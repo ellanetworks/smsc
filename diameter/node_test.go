@@ -38,7 +38,7 @@ type testPeer struct {
 	errs  chan error
 }
 
-func startServer(t *testing.T, srv *Server) *sctp.SCTPAddr {
+func startServer(t *testing.T, srv *Node) *sctp.SCTPAddr {
 	t.Helper()
 	skipIfNoSCTP(t)
 
@@ -208,7 +208,7 @@ func resultCode(t *testing.T, m *Message) uint32 {
 	return v
 }
 
-func openPeer(t *testing.T, srv *Server) *testPeer {
+func openPeer(t *testing.T, srv *Node) *testPeer {
 	t.Helper()
 
 	p := dialPeer(t, startServer(t, srv))
@@ -223,7 +223,7 @@ func openPeer(t *testing.T, srv *Server) *testPeer {
 }
 
 func TestCapabilitiesExchange(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(cer(sgdApp()))
 
 	cea := p.recv()
@@ -246,7 +246,7 @@ func TestCapabilitiesExchange(t *testing.T) {
 }
 
 func TestCapabilitiesExchangeNoCommonApplication(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(cer(Unsigned32(AVPAuthApplicationID, AVPFlagMandatory, 0, 4)))
 
 	if code := resultCode(t, p.recv()); code != ResultNoCommonApplication {
@@ -257,7 +257,7 @@ func TestCapabilitiesExchangeNoCommonApplication(t *testing.T) {
 }
 
 func TestCapabilitiesExchangeRelay(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(cer(Unsigned32(AVPAuthApplicationID, AVPFlagMandatory, 0, RelayApplicationID)))
 
 	if code := resultCode(t, p.recv()); code != ResultSuccess {
@@ -266,7 +266,7 @@ func TestCapabilitiesExchangeRelay(t *testing.T) {
 }
 
 func TestFirstMessageNotCERCloses(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(&Message{Flags: FlagRequest, CommandCode: CommandDeviceWatchdog, AVPs: []AVP{
 		UTF8String(AVPOriginHost, AVPFlagMandatory, 0, "mme.example.org"),
 		UTF8String(AVPOriginRealm, AVPFlagMandatory, 0, "example.org"),
@@ -276,7 +276,7 @@ func TestFirstMessageNotCERCloses(t *testing.T) {
 }
 
 func TestDeviceWatchdogAnswered(t *testing.T) {
-	p := openPeer(t, &Server{})
+	p := openPeer(t, &Node{})
 	p.send(&Message{Flags: FlagRequest, CommandCode: CommandDeviceWatchdog, HopByHopID: 7, EndToEndID: 8, AVPs: []AVP{
 		UTF8String(AVPOriginHost, AVPFlagMandatory, 0, "mme.example.org"),
 		UTF8String(AVPOriginRealm, AVPFlagMandatory, 0, "example.org"),
@@ -289,7 +289,7 @@ func TestDeviceWatchdogAnswered(t *testing.T) {
 }
 
 func TestDisconnectPeerAnswered(t *testing.T) {
-	p := openPeer(t, &Server{})
+	p := openPeer(t, &Node{})
 	p.send(&Message{Flags: FlagRequest, CommandCode: CommandDisconnectPeer, HopByHopID: 9, AVPs: []AVP{
 		UTF8String(AVPOriginHost, AVPFlagMandatory, 0, "mme.example.org"),
 		UTF8String(AVPOriginRealm, AVPFlagMandatory, 0, "example.org"),
@@ -305,7 +305,7 @@ func TestDisconnectPeerAnswered(t *testing.T) {
 func TestApplicationRequestHandled(t *testing.T) {
 	handled := make(chan *Message, 1)
 
-	p := openPeer(t, &Server{Handler: HandlerFunc(func(_ context.Context, c *Conn, req *Message) *Message {
+	p := openPeer(t, &Node{Handler: HandlerFunc(func(_ context.Context, c *Conn, req *Message) *Message {
 		handled <- req
 
 		if c.PeerHost() != "mme.example.org" {
@@ -344,7 +344,7 @@ func TestApplicationRequestHandled(t *testing.T) {
 }
 
 func TestUnsupportedApplicationRejected(t *testing.T) {
-	p := openPeer(t, &Server{})
+	p := openPeer(t, &Node{})
 	p.send(&Message{Flags: FlagRequest, CommandCode: 8388647, ApplicationID: 16777312, HopByHopID: 13, AVPs: []AVP{
 		UTF8String(AVPOriginHost, AVPFlagMandatory, 0, "mme.example.org"),
 		UTF8String(AVPOriginRealm, AVPFlagMandatory, 0, "example.org"),
@@ -359,7 +359,7 @@ func TestUnsupportedApplicationRejected(t *testing.T) {
 func TestServerRequestToPeer(t *testing.T) {
 	conns := make(chan *Conn, 1)
 
-	p := openPeer(t, &Server{Handler: HandlerFunc(func(_ context.Context, c *Conn, req *Message) *Message {
+	p := openPeer(t, &Node{Handler: HandlerFunc(func(_ context.Context, c *Conn, req *Message) *Message {
 		conns <- c
 		return c.Answer(req, ResultSuccess)
 	})})
@@ -409,7 +409,7 @@ func TestWatchdogProbesAndCloses(t *testing.T) {
 
 	t.Cleanup(func() { minWatchdogInterval, watchdogJitter = oldMin, oldJitter })
 
-	p := openPeer(t, &Server{WatchdogInterval: 200 * time.Millisecond})
+	p := openPeer(t, &Node{WatchdogInterval: 200 * time.Millisecond})
 
 	dwr := p.recv()
 	if dwr.CommandCode != CommandDeviceWatchdog || !dwr.IsRequest() {
@@ -425,7 +425,7 @@ func TestWatchdogAnsweredKeepsConnection(t *testing.T) {
 
 	t.Cleanup(func() { minWatchdogInterval, watchdogJitter = oldMin, oldJitter })
 
-	p := openPeer(t, &Server{WatchdogInterval: 200 * time.Millisecond})
+	p := openPeer(t, &Node{WatchdogInterval: 200 * time.Millisecond})
 
 	for range 4 {
 		dwr := p.recv()
@@ -440,7 +440,7 @@ func TestWatchdogAnsweredKeepsConnection(t *testing.T) {
 }
 
 func TestShutdownSendsDisconnectPeer(t *testing.T) {
-	srv := &Server{}
+	srv := &Node{}
 	p := openPeer(t, srv)
 
 	done := make(chan struct{})
@@ -478,12 +478,12 @@ func TestShutdownSendsDisconnectPeer(t *testing.T) {
 }
 
 func TestServeValidatesConfiguration(t *testing.T) {
-	err := (&Server{}).Serve(context.Background(), nil)
+	err := (&Node{}).Serve(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected a validation error")
 	}
 
-	srv := &Server{
+	srv := &Node{
 		Identity: Identity{
 			OriginHost: "a", OriginRealm: "b", ProductName: "c",
 			HostIPAddresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
@@ -499,7 +499,7 @@ func TestServeValidatesConfiguration(t *testing.T) {
 }
 
 func TestDoOnClosedConn(t *testing.T) {
-	c := newConn(&Server{Logger: nil}, nil)
+	c := newConn(&Node{}, nil, false)
 	c.disconnect()
 
 	if _, err := c.Do(context.Background(), &Message{}); !errors.Is(err, ErrConnClosed) {
@@ -508,7 +508,7 @@ func TestDoOnClosedConn(t *testing.T) {
 }
 
 func TestCapabilitiesExchangeNoCommonSecurity(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(cer(sgdApp(), Unsigned32(AVPInbandSecurityID, AVPFlagMandatory, 0, 1)))
 
 	if code := resultCode(t, p.recv()); code != ResultNoCommonSecurity {
@@ -519,7 +519,7 @@ func TestCapabilitiesExchangeNoCommonSecurity(t *testing.T) {
 }
 
 func TestCapabilitiesExchangeNoInbandSecurityOffered(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(cer(sgdApp(), Unsigned32(AVPInbandSecurityID, AVPFlagMandatory, 0, 1), Unsigned32(AVPInbandSecurityID, AVPFlagMandatory, 0, InbandSecurityNone)))
 
 	if code := resultCode(t, p.recv()); code != ResultSuccess {
@@ -528,7 +528,7 @@ func TestCapabilitiesExchangeNoInbandSecurityOffered(t *testing.T) {
 }
 
 func TestCapabilitiesAnswerAdvertisesSupportedVendor(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(cer(sgdApp()))
 
 	cea := p.recv()
@@ -544,7 +544,7 @@ func TestCapabilitiesAnswerAdvertisesSupportedVendor(t *testing.T) {
 }
 
 func TestHandlerPanicAnswersUnableToComply(t *testing.T) {
-	p := openPeer(t, &Server{Handler: HandlerFunc(func(context.Context, *Conn, *Message) *Message {
+	p := openPeer(t, &Node{Handler: HandlerFunc(func(context.Context, *Conn, *Message) *Message {
 		panic("boom")
 	})})
 
@@ -560,7 +560,7 @@ func TestHandlerPanicAnswersUnableToComply(t *testing.T) {
 }
 
 func TestUnorderedAfterPeerConfirmsOpen(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{}))
+	p := dialPeer(t, startServer(t, &Node{}))
 	p.send(cer(sgdApp()))
 
 	cea, flags := p.recvWithFlags()
@@ -580,13 +580,13 @@ func TestUnorderedAfterPeerConfirmsOpen(t *testing.T) {
 }
 
 func TestHandshakeTimeoutClosesSilentPeer(t *testing.T) {
-	p := dialPeer(t, startServer(t, &Server{HandshakeTimeout: 200 * time.Millisecond}))
+	p := dialPeer(t, startServer(t, &Node{HandshakeTimeout: 200 * time.Millisecond}))
 
 	p.expectClosed()
 }
 
 func TestHandshakeTimeoutStoppedByCER(t *testing.T) {
-	p := openPeer(t, &Server{HandshakeTimeout: 200 * time.Millisecond})
+	p := openPeer(t, &Node{HandshakeTimeout: 200 * time.Millisecond})
 
 	time.Sleep(400 * time.Millisecond)
 
@@ -601,7 +601,7 @@ func TestHandshakeTimeoutStoppedByCER(t *testing.T) {
 }
 
 func TestServeRejectsNegativeHandshakeTimeout(t *testing.T) {
-	srv := &Server{
+	srv := &Node{
 		Identity: Identity{
 			OriginHost: "a", OriginRealm: "b", ProductName: "c",
 			HostIPAddresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
@@ -647,7 +647,7 @@ func TestRequestForAnotherDestination(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			p := openPeer(t, &Server{})
+			p := openPeer(t, &Node{})
 			p.send(appRequest(30, 30, tt.avps...))
 
 			ans := p.recv()
@@ -659,7 +659,7 @@ func TestRequestForAnotherDestination(t *testing.T) {
 }
 
 func TestRequestForThisHostIsLocal(t *testing.T) {
-	p := openPeer(t, &Server{})
+	p := openPeer(t, &Node{})
 	p.send(appRequest(31, 31,
 		UTF8String(AVPDestinationHost, AVPFlagMandatory, 0, "SMSC.example.org"),
 		UTF8String(AVPDestinationRealm, AVPFlagMandatory, 0, "example.org"),
@@ -673,7 +673,7 @@ func TestRequestForThisHostIsLocal(t *testing.T) {
 func TestDuplicateRequestGetsOriginalAnswer(t *testing.T) {
 	var calls atomic.Int32
 
-	p := openPeer(t, &Server{Handler: HandlerFunc(func(_ context.Context, c *Conn, req *Message) *Message {
+	p := openPeer(t, &Node{Handler: HandlerFunc(func(_ context.Context, c *Conn, req *Message) *Message {
 		calls.Add(1)
 		return c.Answer(req, ResultSuccess)
 	})})
@@ -710,7 +710,7 @@ func TestShutdownWaitsForInFlightRequests(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})
 
-	srv := &Server{Handler: HandlerFunc(func(ctx context.Context, c *Conn, req *Message) *Message {
+	srv := &Node{Handler: HandlerFunc(func(ctx context.Context, c *Conn, req *Message) *Message {
 		close(started)
 		<-release
 
@@ -773,7 +773,7 @@ func TestRequestDuringShutdown(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			srv := &Server{}
+			srv := &Node{}
 			p := openPeer(t, srv)
 
 			srv.admitMu.Lock()
@@ -795,7 +795,7 @@ func TestRequestDuringShutdown(t *testing.T) {
 }
 
 func TestAdmitAfterShutdownStartsIsRefused(t *testing.T) {
-	srv := &Server{}
+	srv := &Node{}
 
 	if code := srv.admit(appRequest(1, 1)); code != 0 {
 		t.Fatalf("admit before shutdown = %d", code)

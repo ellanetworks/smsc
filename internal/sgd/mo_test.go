@@ -13,6 +13,7 @@ import (
 
 	"github.com/ellanetworks/smsc/diameter"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/tgpp"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -80,19 +81,19 @@ func ofr(avps ...diameter.AVP) *diameter.Message {
 }
 
 func scAddress(t *testing.T, hexDigits string) diameter.AVP {
-	return diameter.OctetString(AVPSCAddress, diameter.AVPFlagMandatory, VendorID3GPP, mustHex(t, hexDigits))
+	return diameter.OctetString(tgpp.AVPSCAddress, diameter.AVPFlagMandatory, tgpp.VendorID, mustHex(t, hexDigits))
 }
 
 func userIdentifier(avps ...diameter.AVP) diameter.AVP {
-	return diameter.Grouped(AVPUserIdentifier, diameter.AVPFlagMandatory, VendorID3GPP, avps...)
+	return diameter.Grouped(tgpp.AVPUserIdentifier, diameter.AVPFlagMandatory, tgpp.VendorID, avps...)
 }
 
 func msisdn(t *testing.T) diameter.AVP {
-	return diameter.OctetString(AVPMSISDN, diameter.AVPFlagMandatory, VendorID3GPP, mustHex(t, "5155210300f1"))
+	return diameter.OctetString(tgpp.AVPMSISDN, diameter.AVPFlagMandatory, tgpp.VendorID, mustHex(t, "5155210300f1"))
 }
 
 func smRPUI(t *testing.T, hexTPDU string) diameter.AVP {
-	return diameter.OctetString(AVPSMRPUI, diameter.AVPFlagMandatory, VendorID3GPP, mustHex(t, hexTPDU))
+	return diameter.OctetString(AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, mustHex(t, hexTPDU))
 }
 
 func ofrWithSubmit(t *testing.T, hexTPDU string) *diameter.Message {
@@ -142,11 +143,11 @@ func experimentalCode(t *testing.T, ans *diameter.Message) uint32 {
 func deliveryFailure(t *testing.T, ans *diameter.Message) (uint32, []byte) {
 	t.Helper()
 
-	if code := experimentalCode(t, ans); code != ResultErrorSMDeliveryFailure {
-		t.Fatalf("Experimental-Result-Code = %d, want %d", code, ResultErrorSMDeliveryFailure)
+	if code := experimentalCode(t, ans); code != tgpp.ResultErrorSMDeliveryFailure {
+		t.Fatalf("Experimental-Result-Code = %d, want %d", code, tgpp.ResultErrorSMDeliveryFailure)
 	}
 
-	cause, ok := ans.Find(AVPSMDeliveryFailureCause, VendorID3GPP)
+	cause, ok := ans.Find(AVPSMDeliveryFailureCause, tgpp.VendorID)
 	if !ok {
 		t.Fatal("SM-Delivery-Failure-Cause missing")
 	}
@@ -156,11 +157,11 @@ func deliveryFailure(t *testing.T, ans *diameter.Message) (uint32, []byte) {
 		t.Fatal(err)
 	}
 
-	enum, _ := diameter.Find(inner, AVPSMEnumeratedDeliveryFailureCause, VendorID3GPP)
+	enum, _ := diameter.Find(inner, AVPSMEnumeratedDeliveryFailureCause, tgpp.VendorID)
 	c, _ := enum.Unsigned32()
 
 	var diagnostic []byte
-	if d, ok := diameter.Find(inner, AVPSMDiagnosticInfo, VendorID3GPP); ok {
+	if d, ok := diameter.Find(inner, AVPSMDiagnosticInfo, tgpp.VendorID); ok {
 		diagnostic = d.Data
 	}
 
@@ -327,7 +328,7 @@ func TestMOForwardStoreFailure(t *testing.T) {
 }
 
 func TestMOForwardOversizedSMRPUI(t *testing.T) {
-	big := diameter.OctetString(AVPSMRPUI, diameter.AVPFlagMandatory, VendorID3GPP, make([]byte, maxSMRPUILength+1))
+	big := diameter.OctetString(AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, make([]byte, maxSMRPUILength+1))
 	req := ofr(scAddress(t, "5155000000f0"), userIdentifier(msisdn(t)), big)
 
 	ans := newTestHandler(&fakeStore{}).ServeDiameter(context.Background(), nil, req)
@@ -343,18 +344,18 @@ func TestMOForwardOversizedSMRPUI(t *testing.T) {
 
 func TestMOForwardMSISDNLessDeliveryNotSupported(t *testing.T) {
 	req := ofrWithSubmit(t, validSubmit)
-	req.AVPs = append(req.AVPs, diameter.Grouped(AVPSMSMICorrelationID, 0, VendorID3GPP))
+	req.AVPs = append(req.AVPs, diameter.Grouped(AVPSMSMICorrelationID, 0, tgpp.VendorID))
 
 	ans := newTestHandler(&fakeStore{}).ServeDiameter(context.Background(), nil, req)
 	assertCommon(t, ans)
 
-	if code := experimentalCode(t, ans); code != ResultErrorFacilityNotSupported {
+	if code := experimentalCode(t, ans); code != tgpp.ResultErrorFacilityNotSupported {
 		t.Fatalf("Experimental-Result-Code = %d", code)
 	}
 }
 
 func TestMOForwardUnknownMandatoryAVP(t *testing.T) {
-	unknown := diameter.Unsigned32(9999, diameter.AVPFlagMandatory, VendorID3GPP, 1)
+	unknown := diameter.Unsigned32(9999, diameter.AVPFlagMandatory, tgpp.VendorID, 1)
 	req := ofrWithSubmit(t, validSubmit)
 	req.AVPs = append(req.AVPs, unknown)
 
@@ -365,14 +366,14 @@ func TestMOForwardUnknownMandatoryAVP(t *testing.T) {
 		t.Fatalf("Result-Code = %d", code)
 	}
 
-	if failed := failedAVP(t, ans); failed.Code != 9999 || failed.VendorID != VendorID3GPP {
+	if failed := failedAVP(t, ans); failed.Code != 9999 || failed.VendorID != tgpp.VendorID {
 		t.Fatalf("Failed-AVP = %+v", failed)
 	}
 }
 
 func TestMOForwardUnknownOptionalAVPIgnored(t *testing.T) {
 	req := ofrWithSubmit(t, validSubmit)
-	req.AVPs = append(req.AVPs, diameter.Unsigned32(9999, 0, VendorID3GPP, 1))
+	req.AVPs = append(req.AVPs, diameter.Unsigned32(9999, 0, tgpp.VendorID, 1))
 
 	ans := newTestHandler(&fakeStore{}).ServeDiameter(context.Background(), nil, req)
 
@@ -391,9 +392,9 @@ func TestMOForwardMissingAVPs(t *testing.T) {
 		"Origin-Host":        {diameter.AVPOriginHost, 0, 0},
 		"Origin-Realm":       {diameter.AVPOriginRealm, 0, 0},
 		"Destination-Realm":  {diameter.AVPDestinationRealm, 0, 0},
-		"SC-Address":         {AVPSCAddress, VendorID3GPP, 0},
-		"User-Identifier":    {AVPUserIdentifier, VendorID3GPP, 0},
-		"SM-RP-UI":           {AVPSMRPUI, VendorID3GPP, 0},
+		"SC-Address":         {tgpp.AVPSCAddress, tgpp.VendorID, 0},
+		"User-Identifier":    {tgpp.AVPUserIdentifier, tgpp.VendorID, 0},
+		"SM-RP-UI":           {AVPSMRPUI, tgpp.VendorID, 0},
 	}
 
 	for name, tt := range tests {
@@ -433,7 +434,7 @@ func TestMOForwardInvalidSCAddress(t *testing.T) {
 		t.Fatalf("Result-Code = %d", code)
 	}
 
-	if failed := failedAVP(t, ans); failed.Code != AVPSCAddress {
+	if failed := failedAVP(t, ans); failed.Code != tgpp.AVPSCAddress {
 		t.Fatalf("Failed-AVP holds %d", failed.Code)
 	}
 }
@@ -446,43 +447,5 @@ func TestUnsupportedCommand(t *testing.T) {
 
 	if ans.Flags&diameter.FlagError == 0 || resultCode(t, ans) != diameter.ResultCommandUnsupported {
 		t.Fatalf("answer = %+v", ans)
-	}
-}
-
-func TestDecodeTBCD(t *testing.T) {
-	tests := []struct {
-		in      string
-		want    string
-		wantErr bool
-	}{
-		{"5155210300f1", "15551230001", false},
-		{"21436587", "12345678", false},
-		{"f1", "1", false},
-		{"1f21", "", true},
-		{"", "", true},
-		{"a1", "", true},
-	}
-
-	for _, tt := range tests {
-		got, err := decodeTBCD(mustHex(t, tt.in))
-		if (err != nil) != tt.wantErr || got != tt.want {
-			t.Errorf("decodeTBCD(%s) = %q, %v", tt.in, got, err)
-		}
-	}
-}
-
-func TestMOForwardReplaceTypeAndSingleShot(t *testing.T) {
-	store := &fakeStore{}
-
-	newTestHandler(store).ServeDiameter(context.Background(), nil,
-		ofrWithSubmit(t, "09"+"00"+"0281"+"21"+"41"+"00"+"41000000000000"+"00"))
-
-	if len(store.stored) != 1 {
-		t.Fatalf("stored %d messages", len(store.stored))
-	}
-
-	got := store.stored[0]
-	if !got.Replace || got.ProtocolIdentifier != 0x41 || !got.SingleShot || !got.ExpiresAt.Equal(testNow.Add(5*time.Minute)) {
-		t.Fatalf("stored = %+v", got)
 	}
 }

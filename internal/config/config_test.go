@@ -17,6 +17,10 @@ diameter:
   origin_realm: example.org
   address: 192.0.2.10
   port: 3869
+hss:
+  host: hss.example.org
+  realm: example.org
+  address: 192.0.2.20
 `
 
 func writeConfig(t *testing.T, content string) string {
@@ -44,6 +48,12 @@ func TestLoad(t *testing.T) {
 			OriginRealm: "example.org",
 			Address:     netip.MustParseAddr("192.0.2.10"),
 			Port:        3869,
+		},
+		HSS: HSS{
+			Host:    "hss.example.org",
+			Realm:   "example.org",
+			Address: netip.MustParseAddr("192.0.2.20"),
+			Port:    3868,
 		},
 	}
 
@@ -75,6 +85,11 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"unspecified ipv4 address": {"192.0.2.10", "0.0.0.0"},
 		"unspecified ipv6 address": {"192.0.2.10", "'::'"},
 		"port out of range":        {"port: 3869", "port: 70000"},
+		"missing hss host":         {"  host: hss.example.org\n", ""},
+		"missing hss realm":        {"  realm: example.org\n", ""},
+		"missing hss address":      {"  address: 192.0.2.20\n", ""},
+		"unspecified hss address":  {"192.0.2.20", "0.0.0.0"},
+		"hss port out of range":    {"  address: 192.0.2.20\n", "  address: 192.0.2.20\n  port: 99999\n"},
 		"unknown field":            {"db:\n", "unknown: true\ndb:\n"},
 	}
 
