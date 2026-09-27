@@ -33,7 +33,7 @@ func (p Plan) International(typeOfNumber uint8, digits string) (string, error) {
 		case p.NationalPrefix != "" && strings.HasPrefix(digits, p.NationalPrefix):
 			return p.CountryCode + strings.TrimPrefix(digits, p.NationalPrefix), nil
 		default:
-			return digits, nil
+			return p.CountryCode + digits, nil
 		}
 	default:
 		return "", fmt.Errorf("%w: type of number %d", ErrUnsupportedNumber, typeOfNumber)

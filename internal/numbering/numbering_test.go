@@ -18,7 +18,7 @@ func TestInternational(t *testing.T) {
 		{"national", 0x2, "612345678", "33612345678"},
 		{"unknown with national prefix", 0x0, "0612345678", "33612345678"},
 		{"unknown with international prefix", 0x0, "0015551230002", "15551230002"},
-		{"unknown without prefix", 0x0, "33612345678", "33612345678"},
+		{"unknown without prefix", 0x0, "612345678", "33612345678"},
 	}
 
 	for _, tt := range tests {
@@ -32,8 +32,8 @@ func TestInternational(t *testing.T) {
 }
 
 func TestInternationalWithoutPrefixes(t *testing.T) {
-	got, err := Plan{CountryCode: "1"}.International(0x0, "0612345678")
-	if err != nil || got != "0612345678" {
+	got, err := Plan{CountryCode: "1"}.International(0x0, "5551230002")
+	if err != nil || got != "15551230002" {
 		t.Fatalf("International = %q, %v", got, err)
 	}
 }
