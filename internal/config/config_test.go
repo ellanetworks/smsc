@@ -1,10 +1,23 @@
 package config
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+const validConfig = `db:
+  path: /var/lib/smsc/smsc.db
+service_centre:
+  address: "15550000000"
+diameter:
+  origin_host: smsc.example.org
+  origin_realm: example.org
+  address: 192.0.2.10
+  port: 3869
+`
 
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
@@ -18,25 +31,64 @@ func writeConfig(t *testing.T, content string) string {
 }
 
 func TestLoad(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "db:\n  path: /var/lib/smsc/smsc.db\n"))
+	cfg, err := Load(writeConfig(t, validConfig))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.DB.Path != "/var/lib/smsc/smsc.db" {
-		t.Fatalf("db.path = %q", cfg.DB.Path)
+	want := Config{
+		DB:            DB{Path: "/var/lib/smsc/smsc.db"},
+		ServiceCentre: ServiceCentre{Address: "15550000000"},
+		Diameter: Diameter{
+			OriginHost:  "smsc.example.org",
+			OriginRealm: "example.org",
+			Address:     netip.MustParseAddr("192.0.2.10"),
+			Port:        3869,
+		},
+	}
+
+	if cfg != want {
+		t.Fatalf("Load = %+v, want %+v", cfg, want)
 	}
 }
 
-func TestLoadRejectsMissingDBPath(t *testing.T) {
-	if _, err := Load(writeConfig(t, "db: {}\n")); err == nil {
-		t.Fatal("expected an error for a missing db.path")
+func TestLoadDefaultsDiameterPort(t *testing.T) {
+	cfg, err := Load(writeConfig(t, strings.Replace(validConfig, "  port: 3869\n", "", 1)))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Diameter.Port != 3868 {
+		t.Fatalf("diameter.port = %d, want 3868", cfg.Diameter.Port)
 	}
 }
 
-func TestLoadRejectsUnknownField(t *testing.T) {
-	if _, err := Load(writeConfig(t, "db:\n  path: smsc.db\nunknown: true\n")); err == nil {
-		t.Fatal("expected an error for an unknown field")
+func TestLoadRejectsInvalidConfig(t *testing.T) {
+	tests := map[string][2]string{
+		"missing db.path":          {"  path: /var/lib/smsc/smsc.db\n", ""},
+		"missing sc address":       {`  address: "15550000000"` + "\n", ""},
+		"non-digit sc address":     {`"15550000000"`, `"+15550000000"`},
+		"missing origin host":      {"  origin_host: smsc.example.org\n", ""},
+		"missing origin realm":     {"  origin_realm: example.org\n", ""},
+		"missing diameter address": {"  address: 192.0.2.10\n", ""},
+		"invalid diameter address": {"192.0.2.10", "not-an-ip"},
+		"unspecified ipv4 address": {"192.0.2.10", "0.0.0.0"},
+		"unspecified ipv6 address": {"192.0.2.10", "'::'"},
+		"port out of range":        {"port: 3869", "port: 70000"},
+		"unknown field":            {"db:\n", "unknown: true\ndb:\n"},
+	}
+
+	for name, edit := range tests {
+		t.Run(name, func(t *testing.T) {
+			content := strings.Replace(validConfig, edit[0], edit[1], 1)
+			if content == validConfig {
+				t.Fatalf("test edit %q did not apply", edit[0])
+			}
+
+			if _, err := Load(writeConfig(t, content)); err == nil {
+				t.Fatal("expected an error")
+			}
+		})
 	}
 }
 

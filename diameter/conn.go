@@ -47,6 +47,9 @@ type Conn struct {
 	watchdogDWA  chan struct{}
 	disconnected chan struct{}
 	closeOnce    sync.Once
+
+	handshakeMu    sync.Mutex
+	handshakeTimer *time.Timer
 }
 
 func newConn(srv *Server, sc *sctp.SCTPConn) *Conn {
@@ -125,31 +128,7 @@ func (c *Conn) Do(ctx context.Context, req *Message) (*Message, error) {
 }
 
 func (c *Conn) Answer(req *Message, resultCode uint32) *Message {
-	ans := &Message{
-		Flags:         req.Flags & FlagProxiable,
-		CommandCode:   req.CommandCode,
-		ApplicationID: req.ApplicationID,
-		HopByHopID:    req.HopByHopID,
-		EndToEndID:    req.EndToEndID,
-	}
-
-	if resultCode >= 3000 && resultCode < 4000 {
-		ans.Flags |= FlagError
-	}
-
-	if sessionID, ok := req.Find(AVPSessionID, 0); ok {
-		ans.AVPs = append(ans.AVPs, sessionID)
-	}
-
-	ans.AVPs = append(ans.AVPs,
-		UTF8String(AVPOriginHost, AVPFlagMandatory, 0, c.srv.Identity.OriginHost),
-		UTF8String(AVPOriginRealm, AVPFlagMandatory, 0, c.srv.Identity.OriginRealm),
-		Unsigned32(AVPResultCode, AVPFlagMandatory, 0, resultCode),
-	)
-
-	ans.AVPs = append(ans.AVPs, FindAll(req.AVPs, AVPProxyInfo, 0)...)
-
-	return ans
+	return NewAnswer(req, c.srv.Identity, resultCode)
 }
 
 func (c *Conn) write(m *Message) error {
@@ -170,7 +149,7 @@ func (c *Conn) write(m *Message) error {
 	return nil
 }
 
-func (c *Conn) receive(ctx context.Context, b []byte) {
+func (c *Conn) receive(b []byte) {
 	m, err := Unmarshal(b)
 	if err != nil {
 		c.receiveMalformed(m, err)
@@ -212,7 +191,17 @@ func (c *Conn) receive(ctx context.Context, b []byte) {
 			return
 		}
 
-		go c.serve(ctx, m)
+		if code := c.srv.routingError(m); code != 0 {
+			c.send(c.Answer(m, code))
+			return
+		}
+
+		if code := c.srv.admit(m); code != 0 {
+			c.send(c.Answer(m, code))
+			return
+		}
+
+		go c.serve(m)
 	}
 }
 
@@ -259,21 +248,42 @@ func (c *Conn) receiveAnswer(m *Message) {
 	}
 }
 
-func (c *Conn) serve(ctx context.Context, req *Message) {
+func (c *Conn) serve(req *Message) {
+	defer c.srv.inflight.Done()
+
+	key, entry, original := c.srv.duplicates.begin(req)
+	if !original {
+		select {
+		case <-entry.done:
+			c.send(entry.answerFor(req))
+		case <-c.srv.baseCtx.Done():
+		}
+
+		return
+	}
+
+	ans := c.handle(req)
+
+	c.srv.duplicates.finish(key, entry, ans)
+	c.send(ans)
+}
+
+func (c *Conn) handle(req *Message) (ans *Message) {
 	defer func() {
 		if r := recover(); r != nil {
 			c.logger.Error("panic handling Diameter request",
 				slog.Any("panic", r), slog.Uint64("command_code", uint64(req.CommandCode)), slog.String("stack", string(debug.Stack())))
-			c.send(c.Answer(req, ResultUnableToComply))
+
+			ans = c.Answer(req, ResultUnableToComply)
 		}
 	}()
 
-	ans := c.srv.Handler.ServeDiameter(ctx, c, req)
+	ans = c.srv.Handler.ServeDiameter(c.srv.baseCtx, c, req)
 	if ans == nil {
 		ans = c.Answer(req, ResultUnableToComply)
 	}
 
-	c.send(ans)
+	return ans
 }
 
 func (c *Conn) send(m *Message) {
@@ -297,8 +307,32 @@ func (c *Conn) close() {
 	_ = c.sc.Close()
 }
 
+func (c *Conn) startHandshakeTimer(timeout time.Duration) {
+	c.handshakeMu.Lock()
+	defer c.handshakeMu.Unlock()
+
+	c.handshakeTimer = time.AfterFunc(timeout, func() {
+		if connState(c.state.Load()) != stateWaitCER {
+			return
+		}
+
+		c.logger.Warn("closing Diameter connection: no CER before the handshake timeout", slog.Duration("timeout", timeout))
+		c.abort()
+	})
+}
+
+func (c *Conn) stopHandshakeTimer() {
+	c.handshakeMu.Lock()
+	defer c.handshakeMu.Unlock()
+
+	if c.handshakeTimer != nil {
+		c.handshakeTimer.Stop()
+	}
+}
+
 func (c *Conn) disconnect() {
 	c.closeOnce.Do(func() {
+		c.stopHandshakeTimer()
 		close(c.disconnected)
 
 		c.mu.Lock()

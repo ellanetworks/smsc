@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ellanetworks/core/sctp"
 )
 
-const DefaultWatchdogInterval = 30 * time.Second
+const (
+	DefaultWatchdogInterval = 30 * time.Second
+	DefaultHandshakeTimeout = 30 * time.Second
+)
 
 var minWatchdogInterval = 6 * time.Second
 
@@ -44,11 +48,18 @@ type Server struct {
 	Applications     []Application
 	Handler          Handler
 	WatchdogInterval time.Duration
+	HandshakeTimeout time.Duration
 	Logger           *slog.Logger
 
-	sctpServer *sctp.Server
-	conns      sync.Map
-	jitter     time.Duration
+	sctpServer   *sctp.Server
+	conns        sync.Map
+	jitter       time.Duration
+	baseCtx      context.Context
+	baseCancel   context.CancelFunc
+	inflight     sync.WaitGroup
+	admitMu      sync.Mutex
+	shuttingDown bool
+	duplicates   duplicateCache
 }
 
 func (s *Server) Serve(ctx context.Context, ln *sctp.Listener) error {
@@ -64,13 +75,23 @@ func (s *Server) Serve(ctx context.Context, ln *sctp.Listener) error {
 		s.WatchdogInterval = DefaultWatchdogInterval
 	}
 
+	if s.HandshakeTimeout == 0 {
+		s.HandshakeTimeout = DefaultHandshakeTimeout
+	}
+
 	s.jitter = watchdogJitter
+	s.baseCtx, s.baseCancel = context.WithCancel(context.WithoutCancel(ctx))
 
 	s.sctpServer = sctp.NewServer(sctp.Config{
 		PPID:   PPID,
 		Name:   "Diameter",
 		Logger: s.Logger,
 	}, sctp.Callbacks{
+		OnConnect: func(sc *sctp.SCTPConn) {
+			c := newConn(s, sc)
+			s.conns.Store(sc, c)
+			c.startHandshakeTimer(s.HandshakeTimeout)
+		},
 		Dispatch: s.dispatch,
 		OnDisconnect: func(sc *sctp.SCTPConn) {
 			if v, ok := s.conns.LoadAndDelete(sc); ok {
@@ -98,6 +119,8 @@ func (s *Server) validate() error {
 		return errors.New("diameter: at least one Application is required")
 	case s.Handler == nil:
 		return errors.New("diameter: Handler is required")
+	case s.HandshakeTimeout < 0:
+		return errors.New("diameter: HandshakeTimeout must not be negative")
 	case s.WatchdogInterval != 0 && s.WatchdogInterval < minWatchdogInterval:
 		return fmt.Errorf("diameter: WatchdogInterval %s is below the %s minimum", s.WatchdogInterval, minWatchdogInterval)
 	}
@@ -108,6 +131,22 @@ func (s *Server) validate() error {
 func (s *Server) Shutdown(ctx context.Context) {
 	if s.sctpServer == nil {
 		return
+	}
+
+	s.admitMu.Lock()
+	s.shuttingDown = true
+	s.admitMu.Unlock()
+
+	drained := make(chan struct{})
+
+	go func() {
+		s.inflight.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+	case <-ctx.Done():
 	}
 
 	var wg sync.WaitGroup
@@ -146,11 +185,40 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	wg.Wait()
 	s.sctpServer.Shutdown(ctx)
+	s.baseCancel()
 }
 
-func (s *Server) dispatch(ctx context.Context, sc *sctp.SCTPConn, b []byte) {
+func (s *Server) routingError(req *Message) uint32 {
+	if host, ok := req.Find(AVPDestinationHost, 0); ok && !strings.EqualFold(host.String(), s.Identity.OriginHost) {
+		return ResultUnableToDeliver
+	}
+
+	if realm, ok := req.Find(AVPDestinationRealm, 0); ok && !strings.EqualFold(realm.String(), s.Identity.OriginRealm) {
+		return ResultRealmNotServed
+	}
+
+	return 0
+}
+
+func (s *Server) admit(req *Message) uint32 {
+	s.admitMu.Lock()
+	defer s.admitMu.Unlock()
+
+	if !s.shuttingDown {
+		s.inflight.Add(1)
+		return 0
+	}
+
+	if _, ok := req.Find(AVPDestinationHost, 0); ok {
+		return ResultTooBusy
+	}
+
+	return ResultUnableToDeliver
+}
+
+func (s *Server) dispatch(_ context.Context, sc *sctp.SCTPConn, b []byte) {
 	v, _ := s.conns.LoadOrStore(sc, newConn(s, sc))
-	v.(*Conn).receive(ctx, b)
+	v.(*Conn).receive(b)
 }
 
 func (c *Conn) handleCER(req *Message) {
@@ -186,6 +254,7 @@ func (c *Conn) handleCER(req *Message) {
 	c.peerIsRelay = relay
 	c.commonAppIDs = common
 	c.state.Store(int32(stateOpen))
+	c.stopHandshakeTimer()
 
 	c.send(c.capabilitiesAnswer(req, ResultSuccess))
 

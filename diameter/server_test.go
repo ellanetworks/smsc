@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -576,4 +577,238 @@ func TestUnorderedAfterPeerConfirmsOpen(t *testing.T) {
 	if dwa.CommandCode != CommandDeviceWatchdog || flags&sctp.SCTPUnordered == 0 {
 		t.Fatalf("DWA flags = 0x%x, want unordered", flags)
 	}
+}
+
+func TestHandshakeTimeoutClosesSilentPeer(t *testing.T) {
+	p := dialPeer(t, startServer(t, &Server{HandshakeTimeout: 200 * time.Millisecond}))
+
+	p.expectClosed()
+}
+
+func TestHandshakeTimeoutStoppedByCER(t *testing.T) {
+	p := openPeer(t, &Server{HandshakeTimeout: 200 * time.Millisecond})
+
+	time.Sleep(400 * time.Millisecond)
+
+	p.send(&Message{Flags: FlagRequest, CommandCode: CommandDeviceWatchdog, HopByHopID: 5, AVPs: []AVP{
+		UTF8String(AVPOriginHost, AVPFlagMandatory, 0, "mme.example.org"),
+		UTF8String(AVPOriginRealm, AVPFlagMandatory, 0, "example.org"),
+	}})
+
+	if dwa := p.recv(); dwa.CommandCode != CommandDeviceWatchdog || resultCode(t, dwa) != ResultSuccess {
+		t.Fatalf("DWA = %+v", dwa)
+	}
+}
+
+func TestServeRejectsNegativeHandshakeTimeout(t *testing.T) {
+	srv := &Server{
+		Identity: Identity{
+			OriginHost: "a", OriginRealm: "b", ProductName: "c",
+			HostIPAddresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
+		},
+		Applications:     []Application{{ID: testAppID}},
+		Handler:          HandlerFunc(func(context.Context, *Conn, *Message) *Message { return nil }),
+		HandshakeTimeout: -time.Second,
+	}
+
+	if err := srv.Serve(context.Background(), nil); err == nil {
+		t.Fatal("expected an error for a negative handshake timeout")
+	}
+}
+
+func appRequest(hopByHop, endToEnd uint32, extra ...AVP) *Message {
+	return &Message{
+		Flags:         FlagRequest,
+		CommandCode:   8388645,
+		ApplicationID: testAppID,
+		HopByHopID:    hopByHop,
+		EndToEndID:    endToEnd,
+		AVPs: append([]AVP{
+			UTF8String(AVPOriginHost, AVPFlagMandatory, 0, "mme.example.org"),
+			UTF8String(AVPOriginRealm, AVPFlagMandatory, 0, "example.org"),
+		}, extra...),
+	}
+}
+
+func TestRequestForAnotherDestination(t *testing.T) {
+	tests := map[string]struct {
+		avps []AVP
+		want uint32
+	}{
+		"other host": {
+			[]AVP{UTF8String(AVPDestinationHost, AVPFlagMandatory, 0, "other.example.org")},
+			ResultUnableToDeliver,
+		},
+		"other realm": {
+			[]AVP{UTF8String(AVPDestinationRealm, AVPFlagMandatory, 0, "other.org")},
+			ResultRealmNotServed,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			p := openPeer(t, &Server{})
+			p.send(appRequest(30, 30, tt.avps...))
+
+			ans := p.recv()
+			if ans.Flags&FlagError == 0 || resultCode(t, ans) != tt.want {
+				t.Fatalf("answer = %+v", ans)
+			}
+		})
+	}
+}
+
+func TestRequestForThisHostIsLocal(t *testing.T) {
+	p := openPeer(t, &Server{})
+	p.send(appRequest(31, 31,
+		UTF8String(AVPDestinationHost, AVPFlagMandatory, 0, "SMSC.example.org"),
+		UTF8String(AVPDestinationRealm, AVPFlagMandatory, 0, "example.org"),
+	))
+
+	if code := resultCode(t, p.recv()); code != ResultSuccess {
+		t.Fatalf("Result-Code = %d", code)
+	}
+}
+
+func TestDuplicateRequestGetsOriginalAnswer(t *testing.T) {
+	var calls atomic.Int32
+
+	p := openPeer(t, &Server{Handler: HandlerFunc(func(_ context.Context, c *Conn, req *Message) *Message {
+		calls.Add(1)
+		return c.Answer(req, ResultSuccess)
+	})})
+
+	p.send(appRequest(40, 99))
+	first := p.recv()
+
+	retransmit := appRequest(41, 99)
+	retransmit.Flags |= FlagRetransmit
+	p.send(retransmit)
+	second := p.recv()
+
+	if calls.Load() != 1 {
+		t.Fatalf("handler called %d times, want 1", calls.Load())
+	}
+
+	if second.HopByHopID != 41 || second.EndToEndID != 99 || resultCode(t, second) != resultCode(t, first) {
+		t.Fatalf("duplicate answer = %+v", second)
+	}
+
+	if second.Flags&FlagRetransmit != 0 {
+		t.Fatal("answer must not carry the T flag")
+	}
+
+	p.send(appRequest(42, 100))
+	p.recv()
+
+	if calls.Load() != 2 {
+		t.Fatalf("handler called %d times after a new request, want 2", calls.Load())
+	}
+}
+
+func TestShutdownWaitsForInFlightRequests(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+
+	srv := &Server{Handler: HandlerFunc(func(ctx context.Context, c *Conn, req *Message) *Message {
+		close(started)
+		<-release
+
+		if ctx.Err() != nil {
+			t.Errorf("handler context cancelled during shutdown: %v", ctx.Err())
+		}
+
+		return c.Answer(req, ResultSuccess)
+	})}
+
+	p := openPeer(t, srv)
+	p.send(appRequest(50, 50))
+	<-started
+
+	done := make(chan struct{})
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+		defer cancel()
+
+		srv.Shutdown(ctx)
+		close(done)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	ans := p.recv()
+	if ans.HopByHopID != 50 || resultCode(t, ans) != ResultSuccess {
+		t.Fatalf("in-flight answer = %+v", ans)
+	}
+
+	dpr := p.recv()
+	if dpr.CommandCode != CommandDisconnectPeer {
+		t.Fatalf("expected DPR after the in-flight answer, got %d", dpr.CommandCode)
+	}
+
+	p.send(&Message{CommandCode: CommandDisconnectPeer, HopByHopID: dpr.HopByHopID, EndToEndID: dpr.EndToEndID, AVPs: []AVP{
+		Unsigned32(AVPResultCode, AVPFlagMandatory, 0, ResultSuccess),
+	}})
+
+	select {
+	case <-done:
+	case <-time.After(testTimeout):
+		t.Fatal("Shutdown did not return")
+	}
+}
+
+func TestRequestDuringShutdown(t *testing.T) {
+	tests := map[string]struct {
+		avps []AVP
+		want uint32
+	}{
+		"addressed to this host": {
+			[]AVP{UTF8String(AVPDestinationHost, AVPFlagMandatory, 0, "smsc.example.org")},
+			ResultTooBusy,
+		},
+		"no destination host": {nil, ResultUnableToDeliver},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			srv := &Server{}
+			p := openPeer(t, srv)
+
+			srv.admitMu.Lock()
+			srv.shuttingDown = true
+			srv.admitMu.Unlock()
+
+			p.send(appRequest(60, 60, tt.avps...))
+
+			ans := p.recv()
+			if ans.Flags&FlagError == 0 || resultCode(t, ans) != tt.want {
+				t.Fatalf("answer = %+v", ans)
+			}
+
+			srv.admitMu.Lock()
+			srv.shuttingDown = false
+			srv.admitMu.Unlock()
+		})
+	}
+}
+
+func TestAdmitAfterShutdownStartsIsRefused(t *testing.T) {
+	srv := &Server{}
+
+	if code := srv.admit(appRequest(1, 1)); code != 0 {
+		t.Fatalf("admit before shutdown = %d", code)
+	}
+
+	srv.admitMu.Lock()
+	srv.shuttingDown = true
+	srv.admitMu.Unlock()
+
+	if code := srv.admit(appRequest(2, 2)); code == 0 {
+		t.Fatal("request admitted after shutdown started")
+	}
+
+	srv.inflight.Done()
+	srv.inflight.Wait()
 }

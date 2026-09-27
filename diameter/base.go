@@ -22,15 +22,26 @@ const (
 	AVPResultCode                  uint32 = 268
 	AVPProductName                 uint32 = 269
 	AVPDisconnectCause             uint32 = 273
+	AVPAuthSessionState            uint32 = 277
+	AVPFailedAVP                   uint32 = 279
+	AVPDestinationRealm            uint32 = 283
 	AVPProxyInfo                   uint32 = 284
 	AVPInbandSecurityID            uint32 = 299
+	AVPDestinationHost             uint32 = 293
 	AVPOriginRealm                 uint32 = 296
+	AVPExperimentalResult          uint32 = 297
+	AVPExperimentalResultCode      uint32 = 298
 )
 
 const (
 	ResultSuccess                uint32 = 2001
 	ResultCommandUnsupported     uint32 = 3001
+	ResultUnableToDeliver        uint32 = 3002
+	ResultRealmNotServed         uint32 = 3003
+	ResultTooBusy                uint32 = 3004
 	ResultApplicationUnsupported uint32 = 3007
+	ResultAVPUnsupported         uint32 = 5001
+	ResultInvalidAVPValue        uint32 = 5004
 	ResultMissingAVP             uint32 = 5005
 	ResultNoCommonApplication    uint32 = 5010
 	ResultUnsupportedVersion     uint32 = 5011
@@ -41,6 +52,8 @@ const (
 )
 
 const InbandSecurityNone uint32 = 0
+
+const AuthSessionStateNoStateMaintained uint32 = 1
 
 const (
 	DisconnectCauseRebooting            uint32 = 0
