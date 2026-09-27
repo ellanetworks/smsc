@@ -37,6 +37,7 @@ func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64) ([]Deliv
 	if err != nil {
 		return nil, fmt.Errorf("list delivery attempts: %w", err)
 	}
+
 	defer func() { _ = rows.Close() }()
 
 	var attempts []DeliveryAttempt

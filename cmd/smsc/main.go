@@ -38,6 +38,7 @@ func run(configPath string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = database.Close() }()
 
 	logger.Info("smsc started", "db", cfg.DB.Path)
