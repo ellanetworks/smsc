@@ -7,3 +7,8 @@ diameter:
   origin_realm: example.org
   address: 127.0.0.1
   port: 3868
+hss:
+  host: hss.example.org
+  realm: example.org
+  address: 127.0.0.1
+  port: 3869

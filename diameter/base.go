@@ -11,6 +11,7 @@ const (
 )
 
 const (
+	AVPUserName                    uint32 = 1
 	AVPHostIPAddress               uint32 = 257
 	AVPAuthApplicationID           uint32 = 258
 	AVPAcctApplicationID           uint32 = 259

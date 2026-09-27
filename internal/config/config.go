@@ -16,6 +16,7 @@ type Config struct {
 	DB            DB            `yaml:"db"`
 	ServiceCentre ServiceCentre `yaml:"service_centre"`
 	Diameter      Diameter      `yaml:"diameter"`
+	HSS           HSS           `yaml:"hss"`
 }
 
 type DB struct {
@@ -24,6 +25,13 @@ type DB struct {
 
 type ServiceCentre struct {
 	Address string `yaml:"address"`
+}
+
+type HSS struct {
+	Host    string     `yaml:"host"`
+	Realm   string     `yaml:"realm"`
+	Address netip.Addr `yaml:"address"`
+	Port    int        `yaml:"port"`
 }
 
 type Diameter struct {
@@ -51,6 +59,10 @@ func Load(path string) (Config, error) {
 		cfg.Diameter.Port = defaultDiameterPort
 	}
 
+	if cfg.HSS.Port == 0 {
+		cfg.HSS.Port = defaultDiameterPort
+	}
+
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -74,6 +86,14 @@ func (c Config) validate() error {
 		return errors.New("diameter.address must be a specific address, not 0.0.0.0 or ::, since it is advertised to peers")
 	case c.Diameter.Port < 1 || c.Diameter.Port > 65535:
 		return fmt.Errorf("diameter.port %d is out of range", c.Diameter.Port)
+	case c.HSS.Host == "":
+		return errors.New("hss.host is required")
+	case c.HSS.Realm == "":
+		return errors.New("hss.realm is required")
+	case !c.HSS.Address.IsValid() || c.HSS.Address.IsUnspecified():
+		return errors.New("hss.address must be a specific IP address")
+	case c.HSS.Port < 1 || c.HSS.Port > 65535:
+		return fmt.Errorf("hss.port %d is out of range", c.HSS.Port)
 	}
 
 	return nil

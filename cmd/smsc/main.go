@@ -16,7 +16,9 @@ import (
 	"github.com/ellanetworks/smsc/diameter"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/s6c"
 	"github.com/ellanetworks/smsc/internal/sgd"
+	"github.com/ellanetworks/smsc/internal/tgpp"
 )
 
 const shutdownTimeout = 5 * time.Second
@@ -57,17 +59,30 @@ func run(configPath string, logger *slog.Logger) error {
 		ProductName:     "smsc",
 	}
 
-	server := &diameter.Server{
-		Identity:     identity,
-		Applications: []diameter.Application{{ID: sgd.ApplicationID, VendorID: sgd.VendorID3GPP}},
-		Handler: &sgd.Handler{
-			Identity:             identity,
-			ServiceCentreAddress: cfg.ServiceCentre.Address,
-			Store:                database,
-			Now:                  time.Now,
-			Logger:               logger,
+	mux := diameter.NewMux()
+	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &sgd.Handler{
+		Identity:             identity,
+		ServiceCentreAddress: cfg.ServiceCentre.Address,
+		Store:                database,
+		Now:                  time.Now,
+		Logger:               logger,
+	})
+
+	node := &diameter.Node{
+		Identity: identity,
+		Applications: []diameter.Application{
+			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
+			{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
 		},
-		Logger: logger,
+		Peers: []diameter.Peer{{
+			Host: cfg.HSS.Host,
+			Address: &sctp.SCTPAddr{
+				IPAddrs: []net.IPAddr{{IP: cfg.HSS.Address.AsSlice()}},
+				Port:    cfg.HSS.Port,
+			},
+		}},
+		Handler: mux,
+		Logger:  logger,
 	}
 
 	var lc sctp.ListenConfig
@@ -80,7 +95,11 @@ func run(configPath string, logger *slog.Logger) error {
 		return fmt.Errorf("listen for Diameter: %w", err)
 	}
 
-	if err := server.Serve(ctx, ln); err != nil {
+	if err := node.Serve(ctx, ln); err != nil {
+		return err
+	}
+
+	if err := node.Start(ctx); err != nil {
 		return err
 	}
 
@@ -93,7 +112,7 @@ func run(configPath string, logger *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	server.Shutdown(shutdownCtx)
+	node.Shutdown(shutdownCtx)
 
 	return nil
 }
