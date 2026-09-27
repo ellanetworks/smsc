@@ -1,0 +1,30 @@
+name: ella-smsc
+base: bare
+build-base: ubuntu@26.04
+version: 0.0.1
+summary: Ella SMSC is a secure, reliable, and easy to operate SMS service center.
+description: |
+ Ella SMSC is a secure, reliable, and easy to operate SMS service center.
+platforms:
+  amd64:
+  arm64:
+
+services:
+  ella-smsc:
+    override: replace
+    summary: Ella SMSC is a secure, reliable, and easy to operate SMS service center.
+    command: smsc --config /smsc.yaml
+    startup: enabled
+    on-failure: restart
+
+parts:
+  core:
+    plugin: go
+    source: .
+    source-type: local
+    build-packages:
+      - git
+    build-snaps:
+      - go/1.26/stable
+    stage-packages:
+      - libc6_libs

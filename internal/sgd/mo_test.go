@@ -13,6 +13,7 @@ import (
 
 	"github.com/ellanetworks/smsc/diameter"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/numbering"
 	"github.com/ellanetworks/smsc/internal/tgpp"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
@@ -40,7 +41,9 @@ func newTestHandler(store *fakeStore) *Handler {
 	return &Handler{
 		Identity:             diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"},
 		ServiceCentreAddress: "15550000000",
+		DefaultValidity:      7 * 24 * time.Hour,
 		Store:                store,
+		Numbering:            numbering.Plan{CountryCode: "1", NationalPrefix: "0", InternationalPrefix: "011"},
 		Now:                  func() time.Time { return testNow },
 		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -229,7 +232,7 @@ func TestMOForwardStoresMessage(t *testing.T) {
 	wantOriginator := db.Address{Digits: "15551230001", TypeOfNumber: 1, NumberingPlan: 1}
 	wantRecipient := db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1}
 
-	if got.Originator != wantOriginator || got.Recipient != wantRecipient || got.MessageReference != 7 ||
+	if got.Originator != wantOriginator || got.Recipient != wantRecipient || got.MSISDN != "15551230002" || got.MessageReference != 7 ||
 		!got.RejectDuplicates || got.Replace || got.SingleShot || !got.SubmittedAt.Equal(testNow) ||
 		!got.ExpiresAt.Equal(testNow.Add(4*24*time.Hour)) || !bytes.Equal(got.TPDU, mustHex(t, validSubmit)) {
 		t.Fatalf("stored = %+v", got)
@@ -243,7 +246,8 @@ func TestMOForwardKeepsNationalNumberType(t *testing.T) {
 		ofrWithSubmit(t, "01"+"00"+"04a1"+"2143"+"00"+"00"+"00"))
 
 	if len(store.stored) != 1 || store.stored[0].Recipient != (db.Address{Digits: "1234", TypeOfNumber: 2, NumberingPlan: 1}) ||
-		!store.stored[0].ExpiresAt.IsZero() {
+		store.stored[0].MSISDN != "11234" ||
+		!store.stored[0].ExpiresAt.Equal(testNow.Add(7*24*time.Hour)) {
 		t.Fatalf("stored = %+v", store.stored)
 	}
 }
@@ -279,6 +283,7 @@ func TestMOForwardSubmitRejections(t *testing.T) {
 	}{
 		"alphanumeric destination":  {"01" + "00" + "04d0" + "c1e1" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"empty destination":         {"01" + "00" + "0091" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
+		"network-specific number":   {"01" + "00" + "04b1" + "2143" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"sms-command":               {"02" + "00" + "00" + "00" + "00" + "0281" + "21" + "00", tpdu.FailureCommandUnsupported},
 		"reserved message type":     {"03" + "00", tpdu.FailureTPDUNotSupported},
 		"reserved validity format":  {"09" + "00" + "0281" + "21" + "00" + "00" + "04000000000000" + "00", tpdu.FailureValidityPeriodNotSupported},
@@ -447,5 +452,19 @@ func TestUnsupportedCommand(t *testing.T) {
 
 	if ans.Flags&diameter.FlagError == 0 || resultCode(t, ans) != diameter.ResultCommandUnsupported {
 		t.Fatalf("answer = %+v", ans)
+	}
+}
+
+func TestMOForwardNotifiesWhenStored(t *testing.T) {
+	var notified int
+
+	h := newTestHandler(&fakeStore{})
+	h.Stored = func() { notified++ }
+
+	h.ServeDiameter(context.Background(), nil, ofrWithSubmit(t, validSubmit))
+	h.ServeDiameter(context.Background(), nil, ofrWithSubmit(t, "03"+"00"))
+
+	if notified != 1 {
+		t.Fatalf("notified %d times, want once for the stored message only", notified)
 	}
 }

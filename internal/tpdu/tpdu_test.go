@@ -242,3 +242,19 @@ func TestAddressRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestDeliverFromSubmitDoesNotPromiseStatusReport(t *testing.T) {
+	s, err := DecodeSubmit(mustHex(t, "31"+"07"+"0b91"+"5155210300f0"+"00"+"00"+"aa"+"05"+"e8329bfd06"))
+	if err != nil || !s.StatusReportRequest {
+		t.Fatalf("DecodeSubmit = %+v, %v", s, err)
+	}
+
+	b, err := DeliverFromSubmit(s, Address{TypeOfNumber: 0x1, NumberingPlan: 0x1, Digits: "15551230001"}, time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if b[0]&0x20 != 0 {
+		t.Fatalf("TP-SRI set (first octet %02x) with no SMS-STATUS-REPORT support", b[0])
+	}
+}

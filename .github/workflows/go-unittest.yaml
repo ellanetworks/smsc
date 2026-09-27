@@ -16,6 +16,9 @@ jobs:
         with:
           go-version-file: "go.mod"
 
+      - name: Load SCTP
+        run: sudo modprobe sctp
+
       - name: Unit tests
         run: go test -cover ./...
 

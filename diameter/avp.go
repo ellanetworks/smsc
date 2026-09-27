@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"time"
 )
 
 const (
@@ -126,6 +127,20 @@ func Address(code uint32, flags uint8, vendorID uint32, v netip.Addr) AVP {
 	data = append(data, v.AsSlice()...)
 
 	return newAVP(code, flags, vendorID, data)
+}
+
+const ntpUnixOffset = 2208988800
+
+func Time(code uint32, flags uint8, vendorID uint32, t time.Time) AVP {
+	return newAVP(code, flags, vendorID, binary.BigEndian.AppendUint32(nil, uint32(t.Unix()+ntpUnixOffset)))
+}
+
+func (a AVP) Time() (time.Time, error) {
+	if len(a.Data) != 4 {
+		return time.Time{}, fmt.Errorf("diameter: AVP %d: Time of %d octets", a.Code, len(a.Data))
+	}
+
+	return time.Unix(int64(binary.BigEndian.Uint32(a.Data))-ntpUnixOffset, 0).UTC(), nil
 }
 
 func Grouped(code uint32, flags uint8, vendorID uint32, avps ...AVP) AVP {

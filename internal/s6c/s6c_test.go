@@ -77,7 +77,7 @@ func mmeServingNode(t *testing.T) diameter.AVP {
 	return diameter.Grouped(avpServingNode, diameter.AVPFlagMandatory, tgpp.VendorID,
 		diameter.UTF8String(avpMMEName, diameter.AVPFlagMandatory, tgpp.VendorID, "mme.example.org"),
 		diameter.UTF8String(avpMMERealm, 0, tgpp.VendorID, "example.org"),
-		diameter.OctetString(avpMMENumberForMTSMS, 0, tgpp.VendorID, mustHex(t, "5155000010f0")),
+		diameter.OctetString(tgpp.AVPMMENumberForMTSMS, 0, tgpp.VendorID, mustHex(t, "5155000010f0")),
 	)
 }
 
@@ -168,7 +168,7 @@ func TestSendRoutingInfoForSMParsesAllServingNodes(t *testing.T) {
 		diameter.Grouped(avpAdditionalServingNode, diameter.AVPFlagMandatory, tgpp.VendorID,
 			diameter.UTF8String(avpSGSNName, 0, tgpp.VendorID, "sgsn.example.org"),
 			diameter.UTF8String(avpSGSNRealm, 0, tgpp.VendorID, "example.org"),
-			diameter.OctetString(avpSGSNNumber, diameter.AVPFlagMandatory, tgpp.VendorID, mustHex(t, "5155000020f0")),
+			diameter.OctetString(tgpp.AVPSGSNNumber, diameter.AVPFlagMandatory, tgpp.VendorID, mustHex(t, "5155000020f0")),
 		),
 		diameter.Grouped(avpSMSF3GPPAddress, 0, tgpp.VendorID,
 			diameter.OctetString(avpSMSF3GPPNumber, 0, tgpp.VendorID, mustHex(t, "5155000030f0")),

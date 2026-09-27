@@ -14,14 +14,18 @@ var (
 	testRecipient  = Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1}
 )
 
+const testMSISDN = "15551230002"
+
 func testMessage(reference uint8, rejectDuplicates bool, tpdu []byte, at time.Time) NewMessage {
 	return NewMessage{
 		Originator:       testOriginator,
 		Recipient:        testRecipient,
+		MSISDN:           testMSISDN,
 		MessageReference: reference,
 		RejectDuplicates: rejectDuplicates,
 		TPDU:             tpdu,
 		SubmittedAt:      at,
+		ExpiresAt:        at.Add(7 * 24 * time.Hour),
 	}
 }
 
@@ -271,20 +275,6 @@ func TestExpiryAndSingleShotStored(t *testing.T) {
 	if !m.ExpiresAt.Equal(submitted.Add(time.Hour)) || !m.SingleShot || m.ProtocolIdentifier != 0x41 {
 		t.Fatalf("message = %+v", m)
 	}
-
-	id, err = d.CreateMessage(ctx, testMessage(2, false, []byte{0x01}, submitted))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	m, err = d.GetMessage(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !m.ExpiresAt.IsZero() || m.SingleShot {
-		t.Fatalf("message without validity = %+v", m)
-	}
 }
 
 func TestReplaceShortMessage(t *testing.T) {
@@ -345,5 +335,247 @@ func TestReplaceShortMessage(t *testing.T) {
 	newID, err := d.CreateMessage(ctx, afterDelivery)
 	if err != nil || newID == id {
 		t.Fatalf("replace after delivery stored as %d, %v; want a new message", newID, err)
+	}
+}
+
+func TestDeliveryScheduling(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	first, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, base.Add(time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := d.NextDue(ctx, base.Add(-time.Second), nil); err != nil || ok {
+		t.Fatalf("NextDue before anything is due = %v, %v", ok, err)
+	}
+
+	m, ok, err := d.NextDue(ctx, base.Add(time.Minute), nil)
+	if err != nil || !ok || m.ID != first {
+		t.Fatalf("NextDue = %+v, %v, %v; want message %d", m, ok, err, first)
+	}
+
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	m, ok, err = d.NextDue(ctx, base.Add(time.Minute), nil)
+	if err != nil || !ok || m.ID != second {
+		t.Fatalf("NextDue after retry = %+v, %v, %v; want message %d", m, ok, err, second)
+	}
+
+	retried, err := d.GetMessage(ctx, first)
+	if err != nil || retried.Retries != 1 || !retried.NextAttemptAt.Equal(base.Add(time.Hour)) {
+		t.Fatalf("retried message = %+v, %v", retried, err)
+	}
+
+	wakeup, ok, err := d.NextWakeup(ctx, nil)
+	if err != nil || !ok || !wakeup.Equal(base.Add(time.Second)) {
+		t.Fatalf("NextWakeup = %v, %v, %v", wakeup, ok, err)
+	}
+
+	pending, err := d.CountPendingFor(ctx, testMSISDN, first)
+	if err != nil || pending != 1 {
+		t.Fatalf("CountPendingFor = %d, %v", pending, err)
+	}
+
+	if err := d.SetMessageStatus(ctx, second, StatusExpired, base); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.SetMessageStatus(ctx, first, StatusDelivered, base); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.ScheduleRetry(ctx, first, base, base); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ScheduleRetry on a delivered message = %v, want ErrNotFound", err)
+	}
+
+	if _, ok, err := d.NextWakeup(ctx, nil); err != nil || ok {
+		t.Fatalf("NextWakeup with nothing pending = %v, %v", ok, err)
+	}
+}
+
+func TestNextDueSkipsBusyRecipients(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	if _, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base)); err != nil {
+		t.Fatal(err)
+	}
+
+	other := testMessage(2, false, []byte{0x02}, base.Add(time.Second))
+	other.MSISDN = "15551230003"
+
+	otherID, err := d.CreateMessage(ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, ok, err := d.NextDue(ctx, base.Add(time.Minute), []string{testMSISDN})
+	if err != nil || !ok || m.ID != otherID || m.MSISDN != "15551230003" {
+		t.Fatalf("NextDue = %+v, %v, %v; want message %d", m, ok, err, otherID)
+	}
+
+	if _, ok, err := d.NextDue(ctx, base.Add(time.Minute), []string{testMSISDN, "15551230003"}); err != nil || ok {
+		t.Fatalf("NextDue with every recipient busy = %v, %v", ok, err)
+	}
+
+	wakeup, ok, err := d.NextWakeup(ctx, []string{testMSISDN})
+	if err != nil || !ok || !wakeup.Equal(base.Add(time.Second)) {
+		t.Fatalf("NextWakeup = %v, %v, %v", wakeup, ok, err)
+	}
+}
+
+func TestHoldAndAlertRecipient(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	first, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	later, err := d.CreateMessage(ctx, testMessage(3, false, []byte{0x03}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base); err != nil {
+		t.Fatal(err)
+	}
+
+	until := base.Add(time.Hour)
+	if err := d.HoldRecipient(ctx, testMSISDN, until, base); err != nil {
+		t.Fatal(err)
+	}
+
+	for id, want := range map[int64]time.Time{first: until, second: until, later: base.Add(2 * time.Hour)} {
+		m, err := d.GetMessage(ctx, id)
+		if err != nil || !m.NextAttemptAt.Equal(want) {
+			t.Fatalf("message %d next attempt = %v, %v; want %v", id, m.NextAttemptAt, err, want)
+		}
+	}
+
+	if _, ok, err := d.NextDue(ctx, base.Add(time.Minute), nil); err != nil || ok {
+		t.Fatalf("NextDue while held = %v, %v", ok, err)
+	}
+
+	alertedAt := base.Add(time.Minute)
+
+	recipients, err := d.AlertRecipient(ctx, testMSISDN, alertedAt)
+	if err != nil || len(recipients) != 1 || recipients[0] != testMSISDN {
+		t.Fatalf("AlertRecipient = %v, %v", recipients, err)
+	}
+
+	for _, id := range []int64{first, second, later} {
+		m, err := d.GetMessage(ctx, id)
+		if err != nil || !m.NextAttemptAt.Equal(alertedAt) {
+			t.Fatalf("message %d next attempt after alert = %v, %v; want %v", id, m.NextAttemptAt, err, alertedAt)
+		}
+	}
+}
+
+func TestAlertMSISDN(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.HoldRecipient(ctx, testMSISDN, base.Add(time.Hour), base); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.SetAlertMSISDN(ctx, testMSISDN, "15559990000", base); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.SetAlertMSISDN(ctx, testMSISDN, "15559990001", base); err != nil {
+		t.Fatal(err)
+	}
+
+	recipients, err := d.AlertRecipient(ctx, "15559990000", base)
+	if err != nil || len(recipients) != 1 {
+		t.Fatalf("AlertRecipient with a stale Alert MSISDN = %v, %v", recipients, err)
+	}
+
+	recipients, err = d.AlertRecipient(ctx, "15559990001", base.Add(time.Minute))
+	if err != nil || len(recipients) != 2 || recipients[1] != testMSISDN {
+		t.Fatalf("AlertRecipient by Alert MSISDN = %v, %v", recipients, err)
+	}
+
+	m, err := d.GetMessage(ctx, id)
+	if err != nil || !m.NextAttemptAt.Equal(base.Add(time.Minute)) {
+		t.Fatalf("next attempt after alert = %v, %v", m.NextAttemptAt, err)
+	}
+
+	if err := d.SetAlertMSISDN(ctx, testMSISDN, "", base); err != nil {
+		t.Fatal(err)
+	}
+
+	recipients, err = d.AlertRecipient(ctx, "15559990001", base)
+	if err != nil || len(recipients) != 1 {
+		t.Fatalf("AlertRecipient after clearing the Alert MSISDN = %v, %v", recipients, err)
+	}
+}
+
+func TestNewMessageJoinsRecipientHold(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	if _, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base)); err != nil {
+		t.Fatal(err)
+	}
+
+	until := base.Add(time.Hour)
+	if err := d.HoldRecipient(ctx, testMSISDN, until, base); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, base.Add(time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	other := testMessage(3, false, []byte{0x03}, base.Add(time.Minute))
+	other.MSISDN = "15551230003"
+
+	free, err := d.CreateMessage(ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for id, want := range map[int64]time.Time{held: until, free: base.Add(time.Minute)} {
+		m, err := d.GetMessage(ctx, id)
+		if err != nil || !m.NextAttemptAt.Equal(want) {
+			t.Fatalf("message %d next attempt = %v, %v; want %v", id, m.NextAttemptAt, err, want)
+		}
+	}
+
+	if _, err := d.AlertRecipient(ctx, testMSISDN, base.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if m, err := d.GetMessage(ctx, held); err != nil || !m.NextAttemptAt.Equal(base.Add(2*time.Minute)) {
+		t.Fatalf("next attempt after alert = %v, %v", m.NextAttemptAt, err)
 	}
 }

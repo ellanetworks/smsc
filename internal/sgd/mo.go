@@ -8,6 +8,7 @@ import (
 
 	"github.com/ellanetworks/smsc/diameter"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/numbering"
 	"github.com/ellanetworks/smsc/internal/tbcd"
 	"github.com/ellanetworks/smsc/internal/tgpp"
 	"github.com/ellanetworks/smsc/internal/tpdu"
@@ -21,50 +22,45 @@ type Handler struct {
 	Identity             diameter.Identity
 	ServiceCentreAddress string
 	Store                MessageStore
+	Numbering            numbering.Plan
+	DefaultValidity      time.Duration
+	Stored               func()
 	Now                  func() time.Time
 	Logger               *slog.Logger
 }
 
-type avpID struct {
-	code     uint32
-	vendorID uint32
+var ofrKnownAVPs = map[diameter.AVPKey]bool{
+	{Code: diameter.AVPSessionID}:                              true,
+	{Code: diameter.AVPDRMP}:                                   true,
+	{Code: diameter.AVPVendorSpecificApplicationID}:            true,
+	{Code: diameter.AVPAuthSessionState}:                       true,
+	{Code: diameter.AVPOriginHost}:                             true,
+	{Code: diameter.AVPOriginRealm}:                            true,
+	{Code: diameter.AVPDestinationHost}:                        true,
+	{Code: diameter.AVPDestinationRealm}:                       true,
+	{Code: tgpp.AVPSCAddress, VendorID: tgpp.VendorID}:         true,
+	{Code: AVPOFRFlags, VendorID: tgpp.VendorID}:               true,
+	{Code: tgpp.AVPSupportedFeatures, VendorID: tgpp.VendorID}: true,
+	{Code: tgpp.AVPUserIdentifier, VendorID: tgpp.VendorID}:    true,
+	{Code: AVPEPSLocationInformation, VendorID: tgpp.VendorID}: true,
+	{Code: AVPNRCellGlobalIdentity, VendorID: tgpp.VendorID}:   true,
+	{Code: AVPSMRPUI, VendorID: tgpp.VendorID}:                 true,
+	{Code: AVPSMSMICorrelationID, VendorID: tgpp.VendorID}:     true,
+	{Code: AVPSMDeliveryOutcome, VendorID: tgpp.VendorID}:      true,
+	{Code: AVPMPSPriority, VendorID: tgpp.VendorID}:            true,
+	{Code: diameter.AVPProxyInfo}:                              true,
+	{Code: diameter.AVPRouteRecord}:                            true,
 }
 
-var ofrKnownAVPs = map[avpID]bool{
-	{diameter.AVPSessionID, 0}: true,
-	{avpDRMP, 0}:               true,
-	{diameter.AVPVendorSpecificApplicationID, 0}: true,
-	{diameter.AVPAuthSessionState, 0}:            true,
-	{diameter.AVPOriginHost, 0}:                  true,
-	{diameter.AVPOriginRealm, 0}:                 true,
-	{diameter.AVPDestinationHost, 0}:             true,
-	{diameter.AVPDestinationRealm, 0}:            true,
-	{tgpp.AVPSCAddress, tgpp.VendorID}:           true,
-	{AVPOFRFlags, tgpp.VendorID}:                 true,
-	{tgpp.AVPSupportedFeatures, tgpp.VendorID}:   true,
-	{tgpp.AVPUserIdentifier, tgpp.VendorID}:      true,
-	{AVPEPSLocationInformation, tgpp.VendorID}:   true,
-	{AVPNRCellGlobalIdentity, tgpp.VendorID}:     true,
-	{AVPSMRPUI, tgpp.VendorID}:                   true,
-	{AVPSMSMICorrelationID, tgpp.VendorID}:       true,
-	{AVPSMDeliveryOutcome, tgpp.VendorID}:        true,
-	{AVPMPSPriority, tgpp.VendorID}:              true,
-	{diameter.AVPProxyInfo, 0}:                   true,
-	{avpRouteRecord, 0}:                          true,
-}
-
-var ofrRequiredAVPs = []struct {
-	id           avpID
-	minimumBytes int
-}{
-	{avpID{diameter.AVPSessionID, 0}, 0},
-	{avpID{diameter.AVPAuthSessionState, 0}, 4},
-	{avpID{diameter.AVPOriginHost, 0}, 0},
-	{avpID{diameter.AVPOriginRealm, 0}, 0},
-	{avpID{diameter.AVPDestinationRealm, 0}, 0},
-	{avpID{tgpp.AVPSCAddress, tgpp.VendorID}, 0},
-	{avpID{tgpp.AVPUserIdentifier, tgpp.VendorID}, 0},
-	{avpID{AVPSMRPUI, tgpp.VendorID}, 0},
+var ofrRequiredAVPs = []diameter.RequiredAVP{
+	{Key: diameter.AVPKey{Code: diameter.AVPSessionID}},
+	{Key: diameter.AVPKey{Code: diameter.AVPAuthSessionState}, MinimumLength: 4},
+	{Key: diameter.AVPKey{Code: diameter.AVPOriginHost}},
+	{Key: diameter.AVPKey{Code: diameter.AVPOriginRealm}},
+	{Key: diameter.AVPKey{Code: diameter.AVPDestinationRealm}},
+	{Key: diameter.AVPKey{Code: tgpp.AVPSCAddress, VendorID: tgpp.VendorID}},
+	{Key: diameter.AVPKey{Code: tgpp.AVPUserIdentifier, VendorID: tgpp.VendorID}},
+	{Key: diameter.AVPKey{Code: AVPSMRPUI, VendorID: tgpp.VendorID}},
 }
 
 func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
@@ -76,7 +72,10 @@ func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diam
 }
 
 func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Message) *diameter.Message {
-	if ans := h.checkAVPs(req); ans != nil {
+	if avpErr := diameter.CheckAVPs(req, ofrKnownAVPs, ofrRequiredAVPs); avpErr != nil {
+		ans := h.answer(req, avpErr.ResultCode)
+		ans.AVPs = append(ans.AVPs, diameter.FailedAVP(avpErr.AVP))
+
 		return ans
 	}
 
@@ -128,13 +127,22 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		return h.submitRejected(req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
 
+	recipient, err := h.Numbering.International(submit.Destination.TypeOfNumber, submit.Destination.Digits)
+	if err != nil {
+		return h.submitRejected(req, tpdu.FailureInvalidSMEAddress, receivedAt)
+	}
+
 	if tpdu.RequestsTelematicInterworking(submit.ProtocolIdentifier) {
 		return h.submitRejected(req, tpdu.FailureTelematicInterworkingNotSupported, receivedAt)
 	}
 
-	expiresAt, _, err := submit.Expiry(receivedAt)
+	expiresAt, hasValidity, err := submit.Expiry(receivedAt)
 	if err != nil {
 		return h.submitRejected(req, tpdu.FailureValidityPeriodNotSupported, receivedAt)
+	}
+
+	if !hasValidity {
+		expiresAt = receivedAt.Add(h.DefaultValidity)
 	}
 
 	id, err := h.Store.CreateMessage(ctx, db.NewMessage{
@@ -148,6 +156,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 			TypeOfNumber:  submit.Destination.TypeOfNumber,
 			NumberingPlan: submit.Destination.NumberingPlan,
 		},
+		MSISDN:             recipient,
 		MessageReference:   submit.MessageReference,
 		ProtocolIdentifier: submit.ProtocolIdentifier,
 		RejectDuplicates:   submit.RejectDuplicates,
@@ -167,33 +176,14 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		return h.deliveryFailure(req, CauseSCCongestion, h.submitReport(tpdu.FailureSCSystemFailure, receivedAt))
 	}
 
+	if h.Stored != nil {
+		h.Stored()
+	}
+
 	h.Logger.Debug("accepted mobile-originated short message",
-		slog.Int64("message_id", id), slog.String("originator", originator), slog.String("recipient", submit.Destination.Digits))
+		slog.Int64("message_id", id), slog.String("originator", originator), slog.String("recipient", recipient))
 
 	return h.answer(req, diameter.ResultSuccess)
-}
-
-func (h *Handler) checkAVPs(req *diameter.Message) *diameter.Message {
-	for _, a := range req.AVPs {
-		if a.Flags&diameter.AVPFlagMandatory != 0 && !ofrKnownAVPs[avpID{a.Code, a.VendorID}] {
-			ans := h.answer(req, diameter.ResultAVPUnsupported)
-			ans.AVPs = append(ans.AVPs, diameter.FailedAVP(a))
-
-			return ans
-		}
-	}
-
-	for _, r := range ofrRequiredAVPs {
-		if _, ok := req.Find(r.id.code, r.id.vendorID); !ok {
-			ans := h.answer(req, diameter.ResultMissingAVP)
-			ans.AVPs = append(ans.AVPs, diameter.FailedAVP(
-				diameter.OctetString(r.id.code, diameter.AVPFlagMandatory, r.id.vendorID, make([]byte, r.minimumBytes))))
-
-			return ans
-		}
-	}
-
-	return nil
 }
 
 func submitFailureCause(b []byte, err error) byte {

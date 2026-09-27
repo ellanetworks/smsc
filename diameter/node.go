@@ -129,7 +129,7 @@ func (n *Node) init(ctx context.Context) error {
 
 		n.jitter = watchdogJitter
 		n.baseCtx, n.baseCancel = context.WithCancel(context.WithoutCancel(ctx))
-		n.sessionHigh = uint32(time.Now().Unix() + ntpEpochOffset)
+		n.sessionHigh = uint32(time.Now().Unix() + ntpUnixOffset)
 		n.peers = make(map[string]*peerEntry)
 		n.peersChanged = make(chan struct{})
 		n.endToEnd.Store(uint32(time.Now().Unix()&0xfff)<<20 | randomUint32()&0xfffff)
@@ -141,8 +141,6 @@ func (n *Node) init(ctx context.Context) error {
 
 	return n.initErr
 }
-
-const ntpEpochOffset = 2208988800
 
 func (n *Node) validate() error {
 	switch {

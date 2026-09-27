@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/netip"
 	"testing"
+	"time"
 )
 
 func TestMessageMarshalLayout(t *testing.T) {
@@ -137,5 +138,23 @@ func TestGroupedAVP(t *testing.T) {
 func TestUnsigned32RejectsWrongLength(t *testing.T) {
 	if _, err := (AVP{Data: []byte{1, 2}}).Unsigned32(); err == nil {
 		t.Fatal("expected an error")
+	}
+}
+
+func TestTimeAVP(t *testing.T) {
+	at := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	a := Time(3307, AVPFlagMandatory, 10415, at)
+	if !bytes.Equal(a.Data, []byte{0xee, 0x63, 0x83, 0xc0}) {
+		t.Fatalf("Time data = %x", a.Data)
+	}
+
+	got, err := a.Time()
+	if err != nil || !got.Equal(at) {
+		t.Fatalf("Time() = %v, %v", got, err)
+	}
+
+	if _, err := (AVP{Data: []byte{1}}).Time(); err == nil {
+		t.Fatal("expected an error for a short Time")
 	}
 }
