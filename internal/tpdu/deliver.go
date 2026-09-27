@@ -20,7 +20,6 @@ type Deliver struct {
 
 func DeliverFromSubmit(s Submit, originator Address, receivedAt time.Time) Deliver {
 	return Deliver{
-		StatusReportIndication: s.StatusReportRequest,
 		UserDataHeader:         s.UserDataHeader,
 		Originator:             originator,
 		ProtocolIdentifier:     s.ProtocolIdentifier,

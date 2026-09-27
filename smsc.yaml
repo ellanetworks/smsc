@@ -1,2 +1,9 @@
 db:
   path: smsc.db
+service_centre:
+  address: "15550000000"
+diameter:
+  origin_host: smsc.example.org
+  origin_realm: example.org
+  address: 127.0.0.1
+  port: 3868

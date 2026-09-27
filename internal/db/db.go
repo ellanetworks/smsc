@@ -19,13 +19,22 @@ var migrations = []string{
 	`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		originator TEXT NOT NULL,
+		originator_ton INTEGER NOT NULL,
+		originator_npi INTEGER NOT NULL,
 		recipient TEXT NOT NULL,
+		recipient_ton INTEGER NOT NULL,
+		recipient_npi INTEGER NOT NULL,
+		message_reference INTEGER NOT NULL,
+		protocol_identifier INTEGER NOT NULL,
 		tpdu BLOB NOT NULL,
 		status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed')),
+		single_shot INTEGER NOT NULL CHECK (single_shot IN (0, 1)),
 		submitted_at INTEGER NOT NULL,
+		expires_at INTEGER,
 		updated_at INTEGER NOT NULL
 	);
 	CREATE INDEX messages_status ON messages (status);
+	CREATE INDEX messages_originator ON messages (originator, originator_ton, originator_npi, id);
 	CREATE TABLE delivery_attempts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,

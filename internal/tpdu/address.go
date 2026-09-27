@@ -5,7 +5,11 @@ import (
 	"fmt"
 )
 
-const TypeOfNumberAlphanumeric = 0x5
+const (
+	TypeOfNumberInternational = 0x1
+	TypeOfNumberAlphanumeric  = 0x5
+	NumberingPlanISDN         = 0x1
+)
 
 var ErrUnsupportedAddress = errors.New("unsupported address type")
 

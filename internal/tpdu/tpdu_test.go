@@ -158,7 +158,7 @@ func TestDeliverFromSubmitEncode(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 
-	want := mustHex(t, "24"+"0b91"+"5155210300f1"+"00"+"00"+"62907251405069"+"05"+"e8329bfd06")
+	want := mustHex(t, "04"+"0b91"+"5155210300f1"+"00"+"00"+"62907251405069"+"05"+"e8329bfd06")
 	if !bytes.Equal(got, want) {
 		t.Fatalf("Encode = %x, want %x", got, want)
 	}
