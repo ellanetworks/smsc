@@ -102,8 +102,11 @@ func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
 func heldUntil(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (int64, error) {
 	var held sql.Null[int64]
 
-	err := tx.QueryRowContext(ctx,
-		`SELECT MAX(next_attempt_at) FROM messages WHERE msisdn = ? AND status = ?`, msisdn, StatusPending).Scan(&held)
+	err := tx.QueryRowContext(ctx, `SELECT held_until FROM recipients WHERE msisdn = ?`, msisdn).Scan(&held)
+	if errors.Is(err, sql.ErrNoRows) {
+		return at, nil
+	}
+
 	if err != nil {
 		return 0, err
 	}
@@ -335,10 +338,32 @@ func (d *DB) CountPendingFor(ctx context.Context, msisdn string, excludeID int64
 }
 
 func (d *DB) HoldRecipient(ctx context.Context, msisdn string, until, now time.Time) error {
-	_, err := d.conn.ExecContext(ctx,
-		`UPDATE messages SET next_attempt_at = ?, updated_at = ? WHERE msisdn = ? AND status = ? AND next_attempt_at < ?`,
-		until.UTC().UnixNano(), now.UTC().UnixNano(), msisdn, StatusPending, until.UTC().UnixNano())
+	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("hold recipient: %w", err)
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	at, updated := until.UTC().UnixNano(), now.UTC().UnixNano()
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO recipients (msisdn, held_until, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT (msisdn) DO UPDATE SET held_until = MAX(COALESCE(held_until, 0), excluded.held_until),
+		updated_at = excluded.updated_at`,
+		msisdn, at, updated)
+	if err != nil {
+		return fmt.Errorf("hold recipient: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE messages SET next_attempt_at = ?, updated_at = ? WHERE msisdn = ? AND status = ? AND next_attempt_at < ?`,
+		at, updated, msisdn, StatusPending, at)
+	if err != nil {
+		return fmt.Errorf("hold recipient: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("hold recipient: %w", err)
 	}
 
@@ -355,7 +380,7 @@ func (d *DB) AlertRecipient(ctx context.Context, msisdn string, now time.Time) (
 
 	recipients := []string{msisdn}
 
-	rows, err := tx.QueryContext(ctx, `SELECT msisdn FROM alert_msisdns WHERE alert_msisdn = ? AND msisdn != ?`, msisdn, msisdn)
+	rows, err := tx.QueryContext(ctx, `SELECT msisdn FROM recipients WHERE alert_msisdn = ? AND msisdn != ?`, msisdn, msisdn)
 	if err != nil {
 		return nil, fmt.Errorf("alert recipient: %w", err)
 	}
@@ -381,10 +406,14 @@ func (d *DB) AlertRecipient(ctx context.Context, msisdn string, now time.Time) (
 	at := now.UTC().UnixNano()
 
 	for _, r := range recipients {
-		_, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE recipients SET held_until = NULL, updated_at = ? WHERE msisdn = ?`, at, r); err != nil {
+			return nil, fmt.Errorf("alert recipient: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE messages SET next_attempt_at = ?, updated_at = ? WHERE msisdn = ? AND status = ? AND next_attempt_at > ?`,
-			at, at, r, StatusPending, at)
-		if err != nil {
+			at, at, r, StatusPending, at); err != nil {
 			return nil, fmt.Errorf("alert recipient: %w", err)
 		}
 	}
@@ -397,17 +426,12 @@ func (d *DB) AlertRecipient(ctx context.Context, msisdn string, now time.Time) (
 }
 
 func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error {
-	var err error
+	alert := sql.Null[string]{V: alertMSISDN, Valid: alertMSISDN != "" && alertMSISDN != msisdn}
 
-	if alertMSISDN == "" || alertMSISDN == msisdn {
-		_, err = d.conn.ExecContext(ctx, `DELETE FROM alert_msisdns WHERE msisdn = ?`, msisdn)
-	} else {
-		_, err = d.conn.ExecContext(ctx,
-			`INSERT INTO alert_msisdns (msisdn, alert_msisdn, updated_at) VALUES (?, ?, ?)
-			ON CONFLICT (msisdn) DO UPDATE SET alert_msisdn = excluded.alert_msisdn, updated_at = excluded.updated_at`,
-			msisdn, alertMSISDN, now.UTC().UnixNano())
-	}
-
+	_, err := d.conn.ExecContext(ctx,
+		`INSERT INTO recipients (msisdn, alert_msisdn, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT (msisdn) DO UPDATE SET alert_msisdn = excluded.alert_msisdn, updated_at = excluded.updated_at`,
+		msisdn, alert, now.UTC().UnixNano())
 	if err != nil {
 		return fmt.Errorf("set alert MSISDN: %w", err)
 	}

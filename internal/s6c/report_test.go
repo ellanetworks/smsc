@@ -218,7 +218,7 @@ func TestReportSMDeliveryStatusFailedNodes(t *testing.T) {
 	number, _ := diameter.Find(inner, tgpp.AVPMMENumberForMTSMS, tgpp.VendorID)
 
 	if name.String() != "mme.example.org" || realm.String() != "example.org" || !bytes.Equal(number.Data, mustHex(t, "5155000010f0")) ||
-		name.Flags&diameter.AVPFlagMandatory == 0 || realm.Flags&diameter.AVPFlagMandatory != 0 || number.Flags&diameter.AVPFlagMandatory != 0 {
+		name.Flags&diameter.AVPFlagMandatory == 0 || realm.Flags&diameter.AVPFlagMandatory == 0 || number.Flags&diameter.AVPFlagMandatory == 0 {
 		t.Fatalf("Serving-Node content = %+v", inner)
 	}
 

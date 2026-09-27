@@ -199,7 +199,8 @@ func servingNodeAVP(code uint32, n ServingNode) (diameter.AVP, error) {
 	}
 
 	if n.MME != nil {
-		avps, err := nodeAVPs(*n.MME, avpMMEName, diameter.AVPFlagMandatory, avpMMERealm, 0, tgpp.AVPMMENumberForMTSMS, 0)
+		avps, err := nodeAVPs(*n.MME, avpMMEName, diameter.AVPFlagMandatory, avpMMERealm, diameter.AVPFlagMandatory,
+			tgpp.AVPMMENumberForMTSMS, diameter.AVPFlagMandatory)
 		if err != nil {
 			return diameter.AVP{}, err
 		}

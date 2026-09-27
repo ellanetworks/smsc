@@ -1028,3 +1028,33 @@ func waitForStatus(t *testing.T, database *db.DB, id int64, want db.MessageStatu
 
 	t.Fatalf("message %d never reached %s", id, want)
 }
+
+type cancellingRouter struct {
+	*fakeRouter
+	cancel context.CancelFunc
+}
+
+func (r *cancellingRouter) SendRoutingInfoForSM(ctx context.Context, req s6c.Request) (s6c.Routing, error) {
+	r.cancel()
+
+	return r.fakeRouter.SendRoutingInfoForSM(ctx, req)
+}
+
+func TestShutdownAfterRoutingSendsNoTFR(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := newFakeStore(pendingMessage(t))
+	router := &cancellingRouter{fakeRouter: &fakeRouter{routing: mmeRouting()}, cancel: cancel}
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+
+	newDeliverer(store, router, sender).Run(ctx)
+
+	if len(sender.requests) != 0 || len(store.attempts) != 0 {
+		t.Fatalf("TFRs = %d, attempts = %+v; no TFR may start after shutdown", len(sender.requests), store.attempts)
+	}
+
+	if m := store.messages[1]; m.Status != db.StatusPending || m.Retries != 0 || !m.NextAttemptAt.Equal(testNow) {
+		t.Fatalf("message = %+v; an interrupted delivery must leave the message untouched", m)
+	}
+}

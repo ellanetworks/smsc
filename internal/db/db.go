@@ -47,12 +47,13 @@ var migrations = []string{
 		result_code INTEGER NOT NULL
 	);
 	CREATE INDEX delivery_attempts_message_id ON delivery_attempts (message_id);
-	CREATE TABLE alert_msisdns (
+	CREATE TABLE recipients (
 		msisdn TEXT PRIMARY KEY,
-		alert_msisdn TEXT NOT NULL,
+		alert_msisdn TEXT,
+		held_until INTEGER,
 		updated_at INTEGER NOT NULL
 	);
-	CREATE INDEX alert_msisdns_alert_msisdn ON alert_msisdns (alert_msisdn);`,
+	CREATE INDEX recipients_alert_msisdn ON recipients (alert_msisdn);`,
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {

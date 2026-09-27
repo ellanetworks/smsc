@@ -579,3 +579,58 @@ func TestNewMessageJoinsRecipientHold(t *testing.T) {
 		t.Fatalf("next attempt after alert = %v, %v", m.NextAttemptAt, err)
 	}
 }
+
+func TestOnlyHoldsDelayNewMessages(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	first, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base); err != nil {
+		t.Fatal(err)
+	}
+
+	afterRetry, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, base.Add(time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m, err := d.GetMessage(ctx, afterRetry); err != nil || !m.NextAttemptAt.Equal(base.Add(time.Minute)) {
+		t.Fatalf("message after a plain retry next attempt = %v, %v; a retry is not a hold", m.NextAttemptAt, err)
+	}
+
+	if err := d.HoldRecipient(ctx, testMSISDN, base.Add(2*time.Hour), base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.HoldRecipient(ctx, testMSISDN, base.Add(90*time.Minute), base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	whileHeld, err := d.CreateMessage(ctx, testMessage(3, false, []byte{0x03}, base.Add(2*time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.AlertRecipient(ctx, testMSISDN, base.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	afterAlert, err := d.CreateMessage(ctx, testMessage(4, false, []byte{0x04}, base.Add(4*time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m, err := d.GetMessage(ctx, afterAlert); err != nil || !m.NextAttemptAt.Equal(base.Add(4*time.Minute)) {
+		t.Fatalf("message after the alert next attempt = %v, %v", m.NextAttemptAt, err)
+	}
+
+	m, err := d.GetMessage(ctx, whileHeld)
+	if err != nil || !m.NextAttemptAt.Equal(base.Add(3*time.Minute)) {
+		t.Fatalf("held message next attempt = %v, %v; want the alert time", m.NextAttemptAt, err)
+	}
+}

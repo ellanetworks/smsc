@@ -71,6 +71,7 @@ const (
 	temporary
 	expired
 	targetFailed
+	interrupted
 )
 
 type nodeKind int
@@ -276,6 +277,8 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 		return d.Store.SetMessageStatus(ctx, m.ID, db.StatusExpired, d.Now())
 	case permanent:
 		return d.Store.SetMessageStatus(ctx, m.ID, db.StatusFailed, d.Now())
+	case interrupted:
+		return nil
 	}
 
 	now := d.Now()
@@ -337,6 +340,11 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 	}
 
 	a := d.attempt(stop, log, m, routing.IMSI, targets, deliver, more > 0)
+
+	if a.outcome == interrupted {
+		log.Info("short message delivery interrupted by shutdown")
+		return result{outcome: interrupted}
+	}
 
 	if a.outcome == delivered {
 		if success := a.successReport(); routing.MWDStatus&mwdStatusFlags != 0 || len(success) > 1 {
@@ -443,8 +451,14 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 	retry := false
 
 	for i, t := range targets {
-		if i > 0 && stop.Err() != nil {
+		if stop.Err() != nil {
+			if i == 0 {
+				a.outcome = interrupted
+				return a
+			}
+
 			retry = true
+
 			break
 		}
 

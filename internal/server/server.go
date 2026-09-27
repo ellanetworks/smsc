@@ -181,7 +181,12 @@ func (s *Server) Shutdown(ctx context.Context) {
 	s.Logger.Info("smsc stopping")
 
 	s.stopDelivery()
-	<-s.deliveryDone
+
+	select {
+	case <-s.deliveryDone:
+	case <-ctx.Done():
+		s.Logger.Warn("shutting down with short message deliveries still in flight")
+	}
 
 	s.node.Shutdown(ctx)
 
