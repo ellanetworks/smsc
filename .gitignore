@@ -1,0 +1,4 @@
+/smsc
+*.db
+*.db-shm
+*.db-wal
