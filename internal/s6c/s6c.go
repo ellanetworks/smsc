@@ -12,11 +12,13 @@ import (
 
 const ApplicationID uint32 = 16777312
 
-const CommandSendRoutingInfoForSM uint32 = 8388647
+const (
+	CommandSendRoutingInfoForSM   uint32 = 8388647
+	CommandAlertServiceCentre     uint32 = 8388648
+	CommandReportSMDeliveryStatus uint32 = 8388649
+)
 
 const (
-	avpSGSNNumber                        uint32 = 1489
-	avpMMENumberForMTSMS                 uint32 = 1645
 	avpLMSI                              uint32 = 2400
 	avpServingNode                       uint32 = 2401
 	avpMMEName                           uint32 = 2402
@@ -34,8 +36,19 @@ const (
 	avpMMEAbsentUserDiagnosticSM         uint32 = 3313
 	avpMSCAbsentUserDiagnosticSM         uint32 = 3314
 	avpSGSNAbsentUserDiagnosticSM        uint32 = 3315
+	avpSMDeliveryOutcome                 uint32 = 3316
+	avpMMESMDeliveryOutcome              uint32 = 3317
+	avpSGSNSMDeliveryOutcome             uint32 = 3319
+	avpSMDeliveryCause                   uint32 = 3321
+	avpAbsentUserDiagnosticSM            uint32 = 3322
+	avpRDRFlags                          uint32 = 3323
+	avpSMSMICorrelationID                uint32 = 3324
+	avpMaximumUEAvailabilityTime         uint32 = 3329
+	avpSMSGMSCAlertEvent                 uint32 = 3333
 	avpSMSF3GPPAbsentUserDiagnosticSM    uint32 = 3334
 	avpSMSFNon3GPPAbsentUserDiagnosticSM uint32 = 3335
+	avpSMSF3GPPSMDeliveryOutcome         uint32 = 3336
+	avpSMSFNon3GPPSMDeliveryOutcome      uint32 = 3337
 	avpSMSF3GPPNumber                    uint32 = 3338
 	avpSMSFNon3GPPNumber                 uint32 = 3339
 	avpSMSF3GPPName                      uint32 = 3340
@@ -47,14 +60,21 @@ const (
 )
 
 const (
-	smRPMTIDeliver       uint32 = 0
-	srrFlagGPRSIndicator uint32 = 1 << 0
-	srrFlagSingleAttempt uint32 = 1 << 2
-	featureListID        uint32 = 1
-	featureSMSFSupport   uint32 = 1 << 0
+	smRPMTIDeliver                uint32 = 0
+	srrFlagGPRSIndicator          uint32 = 1 << 0
+	srrFlagSingleAttempt          uint32 = 1 << 2
+	rdrFlagSingleAttempt          uint32 = 1 << 0
+	featureListID                 uint32 = 1
+	featureSMSFSupport            uint32 = 1 << 0
+	MWDStatusSCAddressNotIncluded uint32 = 1 << 0
+	MWDStatusMNRF                 uint32 = 1 << 1
+	MWDStatusMCEF                 uint32 = 1 << 2
+	MWDStatusMNRG                 uint32 = 1 << 3
+	MWDStatusMNR5G                uint32 = 1 << 4
+	MWDStatusMNR5GN3G             uint32 = 1 << 5
 )
 
-var ErrMalformedAnswer = errors.New("s6c: malformed Send-Routing-Info-for-SM answer")
+var ErrMalformedAnswer = errors.New("s6c: malformed answer")
 
 type Requester interface {
 	Do(ctx context.Context, peerHost string, req *diameter.Message) (*diameter.Message, error)
@@ -91,14 +111,25 @@ func (s ServingNode) empty() bool {
 	return s.MME == nil && s.SGSN == nil && s.MSCNumber == "" && s.IPSMGW == nil
 }
 
-type Routing struct {
-	IMSI        string
+type ServingNodes struct {
 	Serving     *ServingNode
 	Additional  *ServingNode
 	SMSF3GPP    *Node
 	SMSFNon3GPP *Node
+}
+
+func (n ServingNodes) empty() bool {
+	return n.Serving == nil && n.Additional == nil && n.SMSF3GPP == nil && n.SMSFNon3GPP == nil
+}
+
+type Routing struct {
+	ServingNodes
+
+	IMSI        string
 	LMSI        []byte
 	MWDStatus   uint32
+	Absent      AbsentUserDiagnostics
+	AlertMSISDN string
 }
 
 type AbsentUserDiagnostics struct {
@@ -115,14 +146,15 @@ type ResultError struct {
 	VendorID     uint32
 	MWDStatus    uint32
 	Absent       AbsentUserDiagnostics
+	AlertMSISDN  string
 }
 
 func (e *ResultError) Error() string {
 	if e.Experimental {
-		return fmt.Sprintf("s6c: Send-Routing-Info-for-SM failed with experimental result %d", e.ResultCode)
+		return fmt.Sprintf("s6c: request failed with experimental result %d", e.ResultCode)
 	}
 
-	return fmt.Sprintf("s6c: Send-Routing-Info-for-SM failed with result %d", e.ResultCode)
+	return fmt.Sprintf("s6c: request failed with result %d", e.ResultCode)
 }
 
 func IsExperimental(err error, code uint32) bool {
@@ -198,33 +230,87 @@ func parseAnswer(ans *diameter.Message) (Routing, error) {
 		routing.MWDStatus, _ = mwd.Unsigned32()
 	}
 
+	routing.Absent = absentUserDiagnostics(ans)
+
 	var err error
 
-	routing.Serving, err = servingNode(ans, avpServingNode)
+	routing.AlertMSISDN, err = alertMSISDN(ans)
 	if err != nil {
 		return Routing{}, err
 	}
 
-	routing.Additional, err = servingNode(ans, avpAdditionalServingNode)
+	routing.ServingNodes, err = servingNodes(ans)
 	if err != nil {
 		return Routing{}, err
 	}
 
-	routing.SMSF3GPP, err = smsfAddress(ans, avpSMSF3GPPAddress, avpSMSF3GPPName, avpSMSF3GPPRealm, avpSMSF3GPPNumber)
-	if err != nil {
-		return Routing{}, err
-	}
-
-	routing.SMSFNon3GPP, err = smsfAddress(ans, avpSMSFNon3GPPAddress, avpSMSFNon3GPPName, avpSMSFNon3GPPRealm, avpSMSFNon3GPPNumber)
-	if err != nil {
-		return Routing{}, err
-	}
-
-	if routing.Serving == nil && routing.Additional == nil && routing.SMSF3GPP == nil && routing.SMSFNon3GPP == nil {
+	if routing.empty() {
 		return Routing{}, fmt.Errorf("%w: no serving node", ErrMalformedAnswer)
 	}
 
 	return routing, nil
+}
+
+func servingNodes(ans *diameter.Message) (ServingNodes, error) {
+	var (
+		nodes ServingNodes
+		err   error
+	)
+
+	nodes.Serving, err = servingNode(ans, avpServingNode)
+	if err != nil {
+		return ServingNodes{}, err
+	}
+
+	nodes.Additional, err = servingNode(ans, avpAdditionalServingNode)
+	if err != nil {
+		return ServingNodes{}, err
+	}
+
+	nodes.SMSF3GPP, err = smsfAddress(ans, avpSMSF3GPPAddress, avpSMSF3GPPName, avpSMSF3GPPRealm, avpSMSF3GPPNumber)
+	if err != nil {
+		return ServingNodes{}, err
+	}
+
+	nodes.SMSFNon3GPP, err = smsfAddress(ans, avpSMSFNon3GPPAddress, avpSMSFNon3GPPName, avpSMSFNon3GPPRealm, avpSMSFNon3GPPNumber)
+	if err != nil {
+		return ServingNodes{}, err
+	}
+
+	return nodes, nil
+}
+
+func alertMSISDN(m *diameter.Message) (string, error) {
+	a, ok := m.Find(tgpp.AVPUserIdentifier, tgpp.VendorID)
+	if !ok {
+		return "", nil
+	}
+
+	msisdn, err := userIdentifierMSISDN(a)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrMalformedAnswer, err)
+	}
+
+	return msisdn, nil
+}
+
+func userIdentifierMSISDN(a diameter.AVP) (string, error) {
+	inner, err := a.Grouped()
+	if err != nil {
+		return "", fmt.Errorf("User-Identifier: %w", err)
+	}
+
+	msisdn, ok := diameter.Find(inner, tgpp.AVPMSISDN, tgpp.VendorID)
+	if !ok {
+		return "", nil
+	}
+
+	digits, err := tbcd.Decode(msisdn.Data)
+	if err != nil {
+		return "", fmt.Errorf("User-Identifier MSISDN: %w", err)
+	}
+
+	return digits, nil
 }
 
 func resultError(ans *diameter.Message) error {
@@ -273,19 +359,28 @@ func resultError(ans *diameter.Message) error {
 
 	e := &ResultError{ResultCode: code, Experimental: true, VendorID: vendorID}
 
+	e.AlertMSISDN, err = alertMSISDN(ans)
+	if err != nil {
+		return err
+	}
+
 	if mwd, ok := ans.Find(avpMWDStatus, tgpp.VendorID); ok {
 		e.MWDStatus, _ = mwd.Unsigned32()
 	}
 
-	e.Absent = AbsentUserDiagnostics{
+	e.Absent = absentUserDiagnostics(ans)
+
+	return e
+}
+
+func absentUserDiagnostics(ans *diameter.Message) AbsentUserDiagnostics {
+	return AbsentUserDiagnostics{
 		MME:         optionalUnsigned32(ans, avpMMEAbsentUserDiagnosticSM),
 		MSC:         optionalUnsigned32(ans, avpMSCAbsentUserDiagnosticSM),
 		SGSN:        optionalUnsigned32(ans, avpSGSNAbsentUserDiagnosticSM),
 		SMSF3GPP:    optionalUnsigned32(ans, avpSMSF3GPPAbsentUserDiagnosticSM),
 		SMSFNon3GPP: optionalUnsigned32(ans, avpSMSFNon3GPPAbsentUserDiagnosticSM),
 	}
-
-	return e
 }
 
 func optionalUnsigned32(m *diameter.Message, code uint32) *uint32 {
@@ -332,12 +427,12 @@ func servingNode(m *diameter.Message, code uint32) (*ServingNode, error) {
 		return digits, nil
 	}
 
-	mmeNumber, err := number(avpMMENumberForMTSMS)
+	mmeNumber, err := number(tgpp.AVPMMENumberForMTSMS)
 	if err != nil {
 		return nil, err
 	}
 
-	sgsnNumber, err := number(avpSGSNNumber)
+	sgsnNumber, err := number(tgpp.AVPSGSNNumber)
 	if err != nil {
 		return nil, err
 	}

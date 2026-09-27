@@ -4,8 +4,10 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const validConfig = `db:
@@ -21,6 +23,15 @@ hss:
   host: hss.example.org
   realm: example.org
   address: 192.0.2.20
+numbering:
+  country_code: "33"
+  national_prefix: "0"
+  international_prefix: "00"
+delivery:
+  default_validity: 48h
+  retry_intervals: [30s, 10m]
+  attempt_timeout: 20s
+  concurrency: 5
 `
 
 func writeConfig(t *testing.T, content string) string {
@@ -55,9 +66,16 @@ func TestLoad(t *testing.T) {
 			Address: netip.MustParseAddr("192.0.2.20"),
 			Port:    3868,
 		},
+		Numbering: Numbering{CountryCode: "33", NationalPrefix: "0", InternationalPrefix: "00"},
+		Delivery: Delivery{
+			DefaultValidity: 48 * time.Hour,
+			RetryIntervals:  []time.Duration{30 * time.Second, 10 * time.Minute},
+			AttemptTimeout:  20 * time.Second,
+			Concurrency:     5,
+		},
 	}
 
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("Load = %+v, want %+v", cfg, want)
 	}
 }
@@ -75,22 +93,31 @@ func TestLoadDefaultsDiameterPort(t *testing.T) {
 
 func TestLoadRejectsInvalidConfig(t *testing.T) {
 	tests := map[string][2]string{
-		"missing db.path":          {"  path: /var/lib/smsc/smsc.db\n", ""},
-		"missing sc address":       {`  address: "15550000000"` + "\n", ""},
-		"non-digit sc address":     {`"15550000000"`, `"+15550000000"`},
-		"missing origin host":      {"  origin_host: smsc.example.org\n", ""},
-		"missing origin realm":     {"  origin_realm: example.org\n", ""},
-		"missing diameter address": {"  address: 192.0.2.10\n", ""},
-		"invalid diameter address": {"192.0.2.10", "not-an-ip"},
-		"unspecified ipv4 address": {"192.0.2.10", "0.0.0.0"},
-		"unspecified ipv6 address": {"192.0.2.10", "'::'"},
-		"port out of range":        {"port: 3869", "port: 70000"},
-		"missing hss host":         {"  host: hss.example.org\n", ""},
-		"missing hss realm":        {"  realm: example.org\n", ""},
-		"missing hss address":      {"  address: 192.0.2.20\n", ""},
-		"unspecified hss address":  {"192.0.2.20", "0.0.0.0"},
-		"hss port out of range":    {"  address: 192.0.2.20\n", "  address: 192.0.2.20\n  port: 99999\n"},
-		"unknown field":            {"db:\n", "unknown: true\ndb:\n"},
+		"missing db.path":           {"  path: /var/lib/smsc/smsc.db\n", ""},
+		"missing sc address":        {`  address: "15550000000"` + "\n", ""},
+		"non-digit sc address":      {`"15550000000"`, `"+15550000000"`},
+		"missing origin host":       {"  origin_host: smsc.example.org\n", ""},
+		"missing origin realm":      {"  origin_realm: example.org\n", ""},
+		"missing diameter address":  {"  address: 192.0.2.10\n", ""},
+		"invalid diameter address":  {"192.0.2.10", "not-an-ip"},
+		"unspecified ipv4 address":  {"192.0.2.10", "0.0.0.0"},
+		"unspecified ipv6 address":  {"192.0.2.10", "'::'"},
+		"port out of range":         {"port: 3869", "port: 70000"},
+		"missing hss host":          {"  host: hss.example.org\n", ""},
+		"missing hss realm":         {"  realm: example.org\n", ""},
+		"missing hss address":       {"  address: 192.0.2.20\n", ""},
+		"unspecified hss address":   {"192.0.2.20", "0.0.0.0"},
+		"missing country code":      {"  country_code: \"33\"\n", ""},
+		"non-digit country code":    {"\"33\"", "\"+33\""},
+		"long country code":         {"\"33\"", "\"3333\""},
+		"non-digit national prefix": {"national_prefix: \"0\"", "national_prefix: \"+\""},
+		"non-digit intl prefix":     {"international_prefix: \"00\"", "international_prefix: \"+\""},
+		"zero retry interval":       {"[30s, 10m]", "[30s, 0s]"},
+		"short attempt timeout":     {"attempt_timeout: 20s", "attempt_timeout: 100ms"},
+		"negative validity":         {"default_validity: 48h", "default_validity: -1h"},
+		"negative concurrency":      {"concurrency: 5", "concurrency: -1"},
+		"hss port out of range":     {"  address: 192.0.2.20\n", "  address: 192.0.2.20\n  port: 99999\n"},
+		"unknown field":             {"db:\n", "unknown: true\ndb:\n"},
 	}
 
 	for name, edit := range tests {
@@ -110,5 +137,25 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 func TestLoadRejectsMissingFile(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
 		t.Fatal("expected an error for a missing file")
+	}
+}
+
+func TestLoadDeliveryDefaults(t *testing.T) {
+	i := strings.Index(validConfig, "delivery:")
+
+	cfg, err := Load(writeConfig(t, validConfig[:i]))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	want := Delivery{
+		DefaultValidity: 7 * 24 * time.Hour,
+		RetryIntervals:  []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour},
+		AttemptTimeout:  30 * time.Second,
+		Concurrency:     20,
+	}
+
+	if !reflect.DeepEqual(cfg.Delivery, want) {
+		t.Fatalf("Delivery = %+v, want %+v", cfg.Delivery, want)
 	}
 }

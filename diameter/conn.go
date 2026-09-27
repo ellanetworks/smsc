@@ -222,8 +222,8 @@ func (c *Conn) receive(b []byte) {
 		c.unordered.Store(true)
 	}
 
-	if c.reopening.Load() && !isWatchdogOrDisconnect(m) {
-		c.logger.Debug("discarding Diameter message while the connection is reopening", slog.Uint64("command_code", uint64(m.CommandCode)))
+	if c.reopening.Load() && !m.IsRequest() && !isWatchdogOrDisconnect(m) {
+		c.logger.Debug("discarding Diameter answer while the connection is reopening", slog.Uint64("command_code", uint64(m.CommandCode)))
 		return
 	}
 

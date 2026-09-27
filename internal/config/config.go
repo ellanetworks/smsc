@@ -6,17 +6,40 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-const defaultDiameterPort = 3868
+const (
+	defaultDiameterPort   = 3868
+	defaultValidity       = 7 * 24 * time.Hour
+	defaultAttemptTimeout = 30 * time.Second
+	defaultConcurrency    = 20
+)
+
+var defaultRetryIntervals = []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour}
 
 type Config struct {
 	DB            DB            `yaml:"db"`
 	ServiceCentre ServiceCentre `yaml:"service_centre"`
 	Diameter      Diameter      `yaml:"diameter"`
 	HSS           HSS           `yaml:"hss"`
+	Numbering     Numbering     `yaml:"numbering"`
+	Delivery      Delivery      `yaml:"delivery"`
+}
+
+type Numbering struct {
+	CountryCode         string `yaml:"country_code"`
+	NationalPrefix      string `yaml:"national_prefix"`
+	InternationalPrefix string `yaml:"international_prefix"`
+}
+
+type Delivery struct {
+	DefaultValidity time.Duration   `yaml:"default_validity"`
+	RetryIntervals  []time.Duration `yaml:"retry_intervals"`
+	AttemptTimeout  time.Duration   `yaml:"attempt_timeout"`
+	Concurrency     int             `yaml:"concurrency"`
 }
 
 type DB struct {
@@ -63,6 +86,22 @@ func Load(path string) (Config, error) {
 		cfg.HSS.Port = defaultDiameterPort
 	}
 
+	if cfg.Delivery.DefaultValidity == 0 {
+		cfg.Delivery.DefaultValidity = defaultValidity
+	}
+
+	if cfg.Delivery.RetryIntervals == nil {
+		cfg.Delivery.RetryIntervals = defaultRetryIntervals
+	}
+
+	if cfg.Delivery.AttemptTimeout == 0 {
+		cfg.Delivery.AttemptTimeout = defaultAttemptTimeout
+	}
+
+	if cfg.Delivery.Concurrency == 0 {
+		cfg.Delivery.Concurrency = defaultConcurrency
+	}
+
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -94,6 +133,24 @@ func (c Config) validate() error {
 		return errors.New("hss.address must be a specific IP address")
 	case c.HSS.Port < 1 || c.HSS.Port > 65535:
 		return fmt.Errorf("hss.port %d is out of range", c.HSS.Port)
+	case !isDigits(c.Numbering.CountryCode) || len(c.Numbering.CountryCode) > 3:
+		return errors.New("numbering.country_code must be 1 to 3 digits")
+	case c.Numbering.NationalPrefix != "" && !isDigits(c.Numbering.NationalPrefix):
+		return errors.New("numbering.national_prefix must be digits")
+	case c.Numbering.InternationalPrefix != "" && !isDigits(c.Numbering.InternationalPrefix):
+		return errors.New("numbering.international_prefix must be digits")
+	case c.Delivery.DefaultValidity < 0:
+		return errors.New("delivery.default_validity must not be negative")
+	case c.Delivery.AttemptTimeout < time.Second:
+		return errors.New("delivery.attempt_timeout must be at least 1s")
+	case c.Delivery.Concurrency < 1:
+		return errors.New("delivery.concurrency must be at least 1")
+	}
+
+	for _, interval := range c.Delivery.RetryIntervals {
+		if interval <= 0 {
+			return errors.New("delivery.retry_intervals must be positive")
+		}
 	}
 
 	return nil

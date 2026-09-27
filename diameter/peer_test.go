@@ -247,6 +247,36 @@ func TestNodeReconnectsAndReopens(t *testing.T) {
 	eventually(t, "the reopened connection to become available", func() bool { return doSucceeds(smsc, "hss.example.org") })
 }
 
+func TestReopeningConnectionServesPeerRequests(t *testing.T) {
+	fastWatchdog(t)
+
+	hss := newPeerNode("hss.example.org")
+	hss.WatchdogInterval = 100 * time.Millisecond
+	hssAddr := listenNode(t, hss)
+	startNode(t, hss)
+
+	smsc := newPeerNode("smsc.example.org")
+	smsc.WatchdogInterval = time.Minute
+	smsc.Peers = []Peer{{Host: "hss.example.org", Address: hssAddr}}
+	startNode(t, smsc)
+
+	eventually(t, "the first connection", func() bool { return doSucceeds(smsc, "hss.example.org") })
+
+	first := openConn(smsc, "hss.example.org")
+	openConn(hss, "smsc.example.org").abort()
+
+	eventually(t, "a reopening connection", func() bool {
+		c := openConn(smsc, "hss.example.org")
+		return c != nil && c != first && c.reopening.Load()
+	})
+
+	eventually(t, "the HSS to reach the SMSC while it reopens", func() bool { return doSucceeds(hss, "smsc.example.org") })
+
+	if !openConn(smsc, "hss.example.org").reopening.Load() || doSucceeds(smsc, "hss.example.org") {
+		t.Fatal("the reopening side must not send its own requests before three watchdog answers")
+	}
+}
+
 func TestNodeHonoursDisconnectCauseBusy(t *testing.T) {
 	fastWatchdog(t)
 

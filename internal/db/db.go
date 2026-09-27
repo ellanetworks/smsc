@@ -24,17 +24,21 @@ var migrations = []string{
 		recipient TEXT NOT NULL,
 		recipient_ton INTEGER NOT NULL,
 		recipient_npi INTEGER NOT NULL,
+		msisdn TEXT NOT NULL,
 		message_reference INTEGER NOT NULL,
 		protocol_identifier INTEGER NOT NULL,
 		tpdu BLOB NOT NULL,
-		status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed')),
+		status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'expired')),
 		single_shot INTEGER NOT NULL CHECK (single_shot IN (0, 1)),
 		submitted_at INTEGER NOT NULL,
-		expires_at INTEGER,
+		expires_at INTEGER NOT NULL,
+		next_attempt_at INTEGER NOT NULL,
+		retries INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	);
-	CREATE INDEX messages_status ON messages (status);
+	CREATE INDEX messages_due ON messages (status, next_attempt_at);
 	CREATE INDEX messages_originator ON messages (originator, originator_ton, originator_npi, id);
+	CREATE INDEX messages_msisdn ON messages (msisdn, status, next_attempt_at);
 	CREATE TABLE delivery_attempts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
@@ -42,7 +46,14 @@ var migrations = []string{
 		serving_node TEXT NOT NULL,
 		result_code INTEGER NOT NULL
 	);
-	CREATE INDEX delivery_attempts_message_id ON delivery_attempts (message_id);`,
+	CREATE INDEX delivery_attempts_message_id ON delivery_attempts (message_id);
+	CREATE TABLE recipients (
+		msisdn TEXT PRIMARY KEY,
+		alert_msisdn TEXT,
+		held_until INTEGER,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE INDEX recipients_alert_msisdn ON recipients (alert_msisdn);`,
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {

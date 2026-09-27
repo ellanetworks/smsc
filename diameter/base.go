@@ -24,10 +24,12 @@ const (
 	AVPProductName                 uint32 = 269
 	AVPDisconnectCause             uint32 = 273
 	AVPAuthSessionState            uint32 = 277
+	AVPRouteRecord                 uint32 = 282
 	AVPFailedAVP                   uint32 = 279
 	AVPDestinationRealm            uint32 = 283
 	AVPProxyInfo                   uint32 = 284
 	AVPInbandSecurityID            uint32 = 299
+	AVPDRMP                        uint32 = 301
 	AVPDestinationHost             uint32 = 293
 	AVPOriginRealm                 uint32 = 296
 	AVPExperimentalResult          uint32 = 297
