@@ -1,0 +1,22 @@
+name: Main workflow
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go-unit-test:
+    uses: ./.github/workflows/go-unittest.yaml
+  go-lint:
+    uses: ./.github/workflows/go-lint.yaml

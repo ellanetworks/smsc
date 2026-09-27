@@ -14,6 +14,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "smsc.yaml", "path to the configuration file")
+
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -37,7 +38,7 @@ func run(configPath string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	logger.Info("smsc started", "db", cfg.DB.Path)
 
