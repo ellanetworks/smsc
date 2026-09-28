@@ -15,15 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/s6c"
+	"github.com/ellanetworks/core/diameter/sgd"
+	"github.com/ellanetworks/core/diameter/tbcd"
+	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/core/sctp"
-	"github.com/ellanetworks/smsc/diameter"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/s6c"
 	"github.com/ellanetworks/smsc/internal/server"
-	"github.com/ellanetworks/smsc/internal/sgd"
-	"github.com/ellanetworks/smsc/internal/tbcd"
-	"github.com/ellanetworks/smsc/internal/tgpp"
 )
 
 const (
@@ -118,20 +118,26 @@ func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
 		c.subscribers[s.msisdn] = s
 	}
 
-	c.node = &diameter.Node{
+	node, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{
 			OriginHost:      coreHost,
 			OriginRealm:     realm,
 			HostIPAddresses: []netip.Addr{loopback},
 			ProductName:     "fake-core",
 		},
-		Applications: []diameter.Application{
+		AcceptUnknownPeers: true,
+		UnknownPeerApplications: []diameter.Application{
 			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
 			{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
 		},
 		Handler: diameter.HandlerFunc(c.serve),
 		Logger:  discardLogger(),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
 	}
+
+	c.node = node
 
 	var lc sctp.ListenConfig
 
@@ -140,9 +146,7 @@ func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
 		t.Fatalf("listen: %v", err)
 	}
 
-	if err := c.node.Serve(context.Background(), ln); err != nil {
-		t.Fatalf("Serve: %v", err)
-	}
+	go func() { _ = c.node.Serve(diameter.NewSCTPListener(ln, discardLogger())) }()
 
 	c.addr = ln.Addr().(*sctp.SCTPAddr)
 
@@ -150,7 +154,7 @@ func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		c.node.Shutdown(ctx)
+		_ = c.node.Shutdown(ctx)
 	})
 
 	return c
@@ -170,14 +174,14 @@ func (c *fakeCore) serve(_ context.Context, _ *diameter.Conn, req *diameter.Mess
 }
 
 func (c *fakeCore) answer(req *diameter.Message, resultCode uint32) *diameter.Message {
-	ans := diameter.NewAnswer(req, c.node.Identity, resultCode)
+	ans := diameter.NewAnswer(req, c.node.Identity(), resultCode)
 	ans.AVPs = append(ans.AVPs, authSessionState())
 
 	return ans
 }
 
 func (c *fakeCore) experimental(req *diameter.Message, resultCode uint32) *diameter.Message {
-	ans := diameter.NewExperimentalAnswer(req, c.node.Identity, tgpp.VendorID, resultCode)
+	ans := diameter.NewExperimentalAnswer(req, c.node.Identity(), tgpp.VendorID, resultCode)
 	ans.AVPs = append(ans.AVPs, authSessionState())
 
 	return ans
@@ -222,7 +226,7 @@ func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
 func (c *fakeCore) forwardShortMessage(req *diameter.Message) *diameter.Message {
 	userName, _ := req.Find(diameter.AVPUserName, 0)
 	smRPUI, _ := req.Find(sgd.AVPSMRPUI, tgpp.VendorID)
-	imsi := userName.String()
+	imsi := userName.UTF8String()
 
 	c.mu.Lock()
 	answerMT := c.answerMT
@@ -353,7 +357,7 @@ func (c *fakeCore) do(req *diameter.Message) *diameter.Message {
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 
-	ans, err := c.node.Do(ctx, smscHost, req)
+	ans, err := c.node.DoHost(ctx, smscHost, req)
 	if err != nil {
 		c.t.Fatalf("request %d to the SMSC: %v", req.CommandCode, err)
 	}
@@ -368,7 +372,7 @@ func (c *fakeCore) waitForSMSC() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		_, err := c.node.Do(ctx, smscHost, c.request(s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
+		_, err := c.node.DoHost(ctx, smscHost, c.request(s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
 
 		return err == nil
 	})

@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ellanetworks/smsc/diameter"
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/sgd"
+	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/numbering"
-	"github.com/ellanetworks/smsc/internal/tbcd"
-	"github.com/ellanetworks/smsc/internal/tgpp"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -29,42 +29,8 @@ type Handler struct {
 	Logger               *slog.Logger
 }
 
-var ofrKnownAVPs = map[diameter.AVPKey]bool{
-	{Code: diameter.AVPSessionID}:                              true,
-	{Code: diameter.AVPDRMP}:                                   true,
-	{Code: diameter.AVPVendorSpecificApplicationID}:            true,
-	{Code: diameter.AVPAuthSessionState}:                       true,
-	{Code: diameter.AVPOriginHost}:                             true,
-	{Code: diameter.AVPOriginRealm}:                            true,
-	{Code: diameter.AVPDestinationHost}:                        true,
-	{Code: diameter.AVPDestinationRealm}:                       true,
-	{Code: tgpp.AVPSCAddress, VendorID: tgpp.VendorID}:         true,
-	{Code: AVPOFRFlags, VendorID: tgpp.VendorID}:               true,
-	{Code: tgpp.AVPSupportedFeatures, VendorID: tgpp.VendorID}: true,
-	{Code: tgpp.AVPUserIdentifier, VendorID: tgpp.VendorID}:    true,
-	{Code: AVPEPSLocationInformation, VendorID: tgpp.VendorID}: true,
-	{Code: AVPNRCellGlobalIdentity, VendorID: tgpp.VendorID}:   true,
-	{Code: AVPSMRPUI, VendorID: tgpp.VendorID}:                 true,
-	{Code: AVPSMSMICorrelationID, VendorID: tgpp.VendorID}:     true,
-	{Code: AVPSMDeliveryOutcome, VendorID: tgpp.VendorID}:      true,
-	{Code: AVPMPSPriority, VendorID: tgpp.VendorID}:            true,
-	{Code: diameter.AVPProxyInfo}:                              true,
-	{Code: diameter.AVPRouteRecord}:                            true,
-}
-
-var ofrRequiredAVPs = []diameter.RequiredAVP{
-	{Key: diameter.AVPKey{Code: diameter.AVPSessionID}},
-	{Key: diameter.AVPKey{Code: diameter.AVPAuthSessionState}, MinimumLength: 4},
-	{Key: diameter.AVPKey{Code: diameter.AVPOriginHost}},
-	{Key: diameter.AVPKey{Code: diameter.AVPOriginRealm}},
-	{Key: diameter.AVPKey{Code: diameter.AVPDestinationRealm}},
-	{Key: diameter.AVPKey{Code: tgpp.AVPSCAddress, VendorID: tgpp.VendorID}},
-	{Key: diameter.AVPKey{Code: tgpp.AVPUserIdentifier, VendorID: tgpp.VendorID}},
-	{Key: diameter.AVPKey{Code: AVPSMRPUI, VendorID: tgpp.VendorID}},
-}
-
 func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
-	if req.CommandCode != CommandMOForwardShortMessage {
+	if req.CommandCode != sgd.CommandMOForwardShortMessage {
 		return h.answer(req, diameter.ResultCommandUnsupported)
 	}
 
@@ -72,47 +38,39 @@ func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diam
 }
 
 func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Message) *diameter.Message {
-	if avpErr := diameter.CheckAVPs(req, ofrKnownAVPs, ofrRequiredAVPs); avpErr != nil {
-		ans := h.answer(req, avpErr.ResultCode)
-		ans.AVPs = append(ans.AVPs, diameter.FailedAVP(avpErr.AVP))
-
-		return ans
+	if err := sgd.CheckMOForwardShortMessage(req); err != nil {
+		return tgpp.NewErrorAnswer(req, h.Identity, err)
 	}
 
-	if _, ok := req.Find(AVPSMSMICorrelationID, tgpp.VendorID); ok {
+	if _, ok := req.Find(tgpp.AVPSMSMICorrelationID, tgpp.VendorID); ok {
 		return h.experimental(req, tgpp.ResultErrorFacilityNotSupported)
 	}
 
 	scAddress, _ := req.Find(tgpp.AVPSCAddress, tgpp.VendorID)
 
-	scDigits, err := tbcd.Decode(scAddress.Data)
+	scDigits, err := tgpp.DecodeE164(scAddress.Data)
 	if err != nil {
 		return h.invalidAVP(req, scAddress)
 	}
 
 	if scDigits != h.ServiceCentreAddress {
-		return h.deliveryFailure(req, CauseUnknownServiceCentre, nil)
+		return h.deliveryFailure(req, sgd.CauseUnknownServiceCentre, nil)
 	}
 
 	userIdentifier, _ := req.Find(tgpp.AVPUserIdentifier, tgpp.VendorID)
 
-	identifiers, err := userIdentifier.Grouped()
+	user, err := tgpp.ParseUserIdentifier(userIdentifier)
 	if err != nil {
 		return h.invalidAVP(req, userIdentifier)
 	}
 
-	msisdn, ok := diameter.Find(identifiers, tgpp.AVPMSISDN, tgpp.VendorID)
-	if !ok {
-		return h.deliveryFailure(req, CauseUserNotSCUser, nil)
+	originator := user.MSISDN
+	if originator == "" {
+		return h.deliveryFailure(req, sgd.CauseUserNotSCUser, nil)
 	}
 
-	originator, err := tbcd.Decode(msisdn.Data)
-	if err != nil {
-		return h.invalidAVP(req, userIdentifier)
-	}
-
-	smRPUI, _ := req.Find(AVPSMRPUI, tgpp.VendorID)
-	if len(smRPUI.Data) > maxSMRPUILength {
+	smRPUI, _ := req.Find(sgd.AVPSMRPUI, tgpp.VendorID)
+	if len(smRPUI.Data) > sgd.MaxSMRPUILength {
 		return h.invalidAVP(req, smRPUI)
 	}
 
@@ -173,7 +131,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 	if err != nil {
 		h.Logger.Error("failed to store mobile-originated short message", slog.Any("error", err))
 
-		return h.deliveryFailure(req, CauseSCCongestion, h.submitReport(tpdu.FailureSCSystemFailure, receivedAt))
+		return h.deliveryFailure(req, sgd.CauseSCCongestion, h.submitReport(tpdu.FailureSCSystemFailure, receivedAt))
 	}
 
 	if h.Stored != nil {
@@ -204,7 +162,7 @@ func submitFailureCause(b []byte, err error) byte {
 }
 
 func (h *Handler) submitRejected(req *diameter.Message, failureCause byte, receivedAt time.Time) *diameter.Message {
-	return h.deliveryFailure(req, CauseInvalidSMEAddress, h.submitReport(failureCause, receivedAt))
+	return h.deliveryFailure(req, sgd.CauseInvalidSMEAddress, h.submitReport(failureCause, receivedAt))
 }
 
 func (h *Handler) submitReport(failureCause byte, receivedAt time.Time) []byte {
@@ -218,11 +176,11 @@ func (h *Handler) submitReport(failureCause byte, receivedAt time.Time) []byte {
 }
 
 func (h *Handler) answer(req *diameter.Message, resultCode uint32) *diameter.Message {
-	return withAuthSessionState(diameter.NewAnswer(req, h.Identity, resultCode))
+	return tgpp.NewAnswer(req, h.Identity, resultCode)
 }
 
 func (h *Handler) experimental(req *diameter.Message, resultCode uint32) *diameter.Message {
-	return withAuthSessionState(diameter.NewExperimentalAnswer(req, h.Identity, tgpp.VendorID, resultCode))
+	return tgpp.NewExperimentalAnswer(req, h.Identity, resultCode)
 }
 
 func (h *Handler) invalidAVP(req *diameter.Message, offending diameter.AVP) *diameter.Message {
@@ -233,24 +191,10 @@ func (h *Handler) invalidAVP(req *diameter.Message, offending diameter.AVP) *dia
 }
 
 func (h *Handler) deliveryFailure(req *diameter.Message, cause uint32, diagnostic []byte) *diameter.Message {
-	ans := h.experimental(req, tgpp.ResultErrorSMDeliveryFailure)
-
-	inner := []diameter.AVP{
-		diameter.Unsigned32(AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, cause),
+	ans, err := sgd.NewDeliveryFailureAnswer(req, h.Identity, cause, diagnostic)
+	if err != nil {
+		return h.answer(req, diameter.ResultUnableToComply)
 	}
-
-	if diagnostic != nil {
-		inner = append(inner, diameter.OctetString(AVPSMDiagnosticInfo, diameter.AVPFlagMandatory, tgpp.VendorID, diagnostic))
-	}
-
-	ans.AVPs = append(ans.AVPs, diameter.Grouped(AVPSMDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, inner...))
-
-	return ans
-}
-
-func withAuthSessionState(ans *diameter.Message) *diameter.Message {
-	ans.AVPs = append(ans.AVPs, diameter.Unsigned32(diameter.AVPAuthSessionState, diameter.AVPFlagMandatory, 0,
-		diameter.AuthSessionStateNoStateMaintained))
 
 	return ans
 }

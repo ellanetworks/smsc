@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ellanetworks/smsc/diameter"
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/s6c"
+	"github.com/ellanetworks/core/diameter/sgd"
+	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/s6c"
-	"github.com/ellanetworks/smsc/internal/sgd"
-	"github.com/ellanetworks/smsc/internal/tgpp"
 )
 
 var testNow = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -135,7 +135,7 @@ func (s *fakeStore) CreateDeliveryAttempt(_ context.Context, id int64, node stri
 
 type fakeRouter struct {
 	mu        sync.Mutex
-	requests  []s6c.Request
+	requests  []s6c.RoutingRequest
 	routing   s6c.Routing
 	routes    map[string]s6c.Routing
 	err       error
@@ -144,7 +144,7 @@ type fakeRouter struct {
 	reportErr error
 }
 
-func (r *fakeRouter) SendRoutingInfoForSM(_ context.Context, req s6c.Request) (s6c.Routing, error) {
+func (r *fakeRouter) SendRoutingInfoForSM(_ context.Context, req s6c.RoutingRequest) (s6c.Routing, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -245,7 +245,7 @@ func mmeRouting() s6c.Routing {
 	return s6c.Routing{
 		IMSI: "001010000000002",
 		ServingNodes: s6c.ServingNodes{
-			Serving: &s6c.ServingNode{MME: &s6c.Node{Name: "mme.example.org", Realm: "epc.example.org", Number: "15550000010"}},
+			Serving: &s6c.ServingNode{MME: &s6c.NodeAddress{Name: "mme.example.org", Realm: "epc.example.org", Number: "15550000010"}},
 		},
 	}
 }
@@ -299,7 +299,7 @@ func TestDeliverViaMME(t *testing.T) {
 		t.Fatalf("status = %s", store.messages[1].Status)
 	}
 
-	if len(router.requests) != 1 || router.requests[0] != (s6c.Request{MSISDN: "15551230002"}) {
+	if len(router.requests) != 1 || router.requests[0].MSISDN != "15551230002" || router.requests[0].SingleAttempt {
 		t.Fatalf("routing requests = %+v", router.requests)
 	}
 
@@ -362,7 +362,7 @@ func TestDeliverSignalsMoreMessages(t *testing.T) {
 
 func TestDeliverFallsBackToAdditionalNode(t *testing.T) {
 	routing := mmeRouting()
-	routing.Additional = &s6c.ServingNode{SGSN: &s6c.Node{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
+	routing.Additional = &s6c.ServingNode{SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
 
 	store := newFakeStore(pendingMessage(t))
 	sender := &fakeSender{answers: map[string]*diameter.Message{
@@ -395,7 +395,7 @@ func TestDeliverFallsBackToAdditionalNode(t *testing.T) {
 
 func TestDeliverToSMSF(t *testing.T) {
 	routing := s6c.Routing{IMSI: "001010000000002", ServingNodes: s6c.ServingNodes{
-		SMSF3GPP: &s6c.Node{Name: "smsf.example.org", Realm: "5gc.example.org", Number: "15550000030"},
+		SMSF3GPP: &s6c.NodeAddress{Name: "smsf.example.org", Realm: "5gc.example.org", Number: "15550000030"},
 	}}
 	store := newFakeStore(pendingMessage(t))
 	sender := &fakeSender{answers: map[string]*diameter.Message{"smsf.example.org": success()}}
@@ -463,10 +463,10 @@ func TestDeliverRoutingOutcomes(t *testing.T) {
 		err  error
 		want db.MessageStatus
 	}{
-		"unknown user":     {&s6c.ResultError{ResultCode: tgpp.ResultErrorUserUnknown, Experimental: true, VendorID: tgpp.VendorID}, db.StatusFailed},
-		"barred":           {&s6c.ResultError{ResultCode: tgpp.ResultErrorServiceBarred, Experimental: true, VendorID: tgpp.VendorID}, db.StatusFailed},
-		"not subscribed":   {&s6c.ResultError{ResultCode: tgpp.ResultErrorServiceNotSubscribed, Experimental: true, VendorID: tgpp.VendorID}, db.StatusFailed},
-		"absent user":      {&s6c.ResultError{ResultCode: tgpp.ResultErrorAbsentUser, Experimental: true, VendorID: tgpp.VendorID}, db.StatusPending},
+		"unknown user":     {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorUserUnknown)}, db.StatusFailed},
+		"barred":           {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorServiceBarred)}, db.StatusFailed},
+		"not subscribed":   {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorServiceNotSubscribed)}, db.StatusFailed},
+		"absent user":      {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser)}, db.StatusPending},
 		"HSS unreachable":  {diameter.ErrNotConnected, db.StatusPending},
 		"malformed answer": {s6c.ErrMalformedAnswer, db.StatusPending},
 	}
@@ -578,7 +578,7 @@ func TestRunDeliversStoredMessages(t *testing.T) {
 
 func TestDeliverUnknownUserTriesNextNode(t *testing.T) {
 	routing := mmeRouting()
-	routing.Additional = &s6c.ServingNode{SGSN: &s6c.Node{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
+	routing.Additional = &s6c.ServingNode{SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
 
 	store := newFakeStore(pendingMessage(t))
 	sender := &fakeSender{answers: map[string]*diameter.Message{
@@ -595,7 +595,7 @@ func TestDeliverUnknownUserTriesNextNode(t *testing.T) {
 
 func TestDeliverMixedFailuresAreRetried(t *testing.T) {
 	routing := mmeRouting()
-	routing.Additional = &s6c.ServingNode{SGSN: &s6c.Node{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
+	routing.Additional = &s6c.ServingNode{SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
 
 	store := newFakeStore(pendingMessage(t))
 	sender := &fakeSender{answers: map[string]*diameter.Message{
@@ -661,7 +661,7 @@ func TestNotifyBeforeRun(t *testing.T) {
 
 func absentWithDiagnostic(diagnostic uint32) *diameter.Message {
 	return experimental(tgpp.ResultErrorAbsentUser,
-		diameter.Unsigned32(sgd.AVPAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, diagnostic))
+		diameter.Unsigned32(tgpp.AVPAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, diagnostic))
 }
 
 func u32(v uint32) *uint32 {
@@ -747,7 +747,7 @@ func TestMemoryExceededReport(t *testing.T) {
 
 func TestSecondPathSuccessIsReported(t *testing.T) {
 	routing := mmeRouting()
-	routing.Additional = &s6c.ServingNode{SGSN: &s6c.Node{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
+	routing.Additional = &s6c.ServingNode{SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
 
 	router := &fakeRouter{routing: routing}
 	sender := &fakeSender{answers: map[string]*diameter.Message{
@@ -792,7 +792,7 @@ func TestReportAnswerNodesAreRetriedImmediately(t *testing.T) {
 		routing: mmeRouting(),
 		report: s6c.ReportResult{
 			ServingNodes: s6c.ServingNodes{
-				Serving: &s6c.ServingNode{MME: &s6c.Node{Name: "mme2.example.org", Realm: "epc.example.org", Number: "15550000011"}},
+				Serving: &s6c.ServingNode{MME: &s6c.NodeAddress{Name: "mme2.example.org", Realm: "epc.example.org", Number: "15550000011"}},
 			},
 			AlertMSISDN: "15559990000",
 		},
@@ -831,7 +831,7 @@ func TestMemoryExceededDoesNotReportFailedNode(t *testing.T) {
 
 func TestAdditionalNodeFailureIsReported(t *testing.T) {
 	routing := mmeRouting()
-	routing.Additional = &s6c.ServingNode{SGSN: &s6c.Node{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
+	routing.Additional = &s6c.ServingNode{SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
 
 	router := &fakeRouter{routing: routing}
 	sender := &fakeSender{answers: map[string]*diameter.Message{
@@ -851,7 +851,7 @@ func TestShutdownStopsBetweenSteps(t *testing.T) {
 	defer cancel()
 
 	routing := mmeRouting()
-	routing.Additional = &s6c.ServingNode{SGSN: &s6c.Node{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
+	routing.Additional = &s6c.ServingNode{SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
 
 	store := newFakeStore(pendingMessage(t))
 	router := &fakeRouter{routing: routing}
@@ -875,7 +875,7 @@ func TestShutdownStopsBetweenSteps(t *testing.T) {
 }
 
 func TestReportFailureStillHolds(t *testing.T) {
-	router := &fakeRouter{routing: mmeRouting(), reportErr: &s6c.ResultError{ResultCode: tgpp.ResultErrorMWDListFull, Experimental: true, VendorID: tgpp.VendorID}}
+	router := &fakeRouter{routing: mmeRouting(), reportErr: &s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorMWDListFull)}}
 	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": experimental(tgpp.ResultErrorAbsentUser)}}
 	store := newFakeStore(pendingMessage(t))
 
@@ -888,7 +888,7 @@ func TestReportFailureStillHolds(t *testing.T) {
 
 func TestRoutingAbsentUserHoldsWithoutReport(t *testing.T) {
 	router := &fakeRouter{err: &s6c.ResultError{
-		ResultCode: tgpp.ResultErrorAbsentUser, Experimental: true, VendorID: tgpp.VendorID, AlertMSISDN: "15559990000",
+		Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser), AlertMSISDN: "15559990000",
 	}}
 	store := newFakeStore(pendingMessage(t))
 
@@ -963,7 +963,7 @@ func TestRunDeliversOtherRecipientsWhileOneIsStuck(t *testing.T) {
 
 	slow := mmeRouting()
 	fast := mmeRouting()
-	fast.Serving = &s6c.ServingNode{MME: &s6c.Node{Name: "mme2.example.org", Realm: "epc.example.org", Number: "15550000011"}}
+	fast.Serving = &s6c.ServingNode{MME: &s6c.NodeAddress{Name: "mme2.example.org", Realm: "epc.example.org", Number: "15550000011"}}
 
 	sender := &blockingSender{
 		fakeSender: &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success(), "mme2.example.org": success()}},
@@ -1034,7 +1034,7 @@ type cancellingRouter struct {
 	cancel context.CancelFunc
 }
 
-func (r *cancellingRouter) SendRoutingInfoForSM(ctx context.Context, req s6c.Request) (s6c.Routing, error) {
+func (r *cancellingRouter) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, error) {
 	r.cancel()
 
 	return r.fakeRouter.SendRoutingInfoForSM(ctx, req)
