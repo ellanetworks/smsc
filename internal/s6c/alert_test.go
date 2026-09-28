@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ellanetworks/smsc/diameter"
-	"github.com/ellanetworks/smsc/internal/tgpp"
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/s6c"
+	"github.com/ellanetworks/core/diameter/tgpp"
 )
 
 var testTime = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -38,8 +39,8 @@ func alr(t *testing.T, extra ...diameter.AVP) *diameter.Message {
 
 	return &diameter.Message{
 		Flags:         diameter.FlagRequest | diameter.FlagProxiable,
-		CommandCode:   CommandAlertServiceCentre,
-		ApplicationID: ApplicationID,
+		CommandCode:   s6c.CommandAlertServiceCentre,
+		ApplicationID: s6c.ApplicationID,
 		AVPs: append([]diameter.AVP{
 			diameter.UTF8String(diameter.AVPSessionID, diameter.AVPFlagMandatory, 0, "hss.example.org;1;1"),
 			diameter.Unsigned32(diameter.AVPAuthSessionState, diameter.AVPFlagMandatory, 0, diameter.AuthSessionStateNoStateMaintained),
@@ -59,7 +60,7 @@ func scAddressAVP(t *testing.T, hexDigits string) diameter.AVP {
 func answerResult(t *testing.T, ans *diameter.Message) uint32 {
 	t.Helper()
 
-	if ans.CommandCode != CommandAlertServiceCentre || ans.Flags&diameter.FlagRequest != 0 || ans.AVPs[0].Code != diameter.AVPSessionID {
+	if ans.CommandCode != s6c.CommandAlertServiceCentre || ans.Flags&diameter.FlagRequest != 0 || ans.AVPs[0].Code != diameter.AVPSessionID {
 		t.Fatalf("answer header = %+v", ans)
 	}
 
@@ -79,7 +80,7 @@ func TestAlertServiceCentre(t *testing.T) {
 	a := &alerts{}
 	ans := newAlertHandler(a).ServeDiameter(context.Background(), nil,
 		alr(t, scAddressAVP(t, "5155000000f0"), userIdentifier(t, "5155210300f2"),
-			diameter.Time(avpMaximumUEAvailabilityTime, 0, tgpp.VendorID, testTime)))
+			diameter.Time(s6c.AVPMaximumUEAvailabilityTime, 0, tgpp.VendorID, testTime)))
 
 	if code := answerResult(t, ans); code != diameter.ResultSuccess || len(a.msisdns) != 1 || a.msisdns[0] != "15551230002" {
 		t.Fatalf("result = %d, alerts = %v", code, a.msisdns)

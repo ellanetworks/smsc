@@ -8,23 +8,39 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/s6c"
+	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/core/sctp"
-	"github.com/ellanetworks/smsc/diameter"
-	"github.com/ellanetworks/smsc/internal/tgpp"
 )
 
-func testNode(host string, handler diameter.Handler) *diameter.Node {
-	return &diameter.Node{
+func testNode(t *testing.T, host string, handler diameter.Handler, acceptUnknown bool) *diameter.Node {
+	t.Helper()
+
+	apps := []diameter.Application{{ID: s6c.ApplicationID, VendorID: tgpp.VendorID}}
+
+	cfg := diameter.Config{
 		Identity: diameter.Identity{
 			OriginHost:      host,
 			OriginRealm:     "example.org",
 			HostIPAddresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
 			ProductName:     "test",
 		},
-		Applications:      []diameter.Application{{ID: ApplicationID, VendorID: tgpp.VendorID}},
 		Handler:           handler,
 		ReconnectInterval: 100 * time.Millisecond,
 	}
+
+	if acceptUnknown {
+		cfg.AcceptUnknownPeers = true
+		cfg.UnknownPeerApplications = apps
+	}
+
+	n, err := diameter.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return n
 }
 
 func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
@@ -37,7 +53,7 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 
 	received := make(chan *diameter.Message, 1)
 
-	hss := testNode("hss.example.org", diameter.HandlerFunc(func(_ context.Context, c *diameter.Conn, req *diameter.Message) *diameter.Message {
+	hss := testNode(t, "hss.example.org", diameter.HandlerFunc(func(_ context.Context, c *diameter.Conn, req *diameter.Message) *diameter.Message {
 		received <- req
 
 		ans := c.Answer(req, diameter.ResultSuccess)
@@ -48,7 +64,7 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 		)
 
 		return ans
-	}))
+	}), true)
 
 	var lc sctp.ListenConfig
 
@@ -57,16 +73,19 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := hss.Serve(context.Background(), ln); err != nil {
-		t.Fatal(err)
-	}
+	go func() { _ = hss.Serve(diameter.NewSCTPListener(ln, nil)) }()
 
-	smsc := testNode("smsc.example.org", diameter.HandlerFunc(func(_ context.Context, c *diameter.Conn, req *diameter.Message) *diameter.Message {
+	smsc := testNode(t, "smsc.example.org", diameter.HandlerFunc(func(_ context.Context, c *diameter.Conn, req *diameter.Message) *diameter.Message {
 		return c.Answer(req, diameter.ResultCommandUnsupported)
-	}))
-	smsc.Peers = []diameter.Peer{{Host: "hss.example.org", Address: ln.Addr().(*sctp.SCTPAddr)}}
+	}), false)
 
-	if err := smsc.Start(context.Background()); err != nil {
+	if err := smsc.SetPeers([]diameter.Peer{{
+		ID:           "hss",
+		Host:         "hss.example.org",
+		Addresses:    []netip.Addr{netip.MustParseAddr("127.0.0.1")},
+		Port:         uint16(ln.Addr().(*sctp.SCTPAddr).Port),
+		Applications: []diameter.Application{{ID: s6c.ApplicationID, VendorID: tgpp.VendorID}},
+	}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,26 +93,26 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		smsc.Shutdown(ctx)
-		hss.Shutdown(ctx)
+		_ = smsc.Shutdown(ctx)
+		_ = hss.Shutdown(ctx)
 	})
 
 	router := &Router{
-		Node:                 smsc,
-		Identity:             smsc.Identity,
+		Node:                 hssByID{smsc},
+		Identity:             smsc.Identity(),
 		HSSHost:              "hss.example.org",
 		HSSRealm:             "example.org",
 		ServiceCentreAddress: "15550000000",
 	}
 
 	var (
-		routing Routing
+		routing s6c.Routing
 		lastErr error
 	)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		routing, lastErr = router.SendRoutingInfoForSM(context.Background(), Request{MSISDN: "15551230002"})
+		routing, lastErr = router.SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
 		if lastErr == nil {
 			break
 		}
@@ -114,3 +133,11 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 		t.Fatalf("HSS received %+v", req)
 	}
 }
+
+type hssByID struct{ node *diameter.Node }
+
+func (h hssByID) Do(ctx context.Context, _ string, req *diameter.Message) (*diameter.Message, error) {
+	return h.node.Do(ctx, "hss", req)
+}
+
+func (h hssByID) NewSessionID() string { return h.node.NewSessionID() }

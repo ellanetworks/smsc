@@ -11,10 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ellanetworks/smsc/diameter"
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/sgd"
+	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/numbering"
-	"github.com/ellanetworks/smsc/internal/tgpp"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -75,8 +76,8 @@ func baseAVPs() []diameter.AVP {
 func ofr(avps ...diameter.AVP) *diameter.Message {
 	return &diameter.Message{
 		Flags:         diameter.FlagRequest | diameter.FlagProxiable,
-		CommandCode:   CommandMOForwardShortMessage,
-		ApplicationID: ApplicationID,
+		CommandCode:   sgd.CommandMOForwardShortMessage,
+		ApplicationID: sgd.ApplicationID,
 		HopByHopID:    1,
 		EndToEndID:    2,
 		AVPs:          append(baseAVPs(), avps...),
@@ -96,7 +97,7 @@ func msisdn(t *testing.T) diameter.AVP {
 }
 
 func smRPUI(t *testing.T, hexTPDU string) diameter.AVP {
-	return diameter.OctetString(AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, mustHex(t, hexTPDU))
+	return diameter.OctetString(sgd.AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, mustHex(t, hexTPDU))
 }
 
 func ofrWithSubmit(t *testing.T, hexTPDU string) *diameter.Message {
@@ -150,7 +151,7 @@ func deliveryFailure(t *testing.T, ans *diameter.Message) (uint32, []byte) {
 		t.Fatalf("Experimental-Result-Code = %d, want %d", code, tgpp.ResultErrorSMDeliveryFailure)
 	}
 
-	cause, ok := ans.Find(AVPSMDeliveryFailureCause, tgpp.VendorID)
+	cause, ok := ans.Find(sgd.AVPSMDeliveryFailureCause, tgpp.VendorID)
 	if !ok {
 		t.Fatal("SM-Delivery-Failure-Cause missing")
 	}
@@ -160,11 +161,11 @@ func deliveryFailure(t *testing.T, ans *diameter.Message) (uint32, []byte) {
 		t.Fatal(err)
 	}
 
-	enum, _ := diameter.Find(inner, AVPSMEnumeratedDeliveryFailureCause, tgpp.VendorID)
+	enum, _ := diameter.Find(inner, sgd.AVPSMEnumeratedDeliveryFailureCause, tgpp.VendorID)
 	c, _ := enum.Unsigned32()
 
 	var diagnostic []byte
-	if d, ok := diameter.Find(inner, AVPSMDiagnosticInfo, tgpp.VendorID); ok {
+	if d, ok := diameter.Find(inner, sgd.AVPSMDiagnosticInfo, tgpp.VendorID); ok {
 		diagnostic = d.Data
 	}
 
@@ -196,7 +197,7 @@ func failedAVP(t *testing.T, ans *diameter.Message) diameter.AVP {
 func assertCommon(t *testing.T, ans *diameter.Message) {
 	t.Helper()
 
-	if ans.IsRequest() || ans.HopByHopID != 1 || ans.EndToEndID != 2 || ans.CommandCode != CommandMOForwardShortMessage {
+	if ans.IsRequest() || ans.HopByHopID != 1 || ans.EndToEndID != 2 || ans.CommandCode != sgd.CommandMOForwardShortMessage {
 		t.Fatalf("header = %+v", ans)
 	}
 
@@ -258,7 +259,7 @@ func TestMOForwardUnknownServiceCentre(t *testing.T) {
 	ans := newTestHandler(&fakeStore{}).ServeDiameter(context.Background(), nil, req)
 	assertCommon(t, ans)
 
-	if cause, diag := deliveryFailure(t, ans); cause != CauseUnknownServiceCentre || diag != nil {
+	if cause, diag := deliveryFailure(t, ans); cause != sgd.CauseUnknownServiceCentre || diag != nil {
 		t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
 	}
 }
@@ -271,7 +272,7 @@ func TestMOForwardNoMSISDN(t *testing.T) {
 	ans := newTestHandler(&fakeStore{}).ServeDiameter(context.Background(), nil, req)
 	assertCommon(t, ans)
 
-	if cause, _ := deliveryFailure(t, ans); cause != CauseUserNotSCUser {
+	if cause, _ := deliveryFailure(t, ans); cause != sgd.CauseUserNotSCUser {
 		t.Fatalf("cause = %d", cause)
 	}
 }
@@ -301,7 +302,7 @@ func TestMOForwardSubmitRejections(t *testing.T) {
 			assertCommon(t, ans)
 
 			cause, diag := deliveryFailure(t, ans)
-			if cause != CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tt.fcs)) {
+			if cause != sgd.CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tt.fcs)) {
 				t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
 			}
 
@@ -317,7 +318,7 @@ func TestMOForwardDuplicate(t *testing.T) {
 	assertCommon(t, ans)
 
 	cause, diag := deliveryFailure(t, ans)
-	if cause != CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tpdu.FailureRejectedDuplicate)) {
+	if cause != sgd.CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tpdu.FailureRejectedDuplicate)) {
 		t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
 	}
 }
@@ -327,13 +328,13 @@ func TestMOForwardStoreFailure(t *testing.T) {
 	assertCommon(t, ans)
 
 	cause, diag := deliveryFailure(t, ans)
-	if cause != CauseSCCongestion || !bytes.Equal(diag, submitReport(t, tpdu.FailureSCSystemFailure)) {
+	if cause != sgd.CauseSCCongestion || !bytes.Equal(diag, submitReport(t, tpdu.FailureSCSystemFailure)) {
 		t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
 	}
 }
 
 func TestMOForwardOversizedSMRPUI(t *testing.T) {
-	big := diameter.OctetString(AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, make([]byte, maxSMRPUILength+1))
+	big := diameter.OctetString(sgd.AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, make([]byte, sgd.MaxSMRPUILength+1))
 	req := ofr(scAddress(t, "5155000000f0"), userIdentifier(msisdn(t)), big)
 
 	ans := newTestHandler(&fakeStore{}).ServeDiameter(context.Background(), nil, req)
@@ -342,14 +343,14 @@ func TestMOForwardOversizedSMRPUI(t *testing.T) {
 		t.Fatalf("Result-Code = %d", code)
 	}
 
-	if failed := failedAVP(t, ans); failed.Code != AVPSMRPUI {
+	if failed := failedAVP(t, ans); failed.Code != sgd.AVPSMRPUI {
 		t.Fatalf("Failed-AVP holds %d", failed.Code)
 	}
 }
 
 func TestMOForwardMSISDNLessDeliveryNotSupported(t *testing.T) {
 	req := ofrWithSubmit(t, validSubmit)
-	req.AVPs = append(req.AVPs, diameter.Grouped(AVPSMSMICorrelationID, 0, tgpp.VendorID))
+	req.AVPs = append(req.AVPs, diameter.Grouped(tgpp.AVPSMSMICorrelationID, 0, tgpp.VendorID))
 
 	ans := newTestHandler(&fakeStore{}).ServeDiameter(context.Background(), nil, req)
 	assertCommon(t, ans)
@@ -399,7 +400,7 @@ func TestMOForwardMissingAVPs(t *testing.T) {
 		"Destination-Realm":  {diameter.AVPDestinationRealm, 0, 0},
 		"SC-Address":         {tgpp.AVPSCAddress, tgpp.VendorID, 0},
 		"User-Identifier":    {tgpp.AVPUserIdentifier, tgpp.VendorID, 0},
-		"SM-RP-UI":           {AVPSMRPUI, tgpp.VendorID, 0},
+		"SM-RP-UI":           {sgd.AVPSMRPUI, tgpp.VendorID, 0},
 	}
 
 	for name, tt := range tests {

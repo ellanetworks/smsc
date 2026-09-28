@@ -8,12 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ellanetworks/smsc/diameter"
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/s6c"
+	"github.com/ellanetworks/core/diameter/sgd"
+	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/s6c"
-	"github.com/ellanetworks/smsc/internal/sgd"
-	"github.com/ellanetworks/smsc/internal/tbcd"
-	"github.com/ellanetworks/smsc/internal/tgpp"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -34,7 +33,7 @@ type Store interface {
 }
 
 type Router interface {
-	SendRoutingInfoForSM(ctx context.Context, req s6c.Request) (s6c.Routing, error)
+	SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, error)
 	ReportSMDeliveryStatus(ctx context.Context, rep s6c.DeliveryReport) (s6c.ReportResult, error)
 }
 
@@ -93,12 +92,12 @@ const (
 )
 
 type target struct {
-	kind        nodeKind
-	source      nodeSource
-	name        string
-	realm       string
-	numberCode  uint32
-	numberValue string
+	kind       nodeKind
+	source     nodeSource
+	name       string
+	realm      string
+	mmeNumber  string
+	sgsnNumber string
 }
 
 type forwardResult struct {
@@ -310,7 +309,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 	}
 
 	sri, cancel := context.WithTimeout(ctx, d.AttemptTimeout)
-	routing, err := d.Router.SendRoutingInfoForSM(sri, s6c.Request{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
+	routing, err := d.Router.SendRoutingInfoForSM(sri, s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
 
 	cancel()
 
@@ -399,12 +398,12 @@ func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) 
 		tgpp.ResultErrorServiceBarred,
 		tgpp.ResultErrorFacilityNotSupported,
 	} {
-		if s6c.IsExperimental(err, code) {
+		if tgpp.IsExperimental(err, code) {
 			return result{outcome: permanent}
 		}
 	}
 
-	return result{outcome: temporary, hold: s6c.IsExperimental(err, tgpp.ResultErrorAbsentUser)}
+	return result{outcome: temporary, hold: tgpp.IsExperimental(err, tgpp.ResultErrorAbsentUser)}
 }
 
 func (d *Deliverer) setAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string) {
@@ -648,14 +647,14 @@ func deliveryTargets(n s6c.ServingNodes) []target {
 		if sn.node.MME != nil {
 			add(target{
 				kind: kindMME, source: sn.source, name: sn.node.MME.Name, realm: sn.node.MME.Realm,
-				numberCode: tgpp.AVPMMENumberForMTSMS, numberValue: sn.node.MME.Number,
+				mmeNumber: sn.node.MME.Number,
 			})
 		}
 
 		if sn.node.SGSN != nil {
 			add(target{
 				kind: kindSGSN, source: sn.source, name: sn.node.SGSN.Name, realm: sn.node.SGSN.Realm,
-				numberCode: tgpp.AVPSGSNNumber, numberValue: sn.node.SGSN.Number,
+				sgsnNumber: sn.node.SGSN.Number,
 			})
 		}
 	}
@@ -677,52 +676,29 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 		return forwardResult{outcome: permanent}
 	}
 
-	scAddress, err := tbcd.Encode(d.ServiceCentreAddress)
+	tfr, err := sgd.NewMTForwardShortMessageRequest(tgpp.Envelope{
+		SessionID:        d.Sender.NewSessionID(),
+		Origin:           d.Identity,
+		DestinationHost:  t.name,
+		DestinationRealm: t.realm,
+	}, sgd.MTForwardShortMessage{
+		IMSI:                 imsi,
+		ServiceCentreAddress: d.ServiceCentreAddress,
+		SMRPUI:               smRPUI,
+		MMENumberForMTSMS:    t.mmeNumber,
+		SGSNNumber:           t.sgsnNumber,
+		MoreMessagesToSend:   more,
+		DeliveryTimer:        d.AttemptTimeout,
+		DeliveryStartTime:    d.Now(),
+	})
 	if err != nil {
 		return forwardResult{outcome: permanent}
 	}
 
-	start := d.Now()
-
-	avps := []diameter.AVP{
-		diameter.UTF8String(diameter.AVPSessionID, diameter.AVPFlagMandatory, 0, d.Sender.NewSessionID()),
-		diameter.Unsigned32(diameter.AVPAuthSessionState, diameter.AVPFlagMandatory, 0, diameter.AuthSessionStateNoStateMaintained),
-		diameter.UTF8String(diameter.AVPOriginHost, diameter.AVPFlagMandatory, 0, d.Identity.OriginHost),
-		diameter.UTF8String(diameter.AVPOriginRealm, diameter.AVPFlagMandatory, 0, d.Identity.OriginRealm),
-		diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, t.name),
-		diameter.UTF8String(diameter.AVPDestinationRealm, diameter.AVPFlagMandatory, 0, t.realm),
-		diameter.UTF8String(diameter.AVPUserName, diameter.AVPFlagMandatory, 0, imsi),
-		diameter.OctetString(tgpp.AVPSCAddress, diameter.AVPFlagMandatory, tgpp.VendorID, scAddress),
-		diameter.OctetString(sgd.AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, smRPUI),
-	}
-
-	if t.numberCode != 0 && t.numberValue != "" {
-		number, err := tbcd.Encode(t.numberValue)
-		if err != nil {
-			return forwardResult{outcome: temporary}
-		}
-
-		avps = append(avps, diameter.OctetString(t.numberCode, 0, tgpp.VendorID, number))
-	}
-
-	if more {
-		avps = append(avps, diameter.Unsigned32(sgd.AVPTFRFlags, diameter.AVPFlagMandatory, tgpp.VendorID, sgd.TFRFlagMoreMessagesToSend))
-	}
-
-	avps = append(avps,
-		diameter.Unsigned32(sgd.AVPSMDeliveryTimer, diameter.AVPFlagMandatory, tgpp.VendorID, uint32(d.AttemptTimeout/time.Second)),
-		diameter.Time(sgd.AVPSMDeliveryStartTime, diameter.AVPFlagMandatory, tgpp.VendorID, start),
-	)
-
 	attempt, cancel := context.WithTimeout(ctx, d.AttemptTimeout)
 	defer cancel()
 
-	ans, err := d.Sender.Do(attempt, t.name, &diameter.Message{
-		Flags:         diameter.FlagRequest | diameter.FlagProxiable,
-		CommandCode:   sgd.CommandMTForwardShortMessage,
-		ApplicationID: sgd.ApplicationID,
-		AVPs:          avps,
-	})
+	ans, err := d.Sender.Do(attempt, t.name, tfr)
 	if err != nil {
 		return forwardResult{outcome: temporary}
 	}
@@ -731,21 +707,27 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 }
 
 func classifyForwardAnswer(ans *diameter.Message) forwardResult {
-	if rc, ok := ans.Find(diameter.AVPResultCode, 0); ok {
-		code, err := rc.Unsigned32()
-
-		switch {
-		case err == nil && code == diameter.ResultSuccess:
-			return forwardResult{outcome: delivered, code: code, cause: ptr(s6c.DeliveryCauseSuccessfulTransfer)}
-		case code >= 5000 && code < 6000:
-			return forwardResult{outcome: targetFailed, code: code}
-		default:
-			return forwardResult{outcome: temporary, code: code}
-		}
+	_, err := sgd.ParseMTForwardShortMessageAnswer(ans)
+	if err == nil {
+		return forwardResult{outcome: delivered, code: diameter.ResultSuccess, cause: ptr(s6c.DeliveryCauseSuccessfulTransfer)}
 	}
 
-	vendor, code, ok := experimentalResult(ans)
-	if !ok || vendor != tgpp.VendorID {
+	var re *sgd.ResultError
+	if !errors.As(err, &re) {
+		return forwardResult{outcome: temporary}
+	}
+
+	code := re.Code
+
+	if !re.Experimental {
+		if code >= 5000 && code < 6000 {
+			return forwardResult{outcome: targetFailed, code: code}
+		}
+
+		return forwardResult{outcome: temporary, code: code}
+	}
+
+	if re.VendorID != tgpp.VendorID {
 		return forwardResult{outcome: temporary, code: code}
 	}
 
@@ -753,16 +735,16 @@ func classifyForwardAnswer(ans *diameter.Message) forwardResult {
 	case tgpp.ResultErrorUserUnknown:
 		return forwardResult{outcome: targetFailed, code: code, cause: ptr(s6c.DeliveryCauseAbsentUser)}
 	case tgpp.ResultErrorAbsentUser:
-		return forwardResult{outcome: temporary, code: code, cause: ptr(s6c.DeliveryCauseAbsentUser), diagnostic: absentDiagnostic(ans)}
+		return forwardResult{outcome: temporary, code: code, cause: ptr(s6c.DeliveryCauseAbsentUser), diagnostic: re.AbsentUserDiagnostic}
 	case tgpp.ResultErrorIllegalUser, tgpp.ResultErrorIllegalEquipment:
 		return forwardResult{outcome: permanent, code: code}
 	case tgpp.ResultErrorSMDeliveryFailure:
-		cause, ok := deliveryFailureCause(ans)
+		cause := re.DeliveryFailureCause
 
 		switch {
-		case ok && (cause == sgd.CauseEquipmentProtocolError || cause == sgd.CauseEquipmentNotSMEquipped):
+		case cause != nil && (*cause == sgd.CauseEquipmentProtocolError || *cause == sgd.CauseEquipmentNotSMEquipped):
 			return forwardResult{outcome: permanent, code: code}
-		case ok && cause == sgd.CauseMemoryCapacityExceeded:
+		case cause != nil && *cause == sgd.CauseMemoryCapacityExceeded:
 			return forwardResult{outcome: temporary, code: code, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded)}
 		default:
 			return forwardResult{outcome: temporary, code: code}
@@ -774,63 +756,4 @@ func classifyForwardAnswer(ans *diameter.Message) forwardResult {
 
 func ptr(v uint32) *uint32 {
 	return &v
-}
-
-func absentDiagnostic(ans *diameter.Message) *uint32 {
-	a, ok := ans.Find(sgd.AVPAbsentUserDiagnosticSM, tgpp.VendorID)
-	if !ok {
-		return nil
-	}
-
-	v, err := a.Unsigned32()
-	if err != nil {
-		return nil
-	}
-
-	return &v
-}
-
-func experimentalResult(ans *diameter.Message) (uint32, uint32, bool) {
-	er, ok := ans.Find(diameter.AVPExperimentalResult, 0)
-	if !ok {
-		return 0, 0, false
-	}
-
-	inner, err := er.Grouped()
-	if err != nil {
-		return 0, 0, false
-	}
-
-	vendorAVP, okVendor := diameter.Find(inner, diameter.AVPVendorID, 0)
-	codeAVP, okCode := diameter.Find(inner, diameter.AVPExperimentalResultCode, 0)
-
-	if !okVendor || !okCode {
-		return 0, 0, false
-	}
-
-	vendor, errVendor := vendorAVP.Unsigned32()
-	code, errCode := codeAVP.Unsigned32()
-
-	return vendor, code, errVendor == nil && errCode == nil
-}
-
-func deliveryFailureCause(ans *diameter.Message) (uint32, bool) {
-	cause, ok := ans.Find(sgd.AVPSMDeliveryFailureCause, tgpp.VendorID)
-	if !ok {
-		return 0, false
-	}
-
-	inner, err := cause.Grouped()
-	if err != nil {
-		return 0, false
-	}
-
-	enum, ok := diameter.Find(inner, sgd.AVPSMEnumeratedDeliveryFailureCause, tgpp.VendorID)
-	if !ok {
-		return 0, false
-	}
-
-	v, err := enum.Unsigned32()
-
-	return v, err == nil
 }

@@ -9,15 +9,17 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/core/diameter/s6c"
+	"github.com/ellanetworks/core/diameter/sgd"
+	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/core/sctp"
-	"github.com/ellanetworks/smsc/diameter"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
 	"github.com/ellanetworks/smsc/internal/numbering"
-	"github.com/ellanetworks/smsc/internal/s6c"
-	"github.com/ellanetworks/smsc/internal/sgd"
-	"github.com/ellanetworks/smsc/internal/tgpp"
+	smscs6c "github.com/ellanetworks/smsc/internal/s6c"
+	smscsgd "github.com/ellanetworks/smsc/internal/sgd"
 )
 
 var ErrAlreadyStarted = errors.New("server: already started")
@@ -56,32 +58,35 @@ func (s *Server) Start(ctx context.Context) error {
 		ProductName:     "smsc",
 	}
 
-	node := &diameter.Node{
-		Identity: identity,
-		Applications: []diameter.Application{
-			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
-			{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
-		},
-		Peers: []diameter.Peer{{
-			Host: cfg.HSS.Host,
-			Address: &sctp.SCTPAddr{
-				IPAddrs: []net.IPAddr{{IP: cfg.HSS.Address.AsSlice()}},
-				Port:    cfg.HSS.Port,
-			},
-		}},
-		Logger: s.Logger,
+	apps := []diameter.Application{
+		{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
+		{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
+	}
+
+	mux := diameter.NewMux()
+
+	node, err := diameter.New(diameter.Config{
+		Identity:                identity,
+		Handler:                 mux,
+		AcceptUnknownPeers:      true,
+		UnknownPeerApplications: apps,
+		Logger:                  s.Logger,
+	})
+	if err != nil {
+		_ = database.Close()
+		return err
 	}
 
 	deliverer := &delivery.Deliverer{
 		Store: database,
-		Router: &s6c.Router{
-			Node:                 node,
+		Router: &smscs6c.Router{
+			Node:                 hssRequester{node},
 			Identity:             identity,
 			HSSHost:              cfg.HSS.Host,
 			HSSRealm:             cfg.HSS.Realm,
 			ServiceCentreAddress: cfg.ServiceCentre.Address,
 		},
-		Sender:               node,
+		Sender:               hostSender{node},
 		Identity:             identity,
 		ServiceCentreAddress: cfg.ServiceCentre.Address,
 		RetryIntervals:       cfg.Delivery.RetryIntervals,
@@ -91,8 +96,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Logger:               s.Logger,
 	}
 
-	mux := diameter.NewMux()
-	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &sgd.Handler{
+	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &smscsgd.Handler{
 		Identity:             identity,
 		ServiceCentreAddress: cfg.ServiceCentre.Address,
 		Store:                database,
@@ -106,14 +110,12 @@ func (s *Server) Start(ctx context.Context) error {
 		Now:             time.Now,
 		Logger:          s.Logger,
 	})
-	mux.Handle(s6c.ApplicationID, s6c.CommandAlertServiceCentre, &s6c.AlertHandler{
+	mux.Handle(s6c.ApplicationID, s6c.CommandAlertServiceCentre, &smscs6c.AlertHandler{
 		Identity:             identity,
 		ServiceCentreAddress: cfg.ServiceCentre.Address,
 		Alert:                deliverer.Alert,
 		Logger:               s.Logger,
 	})
-
-	node.Handler = mux
 
 	var lc sctp.ListenConfig
 
@@ -126,25 +128,22 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen for Diameter: %w", err)
 	}
 
-	base := context.WithoutCancel(ctx)
-
-	if err := node.Serve(base, ln); err != nil {
+	if err := node.SetPeers([]diameter.Peer{{
+		ID:           hssPeerID,
+		Host:         cfg.HSS.Host,
+		Addresses:    []netip.Addr{cfg.HSS.Address},
+		Port:         uint16(cfg.HSS.Port),
+		Applications: apps,
+	}}); err != nil {
 		_ = ln.Close()
 		_ = database.Close()
 
 		return err
 	}
 
-	if err := node.Start(base); err != nil {
-		shutdown, cancel := context.WithTimeout(base, time.Second)
-		defer cancel()
+	go func() { _ = node.Serve(diameter.NewSCTPListener(ln, s.Logger)) }()
 
-		node.Shutdown(shutdown)
-
-		_ = database.Close()
-
-		return err
-	}
+	base := context.WithoutCancel(ctx)
 
 	deliveryCtx, stopDelivery := context.WithCancel(base)
 	deliveryDone := make(chan struct{})
@@ -188,9 +187,27 @@ func (s *Server) Shutdown(ctx context.Context) {
 		s.Logger.Warn("shutting down with short message deliveries still in flight")
 	}
 
-	s.node.Shutdown(ctx)
+	_ = s.node.Shutdown(ctx)
 
 	if err := s.database.Close(); err != nil {
 		s.Logger.Error("failed to close the database", slog.Any("error", err))
 	}
 }
+
+const hssPeerID = "hss"
+
+type hssRequester struct{ node *diameter.Node }
+
+func (r hssRequester) Do(ctx context.Context, _ string, req *diameter.Message) (*diameter.Message, error) {
+	return r.node.Do(ctx, hssPeerID, req)
+}
+
+func (r hssRequester) NewSessionID() string { return r.node.NewSessionID() }
+
+type hostSender struct{ node *diameter.Node }
+
+func (h hostSender) Do(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
+	return h.node.DoHost(ctx, host, req)
+}
+
+func (h hostSender) NewSessionID() string { return h.node.NewSessionID() }

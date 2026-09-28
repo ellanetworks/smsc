@@ -1,5 +1,7 @@
-github.com/ellanetworks/core/sctp v0.0.0-20260927223644-74fdc7a91d32 h1:PjB2tfmYa1AZZ6K3ioLw79+C2meMqDsdsTbHrRHy4S4=
-github.com/ellanetworks/core/sctp v0.0.0-20260927223644-74fdc7a91d32/go.mod h1:qttv0gHtCuOunPG/VvNgd4p4RTzj3Q5Gh7g4Rd14MYw=
+github.com/ellanetworks/core/diameter v0.0.0-20260928204907-fc197c42dc3f h1:d4cXtBot1TnR0gk8W9U6ANj4GbYBs5eMo+hZwGyA8oM=
+github.com/ellanetworks/core/diameter v0.0.0-20260928204907-fc197c42dc3f/go.mod h1:YchLpOwehhNz8s+hXPtmjT69Jw94otkpFUP4lDdM4wM=
+github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f h1:467mMwOqgbeKZQPV/Jztg1RJFofLhJ5NqJGzT96SUrM=
+github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f/go.mod h1:qttv0gHtCuOunPG/VvNgd4p4RTzj3Q5Gh7g4Rd14MYw=
 github.com/mattn/go-sqlite3 v1.14.42 h1:MigqEP4ZmHw3aIdIT7T+9TLa90Z6smwcthx+Azv4Cgo=
 github.com/mattn/go-sqlite3 v1.14.42/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
