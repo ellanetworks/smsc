@@ -474,8 +474,8 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 		started := d.Now()
 		r, err := d.forward(ctx, imsi, t, deliver, more)
 
-		deliveryAttempt := attemptOf(err)
-		deliveryAttempt.Step, deliveryAttempt.Node, deliveryAttempt.NodeType, deliveryAttempt.StartedAt = db.StepDelivery, t.name, t.kind.nodeType(), started
+		deliveryAttempt := deliveryAttemptOf(t.kind, err)
+		deliveryAttempt.Step, deliveryAttempt.Node, deliveryAttempt.StartedAt = db.StepDelivery, t.name, started
 
 		d.record(ctx, log, m.ID, deliveryAttempt)
 

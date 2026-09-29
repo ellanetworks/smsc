@@ -57,13 +57,12 @@ type Attempt struct {
 	ResultCode  *uint32 `json:"result_code,omitempty"`
 	VendorID    *uint32 `json:"vendor_id,omitempty"`
 
-	FailureCause      string             `json:"failure_cause,omitempty"`
-	TPFailureCause    string             `json:"tp_failure_cause,omitempty"`
-	AbsentDiagnostic  string             `json:"absent_diagnostic,omitempty"`
-	AbsentDiagnostics *AbsentDiagnostics `json:"absent_diagnostics,omitempty"`
+	FailureCause          string                 `json:"failure_cause,omitempty"`
+	TPFailureCause        string                 `json:"tp_failure_cause,omitempty"`
+	AbsentUserDiagnostics *AbsentUserDiagnostics `json:"absent_user_diagnostics,omitempty"`
 }
 
-type AbsentDiagnostics struct {
+type AbsentUserDiagnostics struct {
 	MME         string `json:"mme,omitempty"`
 	MSC         string `json:"msc,omitempty"`
 	SGSN        string `json:"sgsn,omitempty"`
@@ -277,10 +276,9 @@ func attemptOf(a db.DeliveryAttempt) Attempt {
 		ResultCode:  a.ResultCode,
 		VendorID:    a.VendorID,
 
-		FailureCause:      a.FailureCause,
-		TPFailureCause:    a.TPFailureCause,
-		AbsentDiagnostic:  a.AbsentDiagnostic,
-		AbsentDiagnostics: absentDiagnosticsOf(a.AbsentDiagnostics),
+		FailureCause:          a.FailureCause,
+		TPFailureCause:        a.TPFailureCause,
+		AbsentUserDiagnostics: absentUserDiagnosticsOf(a.AbsentUserDiagnostics),
 	}
 }
 
@@ -411,12 +409,12 @@ func atoiDefault(s string, def int) (int, bool) {
 	return v, err == nil
 }
 
-func absentDiagnosticsOf(d db.AbsentDiagnostics) *AbsentDiagnostics {
-	if d == (db.AbsentDiagnostics{}) {
+func absentUserDiagnosticsOf(d db.AbsentUserDiagnostics) *AbsentUserDiagnostics {
+	if d == (db.AbsentUserDiagnostics{}) {
 		return nil
 	}
 
-	out := AbsentDiagnostics(d)
+	out := AbsentUserDiagnostics(d)
 
 	return &out
 }

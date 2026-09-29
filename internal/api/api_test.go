@@ -256,12 +256,12 @@ func TestListMessageAttempts(t *testing.T) {
 		{
 			MessageID: id, StartedAt: testNow.Add(15 * ms), CompletedAt: testNow.Add(30*time.Second + 15*ms), Step: db.StepDelivery,
 			Node: "mme.example.org", NodeType: db.NodeTypeMME, Outcome: "absent_user",
-			ResultCode: &code, VendorID: &vendor, AbsentDiagnostic: "no_paging_response_msc",
+			ResultCode: &code, VendorID: &vendor, AbsentUserDiagnostics: db.AbsentUserDiagnostics{MME: "no_paging_response_msc"},
 		},
 		{
 			MessageID: id, StartedAt: testNow.Add(time.Minute), CompletedAt: testNow.Add(time.Minute + 9*ms), Step: db.StepRouting,
 			Node: "hss.example.org", Outcome: "absent_user",
-			ResultCode: &code, VendorID: &vendor, AbsentDiagnostics: db.AbsentDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
+			ResultCode: &code, VendorID: &vendor, AbsentUserDiagnostics: db.AbsentUserDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
 		},
 		{
 			MessageID: id, StartedAt: testNow.Add(2 * time.Minute), CompletedAt: testNow.Add(2*time.Minute + 480*ms), Step: db.StepDelivery,
@@ -289,12 +289,12 @@ func TestListMessageAttempts(t *testing.T) {
 		{
 			ID: 2, StartedAt: "2026-09-29T10:00:00.015Z", CompletedAt: "2026-09-29T10:00:30.015Z", Step: "delivery",
 			Node: "mme.example.org", NodeType: "mme", Outcome: "absent_user",
-			ResultCode: &code, VendorID: &vendor, AbsentDiagnostic: "no_paging_response_msc",
+			ResultCode: &code, VendorID: &vendor, AbsentUserDiagnostics: &api.AbsentUserDiagnostics{MME: "no_paging_response_msc"},
 		},
 		{
 			ID: 3, StartedAt: "2026-09-29T10:01:00.000Z", CompletedAt: "2026-09-29T10:01:00.009Z", Step: "routing",
 			Node: "hss.example.org", Outcome: "absent_user",
-			ResultCode: &code, VendorID: &vendor, AbsentDiagnostics: &api.AbsentDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
+			ResultCode: &code, VendorID: &vendor, AbsentUserDiagnostics: &api.AbsentUserDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
 		},
 		{
 			ID: 4, StartedAt: "2026-09-29T10:02:00.000Z", CompletedAt: "2026-09-29T10:02:00.480Z", Step: "delivery",
@@ -307,8 +307,9 @@ func TestListMessageAttempts(t *testing.T) {
 		t.Fatalf("attempts = %+v", got)
 	}
 
-	if !strings.Contains(string(result), `"absent_diagnostics":{"smsf_3gpp":"ms_purged_non_gprs"}`) ||
-		strings.Count(string(result), `"absent_diagnostics"`) != 1 || strings.Count(string(result), `"failure_cause"`) != 1 ||
+	if !strings.Contains(string(result), `"absent_user_diagnostics":{"mme":"no_paging_response_msc"}`) ||
+		!strings.Contains(string(result), `"absent_user_diagnostics":{"smsf_3gpp":"ms_purged_non_gprs"}`) ||
+		strings.Count(string(result), `"absent_user_diagnostics"`) != 2 || strings.Count(string(result), `"failure_cause"`) != 1 ||
 		strings.Count(string(result), `"node_type"`) != 2 {
 		t.Fatalf("attempt details are not omitted when absent: %s", result)
 	}

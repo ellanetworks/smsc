@@ -1104,7 +1104,7 @@ func TestAPIShowsAbsentUserRetry(t *testing.T) {
 	a := attempts[0]
 	if m.Status != "pending" || m.NextAttemptAt == "" || a.Step != "routing" || a.Node != coreHost || a.Outcome != "absent_user" ||
 		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorAbsentUser || a.VendorID == nil || *a.VendorID != tgpp.VendorID ||
-		a.AbsentDiagnostics == nil || *a.AbsentDiagnostics != (api.AbsentDiagnostics{MME: "imsi_detached"}) {
+		a.AbsentUserDiagnostics == nil || *a.AbsentUserDiagnostics != (api.AbsentUserDiagnostics{MME: "imsi_detached"}) {
 		t.Fatalf("message = %+v, attempts = %+v", m, attempts)
 	}
 }
@@ -1137,7 +1137,7 @@ func TestAPIShowsDeliveryFailureDetails(t *testing.T) {
 	if m.Status != "pending" || a.Step != "delivery" || a.NodeType != "mme" || a.Outcome != "sm_delivery_failure" ||
 		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorSMDeliveryFailure ||
 		a.FailureCause != "equipment_protocol_error" || a.TPFailureCause != "usim_sms_storage_full" ||
-		a.AbsentDiagnostic != "" || a.AbsentDiagnostics != nil {
+		a.AbsentUserDiagnostics != nil {
 		t.Fatalf("message = %+v, attempts = %+v", m, attempts)
 	}
 }
