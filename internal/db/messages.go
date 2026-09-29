@@ -18,6 +18,13 @@ const (
 	StatusExpired   MessageStatus = "expired"
 )
 
+type MessageOrigin string
+
+const (
+	OriginMobile MessageOrigin = "mobile"
+	OriginAPI    MessageOrigin = "api"
+)
+
 var ErrDuplicate = errors.New("duplicate message")
 
 type Address struct {
@@ -31,6 +38,7 @@ type Message struct {
 	Originator         Address
 	Recipient          Address
 	MSISDN             string
+	Origin             MessageOrigin
 	MessageReference   uint8
 	ProtocolIdentifier uint8
 	TPDU               []byte
@@ -47,6 +55,7 @@ type NewMessage struct {
 	Originator         Address
 	Recipient          Address
 	MSISDN             string
+	Origin             MessageOrigin
 	MessageReference   uint8
 	ProtocolIdentifier uint8
 	RejectDuplicates   bool
@@ -58,13 +67,41 @@ type NewMessage struct {
 }
 
 func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
+	ids, err := d.CreateMessages(ctx, []NewMessage{m})
+	if err != nil {
+		return 0, err
+	}
+
+	return ids[0], nil
+}
+
+func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) ([]int64, error) {
 	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("create message: %w", err)
+		return nil, fmt.Errorf("create message: %w", err)
 	}
 
 	defer func() { _ = tx.Rollback() }()
 
+	ids := make([]int64, 0, len(messages))
+
+	for _, m := range messages {
+		id, err := createMessage(ctx, tx, m)
+		if err != nil {
+			return nil, err
+		}
+
+		ids = append(ids, id)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("create message: %w", err)
+	}
+
+	return ids, nil
+}
+
+func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error) {
 	if m.RejectDuplicates {
 		duplicate, err := isDuplicate(ctx, tx, m)
 		if err != nil {
@@ -76,7 +113,10 @@ func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
 		}
 	}
 
-	var id int64
+	var (
+		id  int64
+		err error
+	)
 
 	if m.Replace {
 		id, err = replacePending(ctx, tx, m)
@@ -90,10 +130,6 @@ func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("create message: %w", err)
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("create message: %w", err)
 	}
 
 	return id, nil
@@ -128,11 +164,11 @@ func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO messages (originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi,
-		msisdn, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, expires_at,
+		msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, expires_at,
 		next_attempt_at, retries, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
-		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN,
+		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.Origin,
 		m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, m.ExpiresAt.UTC().UnixNano(), next, at)
 	if err != nil {
 		return 0, err
@@ -181,9 +217,9 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 	var held int
 
 	err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM messages WHERE originator = ? AND originator_ton = ? AND originator_npi = ?
+		`SELECT COUNT(*) FROM messages WHERE originator = ? AND originator_ton = ? AND originator_npi = ? AND origin = ?
 		AND message_reference = ? AND recipient = ? AND recipient_ton = ? AND recipient_npi = ? AND status = ?`,
-		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, m.MessageReference,
+		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, OriginMobile, m.MessageReference,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, StatusPending).
 		Scan(&held)
 	if err != nil {
@@ -198,8 +234,8 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 
 	err = tx.QueryRowContext(ctx,
 		`SELECT message_reference FROM messages WHERE originator = ? AND originator_ton = ? AND originator_npi = ?
-		ORDER BY id DESC LIMIT 1`,
-		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan).
+		AND origin = ? ORDER BY id DESC LIMIT 1`,
+		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, OriginMobile).
 		Scan(&previous)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -213,7 +249,7 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 }
 
 const messageColumns = `id, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi, msisdn,
-	message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, expires_at, next_attempt_at,
+	origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, expires_at, next_attempt_at,
 	retries, updated_at`
 
 type rowScanner interface {
@@ -227,7 +263,7 @@ func scanMessage(row rowScanner) (Message, error) {
 	)
 
 	err := row.Scan(&m.ID, &m.Originator.Digits, &m.Originator.TypeOfNumber, &m.Originator.NumberingPlan,
-		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN,
+		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN, &m.Origin,
 		&m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status, &m.SingleShot,
 		&submittedAt, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt)
 	if err != nil {
@@ -253,6 +289,66 @@ func (d *DB) GetMessage(ctx context.Context, id int64) (Message, error) {
 	}
 
 	return m, nil
+}
+
+type MessageFilter struct {
+	MSISDN     string
+	Originator string
+	Status     MessageStatus
+}
+
+func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) ([]Message, int, error) {
+	var (
+		where []string
+		args  []any
+	)
+
+	if f.MSISDN != "" {
+		where, args = append(where, "msisdn = ?"), append(args, f.MSISDN)
+	}
+
+	if f.Originator != "" {
+		where, args = append(where, "originator = ?"), append(args, f.Originator)
+	}
+
+	if f.Status != "" {
+		where, args = append(where, "status = ?"), append(args, f.Status)
+	}
+
+	clause := ""
+	if len(where) > 0 {
+		clause = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	var total int
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`+clause, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("list messages: %w", err)
+	}
+
+	rows, err := d.conn.QueryContext(ctx, `SELECT `+messageColumns+` FROM messages`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+		append(args, perPage, (page-1)*perPage)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list messages: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	messages := []Message{}
+
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("list messages: %w", err)
+		}
+
+		messages = append(messages, m)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("list messages: %w", err)
+	}
+
+	return messages, total, nil
 }
 
 func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (Message, bool, error) {

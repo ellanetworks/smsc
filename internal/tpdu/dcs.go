@@ -26,3 +26,14 @@ func isSeptetCoded(dcs byte) bool {
 		return true
 	}
 }
+
+func isUCS2(dcs byte) bool {
+	switch dcs >> 4 {
+	case 0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7:
+		return dcs&0x20 == 0 && (dcs>>2)&0x3 == 0x2
+	case 0xe:
+		return true
+	default:
+		return false
+	}
+}

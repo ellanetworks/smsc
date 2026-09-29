@@ -29,7 +29,7 @@ type Store interface {
 	AlertRecipient(ctx context.Context, msisdn string, now time.Time) ([]string, error)
 	SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error
 	CountPendingFor(ctx context.Context, msisdn string, excludeID int64) (int, error)
-	CreateDeliveryAttempt(ctx context.Context, messageID int64, servingNode string, resultCode uint32, attemptedAt time.Time) (int64, error)
+	CreateDeliveryAttempt(ctx context.Context, a db.DeliveryAttempt) (int64, error)
 }
 
 type Router interface {
@@ -102,7 +102,6 @@ type target struct {
 
 type forwardResult struct {
 	outcome    outcome
-	code       uint32
 	cause      *uint32
 	diagnostic *uint32
 }
@@ -318,6 +317,8 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 		return result{outcome: interrupted}
 	}
 
+	d.record(ctx, log, m.ID, db.StepRouting, "", err)
+
 	if err != nil {
 		log.Info("routing lookup for short message failed", slog.Any("error", err))
 
@@ -466,13 +467,9 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 			break
 		}
 
-		r := d.forward(ctx, imsi, t, deliver, more)
+		r, err := d.forward(ctx, imsi, t, deliver, more)
 
-		if _, err := d.Store.CreateDeliveryAttempt(ctx, m.ID, t.name, r.code, d.Now()); err != nil {
-			log.Error("failed to record delivery attempt", slog.Any("error", err))
-		}
-
-		log.Info("short message delivery attempt", slog.String("serving_node", t.name), slog.Uint64("result_code", uint64(r.code)))
+		d.record(ctx, log, m.ID, db.StepDelivery, t.name, err)
 
 		if r.cause != nil {
 			a.outcomes = append(a.outcomes, nodeOutcome{kind: t.kind, source: t.source, cause: *r.cause, diagnostic: r.diagnostic})
@@ -675,10 +672,10 @@ func deliveryTargets(n s6c.ServingNodes) []target {
 	return targets
 }
 
-func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver func(bool) ([]byte, error), more bool) forwardResult {
+func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver func(bool) ([]byte, error), more bool) (forwardResult, error) {
 	smRPUI, err := deliver(more)
 	if err != nil {
-		return forwardResult{outcome: permanent}
+		return forwardResult{outcome: permanent}, err
 	}
 
 	tfr, err := sgd.NewMTForwardShortMessageRequest(tgpp.Envelope{
@@ -697,7 +694,7 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 		DeliveryStartTime:    d.Now(),
 	})
 	if err != nil {
-		return forwardResult{outcome: permanent}
+		return forwardResult{outcome: permanent}, err
 	}
 
 	attempt, cancel := context.WithTimeout(ctx, d.AttemptTimeout)
@@ -705,16 +702,17 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 
 	ans, err := d.Sender.Do(attempt, t.name, tfr)
 	if err != nil {
-		return forwardResult{outcome: temporary}
+		return forwardResult{outcome: temporary}, err
 	}
 
-	return classifyForwardAnswer(ans)
+	_, err = sgd.ParseMTForwardShortMessageAnswer(ans)
+
+	return classifyForwardAnswer(err), err
 }
 
-func classifyForwardAnswer(ans *diameter.Message) forwardResult {
-	_, err := sgd.ParseMTForwardShortMessageAnswer(ans)
+func classifyForwardAnswer(err error) forwardResult {
 	if err == nil {
-		return forwardResult{outcome: delivered, code: diameter.ResultSuccess, cause: ptr(s6c.DeliveryCauseSuccessfulTransfer)}
+		return forwardResult{outcome: delivered, cause: ptr(s6c.DeliveryCauseSuccessfulTransfer)}
 	}
 
 	var re *sgd.ResultError
@@ -726,36 +724,36 @@ func classifyForwardAnswer(ans *diameter.Message) forwardResult {
 
 	if !re.Experimental {
 		if code >= 5000 && code < 6000 {
-			return forwardResult{outcome: targetFailed, code: code}
+			return forwardResult{outcome: targetFailed}
 		}
 
-		return forwardResult{outcome: temporary, code: code}
+		return forwardResult{outcome: temporary}
 	}
 
 	if re.VendorID != tgpp.VendorID {
-		return forwardResult{outcome: temporary, code: code}
+		return forwardResult{outcome: temporary}
 	}
 
 	switch code {
 	case tgpp.ResultErrorUserUnknown:
-		return forwardResult{outcome: targetFailed, code: code, cause: ptr(s6c.DeliveryCauseAbsentUser)}
+		return forwardResult{outcome: targetFailed, cause: ptr(s6c.DeliveryCauseAbsentUser)}
 	case tgpp.ResultErrorAbsentUser:
-		return forwardResult{outcome: temporary, code: code, cause: ptr(s6c.DeliveryCauseAbsentUser), diagnostic: re.AbsentUserDiagnostic}
+		return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseAbsentUser), diagnostic: re.AbsentUserDiagnostic}
 	case tgpp.ResultErrorIllegalUser, tgpp.ResultErrorIllegalEquipment:
-		return forwardResult{outcome: permanent, code: code}
+		return forwardResult{outcome: permanent}
 	case tgpp.ResultErrorSMDeliveryFailure:
 		cause := re.DeliveryFailureCause
 
 		switch {
 		case cause != nil && (*cause == sgd.CauseEquipmentProtocolError || *cause == sgd.CauseEquipmentNotSMEquipped):
-			return forwardResult{outcome: permanent, code: code}
+			return forwardResult{outcome: permanent}
 		case cause != nil && *cause == sgd.CauseMemoryCapacityExceeded:
-			return forwardResult{outcome: temporary, code: code, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded)}
+			return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded)}
 		default:
-			return forwardResult{outcome: temporary, code: code}
+			return forwardResult{outcome: temporary}
 		}
 	default:
-		return forwardResult{outcome: temporary, code: code}
+		return forwardResult{outcome: temporary}
 	}
 }
 

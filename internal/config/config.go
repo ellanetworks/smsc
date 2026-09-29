@@ -16,6 +16,7 @@ const (
 	defaultValidity       = 7 * 24 * time.Hour
 	defaultAttemptTimeout = 30 * time.Second
 	defaultConcurrency    = 20
+	defaultAPIPort        = 5010
 )
 
 var defaultRetryIntervals = []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour}
@@ -27,6 +28,12 @@ type Config struct {
 	HSS           HSS           `yaml:"hss"`
 	Numbering     Numbering     `yaml:"numbering"`
 	Delivery      Delivery      `yaml:"delivery"`
+	API           API           `yaml:"api"`
+}
+
+type API struct {
+	Address netip.Addr `yaml:"address"`
+	Port    int        `yaml:"port"`
 }
 
 type Numbering struct {
@@ -78,6 +85,10 @@ func Load(path string) (Config, error) {
 
 	if cfg.Diameter.Port == 0 {
 		cfg.Diameter.Port = defaultDiameterPort
+	}
+
+	if cfg.API.Port == 0 {
+		cfg.API.Port = defaultAPIPort
 	}
 
 	if cfg.Delivery.DefaultValidity == 0 {
@@ -133,6 +144,10 @@ func (c Config) validate() error {
 		return errors.New("delivery.attempt_timeout must be at least 1s")
 	case c.Delivery.Concurrency < 1:
 		return errors.New("delivery.concurrency must be at least 1")
+	case !c.API.Address.IsValid():
+		return errors.New("api.address is required")
+	case c.API.Port < 1 || c.API.Port > 65535:
+		return fmt.Errorf("api.port %d is out of range", c.API.Port)
 	}
 
 	for _, network := range c.HSS.AllowedNetworks {

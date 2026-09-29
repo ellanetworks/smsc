@@ -27,7 +27,7 @@ const submitTPDU = "11" + "07" + "0b91" + "5155210300f2" + "00" + "00" + "aa" + 
 type fakeStore struct {
 	mu           sync.Mutex
 	messages     map[int64]*db.Message
-	attempts     []attempt
+	attempts     []db.DeliveryAttempt
 	pending      int
 	holds        []hold
 	alerts       []string
@@ -36,9 +36,9 @@ type fakeStore struct {
 }
 
 type attempt struct {
-	messageID int64
-	node      string
-	code      uint32
+	step    db.AttemptStep
+	node    string
+	outcome string
 }
 
 type hold struct {
@@ -124,13 +124,28 @@ func (s *fakeStore) CountPendingFor(context.Context, string, int64) (int, error)
 	return s.pending, nil
 }
 
-func (s *fakeStore) CreateDeliveryAttempt(_ context.Context, id int64, node string, code uint32, _ time.Time) (int64, error) {
+func (s *fakeStore) CreateDeliveryAttempt(_ context.Context, a db.DeliveryAttempt) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.attempts = append(s.attempts, attempt{id, node, code})
+	s.attempts = append(s.attempts, a)
 
 	return int64(len(s.attempts)), nil
+}
+
+func (s *fakeStore) recorded(step db.AttemptStep) []attempt {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var out []attempt
+
+	for _, a := range s.attempts {
+		if step == "" || a.Step == step {
+			out = append(out, attempt{a.Step, a.Node, a.Outcome})
+		}
+	}
+
+	return out
 }
 
 type fakeRouter struct {
@@ -303,8 +318,13 @@ func TestDeliverViaMME(t *testing.T) {
 		t.Fatalf("routing requests = %+v", router.requests)
 	}
 
-	if len(store.attempts) != 1 || store.attempts[0] != (attempt{1, "mme.example.org", diameter.ResultSuccess}) {
-		t.Fatalf("attempts = %+v", store.attempts)
+	wantAttempts := []attempt{{db.StepRouting, "", "success"}, {db.StepDelivery, "mme.example.org", "success"}}
+	if got := store.recorded(""); !reflect.DeepEqual(got, wantAttempts) {
+		t.Fatalf("attempts = %+v, want %+v", got, wantAttempts)
+	}
+
+	if a := store.attempts[1]; a.MessageID != 1 || !a.AttemptedAt.Equal(testNow) || a.ResultCode == nil || *a.ResultCode != diameter.ResultSuccess || a.VendorID != nil {
+		t.Fatalf("attempt = %+v", a)
 	}
 
 	tfr := sender.requests[0]
@@ -388,8 +408,8 @@ func TestDeliverFallsBackToAdditionalNode(t *testing.T) {
 		}
 	}
 
-	if store.attempts[0].code != tgpp.ResultErrorAbsentUser || store.attempts[1].code != diameter.ResultSuccess {
-		t.Fatalf("attempts = %+v", store.attempts)
+	if got := store.recorded(db.StepDelivery); len(got) != 2 || got[0].outcome != "absent_user" || got[1].outcome != "success" {
+		t.Fatalf("attempts = %+v", got)
 	}
 }
 
@@ -550,6 +570,7 @@ func TestRunDeliversStoredMessages(t *testing.T) {
 		Originator:  db.Address{Digits: "15551230001", TypeOfNumber: 1, NumberingPlan: 1},
 		Recipient:   db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1},
 		MSISDN:      "15551230002",
+		Origin:      db.OriginMobile,
 		TPDU:        mustHex(t, submitTPDU),
 		SubmittedAt: time.Now(),
 		ExpiresAt:   time.Now().Add(time.Hour),
@@ -983,6 +1004,7 @@ func TestRunDeliversOtherRecipientsWhileOneIsStuck(t *testing.T) {
 			Originator:  db.Address{Digits: "15551230001", TypeOfNumber: 1, NumberingPlan: 1},
 			Recipient:   db.Address{Digits: msisdn, TypeOfNumber: 1, NumberingPlan: 1},
 			MSISDN:      msisdn,
+			Origin:      db.OriginMobile,
 			TPDU:        mustHex(t, submitTPDU),
 			SubmittedAt: time.Now(),
 			ExpiresAt:   time.Now().Add(time.Hour),
@@ -1050,7 +1072,7 @@ func TestShutdownAfterRoutingSendsNoTFR(t *testing.T) {
 
 	newDeliverer(store, router, sender).Run(ctx)
 
-	if len(sender.requests) != 0 || len(store.attempts) != 0 {
+	if len(sender.requests) != 0 || len(store.recorded(db.StepDelivery)) != 0 {
 		t.Fatalf("TFRs = %d, attempts = %+v; no TFR may start after shutdown", len(sender.requests), store.attempts)
 	}
 

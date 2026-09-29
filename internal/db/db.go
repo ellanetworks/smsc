@@ -25,6 +25,7 @@ var migrations = []string{
 		recipient_ton INTEGER NOT NULL,
 		recipient_npi INTEGER NOT NULL,
 		msisdn TEXT NOT NULL,
+		origin TEXT NOT NULL CHECK (origin IN ('mobile', 'api')),
 		message_reference INTEGER NOT NULL,
 		protocol_identifier INTEGER NOT NULL,
 		tpdu BLOB NOT NULL,
@@ -43,8 +44,11 @@ var migrations = []string{
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
 		attempted_at INTEGER NOT NULL,
-		serving_node TEXT NOT NULL,
-		result_code INTEGER NOT NULL
+		step TEXT NOT NULL CHECK (step IN ('routing', 'delivery')),
+		node TEXT NOT NULL,
+		outcome TEXT NOT NULL,
+		result_code INTEGER,
+		vendor_id INTEGER
 	);
 	CREATE INDEX delivery_attempts_message_id ON delivery_attempts (message_id);
 	CREATE TABLE recipients (

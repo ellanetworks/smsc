@@ -115,6 +115,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 			NumberingPlan: submit.Destination.NumberingPlan,
 		},
 		MSISDN:             recipient,
+		Origin:             db.OriginMobile,
 		MessageReference:   submit.MessageReference,
 		ProtocolIdentifier: submit.ProtocolIdentifier,
 		RejectDuplicates:   submit.RejectDuplicates,
