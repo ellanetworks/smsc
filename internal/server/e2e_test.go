@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -70,9 +70,14 @@ type deliveryReport struct {
 }
 
 type fakeCore struct {
-	t    *testing.T
-	node *diameter.Node
-	addr *sctp.SCTPAddr
+	t     *testing.T
+	host  string
+	realm string
+	node  *diameter.Node
+
+	busy    atomic.Bool
+	dropSRR *atomic.Bool
+	busied  atomic.Int32
 
 	mu          sync.Mutex
 	subscribers map[string]subscriber
@@ -105,10 +110,24 @@ func discardLogger() *slog.Logger {
 
 func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
 	t.Helper()
+
+	return newNamedFakeCore(t, coreHost, subscribers...)
+}
+
+func newNamedFakeCore(t *testing.T, host string, subscribers ...subscriber) *fakeCore {
+	t.Helper()
+
+	return newRealmFakeCore(t, host, realm, subscribers...)
+}
+
+func newRealmFakeCore(t *testing.T, host, originRealm string, subscribers ...subscriber) *fakeCore {
+	t.Helper()
 	skipIfNoSCTP(t)
 
 	c := &fakeCore{
 		t:           t,
+		host:        host,
+		realm:       originRealm,
 		subscribers: make(map[string]subscriber),
 		absent:      make(map[string]bool),
 		mwdStatus:   make(map[string]uint32),
@@ -120,15 +139,10 @@ func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
 
 	node, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{
-			OriginHost:      coreHost,
-			OriginRealm:     realm,
+			OriginHost:      host,
+			OriginRealm:     originRealm,
 			HostIPAddresses: []netip.Addr{loopback},
 			ProductName:     "fake-core",
-		},
-		AcceptUnknownPeers: true,
-		UnknownPeerApplications: []diameter.Application{
-			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
-			{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
 		},
 		Handler: diameter.HandlerFunc(c.serve),
 		Logger:  discardLogger(),
@@ -138,17 +152,6 @@ func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
 	}
 
 	c.node = node
-
-	var lc sctp.ListenConfig
-
-	ln, err := lc.Listen(context.Background(), &sctp.SCTPAddr{IPAddrs: []net.IPAddr{{IP: loopback.AsSlice()}}})
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-
-	go func() { _ = c.node.Serve(diameter.NewSCTPListener(ln, discardLogger())) }()
-
-	c.addr = ln.Addr().(*sctp.SCTPAddr)
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -160,10 +163,10 @@ func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
 	return c
 }
 
-func (c *fakeCore) serve(_ context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
+func (c *fakeCore) serve(ctx context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
 	switch req.CommandCode {
 	case s6c.CommandSendRoutingInfoForSM:
-		return c.sendRoutingInfo(req)
+		return c.routeOrFail(ctx, req)
 	case sgd.CommandMTForwardShortMessage:
 		return c.forwardShortMessage(req)
 	case s6c.CommandReportSMDeliveryStatus:
@@ -185,6 +188,27 @@ func (c *fakeCore) experimental(req *diameter.Message, resultCode uint32) *diame
 	ans.AVPs = append(ans.AVPs, authSessionState())
 
 	return ans
+}
+
+func (c *fakeCore) routeOrFail(ctx context.Context, req *diameter.Message) *diameter.Message {
+	if c.dropSRR != nil && c.dropSRR.CompareAndSwap(true, false) {
+		go func() { _ = c.node.SetPeers(nil) }()
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(waitTimeout):
+		}
+
+		return nil
+	}
+
+	if c.busy.Load() {
+		c.busied.Add(1)
+
+		return c.answer(req, diameter.ResultTooBusy)
+	}
+
+	return c.sendRoutingInfo(req)
 }
 
 func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
@@ -213,8 +237,8 @@ func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
 	ans.AVPs = append(ans.AVPs,
 		diameter.UTF8String(diameter.AVPUserName, diameter.AVPFlagMandatory, 0, sub.imsi),
 		diameter.Grouped(avpServingNode, diameter.AVPFlagMandatory, tgpp.VendorID,
-			diameter.UTF8String(avpMMEName, diameter.AVPFlagMandatory, tgpp.VendorID, coreHost),
-			diameter.UTF8String(avpMMERealm, 0, tgpp.VendorID, realm),
+			diameter.UTF8String(avpMMEName, diameter.AVPFlagMandatory, tgpp.VendorID, c.host),
+			diameter.UTF8String(avpMMERealm, 0, tgpp.VendorID, c.realm),
 			diameter.OctetString(tgpp.AVPMMENumberForMTSMS, 0, tgpp.VendorID, mustTBCD(c.t, mmeNumber)),
 		),
 		diameter.Unsigned32(avpMWDStatus, diameter.AVPFlagMandatory, tgpp.VendorID, c.mwdStatus[msisdn]),
@@ -343,8 +367,8 @@ func (c *fakeCore) request(commandCode, applicationID uint32, avps ...diameter.A
 		AVPs: append([]diameter.AVP{
 			diameter.UTF8String(diameter.AVPSessionID, diameter.AVPFlagMandatory, 0, c.node.NewSessionID()),
 			authSessionState(),
-			diameter.UTF8String(diameter.AVPOriginHost, diameter.AVPFlagMandatory, 0, coreHost),
-			diameter.UTF8String(diameter.AVPOriginRealm, diameter.AVPFlagMandatory, 0, realm),
+			diameter.UTF8String(diameter.AVPOriginHost, diameter.AVPFlagMandatory, 0, c.host),
+			diameter.UTF8String(diameter.AVPOriginRealm, diameter.AVPFlagMandatory, 0, c.realm),
 			diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, smscHost),
 			diameter.UTF8String(diameter.AVPDestinationRealm, diameter.AVPFlagMandatory, 0, realm),
 		}, avps...),
@@ -363,6 +387,30 @@ func (c *fakeCore) do(req *diameter.Message) *diameter.Message {
 	}
 
 	return ans
+}
+
+func (c *fakeCore) connect(s *smsc) {
+	c.t.Helper()
+
+	addr, ok := s.server.Addr().(*sctp.SCTPAddr)
+	if !ok {
+		c.t.Fatalf("unexpected SMSC address %v", s.server.Addr())
+	}
+
+	if err := c.node.SetPeers([]diameter.Peer{{
+		ID:        "smsc",
+		Host:      smscHost,
+		Addresses: []netip.Addr{loopback},
+		Port:      uint16(addr.Port),
+		Applications: []diameter.Application{
+			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
+			{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
+		},
+	}}); err != nil {
+		c.t.Fatalf("SetPeers: %v", err)
+	}
+
+	c.waitForSMSC()
 }
 
 func (c *fakeCore) waitForSMSC() {
@@ -483,14 +531,14 @@ type smsc struct {
 	store  *db.DB
 }
 
-func testConfig(t *testing.T, core *fakeCore, dbPath string) config.Config {
+func testConfig(t *testing.T, dbPath string) config.Config {
 	t.Helper()
 
 	return config.Config{
 		DB:            config.DB{Path: dbPath},
 		ServiceCentre: config.ServiceCentre{Address: serviceCentreAddress},
 		Diameter:      config.Diameter{OriginHost: smscHost, OriginRealm: realm, Address: loopback},
-		HSS:           config.HSS{Host: coreHost, Realm: realm, Address: loopback, Port: core.addr.Port},
+		HSS:           config.HSS{Realm: realm},
 		Numbering:     config.Numbering{CountryCode: "1"},
 		Delivery: config.Delivery{
 			DefaultValidity: time.Hour,
@@ -547,8 +595,8 @@ func newSMSC(t *testing.T, subscribers ...subscriber) (*fakeCore, *smsc) {
 	t.Helper()
 
 	core := newFakeCore(t, subscribers...)
-	s := startSMSC(t, testConfig(t, core, filepath.Join(t.TempDir(), "smsc.db")))
-	core.waitForSMSC()
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	core.connect(s)
 
 	return core, s
 }
@@ -690,14 +738,14 @@ func TestStuckRecipientDoesNotBlockOthers(t *testing.T) {
 
 func TestPendingMessageIsDeliveredAfterRestart(t *testing.T) {
 	core := newFakeCore(t, alice, bob)
-	cfg := testConfig(t, core, filepath.Join(t.TempDir(), "smsc.db"))
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
 	cfg.Delivery.RetryIntervals = []time.Duration{500 * time.Millisecond}
 
 	core.setAbsent(bob.msisdn, true)
 
 	first := startSMSC(t, cfg)
 
-	core.waitForSMSC()
+	core.connect(first)
 
 	core.submit(alice, bob, "while you were away")
 
@@ -713,6 +761,8 @@ func TestPendingMessageIsDeliveredAfterRestart(t *testing.T) {
 
 	second := startSMSC(t, cfg)
 
+	core.connect(second)
+
 	second.waitForStatus(t, 1, db.StatusDelivered)
 
 	if got := core.deliveredTo(bob.imsi); len(got) != 1 || !bytes.HasSuffix(got[0].tpdu, []byte("while you were away")) {
@@ -721,10 +771,164 @@ func TestPendingMessageIsDeliveredAfterRestart(t *testing.T) {
 }
 
 func TestServerStartTwice(t *testing.T) {
-	core := newFakeCore(t)
-	s := startSMSC(t, testConfig(t, core, filepath.Join(t.TempDir(), "smsc.db")))
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
 
 	if err := s.server.Start(context.Background()); !errors.Is(err, server.ErrAlreadyStarted) {
 		t.Fatalf("second Start = %v, want ErrAlreadyStarted", err)
+	}
+}
+
+func TestRoutingFailsOverToAnotherConnectedHSS(t *testing.T) {
+	first := newNamedFakeCore(t, "node1.example.org", alice, bob)
+	second := newNamedFakeCore(t, "node2.example.org", alice, bob)
+
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	first.connect(s)
+	second.connect(s)
+
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+	defer cancel()
+
+	if err := first.node.Shutdown(ctx); err != nil {
+		t.Fatalf("shut down the first node: %v", err)
+	}
+
+	if rc := second.submit(alice, bob, "hello over node 2"); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	s.waitForStatus(t, 1, db.StatusDelivered)
+
+	if len(first.routingRequests()) != 0 {
+		t.Fatalf("the stopped node received %d routing requests", len(first.routingRequests()))
+	}
+
+	if got := second.deliveredTo(bob.imsi); len(got) != 1 {
+		t.Fatalf("delivered via node 2 = %+v", got)
+	}
+}
+
+func TestRoutingSpreadsAcrossConnectedHSSs(t *testing.T) {
+	first := newNamedFakeCore(t, "node1.example.org", alice, bob)
+	second := newNamedFakeCore(t, "node2.example.org", alice, bob)
+
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	first.connect(s)
+	second.connect(s)
+
+	for i := range 4 {
+		if rc := first.submit(alice, bob, "hello"); rc != diameter.ResultSuccess {
+			t.Fatalf("OFA %d result = %d", i, rc)
+		}
+
+		s.waitForStatus(t, int64(i+1), db.StatusDelivered)
+	}
+
+	if len(first.routingRequests()) == 0 || len(second.routingRequests()) == 0 {
+		t.Fatalf("routing requests: node 1 = %d, node 2 = %d; want both used",
+			len(first.routingRequests()), len(second.routingRequests()))
+	}
+}
+
+func TestRoutingFailsOverWhenAnHSSIsTooBusy(t *testing.T) {
+	first := newNamedFakeCore(t, "node1.example.org", alice, bob)
+	second := newNamedFakeCore(t, "node2.example.org", alice, bob)
+
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	first.connect(s)
+	second.connect(s)
+
+	first.busy.Store(true)
+
+	for i := range 2 {
+		if rc := second.submit(alice, bob, "hello"); rc != diameter.ResultSuccess {
+			t.Fatalf("OFA %d result = %d", i, rc)
+		}
+
+		s.waitForStatus(t, int64(i+1), db.StatusDelivered)
+	}
+
+	if first.busied.Load() == 0 {
+		t.Fatal("the busy node was never tried; the test did not exercise failover")
+	}
+
+	if got := second.routingRequests(); len(got) != 2 {
+		t.Fatalf("routing requests on node 2 = %d, want 2", len(got))
+	}
+}
+
+func TestRoutingFailsOverWhenAnHSSDropsTheRequest(t *testing.T) {
+	var drop atomic.Bool
+
+	first := newNamedFakeCore(t, "node1.example.org", alice, bob)
+	second := newNamedFakeCore(t, "node2.example.org", alice, bob)
+	first.dropSRR, second.dropSRR = &drop, &drop
+
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	first.connect(s)
+	second.connect(s)
+
+	drop.Store(true)
+
+	if rc := first.submit(alice, bob, "hello"); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	s.waitForStatus(t, 1, db.StatusDelivered)
+
+	if drop.Load() {
+		t.Fatal("no node dropped the routing request; the test did not exercise failover")
+	}
+
+	if m, err := s.store.GetMessage(context.Background(), 1); err != nil || m.Retries != 0 {
+		t.Fatalf("message = %+v, %v; failover must happen within the attempt", m, err)
+	}
+}
+
+func TestRoutingWaitsForAnHSSToConnect(t *testing.T) {
+	mme := newRealmFakeCore(t, "mme.visited.example.net", "visited.example.net", alice, bob)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	mme.connect(s)
+
+	if rc := mme.submit(alice, bob, "hello"); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if got := mme.routingRequests(); len(got) != 0 {
+		t.Fatalf("routing requests to a peer outside the HSS realm = %v", got)
+	}
+
+	hss := newFakeCore(t, alice, bob)
+	hss.connect(s)
+
+	s.waitForStatus(t, 1, db.StatusDelivered)
+
+	if m, err := s.store.GetMessage(context.Background(), 1); err != nil || m.Retries != 0 {
+		t.Fatalf("message = %+v, %v; waiting for the HSS must not use up a retry", m, err)
+	}
+}
+
+func TestRoutingSkipsHSSOutsideAllowedNetworks(t *testing.T) {
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
+	cfg.HSS.AllowedNetworks = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	cfg.Delivery.AttemptTimeout = time.Second
+
+	core := newFakeCore(t, alice, bob)
+	s := startSMSC(t, cfg)
+	core.connect(s)
+
+	if rc := core.submit(alice, bob, "hello"); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	eventually(t, "the routing lookup to time out", func() bool {
+		m, err := s.store.GetMessage(context.Background(), 1)
+		return err == nil && m.Retries == 1
+	})
+
+	if got := core.routingRequests(); len(got) != 0 {
+		t.Fatalf("routing requests to an HSS outside the allowed networks = %v", got)
 	}
 }

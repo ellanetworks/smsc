@@ -51,10 +51,8 @@ type ServiceCentre struct {
 }
 
 type HSS struct {
-	Host    string     `yaml:"host"`
-	Realm   string     `yaml:"realm"`
-	Address netip.Addr `yaml:"address"`
-	Port    int        `yaml:"port"`
+	Realm           string         `yaml:"realm"`
+	AllowedNetworks []netip.Prefix `yaml:"allowed_networks"`
 }
 
 type Diameter struct {
@@ -80,10 +78,6 @@ func Load(path string) (Config, error) {
 
 	if cfg.Diameter.Port == 0 {
 		cfg.Diameter.Port = defaultDiameterPort
-	}
-
-	if cfg.HSS.Port == 0 {
-		cfg.HSS.Port = defaultDiameterPort
 	}
 
 	if cfg.Delivery.DefaultValidity == 0 {
@@ -125,14 +119,8 @@ func (c Config) validate() error {
 		return errors.New("diameter.address must be a specific address, not 0.0.0.0 or ::, since it is advertised to peers")
 	case c.Diameter.Port < 1 || c.Diameter.Port > 65535:
 		return fmt.Errorf("diameter.port %d is out of range", c.Diameter.Port)
-	case c.HSS.Host == "":
-		return errors.New("hss.host is required")
 	case c.HSS.Realm == "":
 		return errors.New("hss.realm is required")
-	case !c.HSS.Address.IsValid() || c.HSS.Address.IsUnspecified():
-		return errors.New("hss.address must be a specific IP address")
-	case c.HSS.Port < 1 || c.HSS.Port > 65535:
-		return fmt.Errorf("hss.port %d is out of range", c.HSS.Port)
 	case !isDigits(c.Numbering.CountryCode) || len(c.Numbering.CountryCode) > 3:
 		return errors.New("numbering.country_code must be 1 to 3 digits")
 	case c.Numbering.NationalPrefix != "" && !isDigits(c.Numbering.NationalPrefix):
@@ -145,6 +133,12 @@ func (c Config) validate() error {
 		return errors.New("delivery.attempt_timeout must be at least 1s")
 	case c.Delivery.Concurrency < 1:
 		return errors.New("delivery.concurrency must be at least 1")
+	}
+
+	for _, network := range c.HSS.AllowedNetworks {
+		if !network.IsValid() {
+			return errors.New("hss.allowed_networks must be IP prefixes such as 192.0.2.0/24")
+		}
 	}
 
 	for _, interval := range c.Delivery.RetryIntervals {

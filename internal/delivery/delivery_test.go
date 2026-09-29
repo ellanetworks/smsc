@@ -1058,3 +1058,45 @@ func TestShutdownAfterRoutingSendsNoTFR(t *testing.T) {
 		t.Fatalf("message = %+v; an interrupted delivery must leave the message untouched", m)
 	}
 }
+
+type waitingRouter struct {
+	*fakeRouter
+	waiting chan struct{}
+}
+
+func (r *waitingRouter) SendRoutingInfoForSM(ctx context.Context, _ s6c.RoutingRequest) (s6c.Routing, error) {
+	close(r.waiting)
+	<-ctx.Done()
+
+	return s6c.Routing{}, ctx.Err()
+}
+
+func TestShutdownInterruptsRoutingLookup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := newFakeStore(pendingMessage(t))
+	router := &waitingRouter{fakeRouter: &fakeRouter{}, waiting: make(chan struct{})}
+	d := newDeliverer(store, router, &fakeSender{})
+	d.AttemptTimeout = time.Hour
+
+	done := make(chan struct{})
+
+	go func() {
+		d.Run(ctx)
+		close(done)
+	}()
+
+	<-router.waiting
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown waited for the routing lookup to time out")
+	}
+
+	if m := store.messages[1]; m.Status != db.StatusPending || m.Retries != 0 || !m.NextAttemptAt.Equal(testNow) {
+		t.Fatalf("message = %+v; an interrupted routing lookup must leave the message untouched", m)
+	}
+}

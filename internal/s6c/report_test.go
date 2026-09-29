@@ -55,9 +55,13 @@ func TestReportSMDeliveryStatusRequest(t *testing.T) {
 	}
 
 	req := f.req
-	if f.peer != "hss.example.org" || req.CommandCode != s6c.CommandReportSMDeliveryStatus || req.ApplicationID != s6c.ApplicationID ||
+	if req.CommandCode != s6c.CommandReportSMDeliveryStatus || req.ApplicationID != s6c.ApplicationID ||
 		req.Flags != diameter.FlagRequest|diameter.FlagProxiable || req.AVPs[0].Code != diameter.AVPSessionID {
-		t.Fatalf("request = %+v to %q", req, f.peer)
+		t.Fatalf("request = %+v", req)
+	}
+
+	if _, ok := req.Find(diameter.AVPDestinationHost, 0); ok {
+		t.Fatal("RDR names a Destination-Host; it must be routed by realm to any connected HSS")
 	}
 
 	ui, ok := req.Find(tgpp.AVPUserIdentifier, tgpp.VendorID)

@@ -20,9 +20,8 @@ diameter:
   address: 192.0.2.10
   port: 3869
 hss:
-  host: hss.example.org
-  realm: example.org
-  address: 192.0.2.20
+  realm: epc.mnc001.mcc001.3gppnetwork.org
+  allowed_networks: [192.0.2.0/24, "2001:db8::/32"]
 numbering:
   country_code: "33"
   national_prefix: "0"
@@ -61,10 +60,8 @@ func TestLoad(t *testing.T) {
 			Port:        3869,
 		},
 		HSS: HSS{
-			Host:    "hss.example.org",
-			Realm:   "example.org",
-			Address: netip.MustParseAddr("192.0.2.20"),
-			Port:    3868,
+			Realm:           "epc.mnc001.mcc001.3gppnetwork.org",
+			AllowedNetworks: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24"), netip.MustParsePrefix("2001:db8::/32")},
 		},
 		Numbering: Numbering{CountryCode: "33", NationalPrefix: "0", InternationalPrefix: "00"},
 		Delivery: Delivery{
@@ -103,10 +100,9 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"unspecified ipv4 address":  {"192.0.2.10", "0.0.0.0"},
 		"unspecified ipv6 address":  {"192.0.2.10", "'::'"},
 		"port out of range":         {"port: 3869", "port: 70000"},
-		"missing hss host":          {"  host: hss.example.org\n", ""},
-		"missing hss realm":         {"  realm: example.org\n", ""},
-		"missing hss address":       {"  address: 192.0.2.20\n", ""},
-		"unspecified hss address":   {"192.0.2.20", "0.0.0.0"},
+		"missing hss realm":         {"  realm: epc.mnc001.mcc001.3gppnetwork.org\n", ""},
+		"retired hss host":          {"hss:\n", "hss:\n  host: hss.example.org\n"},
+		"invalid hss network":       {"192.0.2.0/24", "192.0.2.1"},
 		"missing country code":      {"  country_code: \"33\"\n", ""},
 		"non-digit country code":    {"\"33\"", "\"+33\""},
 		"long country code":         {"\"33\"", "\"3333\""},
@@ -116,7 +112,6 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"short attempt timeout":     {"attempt_timeout: 20s", "attempt_timeout: 100ms"},
 		"negative validity":         {"default_validity: 48h", "default_validity: -1h"},
 		"negative concurrency":      {"concurrency: 5", "concurrency: -1"},
-		"hss port out of range":     {"  address: 192.0.2.20\n", "  address: 192.0.2.20\n  port: 99999\n"},
 		"unknown field":             {"db:\n", "unknown: true\ndb:\n"},
 	}
 
