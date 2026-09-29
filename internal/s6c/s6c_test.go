@@ -95,7 +95,7 @@ func experimentalAnswer(code uint32, extra ...diameter.AVP) *diameter.Message {
 func TestSendRoutingInfoForSMRequest(t *testing.T) {
 	f := &fakeRequester{answer: successAnswer(mmeServingNode(t))}
 
-	if _, err := newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002", SingleAttempt: true}); err != nil {
+	if _, _, err := newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002", SingleAttempt: true}); err != nil {
 		t.Fatalf("SendRoutingInfoForSM: %v", err)
 	}
 
@@ -153,7 +153,7 @@ func TestSendRoutingInfoForSMRequest(t *testing.T) {
 func TestSendRoutingInfoForSMWithoutSingleAttempt(t *testing.T) {
 	f := &fakeRequester{answer: successAnswer(mmeServingNode(t))}
 
-	if _, err := newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"}); err != nil {
+	if _, _, err := newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +180,7 @@ func TestSendRoutingInfoForSMParsesAllServingNodes(t *testing.T) {
 		diameter.Unsigned32(s6c.AVPMWDStatus, diameter.AVPFlagMandatory, tgpp.VendorID, 2),
 	)
 
-	routing, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
+	routing, _, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
 	if err != nil {
 		t.Fatalf("SendRoutingInfoForSM: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestSendRoutingInfoForSMMSCAndIPSMGW(t *testing.T) {
 		diameter.UTF8String(s6c.AVPIPSMGWName, diameter.AVPFlagMandatory, tgpp.VendorID, "ipsmgw.example.org"),
 	))
 
-	routing, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "1"})
+	routing, _, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,11 +230,12 @@ func TestSendRoutingInfoForSMAbsentUser(t *testing.T) {
 	answer := experimentalAnswer(tgpp.ResultErrorAbsentUser,
 		diameter.Unsigned32(s6c.AVPMWDStatus, diameter.AVPFlagMandatory, tgpp.VendorID, 2),
 		diameter.Unsigned32(s6c.AVPMMEAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, 1),
+		diameter.UTF8String(diameter.AVPOriginHost, diameter.AVPFlagMandatory, 0, "hss2.example.org"),
 	)
 
-	_, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
-	if !tgpp.IsExperimental(err, tgpp.ResultErrorAbsentUser) {
-		t.Fatalf("err = %v, want absent user", err)
+	_, hss, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
+	if !tgpp.IsExperimental(err, tgpp.ResultErrorAbsentUser) || hss != "hss2.example.org" {
+		t.Fatalf("err = %v from %q, want absent user from hss2.example.org", err, hss)
 	}
 
 	var re *s6c.ResultError
@@ -299,7 +300,7 @@ func TestSendRoutingInfoForSMFailures(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := newRouter(&fakeRequester{answer: tt.answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
+			_, _, err := newRouter(&fakeRequester{answer: tt.answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
 			if !tt.check(err) {
 				t.Fatalf("err = %v", err)
 			}
@@ -308,14 +309,14 @@ func TestSendRoutingInfoForSMFailures(t *testing.T) {
 }
 
 func TestSendRoutingInfoForSMTransportError(t *testing.T) {
-	_, err := newRouter(&fakeRequester{err: diameter.ErrNotConnected}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
+	_, _, err := newRouter(&fakeRequester{err: diameter.ErrNotConnected}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
 	if !errors.Is(err, diameter.ErrNotConnected) {
 		t.Fatalf("err = %v, want ErrNotConnected", err)
 	}
 }
 
 func TestSendRoutingInfoForSMInvalidMSISDN(t *testing.T) {
-	if _, err := newRouter(&fakeRequester{}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "+1555"}); err == nil {
+	if _, _, err := newRouter(&fakeRequester{}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "+1555"}); err == nil {
 		t.Fatal("expected an error for a non-digit MSISDN")
 	}
 }
@@ -327,7 +328,7 @@ func TestSendRoutingInfoForSMMSCWithMMEWithoutNumber(t *testing.T) {
 		diameter.UTF8String(s6c.AVPMMERealm, 0, tgpp.VendorID, "example.org"),
 	))
 
-	routing, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "1"})
+	routing, _, err := newRouter(&fakeRequester{answer: answer}).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "1"})
 	if err != nil {
 		t.Fatal(err)
 	}

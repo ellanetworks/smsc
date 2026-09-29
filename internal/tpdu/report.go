@@ -26,3 +26,11 @@ func EncodeSubmitReportError(failureCause byte, serviceCentreTimeStamp time.Time
 
 	return append(out, scts...), nil
 }
+
+func DeliverReportFailureCause(b []byte) (byte, bool) {
+	if len(b) < 2 || b[0]&0x3 != mtiDeliver {
+		return 0, false
+	}
+
+	return b[1], true
+}

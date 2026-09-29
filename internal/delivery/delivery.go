@@ -33,7 +33,7 @@ type Store interface {
 }
 
 type Router interface {
-	SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, error)
+	SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (routing s6c.Routing, hss string, err error)
 	ReportSMDeliveryStatus(ctx context.Context, rep s6c.DeliveryReport) (s6c.ReportResult, error)
 }
 
@@ -307,8 +307,9 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 		return result{outcome: expired}
 	}
 
+	started := d.Now()
 	sri, cancel := context.WithTimeout(stop, d.AttemptTimeout)
-	routing, err := d.Router.SendRoutingInfoForSM(sri, s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
+	routing, hss, err := d.Router.SendRoutingInfoForSM(sri, s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
 
 	cancel()
 
@@ -317,7 +318,10 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 		return result{outcome: interrupted}
 	}
 
-	d.record(ctx, log, m.ID, db.StepRouting, "", err)
+	routingAttempt := routingAttemptOf(routing, err)
+	routingAttempt.Step, routingAttempt.Node, routingAttempt.StartedAt = db.StepRouting, hss, started
+
+	d.record(ctx, log, m.ID, routingAttempt)
 
 	if err != nil {
 		log.Info("routing lookup for short message failed", slog.Any("error", err))
@@ -467,9 +471,13 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 			break
 		}
 
+		started := d.Now()
 		r, err := d.forward(ctx, imsi, t, deliver, more)
 
-		d.record(ctx, log, m.ID, db.StepDelivery, t.name, err)
+		deliveryAttempt := attemptOf(err)
+		deliveryAttempt.Step, deliveryAttempt.Node, deliveryAttempt.NodeType, deliveryAttempt.StartedAt = db.StepDelivery, t.name, t.kind.nodeType(), started
+
+		d.record(ctx, log, m.ID, deliveryAttempt)
 
 		if r.cause != nil {
 			a.outcomes = append(a.outcomes, nodeOutcome{kind: t.kind, source: t.source, cause: *r.cause, diagnostic: r.diagnostic})

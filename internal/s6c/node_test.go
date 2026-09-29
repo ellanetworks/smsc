@@ -106,12 +106,13 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 
 	var (
 		routing s6c.Routing
+		hssHost string
 		lastErr error
 	)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		routing, lastErr = router.SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
+		routing, hssHost, lastErr = router.SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
 		if lastErr == nil {
 			break
 		}
@@ -121,6 +122,10 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 
 	if lastErr != nil {
 		t.Fatalf("SendRoutingInfoForSM: %v", lastErr)
+	}
+
+	if hssHost != "hss.example.org" {
+		t.Fatalf("answered by %q", hssHost)
 	}
 
 	if routing.IMSI != "001010000000002" || routing.Serving == nil || routing.Serving.MME == nil || routing.Serving.MME.Name != "mme.example.org" {

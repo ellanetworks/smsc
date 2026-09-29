@@ -135,10 +135,10 @@ func TestCreateMessage(t *testing.T) {
 		Text:          str("hello"),
 		Encoding:      "gsm7",
 		Status:        "pending",
-		CreatedAt:     "2026-09-29T10:00:00Z",
-		UpdatedAt:     "2026-09-29T10:00:00Z",
-		ExpiresAt:     "2026-09-30T10:00:00Z",
-		NextAttemptAt: "2026-09-29T10:00:00Z",
+		CreatedAt:     "2026-09-29T10:00:00.000Z",
+		UpdatedAt:     "2026-09-29T10:00:00.000Z",
+		ExpiresAt:     "2026-09-30T10:00:00.000Z",
+		NextAttemptAt: "2026-09-29T10:00:00.000Z",
 	}}
 
 	if !reflect.DeepEqual(got, want) {
@@ -218,24 +218,15 @@ func TestCreateMessageRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestGetMessageWithAttempts(t *testing.T) {
+func TestGetMessage(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
-	ctx := context.Background()
 
 	id := a.create(t, "+15550001111", "+15551230002", "hello")[0].ID
 
-	code, vendor := uint32(5550), uint32(10415)
-
-	for _, at := range []db.DeliveryAttempt{
-		{MessageID: id, AttemptedAt: testNow, Step: db.StepRouting, Outcome: "success", ResultCode: new(uint32(2001))},
-		{
-			MessageID: id, AttemptedAt: testNow.Add(time.Second), Step: db.StepDelivery, Node: "mme.example.org", Outcome: "absent_user",
-			ResultCode: &code, VendorID: &vendor,
-		},
-	} {
-		if _, err := a.store.CreateDeliveryAttempt(ctx, at); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := a.store.CreateDeliveryAttempt(context.Background(), db.DeliveryAttempt{
+		MessageID: id, StartedAt: testNow, CompletedAt: testNow, Step: db.StepRouting, Outcome: "timeout",
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	status, result, _ := a.do(t, http.MethodGet, "/api/v1/messages/1", "")
@@ -243,19 +234,122 @@ func TestGetMessageWithAttempts(t *testing.T) {
 		t.Fatalf("status = %d", status)
 	}
 
-	got := decode[api.MessageWithAttempts](t, result)
+	if got := decode[api.Message](t, result); got.ID != id || *got.Text != "hello" {
+		t.Fatalf("message = %+v", got)
+	}
+}
+
+func TestListMessageAttempts(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	ctx := context.Background()
+
+	id := a.create(t, "+15550001111", "+15551230002", "hello")[0].ID
+
+	code, failure, vendor := uint32(5550), uint32(5555), uint32(10415)
+	ms := time.Millisecond
+
+	for _, at := range []db.DeliveryAttempt{
+		{
+			MessageID: id, StartedAt: testNow, CompletedAt: testNow.Add(12 * ms), Step: db.StepRouting, Node: "hss.example.org",
+			Outcome: "success", ResultCode: new(uint32(2001)),
+		},
+		{
+			MessageID: id, StartedAt: testNow.Add(15 * ms), CompletedAt: testNow.Add(30*time.Second + 15*ms), Step: db.StepDelivery,
+			Node: "mme.example.org", NodeType: db.NodeTypeMME, Outcome: "absent_user",
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostic: "no_paging_response_msc",
+		},
+		{
+			MessageID: id, StartedAt: testNow.Add(time.Minute), CompletedAt: testNow.Add(time.Minute + 9*ms), Step: db.StepRouting,
+			Node: "hss.example.org", Outcome: "absent_user",
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostics: db.AbsentDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
+		},
+		{
+			MessageID: id, StartedAt: testNow.Add(2 * time.Minute), CompletedAt: testNow.Add(2*time.Minute + 480*ms), Step: db.StepDelivery,
+			Node: "smsf.example.org", NodeType: db.NodeTypeSMSF3GPP, Outcome: "sm_delivery_failure", ResultCode: &failure, VendorID: &vendor,
+			FailureCause: "equipment_protocol_error", TPFailureCause: "usim_sms_storage_full",
+		},
+	} {
+		if _, err := a.store.CreateDeliveryAttempt(ctx, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status, result, _ := a.do(t, http.MethodGet, "/api/v1/messages/1/attempts", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+
+	got := decode[api.ListAttemptsResponse](t, result)
 
 	want := []api.Attempt{
-		{AttemptedAt: "2026-09-29T10:00:00Z", Step: "routing", Outcome: "success", ResultCode: new(uint32(2001))},
-		{AttemptedAt: "2026-09-29T10:00:01Z", Step: "delivery", Node: "mme.example.org", Outcome: "absent_user", ResultCode: &code, VendorID: &vendor},
+		{
+			ID: 1, StartedAt: "2026-09-29T10:00:00.000Z", CompletedAt: "2026-09-29T10:00:00.012Z", Step: "routing",
+			Node: "hss.example.org", Outcome: "success", ResultCode: new(uint32(2001)),
+		},
+		{
+			ID: 2, StartedAt: "2026-09-29T10:00:00.015Z", CompletedAt: "2026-09-29T10:00:30.015Z", Step: "delivery",
+			Node: "mme.example.org", NodeType: "mme", Outcome: "absent_user",
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostic: "no_paging_response_msc",
+		},
+		{
+			ID: 3, StartedAt: "2026-09-29T10:01:00.000Z", CompletedAt: "2026-09-29T10:01:00.009Z", Step: "routing",
+			Node: "hss.example.org", Outcome: "absent_user",
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostics: &api.AbsentDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
+		},
+		{
+			ID: 4, StartedAt: "2026-09-29T10:02:00.000Z", CompletedAt: "2026-09-29T10:02:00.480Z", Step: "delivery",
+			Node: "smsf.example.org", NodeType: "smsf_3gpp", Outcome: "sm_delivery_failure",
+			ResultCode: &failure, VendorID: &vendor, FailureCause: "equipment_protocol_error", TPFailureCause: "usim_sms_storage_full",
+		},
 	}
 
-	if got.ID != id || *got.Text != "hello" || !reflect.DeepEqual(got.Attempts, want) {
-		t.Fatalf("message = %+v, attempts = %+v", got.Message, got.Attempts)
+	if !reflect.DeepEqual(got.Items, want) || got.Page != 1 || got.PerPage != 25 || got.TotalCount != 4 {
+		t.Fatalf("attempts = %+v", got)
 	}
 
-	if !strings.Contains(string(result), `"attempts":[`) {
-		t.Fatalf("attempts missing from %s", result)
+	if !strings.Contains(string(result), `"absent_diagnostics":{"smsf_3gpp":"ms_purged_non_gprs"}`) ||
+		strings.Count(string(result), `"absent_diagnostics"`) != 1 || strings.Count(string(result), `"failure_cause"`) != 1 ||
+		strings.Count(string(result), `"node_type"`) != 2 {
+		t.Fatalf("attempt details are not omitted when absent: %s", result)
+	}
+
+	status, result, _ = a.do(t, http.MethodGet, "/api/v1/messages/1/attempts?page=2&per_page=3", "")
+	if page := decode[api.ListAttemptsResponse](t, result); status != http.StatusOK || len(page.Items) != 1 || page.Items[0].ID != 4 || page.TotalCount != 4 {
+		t.Fatalf("second page = %d %+v", status, page)
+	}
+}
+
+func TestListMessageAttemptsWithoutAttempts(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	a.create(t, "+15550001111", "+15551230002", "hello")
+
+	status, result, _ := a.do(t, http.MethodGet, "/api/v1/messages/1/attempts", "")
+	if got := decode[api.ListAttemptsResponse](t, result); status != http.StatusOK || got.Items == nil || len(got.Items) != 0 || got.TotalCount != 0 {
+		t.Fatalf("status = %d, attempts = %s", status, result)
+	}
+}
+
+func TestListMessageAttemptsErrors(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	a.create(t, "+15550001111", "+15551230002", "hello")
+
+	tests := map[string]struct {
+		path string
+		code int
+	}{
+		"unknown message": {"/api/v1/messages/42/attempts", http.StatusNotFound},
+		"invalid id":      {"/api/v1/messages/abc/attempts", http.StatusBadRequest},
+		"invalid page":    {"/api/v1/messages/1/attempts?page=abc", http.StatusBadRequest},
+		"zero page":       {"/api/v1/messages/1/attempts?page=0", http.StatusBadRequest},
+		"page too large":  {"/api/v1/messages/1/attempts?per_page=101", http.StatusBadRequest},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if code, _, errMsg := a.do(t, http.MethodGet, tc.path, ""); code != tc.code || errMsg == "" {
+				t.Fatalf("code = %d, error = %q", code, errMsg)
+			}
+		})
 	}
 }
 
@@ -293,7 +387,6 @@ func TestListMessages(t *testing.T) {
 		"by status":      {"?to=%2B15551230002&status=pending", []int64{1}, 1},
 		"paged":          {"?page=2&per_page=2", []int64{1}, 3},
 		"no match":       {"?to=%2B19999999999", []int64{}, 0},
-		"invalid page":   {"?page=abc", []int64{3, 2, 1}, 3},
 		"delivered only": {"?status=delivered", []int64{3}, 1},
 	}
 
@@ -321,7 +414,7 @@ func TestListMessages(t *testing.T) {
 func TestListMessagesRejectsInvalidFilters(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	for _, query := range []string{"?page=0", "?per_page=0", "?per_page=101", "?to=15551230002", "?from=abc", "?status=lost"} {
+	for _, query := range []string{"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=15551230002", "?from=abc", "?status=lost"} {
 		if code, _, errMsg := a.do(t, http.MethodGet, "/api/v1/messages"+query, ""); code != http.StatusBadRequest || errMsg == "" {
 			t.Fatalf("%s: code = %d, error = %q", query, code, errMsg)
 		}
@@ -362,7 +455,7 @@ func TestGetDiameterStatus(t *testing.T) {
 			Address:      "10.0.0.5",
 			State:        "open",
 			Applications: []string{"s6c", "sgd", "42"},
-			Since:        "2026-09-29T09:59:00Z",
+			Since:        "2026-09-29T09:59:00.000Z",
 		}},
 	}
 

@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
@@ -43,7 +42,7 @@ func GetDiameterStatus(cfg Config) http.Handler {
 				Realm:        p.Realm,
 				State:        p.State.String(),
 				Applications: []string{},
-				Since:        p.Since.UTC().Format(time.RFC3339),
+				Since:        formatTime(p.Since),
 			}
 
 			if p.RemoteAddr.IsValid() {
