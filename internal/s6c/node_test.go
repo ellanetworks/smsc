@@ -100,7 +100,6 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 	router := &Router{
 		Node:                 hssByID{smsc},
 		Identity:             smsc.Identity(),
-		HSSHost:              "hss.example.org",
 		HSSRealm:             "example.org",
 		ServiceCentreAddress: "15550000000",
 	}
@@ -136,7 +135,7 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 
 type hssByID struct{ node *diameter.Node }
 
-func (h hssByID) Do(ctx context.Context, _ string, req *diameter.Message) (*diameter.Message, error) {
+func (h hssByID) Do(ctx context.Context, req *diameter.Message) (*diameter.Message, error) {
 	return h.node.Do(ctx, "hss", req)
 }
 

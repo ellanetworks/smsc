@@ -7,6 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ellanetworks/core/diameter"
@@ -64,12 +68,14 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	mux := diameter.NewMux()
+	hss := newHSSRequester(cfg.HSS.Realm, cfg.HSS.AllowedNetworks)
 
 	node, err := diameter.New(diameter.Config{
 		Identity:                identity,
 		Handler:                 mux,
 		AcceptUnknownPeers:      true,
 		UnknownPeerApplications: apps,
+		OnPeerStateChange:       hss.peersChanged,
 		Logger:                  s.Logger,
 	})
 	if err != nil {
@@ -77,12 +83,13 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
+	hss.node = node
+
 	deliverer := &delivery.Deliverer{
 		Store: database,
 		Router: &smscs6c.Router{
-			Node:                 hssRequester{node},
+			Node:                 hss,
 			Identity:             identity,
-			HSSHost:              cfg.HSS.Host,
 			HSSRealm:             cfg.HSS.Realm,
 			ServiceCentreAddress: cfg.ServiceCentre.Address,
 		},
@@ -126,19 +133,6 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		_ = database.Close()
 		return fmt.Errorf("listen for Diameter: %w", err)
-	}
-
-	if err := node.SetPeers([]diameter.Peer{{
-		ID:           hssPeerID,
-		Host:         cfg.HSS.Host,
-		Addresses:    []netip.Addr{cfg.HSS.Address},
-		Port:         uint16(cfg.HSS.Port),
-		Applications: apps,
-	}}); err != nil {
-		_ = ln.Close()
-		_ = database.Close()
-
-		return err
 	}
 
 	go func() { _ = node.Serve(diameter.NewSCTPListener(ln, s.Logger)) }()
@@ -194,15 +188,138 @@ func (s *Server) Shutdown(ctx context.Context) {
 	}
 }
 
-const hssPeerID = "hss"
+var errNoHSS = errors.New("no HSS connected")
 
-type hssRequester struct{ node *diameter.Node }
+type hssRequester struct {
+	node     *diameter.Node
+	realm    string
+	networks []netip.Prefix
+	next     atomic.Uint32
 
-func (r hssRequester) Do(ctx context.Context, _ string, req *diameter.Message) (*diameter.Message, error) {
-	return r.node.Do(ctx, hssPeerID, req)
+	mu      sync.Mutex
+	changed chan struct{}
 }
 
-func (r hssRequester) NewSessionID() string { return r.node.NewSessionID() }
+func newHSSRequester(realm string, networks []netip.Prefix) *hssRequester {
+	return &hssRequester{realm: realm, networks: networks, changed: make(chan struct{})}
+}
+
+func (r *hssRequester) peersChanged(diameter.PeerStatus) {
+	r.mu.Lock()
+	close(r.changed)
+	r.changed = make(chan struct{})
+	r.mu.Unlock()
+}
+
+func (r *hssRequester) waitChan() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.changed
+}
+
+func (r *hssRequester) Do(ctx context.Context, req *diameter.Message) (*diameter.Message, error) {
+	hosts, err := r.waitForCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	start := r.next.Add(1)
+
+	var (
+		lastAns *diameter.Message
+		lastErr error
+	)
+
+	for i := range uint32(len(hosts)) {
+		host := hosts[(start+i)%uint32(len(hosts))]
+
+		ans, err := r.node.DoHost(ctx, host, req)
+
+		switch {
+		case err == nil && !isRelayFailure(ans):
+			return ans, nil
+		case err == nil:
+			lastAns, lastErr = ans, nil
+		case errors.Is(err, diameter.ErrNotConnected) || errors.Is(err, diameter.ErrUnknownPeer) ||
+			errors.Is(err, diameter.ErrApplicationUnsupported):
+			lastAns, lastErr = nil, err
+		default:
+			return nil, err
+		}
+
+		if ctx.Err() != nil {
+			break
+		}
+	}
+
+	if lastAns != nil {
+		return lastAns, nil
+	}
+
+	return nil, lastErr
+}
+
+func (r *hssRequester) waitForCandidates(ctx context.Context) ([]string, error) {
+	for {
+		changed := r.waitChan()
+
+		if hosts := r.candidates(); len(hosts) > 0 {
+			return hosts, nil
+		}
+
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w in realm %s: %w", errNoHSS, r.realm, ctx.Err())
+		}
+	}
+}
+
+func isRelayFailure(ans *diameter.Message) bool {
+	if ans.Flags&diameter.FlagError == 0 {
+		return false
+	}
+
+	rc, ok := ans.Find(diameter.AVPResultCode, 0)
+	if !ok {
+		return false
+	}
+
+	code, err := rc.Unsigned32()
+
+	return err == nil && (code == diameter.ResultTooBusy || code == diameter.ResultUnableToDeliver)
+}
+
+func (r *hssRequester) candidates() []string {
+	var hosts []string
+
+	for _, p := range r.node.Peers() {
+		if p.State != diameter.PeerOpen || !strings.EqualFold(p.Realm, r.realm) || !r.allowed(p.RemoteAddr) {
+			continue
+		}
+
+		if slices.ContainsFunc(p.Applications, func(a diameter.Application) bool { return a.ID == s6c.ApplicationID }) {
+			hosts = append(hosts, p.Host)
+		}
+	}
+
+	slices.Sort(hosts)
+
+	return hosts
+}
+
+func (r *hssRequester) allowed(addr netip.Addr) bool {
+	if len(r.networks) == 0 {
+		return true
+	}
+
+	addr = addr.Unmap()
+
+	return slices.ContainsFunc(r.networks, func(n netip.Prefix) bool { return n.Contains(addr) })
+}
+
+func (r *hssRequester) NewSessionID() string { return r.node.NewSessionID() }
 
 type hostSender struct{ node *diameter.Node }
 

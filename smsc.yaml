@@ -8,10 +8,8 @@ diameter:
   address: 127.0.0.1
   port: 3868
 hss:
-  host: hss.example.org
-  realm: example.org
-  address: 127.0.0.1
-  port: 3869
+  realm: epc.mnc001.mcc001.3gppnetwork.org
+  allowed_networks: [127.0.0.0/8]
 numbering:
   country_code: "1"
 delivery:

@@ -10,14 +10,13 @@ import (
 )
 
 type Requester interface {
-	Do(ctx context.Context, peerHost string, req *diameter.Message) (*diameter.Message, error)
+	Do(ctx context.Context, req *diameter.Message) (*diameter.Message, error)
 	NewSessionID() string
 }
 
 type Router struct {
 	Node                 Requester
 	Identity             diameter.Identity
-	HSSHost              string
 	HSSRealm             string
 	ServiceCentreAddress string
 }
@@ -32,7 +31,7 @@ func (r *Router) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingReques
 		return s6c.Routing{}, err
 	}
 
-	ans, err := r.Node.Do(ctx, r.HSSHost, msg)
+	ans, err := r.Node.Do(ctx, msg)
 	if err != nil {
 		return s6c.Routing{}, fmt.Errorf("s6c: %w", err)
 	}
@@ -49,7 +48,7 @@ func (r *Router) ReportSMDeliveryStatus(ctx context.Context, rep s6c.DeliveryRep
 		return s6c.ReportResult{}, err
 	}
 
-	ans, err := r.Node.Do(ctx, r.HSSHost, msg)
+	ans, err := r.Node.Do(ctx, msg)
 	if err != nil {
 		return s6c.ReportResult{}, fmt.Errorf("s6c: %w", err)
 	}
@@ -61,7 +60,6 @@ func (r *Router) envelope() tgpp.Envelope {
 	return tgpp.Envelope{
 		SessionID:        r.Node.NewSessionID(),
 		Origin:           r.Identity,
-		DestinationHost:  r.HSSHost,
 		DestinationRealm: r.HSSRealm,
 	}
 }

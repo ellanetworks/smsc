@@ -13,14 +13,12 @@ import (
 )
 
 type fakeRequester struct {
-	peer   string
 	req    *diameter.Message
 	answer *diameter.Message
 	err    error
 }
 
-func (f *fakeRequester) Do(_ context.Context, peerHost string, req *diameter.Message) (*diameter.Message, error) {
-	f.peer = peerHost
+func (f *fakeRequester) Do(_ context.Context, req *diameter.Message) (*diameter.Message, error) {
 	f.req = req
 
 	return f.answer, f.err
@@ -34,7 +32,6 @@ func newRouter(f *fakeRequester) *Router {
 	return &Router{
 		Node:                 f,
 		Identity:             diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"},
-		HSSHost:              "hss.example.org",
 		HSSRealm:             "example.org",
 		ServiceCentreAddress: "15550000000",
 	}
@@ -103,9 +100,13 @@ func TestSendRoutingInfoForSMRequest(t *testing.T) {
 	}
 
 	req := f.req
-	if f.peer != "hss.example.org" || req.CommandCode != s6c.CommandSendRoutingInfoForSM || req.ApplicationID != s6c.ApplicationID ||
+	if req.CommandCode != s6c.CommandSendRoutingInfoForSM || req.ApplicationID != s6c.ApplicationID ||
 		req.Flags != diameter.FlagRequest|diameter.FlagProxiable {
-		t.Fatalf("request header = %+v to %q", req, f.peer)
+		t.Fatalf("request header = %+v", req)
+	}
+
+	if _, ok := req.Find(diameter.AVPDestinationHost, 0); ok {
+		t.Fatal("SRR names a Destination-Host; it must be routed by realm to any connected HSS")
 	}
 
 	if req.AVPs[0].Code != diameter.AVPSessionID || req.AVPs[0].UTF8String() != "smsc.example.org;1;1" {
@@ -116,7 +117,6 @@ func TestSendRoutingInfoForSMRequest(t *testing.T) {
 		code, vendor uint32
 		want         []byte
 	}{
-		"Destination-Host":   {diameter.AVPDestinationHost, 0, []byte("hss.example.org")},
 		"Destination-Realm":  {diameter.AVPDestinationRealm, 0, []byte("example.org")},
 		"MSISDN":             {tgpp.AVPMSISDN, tgpp.VendorID, mustHex(t, "5155210300f2")},
 		"SC-Address":         {tgpp.AVPSCAddress, tgpp.VendorID, mustHex(t, "5155000000f0")},

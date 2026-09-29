@@ -308,10 +308,15 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 		return result{outcome: expired}
 	}
 
-	sri, cancel := context.WithTimeout(ctx, d.AttemptTimeout)
+	sri, cancel := context.WithTimeout(stop, d.AttemptTimeout)
 	routing, err := d.Router.SendRoutingInfoForSM(sri, s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
 
 	cancel()
+
+	if err != nil && stop.Err() != nil {
+		log.Info("short message routing lookup interrupted by shutdown")
+		return result{outcome: interrupted}
+	}
 
 	if err != nil {
 		log.Info("routing lookup for short message failed", slog.Any("error", err))
