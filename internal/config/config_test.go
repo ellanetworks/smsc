@@ -31,6 +31,9 @@ delivery:
   retry_intervals: [30s, 10m]
   attempt_timeout: 20s
   concurrency: 5
+api:
+  address: 127.0.0.1
+  port: 8080
 `
 
 func writeConfig(t *testing.T, content string) string {
@@ -70,6 +73,7 @@ func TestLoad(t *testing.T) {
 			AttemptTimeout:  20 * time.Second,
 			Concurrency:     5,
 		},
+		API: API{Address: netip.MustParseAddr("127.0.0.1"), Port: 8080},
 	}
 
 	if !reflect.DeepEqual(cfg, want) {
@@ -113,6 +117,9 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"negative validity":         {"default_validity: 48h", "default_validity: -1h"},
 		"negative concurrency":      {"concurrency: 5", "concurrency: -1"},
 		"unknown field":             {"db:\n", "unknown: true\ndb:\n"},
+		"api port without address":  {"  address: 127.0.0.1\n  port: 8080", "  port: 8080"},
+		"api port out of range":     {"port: 8080", "port: 70000"},
+		"invalid api address":       {"  address: 127.0.0.1\n", "  address: localhost\n"},
 	}
 
 	for name, edit := range tests {
@@ -152,5 +159,20 @@ func TestLoadDeliveryDefaults(t *testing.T) {
 
 	if !reflect.DeepEqual(cfg.Delivery, want) {
 		t.Fatalf("Delivery = %+v, want %+v", cfg.Delivery, want)
+	}
+
+	if cfg.API.Enabled() || cfg.API.Port != 0 {
+		t.Fatalf("API = %+v; the API must stay off unless configured", cfg.API)
+	}
+}
+
+func TestLoadAPIDefaultPort(t *testing.T) {
+	cfg, err := Load(writeConfig(t, strings.Replace(validConfig, "  port: 8080\n", "", 1)))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !cfg.API.Enabled() || cfg.API.Port != 5010 {
+		t.Fatalf("API = %+v", cfg.API)
 	}
 }

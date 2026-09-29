@@ -17,3 +17,6 @@ delivery:
   retry_intervals: [1m, 5m, 15m, 1h]
   attempt_timeout: 30s
   concurrency: 20
+api:
+  address: 127.0.0.1
+  port: 5010

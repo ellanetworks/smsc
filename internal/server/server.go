@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/core/sctp"
+	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
@@ -35,6 +37,8 @@ type Server struct {
 	database     *db.DB
 	node         *diameter.Node
 	listener     *sctp.Listener
+	apiServer    *http.Server
+	apiListener  net.Listener
 	stopDelivery context.CancelFunc
 	deliveryDone chan struct{}
 }
@@ -135,6 +139,37 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen for Diameter: %w", err)
 	}
 
+	if cfg.API.Enabled() {
+		var lc net.ListenConfig
+
+		apiLn, err := lc.Listen(ctx, "tcp", netip.AddrPortFrom(cfg.API.Address, uint16(cfg.API.Port)).String())
+		if err != nil {
+			_ = ln.Close()
+			_ = database.Close()
+
+			return fmt.Errorf("listen for the API: %w", err)
+		}
+
+		s.apiListener = apiLn
+		s.apiServer = &http.Server{
+			Handler: api.NewHandler(api.Config{
+				Store:           database,
+				Diameter:        diameterStatus{node: node, hss: hss},
+				Notify:          deliverer.Notify,
+				DefaultValidity: cfg.Delivery.DefaultValidity,
+				Now:             time.Now,
+				Logger:          s.Logger,
+			}),
+			ErrorLog:          slog.NewLogLogger(s.Logger.Handler(), slog.LevelWarn),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       time.Minute,
+			WriteTimeout:      time.Minute,
+			IdleTimeout:       2 * time.Minute,
+		}
+
+		go func() { _ = s.apiServer.Serve(apiLn) }()
+	}
+
 	go func() { _ = node.Serve(diameter.NewSCTPListener(ln, s.Logger)) }()
 
 	base := context.WithoutCancel(ctx)
@@ -155,7 +190,19 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.Logger.Info("smsc started", "db", cfg.DB.Path, "diameter", ln.Addr().String())
 
+	if s.apiListener != nil {
+		s.Logger.Info("API listening", "address", s.apiListener.Addr().String())
+	}
+
 	return nil
+}
+
+func (s *Server) APIAddr() net.Addr {
+	if s.apiListener == nil {
+		return nil
+	}
+
+	return s.apiListener.Addr()
 }
 
 func (s *Server) Addr() net.Addr {
@@ -173,6 +220,12 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.Logger.Info("smsc stopping")
 
+	if s.apiServer != nil {
+		if err := s.apiServer.Shutdown(ctx); err != nil {
+			s.Logger.Warn("failed to stop the API cleanly", slog.Any("error", err))
+		}
+	}
+
 	s.stopDelivery()
 
 	select {
@@ -187,8 +240,6 @@ func (s *Server) Shutdown(ctx context.Context) {
 		s.Logger.Error("failed to close the database", slog.Any("error", err))
 	}
 }
-
-var errNoHSS = errors.New("no HSS connected")
 
 type hssRequester struct {
 	node     *diameter.Node
@@ -271,7 +322,7 @@ func (r *hssRequester) waitForCandidates(ctx context.Context) ([]string, error) 
 		select {
 		case <-changed:
 		case <-ctx.Done():
-			return nil, fmt.Errorf("%w in realm %s: %w", errNoHSS, r.realm, ctx.Err())
+			return nil, fmt.Errorf("%w in realm %s: %w", smscs6c.ErrNoHSS, r.realm, ctx.Err())
 		}
 	}
 }
@@ -318,6 +369,21 @@ func (r *hssRequester) allowed(addr netip.Addr) bool {
 
 	return slices.ContainsFunc(r.networks, func(n netip.Prefix) bool { return n.Contains(addr) })
 }
+
+func (r *hssRequester) available() bool {
+	return len(r.candidates()) > 0
+}
+
+type diameterStatus struct {
+	node *diameter.Node
+	hss  *hssRequester
+}
+
+func (d diameterStatus) Identity() diameter.Identity { return d.node.Identity() }
+
+func (d diameterStatus) Peers() []diameter.PeerStatus { return d.node.Peers() }
+
+func (d diameterStatus) HSSAvailable() bool { return d.hss.available() }
 
 func (r *hssRequester) NewSessionID() string { return r.node.NewSessionID() }
 

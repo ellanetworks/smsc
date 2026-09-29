@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -21,6 +22,7 @@ func testMessage(reference uint8, rejectDuplicates bool, tpdu []byte, at time.Ti
 		Originator:       testOriginator,
 		Recipient:        testRecipient,
 		MSISDN:           testMSISDN,
+		Origin:           OriginMobile,
 		MessageReference: reference,
 		RejectDuplicates: rejectDuplicates,
 		TPDU:             tpdu,
@@ -75,7 +77,7 @@ func TestMessageLifecycle(t *testing.T) {
 	}
 
 	if m.Originator != testOriginator || m.Recipient != testRecipient || !bytes.Equal(m.TPDU, tpdu) ||
-		m.MessageReference != 7 {
+		m.MessageReference != 7 || m.Origin != OriginMobile {
 		t.Fatalf("message = %+v", m)
 	}
 
@@ -125,6 +127,10 @@ func TestSetMessageStatusRejectsUnknownStatus(t *testing.T) {
 	}
 }
 
+func u32(v uint32) *uint32 {
+	return &v
+}
+
 func TestDeliveryAttempts(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
@@ -135,14 +141,23 @@ func TestDeliveryAttempts(t *testing.T) {
 	}
 
 	first := time.Date(2026, 9, 27, 12, 0, 1, 0, time.UTC)
-	second := first.Add(time.Minute)
 
-	if _, err := d.CreateDeliveryAttempt(ctx, id, "mme1.epc.example.org", 5550, first); err != nil {
-		t.Fatalf("CreateDeliveryAttempt: %v", err)
+	want := []DeliveryAttempt{
+		{MessageID: id, AttemptedAt: first, Step: StepRouting, Outcome: "timeout"},
+		{MessageID: id, AttemptedAt: first.Add(time.Second), Step: StepRouting, Outcome: "success", ResultCode: u32(2001)},
+		{
+			MessageID: id, AttemptedAt: first.Add(time.Minute), Step: StepDelivery, Node: "mme1.epc.example.org",
+			Outcome: "absent_user", ResultCode: u32(5550), VendorID: u32(10415),
+		},
 	}
 
-	if _, err := d.CreateDeliveryAttempt(ctx, id, "mme2.epc.example.org", 2001, second); err != nil {
-		t.Fatalf("CreateDeliveryAttempt: %v", err)
+	for i := range want {
+		aid, err := d.CreateDeliveryAttempt(ctx, want[i])
+		if err != nil {
+			t.Fatalf("CreateDeliveryAttempt: %v", err)
+		}
+
+		want[i].ID = aid
 	}
 
 	attempts, err := d.ListDeliveryAttempts(ctx, id)
@@ -150,22 +165,139 @@ func TestDeliveryAttempts(t *testing.T) {
 		t.Fatalf("ListDeliveryAttempts: %v", err)
 	}
 
-	if len(attempts) != 2 {
-		t.Fatalf("got %d attempts, want 2", len(attempts))
-	}
-
-	if attempts[0].ServingNode != "mme1.epc.example.org" || attempts[0].ResultCode != 5550 || !attempts[0].AttemptedAt.Equal(first) {
-		t.Fatalf("attempts[0] = %+v", attempts[0])
-	}
-
-	if attempts[1].ServingNode != "mme2.epc.example.org" || attempts[1].ResultCode != 2001 || !attempts[1].AttemptedAt.Equal(second) {
-		t.Fatalf("attempts[1] = %+v", attempts[1])
+	if !reflect.DeepEqual(attempts, want) {
+		t.Fatalf("attempts = %+v, want %+v", attempts, want)
 	}
 }
 
 func TestDeliveryAttemptRequiresMessage(t *testing.T) {
-	if _, err := openTestDB(t).CreateDeliveryAttempt(context.Background(), 42, "mme1", 2001, time.Now()); err == nil {
+	a := DeliveryAttempt{MessageID: 42, AttemptedAt: time.Now(), Step: StepDelivery, Node: "mme1", Outcome: "success"}
+	if _, err := openTestDB(t).CreateDeliveryAttempt(context.Background(), a); err == nil {
 		t.Fatal("expected a foreign key error for an unknown message")
+	}
+}
+
+func TestDeliveryAttemptRejectsUnknownStep(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.CreateDeliveryAttempt(ctx, DeliveryAttempt{MessageID: id, AttemptedAt: time.Now(), Step: "report", Outcome: "success"}); err == nil {
+		t.Fatal("expected an error for an unknown step")
+	}
+}
+
+func TestDuplicateCheckIgnoresAPIMessages(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Now()
+
+	api := testMessage(0, false, []byte{0x01}, now)
+	api.Origin = OriginAPI
+
+	if _, err := d.CreateMessage(ctx, api); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.CreateMessage(ctx, testMessage(0, true, []byte{0x02}, now)); err != nil {
+		t.Fatalf("CreateMessage = %v; an API message is not a previous SMS-SUBMIT from the phone", err)
+	}
+
+	if _, err := d.CreateMessage(ctx, testMessage(0, true, []byte{0x03}, now)); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("CreateMessage = %v, want ErrDuplicate for the phone's own repeat", err)
+	}
+}
+
+func TestMessageOriginIsRequired(t *testing.T) {
+	m := testMessage(1, false, []byte{0x01}, time.Now())
+	m.Origin = ""
+
+	if _, err := openTestDB(t).CreateMessage(context.Background(), m); err == nil {
+		t.Fatal("expected an error for a message without an origin")
+	}
+}
+
+func TestCreateMessagesIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Now()
+
+	if _, err := d.CreateMessage(ctx, testMessage(9, false, []byte{0x01}, now)); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := d.CreateMessages(ctx, []NewMessage{
+		testMessage(1, false, []byte{0x01}, now),
+		testMessage(9, true, []byte{0x01}, now),
+	})
+	if !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("err = %v, want ErrDuplicate", err)
+	}
+
+	if _, total, err := d.ListMessages(ctx, MessageFilter{}, 1, 10); err != nil || total != 1 {
+		t.Fatalf("total = %d, %v; a failed batch must store nothing", total, err)
+	}
+
+	ids, err := d.CreateMessages(ctx, []NewMessage{testMessage(1, false, []byte{0x01}, now), testMessage(2, false, []byte{0x02}, now)})
+	if err != nil || len(ids) != 2 || ids[1] != ids[0]+1 {
+		t.Fatalf("ids = %v, %v", ids, err)
+	}
+}
+
+func TestListMessages(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Now()
+
+	toBob := testMessage(1, false, []byte{0x01}, now)
+	toCarol := testMessage(2, false, []byte{0x01}, now)
+	toCarol.MSISDN = "15551230003"
+	fromCarol := testMessage(3, false, []byte{0x01}, now)
+	fromCarol.Originator.Digits = "15551230003"
+
+	ids, err := d.CreateMessages(ctx, []NewMessage{toBob, toCarol, fromCarol, toBob})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.SetMessageStatus(ctx, ids[3], StatusDelivered, now); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]struct {
+		filter        MessageFilter
+		page, perPage int
+		want          []int64
+		total         int
+	}{
+		"all newest first": {MessageFilter{}, 1, 10, []int64{ids[3], ids[2], ids[1], ids[0]}, 4},
+		"by recipient":     {MessageFilter{MSISDN: testMSISDN}, 1, 10, []int64{ids[3], ids[2], ids[0]}, 3},
+		"by originator":    {MessageFilter{Originator: "15551230003"}, 1, 10, []int64{ids[2]}, 1},
+		"by status":        {MessageFilter{MSISDN: testMSISDN, Status: StatusPending}, 1, 10, []int64{ids[2], ids[0]}, 2},
+		"second page":      {MessageFilter{}, 2, 3, []int64{ids[0]}, 4},
+		"past the end":     {MessageFilter{}, 3, 3, []int64{}, 4},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			messages, total, err := d.ListMessages(ctx, tc.filter, tc.page, tc.perPage)
+			if err != nil {
+				t.Fatalf("ListMessages: %v", err)
+			}
+
+			got := []int64{}
+			for _, m := range messages {
+				got = append(got, m.ID)
+			}
+
+			if !reflect.DeepEqual(got, tc.want) || total != tc.total {
+				t.Fatalf("ids = %v (total %d), want %v (total %d)", got, total, tc.want, tc.total)
+			}
+		})
 	}
 }
 

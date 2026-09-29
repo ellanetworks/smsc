@@ -2,12 +2,15 @@ package s6c
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/tgpp"
 )
+
+var ErrNoHSS = errors.New("no HSS connected")
 
 type Requester interface {
 	Do(ctx context.Context, req *diameter.Message) (*diameter.Message, error)

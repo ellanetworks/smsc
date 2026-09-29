@@ -126,6 +126,50 @@ func DecodeSubmit(b []byte) (Submit, error) {
 	return s, nil
 }
 
+func (s Submit) Encode() ([]byte, error) {
+	if len(s.UserData) != userDataOctets(s.DataCodingScheme, s.UserDataLength) {
+		return nil, fmt.Errorf("sms-submit: user data is %d octets, length %d implies %d",
+			len(s.UserData), s.UserDataLength, userDataOctets(s.DataCodingScheme, s.UserDataLength))
+	}
+
+	if len(s.UserData) > maxUserDataOctets {
+		return nil, fmt.Errorf("sms-submit: %w", ErrUserDataTooLong)
+	}
+
+	da, err := s.Destination.encode()
+	if err != nil {
+		return nil, fmt.Errorf("sms-submit: destination %w", err)
+	}
+
+	first := byte(mtiSubmit) | (s.ValidityPeriodFormat&0x3)<<3
+
+	if s.RejectDuplicates {
+		first |= 0x04
+	}
+
+	if s.StatusReportRequest {
+		first |= 0x20
+	}
+
+	if s.UserDataHeader {
+		first |= 0x40
+	}
+
+	if s.ReplyPath {
+		first |= 0x80
+	}
+
+	out := make([]byte, 0, 2+len(da)+2+len(s.ValidityPeriod)+1+len(s.UserData))
+	out = append(out, first, s.MessageReference)
+	out = append(out, da...)
+	out = append(out, s.ProtocolIdentifier, s.DataCodingScheme)
+	out = append(out, s.ValidityPeriod...)
+	out = append(out, s.UserDataLength)
+	out = append(out, s.UserData...)
+
+	return out, nil
+}
+
 func validateEnhancedValidityPeriod(vp []byte) error {
 	indicator := vp[0]
 

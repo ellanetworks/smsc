@@ -3,12 +3,17 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -21,6 +26,7 @@ import (
 	"github.com/ellanetworks/core/diameter/tbcd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/core/sctp"
+	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/server"
@@ -930,5 +936,211 @@ func TestRoutingSkipsHSSOutsideAllowedNetworks(t *testing.T) {
 
 	if got := core.routingRequests(); len(got) != 0 {
 		t.Fatalf("routing requests to an HSS outside the allowed networks = %v", got)
+	}
+}
+
+func startSMSCWithAPI(t *testing.T) *smsc {
+	t.Helper()
+
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
+	cfg.API = config.API{Address: loopback}
+
+	return startSMSC(t, cfg)
+}
+
+func (s *smsc) api(t *testing.T, method, path string, body any, out any) int {
+	t.Helper()
+
+	var reader io.Reader
+
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		reader = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), method, "http://"+s.server.APIAddr().String()+path, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+
+	if out != nil && resp.StatusCode < 300 {
+		if err := json.Unmarshal(envelope.Result, out); err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+	}
+
+	return resp.StatusCode
+}
+
+func (s *smsc) send(t *testing.T, from, to, text string) []api.Message {
+	t.Helper()
+
+	var created api.CreateMessageResponse
+
+	if code := s.api(t, http.MethodPost, "/api/v1/messages", api.CreateMessageParams{From: from, To: to, Text: text}, &created); code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/messages = %d", code)
+	}
+
+	return created.Items
+}
+
+func (s *smsc) message(t *testing.T, id int64) api.MessageWithAttempts {
+	t.Helper()
+
+	var m api.MessageWithAttempts
+
+	if code := s.api(t, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil, &m); code != http.StatusOK {
+		t.Fatalf("GET message %d = %d", id, code)
+	}
+
+	return m
+}
+
+func (s *smsc) waitForAPIStatus(t *testing.T, id int64, want string) api.MessageWithAttempts {
+	t.Helper()
+
+	var m api.MessageWithAttempts
+
+	eventually(t, "message "+want+" over the API", func() bool {
+		m = s.message(t, id)
+		return m.Status == want
+	})
+
+	return m
+}
+
+func TestAPIMessageIsDelivered(t *testing.T) {
+	core := newFakeCore(t, bob)
+	s := startSMSCWithAPI(t)
+	core.connect(s)
+
+	sent := s.send(t, "+15550001111", "+"+bob.msisdn, "hello from the API")
+	if len(sent) != 1 || sent[0].Status != "pending" {
+		t.Fatalf("sent = %+v", sent)
+	}
+
+	m := s.waitForAPIStatus(t, sent[0].ID, "delivered")
+
+	if len(m.Attempts) != 2 || m.Attempts[0].Step != "routing" || m.Attempts[0].Outcome != "success" ||
+		m.Attempts[1].Step != "delivery" || m.Attempts[1].Node != coreHost || m.Attempts[1].Outcome != "success" {
+		t.Fatalf("attempts = %+v", m.Attempts)
+	}
+
+	got := core.deliveredTo(bob.imsi)
+	if len(got) != 1 || !bytes.Contains(got[0].tpdu, semiOctets(t, "15550001111")) {
+		t.Fatalf("delivered = %+v", got)
+	}
+}
+
+func TestAPIConcatenatedMessageIsDelivered(t *testing.T) {
+	core := newFakeCore(t, bob)
+	s := startSMSCWithAPI(t)
+	core.connect(s)
+
+	sent := s.send(t, "+15550001111", "+"+bob.msisdn, strings.Repeat("0123456789", 20))
+	if len(sent) != 2 {
+		t.Fatalf("sent %d parts, want 2", len(sent))
+	}
+
+	for _, part := range sent {
+		s.waitForAPIStatus(t, part.ID, "delivered")
+	}
+
+	got := core.deliveredTo(bob.imsi)
+	if len(got) != 2 {
+		t.Fatalf("delivered %d parts, want 2", len(got))
+	}
+
+	for i, m := range got {
+		if m.tpdu[0]&0x40 == 0 {
+			t.Fatalf("part %d SMS-DELIVER has no user data header indicator: %x", i+1, m.tpdu)
+		}
+	}
+}
+
+func TestAPIShowsAbsentUserRetry(t *testing.T) {
+	core := newFakeCore(t, bob)
+	core.setAbsent(bob.msisdn, true)
+
+	s := startSMSCWithAPI(t)
+	core.connect(s)
+
+	sent := s.send(t, "+15550001111", "+"+bob.msisdn, "are you there?")
+
+	var m api.MessageWithAttempts
+
+	eventually(t, "the routing failure to be recorded", func() bool {
+		m = s.message(t, sent[0].ID)
+		return len(m.Attempts) > 0
+	})
+
+	a := m.Attempts[0]
+	if m.Status != "pending" || m.NextAttemptAt == "" || a.Step != "routing" || a.Outcome != "absent_user" ||
+		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorAbsentUser || a.VendorID == nil || *a.VendorID != tgpp.VendorID {
+		t.Fatalf("message = %+v, attempts = %+v", m.Message, m.Attempts)
+	}
+}
+
+func TestAPIFindsMobileOriginatedMessages(t *testing.T) {
+	core := newFakeCore(t, alice, bob)
+	s := startSMSCWithAPI(t)
+	core.connect(s)
+
+	core.submit(alice, bob, "hi bob")
+	s.waitForStatus(t, 1, db.StatusDelivered)
+
+	var list api.ListMessagesResponse
+
+	if code := s.api(t, http.MethodGet, "/api/v1/messages?to=%2B"+bob.msisdn, nil, &list); code != http.StatusOK {
+		t.Fatalf("list = %d", code)
+	}
+
+	if len(list.Items) != 1 || list.Items[0].From != "+"+alice.msisdn || list.Items[0].Encoding != "binary" || list.Items[0].Text != nil ||
+		list.Items[0].Status != "delivered" {
+		t.Fatalf("items = %+v", list.Items)
+	}
+}
+
+func TestAPIDiameterStatus(t *testing.T) {
+	core := newFakeCore(t, bob)
+	s := startSMSCWithAPI(t)
+
+	var status api.DiameterStatus
+
+	s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status)
+
+	if status.HSSAvailable || len(status.Peers) != 0 || status.Host != smscHost {
+		t.Fatalf("before connect = %+v", status)
+	}
+
+	core.connect(s)
+
+	eventually(t, "the HSS to be available", func() bool {
+		s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status)
+		return status.HSSAvailable
+	})
+
+	if len(status.Peers) != 1 || status.Peers[0].Host != coreHost || status.Peers[0].State != "open" ||
+		status.Peers[0].Address != loopback.String() || !slices.Contains(status.Peers[0].Applications, "s6c") {
+		t.Fatalf("peers = %+v", status.Peers)
 	}
 }
