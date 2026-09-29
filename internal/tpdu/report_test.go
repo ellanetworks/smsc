@@ -65,3 +65,27 @@ func TestDecodeSubmitEnhancedValidityPeriod(t *testing.T) {
 		})
 	}
 }
+
+func TestDeliverReportFailureCause(t *testing.T) {
+	tests := map[string]struct {
+		report []byte
+		want   byte
+		ok     bool
+	}{
+		"storage full":        {mustHex(t, "00"+"d0"+"00"), 0xd0, true},
+		"with user data":      {mustHex(t, "40"+"d2"+"04"+"02"+"0100"), 0xd2, true},
+		"empty":               {nil, 0, false},
+		"no failure cause":    {mustHex(t, "00"), 0, false},
+		"submit report":       {mustHex(t, "01"+"c5"+"00"), 0, false},
+		"status report shape": {mustHex(t, "02"+"d0"), 0, false},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, ok := DeliverReportFailureCause(tt.report)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("DeliverReportFailureCause = %#x, %v; want %#x, %v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}

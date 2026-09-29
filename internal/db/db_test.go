@@ -147,7 +147,20 @@ func TestDeliveryAttempts(t *testing.T) {
 		{MessageID: id, AttemptedAt: first.Add(time.Second), Step: StepRouting, Outcome: "success", ResultCode: u32(2001)},
 		{
 			MessageID: id, AttemptedAt: first.Add(time.Minute), Step: StepDelivery, Node: "mme1.epc.example.org",
-			Outcome: "absent_user", ResultCode: u32(5550), VendorID: u32(10415),
+			Outcome: "absent_user", ResultCode: u32(5550), VendorID: u32(10415), AbsentDiagnostic: "no_paging_response_msc",
+		},
+		{
+			MessageID: id, AttemptedAt: first.Add(2 * time.Minute), Step: StepRouting, Outcome: "absent_user",
+			ResultCode: u32(5550), VendorID: u32(10415),
+			AbsentDiagnostics: AbsentDiagnostics{
+				MME: "imsi_detached", MSC: "roaming_restriction", SGSN: "gprs_detached",
+				SMSF3GPP: "ms_purged_non_gprs", SMSFNon3GPP: "unknown_99",
+			},
+		},
+		{
+			MessageID: id, AttemptedAt: first.Add(3 * time.Minute), Step: StepDelivery, Node: "mme1.epc.example.org",
+			Outcome: "sm_delivery_failure", ResultCode: u32(5555), VendorID: u32(10415),
+			FailureCause: "equipment_protocol_error", TPFailureCause: "usim_sms_storage_full",
 		},
 	}
 

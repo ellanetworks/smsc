@@ -224,13 +224,22 @@ func TestGetMessageWithAttempts(t *testing.T) {
 
 	id := a.create(t, "+15550001111", "+15551230002", "hello")[0].ID
 
-	code, vendor := uint32(5550), uint32(10415)
+	code, failure, vendor := uint32(5550), uint32(5555), uint32(10415)
 
 	for _, at := range []db.DeliveryAttempt{
 		{MessageID: id, AttemptedAt: testNow, Step: db.StepRouting, Outcome: "success", ResultCode: new(uint32(2001))},
 		{
 			MessageID: id, AttemptedAt: testNow.Add(time.Second), Step: db.StepDelivery, Node: "mme.example.org", Outcome: "absent_user",
-			ResultCode: &code, VendorID: &vendor,
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostic: "imsi_detached",
+		},
+		{
+			MessageID: id, AttemptedAt: testNow.Add(time.Minute), Step: db.StepRouting, Outcome: "absent_user",
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostics: db.AbsentDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
+		},
+		{
+			MessageID: id, AttemptedAt: testNow.Add(2 * time.Minute), Step: db.StepDelivery, Node: "mme.example.org",
+			Outcome: "sm_delivery_failure", ResultCode: &failure, VendorID: &vendor,
+			FailureCause: "equipment_protocol_error", TPFailureCause: "usim_sms_storage_full",
 		},
 	} {
 		if _, err := a.store.CreateDeliveryAttempt(ctx, at); err != nil {
@@ -247,7 +256,18 @@ func TestGetMessageWithAttempts(t *testing.T) {
 
 	want := []api.Attempt{
 		{AttemptedAt: "2026-09-29T10:00:00Z", Step: "routing", Outcome: "success", ResultCode: new(uint32(2001))},
-		{AttemptedAt: "2026-09-29T10:00:01Z", Step: "delivery", Node: "mme.example.org", Outcome: "absent_user", ResultCode: &code, VendorID: &vendor},
+		{
+			AttemptedAt: "2026-09-29T10:00:01Z", Step: "delivery", Node: "mme.example.org", Outcome: "absent_user",
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostic: "imsi_detached",
+		},
+		{
+			AttemptedAt: "2026-09-29T10:01:00Z", Step: "routing", Outcome: "absent_user",
+			ResultCode: &code, VendorID: &vendor, AbsentDiagnostics: &api.AbsentDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
+		},
+		{
+			AttemptedAt: "2026-09-29T10:02:00Z", Step: "delivery", Node: "mme.example.org", Outcome: "sm_delivery_failure",
+			ResultCode: &failure, VendorID: &vendor, FailureCause: "equipment_protocol_error", TPFailureCause: "usim_sms_storage_full",
+		},
 	}
 
 	if got.ID != id || *got.Text != "hello" || !reflect.DeepEqual(got.Attempts, want) {
@@ -256,6 +276,11 @@ func TestGetMessageWithAttempts(t *testing.T) {
 
 	if !strings.Contains(string(result), `"attempts":[`) {
 		t.Fatalf("attempts missing from %s", result)
+	}
+
+	if !strings.Contains(string(result), `"absent_diagnostics":{"smsf_3gpp":"ms_purged_non_gprs"}`) ||
+		strings.Count(string(result), `"absent_diagnostics"`) != 1 || strings.Count(string(result), `"failure_cause"`) != 1 {
+		t.Fatalf("attempt details are not omitted when absent: %s", result)
 	}
 }
 

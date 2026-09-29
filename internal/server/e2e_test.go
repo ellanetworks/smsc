@@ -236,7 +236,11 @@ func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
 	case !ok:
 		return c.experimental(req, tgpp.ResultErrorUserUnknown)
 	case c.absent[msisdn]:
-		return c.experimental(req, tgpp.ResultErrorAbsentUser)
+		ans := c.experimental(req, tgpp.ResultErrorAbsentUser)
+		ans.AVPs = append(ans.AVPs,
+			diameter.Unsigned32(s6c.AVPMMEAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, tgpp.AbsentUserIMSIDetached))
+
+		return ans
 	}
 
 	ans := c.answer(req, diameter.ResultSuccess)
@@ -1087,7 +1091,39 @@ func TestAPIShowsAbsentUserRetry(t *testing.T) {
 
 	a := m.Attempts[0]
 	if m.Status != "pending" || m.NextAttemptAt == "" || a.Step != "routing" || a.Outcome != "absent_user" ||
-		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorAbsentUser || a.VendorID == nil || *a.VendorID != tgpp.VendorID {
+		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorAbsentUser || a.VendorID == nil || *a.VendorID != tgpp.VendorID ||
+		a.AbsentDiagnostics == nil || *a.AbsentDiagnostics != (api.AbsentDiagnostics{MME: "imsi_detached"}) {
+		t.Fatalf("message = %+v, attempts = %+v", m.Message, m.Attempts)
+	}
+}
+
+func TestAPIShowsDeliveryFailureDetails(t *testing.T) {
+	core := newFakeCore(t, bob)
+	core.setAnswerMT(func(string) *diameter.Message {
+		return experimental(tgpp.ResultErrorSMDeliveryFailure,
+			diameter.Grouped(sgd.AVPSMDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID,
+				diameter.Unsigned32(sgd.AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, sgd.CauseEquipmentProtocolError),
+				diameter.OctetString(sgd.AVPSMDiagnosticInfo, diameter.AVPFlagMandatory, tgpp.VendorID, []byte{0x00, 0xd0, 0x00}),
+			))
+	})
+
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	core.connect(s)
+
+	sent := s.send(t, "+15550002222", "+"+bob.msisdn, "is your SIM full?")
+
+	var m api.MessageWithAttempts
+
+	eventually(t, "the delivery failure to be recorded", func() bool {
+		m = s.message(t, sent[0].ID)
+		return len(m.Attempts) > 1
+	})
+
+	a := m.Attempts[1]
+	if m.Status != "pending" || a.Step != "delivery" || a.Outcome != "sm_delivery_failure" ||
+		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorSMDeliveryFailure ||
+		a.FailureCause != "equipment_protocol_error" || a.TPFailureCause != "usim_sms_storage_full" ||
+		a.AbsentDiagnostic != "" || a.AbsentDiagnostics != nil {
 		t.Fatalf("message = %+v, attempts = %+v", m.Message, m.Attempts)
 	}
 }

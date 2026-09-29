@@ -48,7 +48,15 @@ var migrations = []string{
 		node TEXT NOT NULL,
 		outcome TEXT NOT NULL,
 		result_code INTEGER,
-		vendor_id INTEGER
+		vendor_id INTEGER,
+		failure_cause TEXT,
+		tp_failure_cause TEXT,
+		absent_diagnostic TEXT,
+		absent_diagnostic_mme TEXT,
+		absent_diagnostic_msc TEXT,
+		absent_diagnostic_sgsn TEXT,
+		absent_diagnostic_smsf_3gpp TEXT,
+		absent_diagnostic_smsf_non_3gpp TEXT
 	);
 	CREATE INDEX delivery_attempts_message_id ON delivery_attempts (message_id);
 	CREATE TABLE recipients (

@@ -53,6 +53,19 @@ type Attempt struct {
 	Outcome     string  `json:"outcome"`
 	ResultCode  *uint32 `json:"result_code,omitempty"`
 	VendorID    *uint32 `json:"vendor_id,omitempty"`
+
+	FailureCause      string             `json:"failure_cause,omitempty"`
+	TPFailureCause    string             `json:"tp_failure_cause,omitempty"`
+	AbsentDiagnostic  string             `json:"absent_diagnostic,omitempty"`
+	AbsentDiagnostics *AbsentDiagnostics `json:"absent_diagnostics,omitempty"`
+}
+
+type AbsentDiagnostics struct {
+	MME         string `json:"mme,omitempty"`
+	MSC         string `json:"msc,omitempty"`
+	SGSN        string `json:"sgsn,omitempty"`
+	SMSF3GPP    string `json:"smsf_3gpp,omitempty"`
+	SMSFNon3GPP string `json:"smsf_non_3gpp,omitempty"`
 }
 
 type MessageWithAttempts struct {
@@ -204,6 +217,11 @@ func GetMessage(cfg Config) http.Handler {
 				Outcome:     a.Outcome,
 				ResultCode:  a.ResultCode,
 				VendorID:    a.VendorID,
+
+				FailureCause:      a.FailureCause,
+				TPFailureCause:    a.TPFailureCause,
+				AbsentDiagnostic:  a.AbsentDiagnostic,
+				AbsentDiagnostics: absentDiagnosticsOf(a.AbsentDiagnostics),
 			})
 		}
 
@@ -348,4 +366,14 @@ func atoiDefault(s string, def int) int {
 	}
 
 	return def
+}
+
+func absentDiagnosticsOf(d db.AbsentDiagnostics) *AbsentDiagnostics {
+	if d == (db.AbsentDiagnostics{}) {
+		return nil
+	}
+
+	out := AbsentDiagnostics(d)
+
+	return &out
 }
