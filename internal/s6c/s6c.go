@@ -24,22 +24,24 @@ type Router struct {
 	ServiceCentreAddress string
 }
 
-func (r *Router) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, error) {
+func (r *Router) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, string, error) {
 	req.ServiceCentreAddress = r.ServiceCentreAddress
 	req.GPRSIndicator = true
 	req.SMSFSupport = true
 
 	msg, err := s6c.NewSendRoutingInfoForSMRequest(r.envelope(), req)
 	if err != nil {
-		return s6c.Routing{}, err
+		return s6c.Routing{}, "", err
 	}
 
 	ans, err := r.Node.Do(ctx, msg)
 	if err != nil {
-		return s6c.Routing{}, fmt.Errorf("s6c: %w", err)
+		return s6c.Routing{}, "", fmt.Errorf("s6c: %w", err)
 	}
 
-	return s6c.ParseSendRoutingInfoForSMAnswer(ans)
+	routing, err := s6c.ParseSendRoutingInfoForSMAnswer(ans)
+
+	return routing, originHost(ans), err
 }
 
 func (r *Router) ReportSMDeliveryStatus(ctx context.Context, rep s6c.DeliveryReport) (s6c.ReportResult, error) {
@@ -57,6 +59,14 @@ func (r *Router) ReportSMDeliveryStatus(ctx context.Context, rep s6c.DeliveryRep
 	}
 
 	return s6c.ParseReportSMDeliveryStatusAnswer(ans)
+}
+
+func originHost(ans *diameter.Message) string {
+	if a, ok := ans.Find(diameter.AVPOriginHost, 0); ok {
+		return a.UTF8String()
+	}
+
+	return ""
 }
 
 func (r *Router) envelope() tgpp.Envelope {

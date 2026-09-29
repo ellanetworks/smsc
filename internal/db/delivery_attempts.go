@@ -14,12 +14,23 @@ const (
 	StepDelivery AttemptStep = "delivery"
 )
 
+type NodeType string
+
+const (
+	NodeTypeMME         NodeType = "mme"
+	NodeTypeSGSN        NodeType = "sgsn"
+	NodeTypeSMSF3GPP    NodeType = "smsf_3gpp"
+	NodeTypeSMSFNon3GPP NodeType = "smsf_non_3gpp"
+)
+
 type DeliveryAttempt struct {
 	ID          int64
 	MessageID   int64
-	AttemptedAt time.Time
+	StartedAt   time.Time
+	CompletedAt time.Time
 	Step        AttemptStep
 	Node        string
+	NodeType    NodeType
 	Outcome     string
 	ResultCode  *uint32
 	VendorID    *uint32
@@ -38,13 +49,18 @@ type AbsentDiagnostics struct {
 	SMSFNon3GPP string
 }
 
+const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
+	failure_cause, tp_failure_cause, absent_diagnostic, absent_diagnostic_mme, absent_diagnostic_msc,
+	absent_diagnostic_sgsn, absent_diagnostic_smsf_3gpp, absent_diagnostic_smsf_non_3gpp`
+
 func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (int64, error) {
 	res, err := d.conn.ExecContext(ctx,
-		`INSERT INTO delivery_attempts (message_id, attempted_at, step, node, outcome, result_code, vendor_id,
+		`INSERT INTO delivery_attempts (message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 			failure_cause, tp_failure_cause, absent_diagnostic, absent_diagnostic_mme, absent_diagnostic_msc,
 			absent_diagnostic_sgsn, absent_diagnostic_smsf_3gpp, absent_diagnostic_smsf_non_3gpp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.MessageID, a.AttemptedAt.UTC().UnixNano(), a.Step, a.Node, a.Outcome, nullable(a.ResultCode), nullable(a.VendorID),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.MessageID, a.StartedAt.UTC().UnixNano(), a.CompletedAt.UTC().UnixNano(), a.Step, a.Node,
+		nullableString(string(a.NodeType)), a.Outcome, nullable(a.ResultCode), nullable(a.VendorID),
 		nullableString(a.FailureCause), nullableString(a.TPFailureCause), nullableString(a.AbsentDiagnostic),
 		nullableString(a.AbsentDiagnostics.MME), nullableString(a.AbsentDiagnostics.MSC), nullableString(a.AbsentDiagnostics.SGSN),
 		nullableString(a.AbsentDiagnostics.SMSF3GPP), nullableString(a.AbsentDiagnostics.SMSFNon3GPP))
@@ -60,58 +76,73 @@ func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (int6
 	return id, nil
 }
 
-func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64) ([]DeliveryAttempt, error) {
+func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) ([]DeliveryAttempt, int, error) {
+	var total int
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM delivery_attempts WHERE message_id = ?`, messageID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
+	}
+
 	rows, err := d.conn.QueryContext(ctx,
-		`SELECT id, message_id, attempted_at, step, node, outcome, result_code, vendor_id,
-			failure_cause, tp_failure_cause, absent_diagnostic, absent_diagnostic_mme, absent_diagnostic_msc,
-			absent_diagnostic_sgsn, absent_diagnostic_smsf_3gpp, absent_diagnostic_smsf_non_3gpp
-		FROM delivery_attempts WHERE message_id = ? ORDER BY id`,
-		messageID)
+		`SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE message_id = ? ORDER BY id LIMIT ? OFFSET ?`,
+		messageID, perPage, (page-1)*perPage)
 	if err != nil {
-		return nil, fmt.Errorf("list delivery attempts: %w", err)
+		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
 	}
 
 	defer func() { _ = rows.Close() }()
 
-	var attempts []DeliveryAttempt
+	attempts := []DeliveryAttempt{}
 
 	for rows.Next() {
-		var (
-			a                                              DeliveryAttempt
-			attemptedAt                                    int64
-			resultCode, vendorID                           sql.Null[uint32]
-			failureCause, tpFailureCause, absentDiagnostic sql.NullString
-			absentMME, absentMSC, absentSGSN               sql.NullString
-			absentSMSF3GPP, absentSMSFNon3GPP              sql.NullString
-		)
-
-		if err := rows.Scan(&a.ID, &a.MessageID, &attemptedAt, &a.Step, &a.Node, &a.Outcome, &resultCode, &vendorID,
-			&failureCause, &tpFailureCause, &absentDiagnostic,
-			&absentMME, &absentMSC, &absentSGSN, &absentSMSF3GPP, &absentSMSFNon3GPP); err != nil {
-			return nil, fmt.Errorf("list delivery attempts: %w", err)
+		a, err := scanDeliveryAttempt(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
 		}
 
-		a.AttemptedAt = time.Unix(0, attemptedAt).UTC()
-		a.ResultCode = pointer(resultCode)
-		a.VendorID = pointer(vendorID)
-		a.FailureCause = failureCause.String
-		a.TPFailureCause = tpFailureCause.String
-		a.AbsentDiagnostic = absentDiagnostic.String
-		a.AbsentDiagnostics = AbsentDiagnostics{
-			MME:         absentMME.String,
-			MSC:         absentMSC.String,
-			SGSN:        absentSGSN.String,
-			SMSF3GPP:    absentSMSF3GPP.String,
-			SMSFNon3GPP: absentSMSFNon3GPP.String,
-		}
 		attempts = append(attempts, a)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list delivery attempts: %w", err)
+		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
 	}
 
-	return attempts, nil
+	return attempts, total, nil
+}
+
+func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {
+	var (
+		a                                              DeliveryAttempt
+		startedAt, completedAt                         int64
+		nodeType                                       sql.NullString
+		resultCode, vendorID                           sql.Null[uint32]
+		failureCause, tpFailureCause, absentDiagnostic sql.NullString
+		absentMME, absentMSC, absentSGSN               sql.NullString
+		absentSMSF3GPP, absentSMSFNon3GPP              sql.NullString
+	)
+
+	if err := rows.Scan(&a.ID, &a.MessageID, &startedAt, &completedAt, &a.Step, &a.Node, &nodeType, &a.Outcome,
+		&resultCode, &vendorID, &failureCause, &tpFailureCause, &absentDiagnostic,
+		&absentMME, &absentMSC, &absentSGSN, &absentSMSF3GPP, &absentSMSFNon3GPP); err != nil {
+		return DeliveryAttempt{}, err
+	}
+
+	a.StartedAt = time.Unix(0, startedAt).UTC()
+	a.CompletedAt = time.Unix(0, completedAt).UTC()
+	a.NodeType = NodeType(nodeType.String)
+	a.ResultCode = pointer(resultCode)
+	a.VendorID = pointer(vendorID)
+	a.FailureCause = failureCause.String
+	a.TPFailureCause = tpFailureCause.String
+	a.AbsentDiagnostic = absentDiagnostic.String
+	a.AbsentDiagnostics = AbsentDiagnostics{
+		MME:         absentMME.String,
+		MSC:         absentMSC.String,
+		SGSN:        absentSGSN.String,
+		SMSF3GPP:    absentSMSF3GPP.String,
+		SMSFNon3GPP: absentSMSFNon3GPP.String,
+	}
+
+	return a, nil
 }
 
 func nullable(v *uint32) sql.Null[uint32] {

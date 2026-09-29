@@ -43,9 +43,11 @@ var migrations = []string{
 	CREATE TABLE delivery_attempts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
-		attempted_at INTEGER NOT NULL,
+		started_at INTEGER NOT NULL,
+		completed_at INTEGER NOT NULL,
 		step TEXT NOT NULL CHECK (step IN ('routing', 'delivery')),
 		node TEXT NOT NULL,
+		node_type TEXT CHECK (node_type IN ('mme', 'sgsn', 'smsf_3gpp', 'smsf_non_3gpp')),
 		outcome TEXT NOT NULL,
 		result_code INTEGER,
 		vendor_id INTEGER,

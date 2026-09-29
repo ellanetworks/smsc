@@ -181,14 +181,14 @@ func TestReportSMDeliveryStatusFailures(t *testing.T) {
 func TestSendRoutingInfoForSMAlertMSISDN(t *testing.T) {
 	f := &fakeRequester{answer: successAnswer(mmeServingNode(t), userIdentifier(t, "5155999900f0"))}
 
-	routing, err := newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
+	routing, _, err := newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
 	if err != nil || routing.AlertMSISDN != "15559999000" {
 		t.Fatalf("routing = %+v, %v", routing, err)
 	}
 
 	f = &fakeRequester{answer: experimentalAnswer(tgpp.ResultErrorAbsentUser, userIdentifier(t, "5155999900f0"))}
 
-	_, err = newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
+	_, _, err = newRouter(f).SendRoutingInfoForSM(context.Background(), s6c.RoutingRequest{MSISDN: "15551230002"})
 
 	var re *s6c.ResultError
 	if !errors.As(err, &re) || re.AlertMSISDN != "15559999000" {

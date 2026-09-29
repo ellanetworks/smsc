@@ -47,9 +47,12 @@ type Message struct {
 }
 
 type Attempt struct {
-	AttemptedAt string  `json:"attempted_at"`
+	ID          int64   `json:"id"`
+	StartedAt   string  `json:"started_at"`
+	CompletedAt string  `json:"completed_at"`
 	Step        string  `json:"step"`
 	Node        string  `json:"node,omitempty"`
+	NodeType    string  `json:"node_type,omitempty"`
 	Outcome     string  `json:"outcome"`
 	ResultCode  *uint32 `json:"result_code,omitempty"`
 	VendorID    *uint32 `json:"vendor_id,omitempty"`
@@ -68,17 +71,19 @@ type AbsentDiagnostics struct {
 	SMSFNon3GPP string `json:"smsf_non_3gpp,omitempty"`
 }
 
-type MessageWithAttempts struct {
-	Message
-	Attempts []Attempt `json:"attempts"`
-}
-
 type CreateMessageResponse struct {
 	Items []Message `json:"items"`
 }
 
 type ListMessagesResponse struct {
 	Items      []Message `json:"items"`
+	Page       int       `json:"page"`
+	PerPage    int       `json:"per_page"`
+	TotalCount int       `json:"total_count"`
+}
+
+type ListAttemptsResponse struct {
+	Items      []Attempt `json:"items"`
 	Page       int       `json:"page"`
 	PerPage    int       `json:"per_page"`
 	TotalCount int       `json:"total_count"`
@@ -184,71 +189,111 @@ func CreateMessage(cfg Config) http.Handler {
 
 func GetMessage(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "Invalid message ID", err, cfg.Logger)
+		m, ok := lookupMessage(w, r, cfg)
+		if !ok {
 			return
 		}
 
-		m, err := cfg.Store.GetMessage(r.Context(), id)
-		if errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "Message not found", err, cfg.Logger)
+		writeResponse(w, messageOf(m), http.StatusOK, cfg.Logger)
+	})
+}
+
+func ListMessageAttempts(cfg Config) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, perPage, ok := pagination(w, r, cfg)
+		if !ok {
 			return
 		}
 
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
+		m, ok := lookupMessage(w, r, cfg)
+		if !ok {
 			return
 		}
 
-		attempts, err := cfg.Store.ListDeliveryAttempts(r.Context(), id)
+		attempts, total, err := cfg.Store.ListDeliveryAttempts(r.Context(), m.ID, page, perPage)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to list delivery attempts", err, cfg.Logger)
 			return
 		}
 
-		resp := MessageWithAttempts{Message: messageOf(m), Attempts: make([]Attempt, 0, len(attempts))}
+		resp := ListAttemptsResponse{Items: make([]Attempt, 0, len(attempts)), Page: page, PerPage: perPage, TotalCount: total}
 
 		for _, a := range attempts {
-			resp.Attempts = append(resp.Attempts, Attempt{
-				AttemptedAt: formatTime(a.AttemptedAt),
-				Step:        string(a.Step),
-				Node:        a.Node,
-				Outcome:     a.Outcome,
-				ResultCode:  a.ResultCode,
-				VendorID:    a.VendorID,
-
-				FailureCause:      a.FailureCause,
-				TPFailureCause:    a.TPFailureCause,
-				AbsentDiagnostic:  a.AbsentDiagnostic,
-				AbsentDiagnostics: absentDiagnosticsOf(a.AbsentDiagnostics),
-			})
+			resp.Items = append(resp.Items, attemptOf(a))
 		}
 
 		writeResponse(w, resp, http.StatusOK, cfg.Logger)
 	})
 }
 
+func lookupMessage(w http.ResponseWriter, r *http.Request, cfg Config) (db.Message, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid message ID", err, cfg.Logger)
+		return db.Message{}, false
+	}
+
+	m, err := cfg.Store.GetMessage(r.Context(), id)
+	if errors.Is(err, db.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "Message not found", err, cfg.Logger)
+		return db.Message{}, false
+	}
+
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
+		return db.Message{}, false
+	}
+
+	return m, true
+}
+
+func pagination(w http.ResponseWriter, r *http.Request, cfg Config) (int, int, bool) {
+	q := r.URL.Query()
+
+	page, ok := atoiDefault(q.Get("page"), 1)
+	if !ok || page < 1 {
+		writeError(w, http.StatusBadRequest, "page must be an integer >= 1", nil, cfg.Logger)
+		return 0, 0, false
+	}
+
+	perPage, ok := atoiDefault(q.Get("per_page"), defaultPerPage)
+	if !ok || perPage < 1 || perPage > maxPerPage {
+		writeError(w, http.StatusBadRequest, "per_page must be an integer between 1 and 100", nil, cfg.Logger)
+		return 0, 0, false
+	}
+
+	return page, perPage, true
+}
+
+func attemptOf(a db.DeliveryAttempt) Attempt {
+	return Attempt{
+		ID:          a.ID,
+		StartedAt:   formatTime(a.StartedAt),
+		CompletedAt: formatTime(a.CompletedAt),
+		Step:        string(a.Step),
+		Node:        a.Node,
+		NodeType:    string(a.NodeType),
+		Outcome:     a.Outcome,
+		ResultCode:  a.ResultCode,
+		VendorID:    a.VendorID,
+
+		FailureCause:      a.FailureCause,
+		TPFailureCause:    a.TPFailureCause,
+		AbsentDiagnostic:  a.AbsentDiagnostic,
+		AbsentDiagnostics: absentDiagnosticsOf(a.AbsentDiagnostics),
+	}
+}
+
 func ListMessages(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, perPage, ok := pagination(w, r, cfg)
+		if !ok {
+			return
+		}
+
 		q := r.URL.Query()
-		page := atoiDefault(q.Get("page"), 1)
-		perPage := atoiDefault(q.Get("per_page"), defaultPerPage)
 
-		if page < 1 {
-			writeError(w, http.StatusBadRequest, "page must be >= 1", nil, cfg.Logger)
-			return
-		}
-
-		if perPage < 1 || perPage > maxPerPage {
-			writeError(w, http.StatusBadRequest, "per_page must be between 1 and 100", nil, cfg.Logger)
-			return
-		}
-
-		var (
-			filter db.MessageFilter
-			ok     bool
-		)
+		var filter db.MessageFilter
 
 		if to := q.Get("to"); to != "" {
 			if filter.MSISDN, ok = e164Digits(to); !ok {
@@ -338,7 +383,7 @@ func formatAddress(a db.Address) string {
 }
 
 func formatTime(t time.Time) string {
-	return t.UTC().Format(time.RFC3339)
+	return t.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }
 
 func e164Digits(s string) (string, bool) {
@@ -356,16 +401,14 @@ func e164Digits(s string) (string, bool) {
 	return digits, true
 }
 
-func atoiDefault(s string, def int) int {
+func atoiDefault(s string, def int) (int, bool) {
 	if s == "" {
-		return def
+		return def, true
 	}
 
-	if v, err := strconv.Atoi(s); err == nil {
-		return v
-	}
+	v, err := strconv.Atoi(s)
 
-	return def
+	return v, err == nil
 }
 
 func absentDiagnosticsOf(d db.AbsentDiagnostics) *AbsentDiagnostics {

@@ -153,23 +153,24 @@ type fakeRouter struct {
 	requests  []s6c.RoutingRequest
 	routing   s6c.Routing
 	routes    map[string]s6c.Routing
+	hss       string
 	err       error
 	reports   []s6c.DeliveryReport
 	report    s6c.ReportResult
 	reportErr error
 }
 
-func (r *fakeRouter) SendRoutingInfoForSM(_ context.Context, req s6c.RoutingRequest) (s6c.Routing, error) {
+func (r *fakeRouter) SendRoutingInfoForSM(_ context.Context, req s6c.RoutingRequest) (s6c.Routing, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.requests = append(r.requests, req)
 
 	if routing, ok := r.routes[req.MSISDN]; ok {
-		return routing, nil
+		return routing, r.hss, nil
 	}
 
-	return r.routing, r.err
+	return r.routing, r.hss, r.err
 }
 
 func (r *fakeRouter) ReportSMDeliveryStatus(_ context.Context, rep s6c.DeliveryReport) (s6c.ReportResult, error) {
@@ -303,6 +304,52 @@ func avpData(t *testing.T, m *diameter.Message, code, vendor uint32) []byte {
 	return a.Data
 }
 
+func TestAttemptsRecordTimesAndNodes(t *testing.T) {
+	routing := mmeRouting()
+	routing.SMSF3GPP = &s6c.NodeAddress{Name: "smsf.example.org", Realm: "5gc.example.org"}
+
+	store := newFakeStore(pendingMessage(t))
+	router := &fakeRouter{routing: routing, hss: "hss.example.org"}
+	sender := &fakeSender{answers: map[string]*diameter.Message{
+		"mme.example.org":  experimental(tgpp.ResultErrorAbsentUser),
+		"smsf.example.org": success(),
+	}}
+
+	d := newDeliverer(store, router, sender)
+	clock := testNow
+	d.Now = func() time.Time {
+		clock = clock.Add(time.Second)
+		return clock
+	}
+
+	process(t, d)
+
+	want := []struct {
+		step     db.AttemptStep
+		node     string
+		nodeType db.NodeType
+	}{
+		{db.StepRouting, "hss.example.org", ""},
+		{db.StepDelivery, "mme.example.org", db.NodeTypeMME},
+		{db.StepDelivery, "smsf.example.org", db.NodeTypeSMSF3GPP},
+	}
+
+	if len(store.attempts) != len(want) {
+		t.Fatalf("attempts = %+v", store.attempts)
+	}
+
+	for i, w := range want {
+		a := store.attempts[i]
+		if a.Step != w.step || a.Node != w.node || a.NodeType != w.nodeType || !a.StartedAt.Before(a.CompletedAt) {
+			t.Fatalf("attempt %d = %+v, want %+v", i, a, w)
+		}
+
+		if i > 0 && a.StartedAt.Before(store.attempts[i-1].CompletedAt) {
+			t.Fatalf("attempt %d started at %v, before attempt %d completed at %v", i, a.StartedAt, i-1, store.attempts[i-1].CompletedAt)
+		}
+	}
+}
+
 func TestDeliverViaMME(t *testing.T) {
 	store := newFakeStore(pendingMessage(t))
 	router := &fakeRouter{routing: mmeRouting()}
@@ -323,7 +370,8 @@ func TestDeliverViaMME(t *testing.T) {
 		t.Fatalf("attempts = %+v, want %+v", got, wantAttempts)
 	}
 
-	if a := store.attempts[1]; a.MessageID != 1 || !a.AttemptedAt.Equal(testNow) || a.ResultCode == nil || *a.ResultCode != diameter.ResultSuccess || a.VendorID != nil {
+	if a := store.attempts[1]; a.MessageID != 1 || !a.StartedAt.Equal(testNow) || !a.CompletedAt.Equal(testNow) ||
+		a.ResultCode == nil || *a.ResultCode != diameter.ResultSuccess || a.VendorID != nil {
 		t.Fatalf("attempt = %+v", a)
 	}
 
@@ -1072,7 +1120,7 @@ type cancellingRouter struct {
 	cancel context.CancelFunc
 }
 
-func (r *cancellingRouter) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, error) {
+func (r *cancellingRouter) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, string, error) {
 	r.cancel()
 
 	return r.fakeRouter.SendRoutingInfoForSM(ctx, req)
@@ -1102,11 +1150,11 @@ type waitingRouter struct {
 	waiting chan struct{}
 }
 
-func (r *waitingRouter) SendRoutingInfoForSM(ctx context.Context, _ s6c.RoutingRequest) (s6c.Routing, error) {
+func (r *waitingRouter) SendRoutingInfoForSM(ctx context.Context, _ s6c.RoutingRequest) (s6c.Routing, string, error) {
 	close(r.waiting)
 	<-ctx.Done()
 
-	return s6c.Routing{}, ctx.Err()
+	return s6c.Routing{}, "", ctx.Err()
 }
 
 func TestShutdownInterruptsRoutingLookup(t *testing.T) {

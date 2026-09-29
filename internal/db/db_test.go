@@ -143,14 +143,19 @@ func TestDeliveryAttempts(t *testing.T) {
 	first := time.Date(2026, 9, 27, 12, 0, 1, 0, time.UTC)
 
 	want := []DeliveryAttempt{
-		{MessageID: id, AttemptedAt: first, Step: StepRouting, Outcome: "timeout"},
-		{MessageID: id, AttemptedAt: first.Add(time.Second), Step: StepRouting, Outcome: "success", ResultCode: u32(2001)},
+		{MessageID: id, StartedAt: first, CompletedAt: first.Add(30 * time.Second), Step: StepRouting, Outcome: "timeout"},
 		{
-			MessageID: id, AttemptedAt: first.Add(time.Minute), Step: StepDelivery, Node: "mme1.epc.example.org",
+			MessageID: id, StartedAt: first.Add(time.Second), CompletedAt: first.Add(time.Second + 7*time.Millisecond),
+			Step: StepRouting, Node: "hss.example.org", Outcome: "success", ResultCode: u32(2001),
+		},
+		{
+			MessageID: id, StartedAt: first.Add(time.Minute), CompletedAt: first.Add(time.Minute + time.Second),
+			Step: StepDelivery, Node: "mme1.epc.example.org", NodeType: NodeTypeMME,
 			Outcome: "absent_user", ResultCode: u32(5550), VendorID: u32(10415), AbsentDiagnostic: "no_paging_response_msc",
 		},
 		{
-			MessageID: id, AttemptedAt: first.Add(2 * time.Minute), Step: StepRouting, Outcome: "absent_user",
+			MessageID: id, StartedAt: first.Add(2 * time.Minute), CompletedAt: first.Add(2*time.Minute + time.Millisecond),
+			Step: StepRouting, Node: "hss.example.org", Outcome: "absent_user",
 			ResultCode: u32(5550), VendorID: u32(10415),
 			AbsentDiagnostics: AbsentDiagnostics{
 				MME: "imsi_detached", MSC: "roaming_restriction", SGSN: "gprs_detached",
@@ -158,7 +163,8 @@ func TestDeliveryAttempts(t *testing.T) {
 			},
 		},
 		{
-			MessageID: id, AttemptedAt: first.Add(3 * time.Minute), Step: StepDelivery, Node: "mme1.epc.example.org",
+			MessageID: id, StartedAt: first.Add(3 * time.Minute), CompletedAt: first.Add(3*time.Minute + time.Second),
+			Step: StepDelivery, Node: "smsf.5gc.example.org", NodeType: NodeTypeSMSF3GPP,
 			Outcome: "sm_delivery_failure", ResultCode: u32(5555), VendorID: u32(10415),
 			FailureCause: "equipment_protocol_error", TPFailureCause: "usim_sms_storage_full",
 		},
@@ -173,18 +179,28 @@ func TestDeliveryAttempts(t *testing.T) {
 		want[i].ID = aid
 	}
 
-	attempts, err := d.ListDeliveryAttempts(ctx, id)
+	attempts, total, err := d.ListDeliveryAttempts(ctx, id, 1, 10)
 	if err != nil {
 		t.Fatalf("ListDeliveryAttempts: %v", err)
 	}
 
-	if !reflect.DeepEqual(attempts, want) {
-		t.Fatalf("attempts = %+v, want %+v", attempts, want)
+	if !reflect.DeepEqual(attempts, want) || total != len(want) {
+		t.Fatalf("attempts = %+v (total %d), want %+v", attempts, total, want)
+	}
+
+	page, total, err := d.ListDeliveryAttempts(ctx, id, 2, 2)
+	if err != nil || total != len(want) || !reflect.DeepEqual(page, want[2:4]) {
+		t.Fatalf("second page = %+v (total %d), %v", page, total, err)
+	}
+
+	none, total, err := d.ListDeliveryAttempts(ctx, id+1, 1, 10)
+	if err != nil || total != 0 || none == nil || len(none) != 0 {
+		t.Fatalf("attempts of another message = %+v (total %d), %v", none, total, err)
 	}
 }
 
 func TestDeliveryAttemptRequiresMessage(t *testing.T) {
-	a := DeliveryAttempt{MessageID: 42, AttemptedAt: time.Now(), Step: StepDelivery, Node: "mme1", Outcome: "success"}
+	a := DeliveryAttempt{MessageID: 42, StartedAt: time.Now(), CompletedAt: time.Now(), Step: StepDelivery, Node: "mme1", Outcome: "success"}
 	if _, err := openTestDB(t).CreateDeliveryAttempt(context.Background(), a); err == nil {
 		t.Fatal("expected a foreign key error for an unknown message")
 	}
@@ -199,8 +215,14 @@ func TestDeliveryAttemptRejectsUnknownStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := d.CreateDeliveryAttempt(ctx, DeliveryAttempt{MessageID: id, AttemptedAt: time.Now(), Step: "report", Outcome: "success"}); err == nil {
+	if _, err := d.CreateDeliveryAttempt(ctx, DeliveryAttempt{MessageID: id, StartedAt: time.Now(), CompletedAt: time.Now(), Step: "report", Outcome: "success"}); err == nil {
 		t.Fatal("expected an error for an unknown step")
+	}
+
+	if _, err := d.CreateDeliveryAttempt(ctx, DeliveryAttempt{
+		MessageID: id, StartedAt: time.Now(), CompletedAt: time.Now(), Step: StepDelivery, NodeType: "msc", Outcome: "success",
+	}); err == nil {
+		t.Fatal("expected an error for an unknown node type")
 	}
 }
 

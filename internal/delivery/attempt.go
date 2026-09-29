@@ -93,16 +93,43 @@ var tpFailureCauses = map[byte]string{
 	0xff: "unspecified_error_cause",
 }
 
-func (d *Deliverer) record(ctx context.Context, log *slog.Logger, messageID int64, step db.AttemptStep, node string, err error) {
-	a := attemptOf(err)
-	a.MessageID, a.AttemptedAt, a.Step, a.Node = messageID, d.Now(), step, node
+func (d *Deliverer) record(ctx context.Context, log *slog.Logger, messageID int64, a db.DeliveryAttempt) {
+	a.MessageID, a.CompletedAt = messageID, d.Now()
 
 	if _, err := d.Store.CreateDeliveryAttempt(ctx, a); err != nil {
 		log.Error("failed to record delivery attempt", slog.Any("error", err))
 	}
 
-	log.Info("short message delivery attempt", slog.String("step", string(step)), slog.String("node", node),
+	log.Info("short message delivery attempt", slog.String("step", string(a.Step)), slog.String("node", a.Node),
 		slog.String("outcome", a.Outcome))
+}
+
+func (k nodeKind) nodeType() db.NodeType {
+	switch k {
+	case kindSGSN:
+		return db.NodeTypeSGSN
+	case kindSMSF3GPP:
+		return db.NodeTypeSMSF3GPP
+	case kindSMSFNon3GPP:
+		return db.NodeTypeSMSFNon3GPP
+	default:
+		return db.NodeTypeMME
+	}
+}
+
+func routingAttemptOf(routing s6c.Routing, err error) db.DeliveryAttempt {
+	a := attemptOf(err)
+
+	var re *s6c.ResultError
+
+	switch {
+	case err == nil:
+		a.AbsentDiagnostics = absentDiagnosticsOf(routing.Absent)
+	case errors.As(err, &re):
+		a.AbsentDiagnostics = absentDiagnosticsOf(re.Absent)
+	}
+
+	return a
 }
 
 func attemptOf(err error) db.DeliveryAttempt {
@@ -141,10 +168,7 @@ func attemptOf(err error) db.DeliveryAttempt {
 }
 
 func addDetails(a *db.DeliveryAttempt, code uint32, err error) {
-	var (
-		sgdErr *sgd.ResultError
-		s6cErr *s6c.ResultError
-	)
+	var sgdErr *sgd.ResultError
 
 	switch {
 	case errors.As(err, &sgdErr) && code == tgpp.ResultErrorSMDeliveryFailure:
@@ -155,14 +179,16 @@ func addDetails(a *db.DeliveryAttempt, code uint32, err error) {
 		}
 	case errors.As(err, &sgdErr) && code == tgpp.ResultErrorAbsentUser:
 		a.AbsentDiagnostic = optionalName(absentDiagnostics, sgdErr.AbsentUserDiagnostic)
-	case errors.As(err, &s6cErr) && code == tgpp.ResultErrorAbsentUser:
-		a.AbsentDiagnostics = db.AbsentDiagnostics{
-			MME:         optionalName(absentDiagnostics, s6cErr.Absent.MME),
-			MSC:         optionalName(absentDiagnostics, s6cErr.Absent.MSC),
-			SGSN:        optionalName(absentDiagnostics, s6cErr.Absent.SGSN),
-			SMSF3GPP:    optionalName(absentDiagnostics, s6cErr.Absent.SMSF3GPP),
-			SMSFNon3GPP: optionalName(absentDiagnostics, s6cErr.Absent.SMSFNon3GPP),
-		}
+	}
+}
+
+func absentDiagnosticsOf(d s6c.AbsentUserDiagnostics) db.AbsentDiagnostics {
+	return db.AbsentDiagnostics{
+		MME:         optionalName(absentDiagnostics, d.MME),
+		MSC:         optionalName(absentDiagnostics, d.MSC),
+		SGSN:        optionalName(absentDiagnostics, d.SGSN),
+		SMSF3GPP:    optionalName(absentDiagnostics, d.SMSF3GPP),
+		SMSFNon3GPP: optionalName(absentDiagnostics, d.SMSFNon3GPP),
 	}
 }
 

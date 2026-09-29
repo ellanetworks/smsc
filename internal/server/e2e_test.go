@@ -999,10 +999,10 @@ func (s *smsc) send(t *testing.T, from, to, text string) []api.Message {
 	return created.Items
 }
 
-func (s *smsc) message(t *testing.T, id int64) api.MessageWithAttempts {
+func (s *smsc) message(t *testing.T, id int64) api.Message {
 	t.Helper()
 
-	var m api.MessageWithAttempts
+	var m api.Message
 
 	if code := s.api(t, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil, &m); code != http.StatusOK {
 		t.Fatalf("GET message %d = %d", id, code)
@@ -1011,17 +1011,24 @@ func (s *smsc) message(t *testing.T, id int64) api.MessageWithAttempts {
 	return m
 }
 
-func (s *smsc) waitForAPIStatus(t *testing.T, id int64, want string) api.MessageWithAttempts {
+func (s *smsc) attempts(t *testing.T, id int64) []api.Attempt {
 	t.Helper()
 
-	var m api.MessageWithAttempts
+	var resp api.ListAttemptsResponse
+
+	if code := s.api(t, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/attempts", id), nil, &resp); code != http.StatusOK {
+		t.Fatalf("GET attempts of message %d = %d", id, code)
+	}
+
+	return resp.Items
+}
+
+func (s *smsc) waitForAPIStatus(t *testing.T, id int64, want string) {
+	t.Helper()
 
 	eventually(t, "message "+want+" over the API", func() bool {
-		m = s.message(t, id)
-		return m.Status == want
+		return s.message(t, id).Status == want
 	})
-
-	return m
 }
 
 func TestAPIMessageIsDelivered(t *testing.T) {
@@ -1034,11 +1041,14 @@ func TestAPIMessageIsDelivered(t *testing.T) {
 		t.Fatalf("sent = %+v", sent)
 	}
 
-	m := s.waitForAPIStatus(t, sent[0].ID, "delivered")
+	s.waitForAPIStatus(t, sent[0].ID, "delivered")
 
-	if len(m.Attempts) != 2 || m.Attempts[0].Step != "routing" || m.Attempts[0].Outcome != "success" ||
-		m.Attempts[1].Step != "delivery" || m.Attempts[1].Node != coreHost || m.Attempts[1].Outcome != "success" {
-		t.Fatalf("attempts = %+v", m.Attempts)
+	attempts := s.attempts(t, sent[0].ID)
+	if len(attempts) != 2 ||
+		attempts[0].Step != "routing" || attempts[0].Node != coreHost || attempts[0].NodeType != "" || attempts[0].Outcome != "success" ||
+		attempts[1].Step != "delivery" || attempts[1].Node != coreHost || attempts[1].NodeType != "mme" || attempts[1].Outcome != "success" ||
+		attempts[1].StartedAt < attempts[0].CompletedAt || attempts[1].CompletedAt < attempts[1].StartedAt {
+		t.Fatalf("attempts = %+v", attempts)
 	}
 
 	got := core.deliveredTo(bob.imsi)
@@ -1082,18 +1092,20 @@ func TestAPIShowsAbsentUserRetry(t *testing.T) {
 
 	sent := s.send(t, "+15550001111", "+"+bob.msisdn, "are you there?")
 
-	var m api.MessageWithAttempts
+	var attempts []api.Attempt
 
 	eventually(t, "the routing failure to be recorded", func() bool {
-		m = s.message(t, sent[0].ID)
-		return len(m.Attempts) > 0
+		attempts = s.attempts(t, sent[0].ID)
+		return len(attempts) > 0
 	})
 
-	a := m.Attempts[0]
-	if m.Status != "pending" || m.NextAttemptAt == "" || a.Step != "routing" || a.Outcome != "absent_user" ||
+	m := s.message(t, sent[0].ID)
+
+	a := attempts[0]
+	if m.Status != "pending" || m.NextAttemptAt == "" || a.Step != "routing" || a.Node != coreHost || a.Outcome != "absent_user" ||
 		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorAbsentUser || a.VendorID == nil || *a.VendorID != tgpp.VendorID ||
 		a.AbsentDiagnostics == nil || *a.AbsentDiagnostics != (api.AbsentDiagnostics{MME: "imsi_detached"}) {
-		t.Fatalf("message = %+v, attempts = %+v", m.Message, m.Attempts)
+		t.Fatalf("message = %+v, attempts = %+v", m, attempts)
 	}
 }
 
@@ -1112,19 +1124,21 @@ func TestAPIShowsDeliveryFailureDetails(t *testing.T) {
 
 	sent := s.send(t, "+15550002222", "+"+bob.msisdn, "is your SIM full?")
 
-	var m api.MessageWithAttempts
+	var attempts []api.Attempt
 
 	eventually(t, "the delivery failure to be recorded", func() bool {
-		m = s.message(t, sent[0].ID)
-		return len(m.Attempts) > 1
+		attempts = s.attempts(t, sent[0].ID)
+		return len(attempts) > 1
 	})
 
-	a := m.Attempts[1]
-	if m.Status != "pending" || a.Step != "delivery" || a.Outcome != "sm_delivery_failure" ||
+	m := s.message(t, sent[0].ID)
+
+	a := attempts[1]
+	if m.Status != "pending" || a.Step != "delivery" || a.NodeType != "mme" || a.Outcome != "sm_delivery_failure" ||
 		a.ResultCode == nil || *a.ResultCode != tgpp.ResultErrorSMDeliveryFailure ||
 		a.FailureCause != "equipment_protocol_error" || a.TPFailureCause != "usim_sms_storage_full" ||
 		a.AbsentDiagnostic != "" || a.AbsentDiagnostics != nil {
-		t.Fatalf("message = %+v, attempts = %+v", m.Message, m.Attempts)
+		t.Fatalf("message = %+v, attempts = %+v", m, attempts)
 	}
 }
 

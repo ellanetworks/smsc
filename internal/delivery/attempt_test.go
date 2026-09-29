@@ -51,7 +51,7 @@ func TestAttemptOutcomes(t *testing.T) {
 
 func TestAttemptDetails(t *testing.T) {
 	protocolError, notSMEquipped, unknownCause := sgd.CauseEquipmentProtocolError, sgd.CauseEquipmentNotSMEquipped, uint32(9)
-	detached, purged, unknownDiagnostic := tgpp.AbsentUserIMSIDetached, tgpp.AbsentUserPurgedNonGPRS, uint32(99)
+	detached, unknownDiagnostic := tgpp.AbsentUserIMSIDetached, uint32(99)
 	noPaging := tgpp.AbsentUserNoPagingResponseMSC
 
 	deliveryFailure := func(cause *uint32, diagnostic []byte) error {
@@ -80,18 +80,6 @@ func TestAttemptDetails(t *testing.T) {
 		"absent without reason":   {&sgd.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser)}, db.DeliveryAttempt{}},
 		"unknown absent reason":   {&sgd.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser), AbsentUserDiagnostic: &unknownDiagnostic}, db.DeliveryAttempt{AbsentDiagnostic: "unknown_99"}},
 		"diagnostic on busy user": {&sgd.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorUserBusyForMTSMS), AbsentUserDiagnostic: &detached}, db.DeliveryAttempt{}},
-		"absent at the HSS": {
-			&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser), Absent: s6c.AbsentUserDiagnostics{MME: &detached, SMSF3GPP: &purged}},
-			db.DeliveryAttempt{AbsentDiagnostics: db.AbsentDiagnostics{MME: "imsi_detached", SMSF3GPP: "ms_purged_non_gprs"}},
-		},
-		"all HSS slots": {
-			&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser), Absent: s6c.AbsentUserDiagnostics{
-				MME: &detached, MSC: &noPaging, SGSN: &purged, SMSF3GPP: &unknownDiagnostic, SMSFNon3GPP: &detached,
-			}},
-			db.DeliveryAttempt{AbsentDiagnostics: db.AbsentDiagnostics{
-				MME: "imsi_detached", MSC: "no_paging_response_msc", SGSN: "ms_purged_non_gprs", SMSF3GPP: "unknown_99", SMSFNon3GPP: "imsi_detached",
-			}},
-		},
 		"other vendor": {
 			&sgd.ResultError{Result: tgpp.Result{Code: tgpp.ResultErrorSMDeliveryFailure, Experimental: true, VendorID: 42}, DeliveryFailureCause: &protocolError},
 			db.DeliveryAttempt{},
@@ -104,6 +92,46 @@ func TestAttemptDetails(t *testing.T) {
 
 			if a.FailureCause != tc.want.FailureCause || a.TPFailureCause != tc.want.TPFailureCause ||
 				a.AbsentDiagnostic != tc.want.AbsentDiagnostic || a.AbsentDiagnostics != tc.want.AbsentDiagnostics {
+				t.Fatalf("attempt = %+v", a)
+			}
+		})
+	}
+}
+
+func TestRoutingAttemptDiagnostics(t *testing.T) {
+	detached, purged, noPaging, unknownDiagnostic := tgpp.AbsentUserIMSIDetached, tgpp.AbsentUserPurgedNonGPRS, tgpp.AbsentUserNoPagingResponseMSC, uint32(99)
+
+	tests := map[string]struct {
+		routing s6c.Routing
+		err     error
+		want    db.AbsentDiagnostics
+	}{
+		"absent at the HSS": {
+			err:  &s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser), Absent: s6c.AbsentUserDiagnostics{MME: &detached, SMSF3GPP: &purged}},
+			want: db.AbsentDiagnostics{MME: "imsi_detached", SMSF3GPP: "ms_purged_non_gprs"},
+		},
+		"all HSS slots": {
+			err: &s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser), Absent: s6c.AbsentUserDiagnostics{
+				MME: &detached, MSC: &noPaging, SGSN: &purged, SMSF3GPP: &unknownDiagnostic, SMSFNon3GPP: &detached,
+			}},
+			want: db.AbsentDiagnostics{
+				MME: "imsi_detached", MSC: "no_paging_response_msc", SGSN: "ms_purged_non_gprs", SMSF3GPP: "unknown_99", SMSFNon3GPP: "imsi_detached",
+			},
+		},
+		"stored diagnostic on success": {
+			routing: s6c.Routing{IMSI: "001010000000001", Absent: s6c.AbsentUserDiagnostics{SMSF3GPP: &purged}},
+			want:    db.AbsentDiagnostics{SMSF3GPP: "ms_purged_non_gprs"},
+		},
+		"success without diagnostics": {routing: s6c.Routing{IMSI: "001010000000001"}},
+		"absent without diagnostics":  {err: &s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser)}},
+		"transport error":             {err: diameter.ErrNotConnected},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			a := routingAttemptOf(tc.routing, tc.err)
+
+			if a.AbsentDiagnostics != tc.want || a.AbsentDiagnostic != "" {
 				t.Fatalf("attempt = %+v", a)
 			}
 		})
