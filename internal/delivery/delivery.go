@@ -745,7 +745,7 @@ func classifyForwardAnswer(err error) forwardResult {
 		cause := re.DeliveryFailureCause
 
 		switch {
-		case cause != nil && (*cause == sgd.CauseEquipmentProtocolError || *cause == sgd.CauseEquipmentNotSMEquipped):
+		case cause != nil && *cause == sgd.CauseEquipmentNotSMEquipped:
 			return forwardResult{outcome: permanent}
 		case cause != nil && *cause == sgd.CauseMemoryCapacityExceeded:
 			return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded)}
