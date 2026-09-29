@@ -35,13 +35,12 @@ type DeliveryAttempt struct {
 	ResultCode  *uint32
 	VendorID    *uint32
 
-	FailureCause      string
-	TPFailureCause    string
-	AbsentDiagnostic  string
-	AbsentDiagnostics AbsentDiagnostics
+	FailureCause          string
+	TPFailureCause        string
+	AbsentUserDiagnostics AbsentUserDiagnostics
 }
 
-type AbsentDiagnostics struct {
+type AbsentUserDiagnostics struct {
 	MME         string
 	MSC         string
 	SGSN        string
@@ -50,20 +49,20 @@ type AbsentDiagnostics struct {
 }
 
 const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
-	failure_cause, tp_failure_cause, absent_diagnostic, absent_diagnostic_mme, absent_diagnostic_msc,
-	absent_diagnostic_sgsn, absent_diagnostic_smsf_3gpp, absent_diagnostic_smsf_non_3gpp`
+	failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
+	absent_user_diagnostic_sgsn, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp`
 
 func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (int64, error) {
 	res, err := d.conn.ExecContext(ctx,
 		`INSERT INTO delivery_attempts (message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
-			failure_cause, tp_failure_cause, absent_diagnostic, absent_diagnostic_mme, absent_diagnostic_msc,
-			absent_diagnostic_sgsn, absent_diagnostic_smsf_3gpp, absent_diagnostic_smsf_non_3gpp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
+			absent_user_diagnostic_sgsn, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.MessageID, a.StartedAt.UTC().UnixNano(), a.CompletedAt.UTC().UnixNano(), a.Step, a.Node,
 		nullableString(string(a.NodeType)), a.Outcome, nullable(a.ResultCode), nullable(a.VendorID),
-		nullableString(a.FailureCause), nullableString(a.TPFailureCause), nullableString(a.AbsentDiagnostic),
-		nullableString(a.AbsentDiagnostics.MME), nullableString(a.AbsentDiagnostics.MSC), nullableString(a.AbsentDiagnostics.SGSN),
-		nullableString(a.AbsentDiagnostics.SMSF3GPP), nullableString(a.AbsentDiagnostics.SMSFNon3GPP))
+		nullableString(a.FailureCause), nullableString(a.TPFailureCause),
+		nullableString(a.AbsentUserDiagnostics.MME), nullableString(a.AbsentUserDiagnostics.MSC), nullableString(a.AbsentUserDiagnostics.SGSN),
+		nullableString(a.AbsentUserDiagnostics.SMSF3GPP), nullableString(a.AbsentUserDiagnostics.SMSFNon3GPP))
 	if err != nil {
 		return 0, fmt.Errorf("create delivery attempt: %w", err)
 	}
@@ -111,17 +110,17 @@ func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, pe
 
 func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {
 	var (
-		a                                              DeliveryAttempt
-		startedAt, completedAt                         int64
-		nodeType                                       sql.NullString
-		resultCode, vendorID                           sql.Null[uint32]
-		failureCause, tpFailureCause, absentDiagnostic sql.NullString
-		absentMME, absentMSC, absentSGSN               sql.NullString
-		absentSMSF3GPP, absentSMSFNon3GPP              sql.NullString
+		a                                 DeliveryAttempt
+		startedAt, completedAt            int64
+		nodeType                          sql.NullString
+		resultCode, vendorID              sql.Null[uint32]
+		failureCause, tpFailureCause      sql.NullString
+		absentMME, absentMSC, absentSGSN  sql.NullString
+		absentSMSF3GPP, absentSMSFNon3GPP sql.NullString
 	)
 
 	if err := rows.Scan(&a.ID, &a.MessageID, &startedAt, &completedAt, &a.Step, &a.Node, &nodeType, &a.Outcome,
-		&resultCode, &vendorID, &failureCause, &tpFailureCause, &absentDiagnostic,
+		&resultCode, &vendorID, &failureCause, &tpFailureCause,
 		&absentMME, &absentMSC, &absentSGSN, &absentSMSF3GPP, &absentSMSFNon3GPP); err != nil {
 		return DeliveryAttempt{}, err
 	}
@@ -133,8 +132,7 @@ func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {
 	a.VendorID = pointer(vendorID)
 	a.FailureCause = failureCause.String
 	a.TPFailureCause = tpFailureCause.String
-	a.AbsentDiagnostic = absentDiagnostic.String
-	a.AbsentDiagnostics = AbsentDiagnostics{
+	a.AbsentUserDiagnostics = AbsentUserDiagnostics{
 		MME:         absentMME.String,
 		MSC:         absentMSC.String,
 		SGSN:        absentSGSN.String,

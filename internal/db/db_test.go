@@ -151,13 +151,14 @@ func TestDeliveryAttempts(t *testing.T) {
 		{
 			MessageID: id, StartedAt: first.Add(time.Minute), CompletedAt: first.Add(time.Minute + time.Second),
 			Step: StepDelivery, Node: "mme1.epc.example.org", NodeType: NodeTypeMME,
-			Outcome: "absent_user", ResultCode: u32(5550), VendorID: u32(10415), AbsentDiagnostic: "no_paging_response_msc",
+			Outcome: "absent_user", ResultCode: u32(5550), VendorID: u32(10415),
+			AbsentUserDiagnostics: AbsentUserDiagnostics{MME: "no_paging_response_msc"},
 		},
 		{
 			MessageID: id, StartedAt: first.Add(2 * time.Minute), CompletedAt: first.Add(2*time.Minute + time.Millisecond),
 			Step: StepRouting, Node: "hss.example.org", Outcome: "absent_user",
 			ResultCode: u32(5550), VendorID: u32(10415),
-			AbsentDiagnostics: AbsentDiagnostics{
+			AbsentUserDiagnostics: AbsentUserDiagnostics{
 				MME: "imsi_detached", MSC: "roaming_restriction", SGSN: "gprs_detached",
 				SMSF3GPP: "ms_purged_non_gprs", SMSFNon3GPP: "unknown_99",
 			},
