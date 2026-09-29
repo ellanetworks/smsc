@@ -448,7 +448,7 @@ func TestDeliverOutcomes(t *testing.T) {
 		"base permanent error fails":          {answer: &diameter.Message{AVPs: []diameter.AVP{diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, 5004)}}, wantStatus: db.StatusFailed},
 		"illegal user fails":                  {answer: experimental(tgpp.ResultErrorIllegalUser), wantStatus: db.StatusFailed},
 		"illegal equipment fails":             {answer: experimental(tgpp.ResultErrorIllegalEquipment), wantStatus: db.StatusFailed},
-		"equipment protocol error fails":      {answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError), wantStatus: db.StatusFailed},
+		"equipment protocol error is retried": {answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
 		"not SM equipped fails":               {answer: smDeliveryFailure(sgd.CauseEquipmentNotSMEquipped), wantStatus: db.StatusFailed},
 	}
 
@@ -763,6 +763,22 @@ func TestMemoryExceededReport(t *testing.T) {
 
 	if len(store.holds) != 1 {
 		t.Fatalf("holds = %+v", store.holds)
+	}
+}
+
+func TestEquipmentProtocolErrorRetriesWithoutHoldOrReport(t *testing.T) {
+	router := &fakeRouter{routing: mmeRouting()}
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": smDeliveryFailure(sgd.CauseEquipmentProtocolError)}}
+	store := newFakeStore(pendingMessage(t))
+
+	process(t, newDeliverer(store, router, sender))
+
+	if store.messages[1].Status != db.StatusPending {
+		t.Fatalf("status = %s", store.messages[1].Status)
+	}
+
+	if len(router.reports) != 0 || len(store.holds) != 0 {
+		t.Fatalf("reports = %+v, holds = %+v", router.reports, store.holds)
 	}
 }
 
