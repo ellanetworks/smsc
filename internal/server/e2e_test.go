@@ -545,6 +545,7 @@ func testConfig(t *testing.T, dbPath string) config.Config {
 		ServiceCentre: config.ServiceCentre{Address: serviceCentreAddress},
 		Diameter:      config.Diameter{OriginHost: smscHost, OriginRealm: realm, Address: loopback},
 		HSS:           config.HSS{Realm: realm},
+		API:           config.API{Address: loopback},
 		Numbering:     config.Numbering{CountryCode: "1"},
 		Delivery: config.Delivery{
 			DefaultValidity: time.Hour,
@@ -939,15 +940,6 @@ func TestRoutingSkipsHSSOutsideAllowedNetworks(t *testing.T) {
 	}
 }
 
-func startSMSCWithAPI(t *testing.T) *smsc {
-	t.Helper()
-
-	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
-	cfg.API = config.API{Address: loopback}
-
-	return startSMSC(t, cfg)
-}
-
 func (s *smsc) api(t *testing.T, method, path string, body any, out any) int {
 	t.Helper()
 
@@ -1030,7 +1022,7 @@ func (s *smsc) waitForAPIStatus(t *testing.T, id int64, want string) api.Message
 
 func TestAPIMessageIsDelivered(t *testing.T) {
 	core := newFakeCore(t, bob)
-	s := startSMSCWithAPI(t)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
 	core.connect(s)
 
 	sent := s.send(t, "+15550001111", "+"+bob.msisdn, "hello from the API")
@@ -1053,7 +1045,7 @@ func TestAPIMessageIsDelivered(t *testing.T) {
 
 func TestAPIConcatenatedMessageIsDelivered(t *testing.T) {
 	core := newFakeCore(t, bob)
-	s := startSMSCWithAPI(t)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
 	core.connect(s)
 
 	sent := s.send(t, "+15550001111", "+"+bob.msisdn, strings.Repeat("0123456789", 20))
@@ -1081,7 +1073,7 @@ func TestAPIShowsAbsentUserRetry(t *testing.T) {
 	core := newFakeCore(t, bob)
 	core.setAbsent(bob.msisdn, true)
 
-	s := startSMSCWithAPI(t)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
 	core.connect(s)
 
 	sent := s.send(t, "+15550001111", "+"+bob.msisdn, "are you there?")
@@ -1102,7 +1094,7 @@ func TestAPIShowsAbsentUserRetry(t *testing.T) {
 
 func TestAPIFindsMobileOriginatedMessages(t *testing.T) {
 	core := newFakeCore(t, alice, bob)
-	s := startSMSCWithAPI(t)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
 	core.connect(s)
 
 	core.submit(alice, bob, "hi bob")
@@ -1122,7 +1114,7 @@ func TestAPIFindsMobileOriginatedMessages(t *testing.T) {
 
 func TestAPIDiameterStatus(t *testing.T) {
 	core := newFakeCore(t, bob)
-	s := startSMSCWithAPI(t)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
 
 	var status api.DiameterStatus
 

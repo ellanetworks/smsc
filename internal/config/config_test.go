@@ -117,7 +117,7 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"negative validity":         {"default_validity: 48h", "default_validity: -1h"},
 		"negative concurrency":      {"concurrency: 5", "concurrency: -1"},
 		"unknown field":             {"db:\n", "unknown: true\ndb:\n"},
-		"api port without address":  {"  address: 127.0.0.1\n  port: 8080", "  port: 8080"},
+		"missing api address":       {"  address: 127.0.0.1\n", ""},
 		"api port out of range":     {"port: 8080", "port: 70000"},
 		"invalid api address":       {"  address: 127.0.0.1\n", "  address: localhost\n"},
 	}
@@ -143,9 +143,9 @@ func TestLoadRejectsMissingFile(t *testing.T) {
 }
 
 func TestLoadDeliveryDefaults(t *testing.T) {
-	i := strings.Index(validConfig, "delivery:")
+	i, j := strings.Index(validConfig, "delivery:"), strings.Index(validConfig, "api:")
 
-	cfg, err := Load(writeConfig(t, validConfig[:i]))
+	cfg, err := Load(writeConfig(t, validConfig[:i]+validConfig[j:]))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -160,10 +160,6 @@ func TestLoadDeliveryDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Delivery, want) {
 		t.Fatalf("Delivery = %+v, want %+v", cfg.Delivery, want)
 	}
-
-	if cfg.API.Enabled() || cfg.API.Port != 0 {
-		t.Fatalf("API = %+v; the API must stay off unless configured", cfg.API)
-	}
 }
 
 func TestLoadAPIDefaultPort(t *testing.T) {
@@ -172,7 +168,7 @@ func TestLoadAPIDefaultPort(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if !cfg.API.Enabled() || cfg.API.Port != 5010 {
+	if cfg.API.Port != 5010 {
 		t.Fatalf("API = %+v", cfg.API)
 	}
 }

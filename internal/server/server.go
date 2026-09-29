@@ -139,36 +139,34 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen for Diameter: %w", err)
 	}
 
-	if cfg.API.Enabled() {
-		var lc net.ListenConfig
+	var apiLC net.ListenConfig
 
-		apiLn, err := lc.Listen(ctx, "tcp", netip.AddrPortFrom(cfg.API.Address, uint16(cfg.API.Port)).String())
-		if err != nil {
-			_ = ln.Close()
-			_ = database.Close()
+	apiLn, err := apiLC.Listen(ctx, "tcp", netip.AddrPortFrom(cfg.API.Address, uint16(cfg.API.Port)).String())
+	if err != nil {
+		_ = ln.Close()
+		_ = database.Close()
 
-			return fmt.Errorf("listen for the API: %w", err)
-		}
-
-		s.apiListener = apiLn
-		s.apiServer = &http.Server{
-			Handler: api.NewHandler(api.Config{
-				Store:           database,
-				Diameter:        diameterStatus{node: node, hss: hss},
-				Notify:          deliverer.Notify,
-				DefaultValidity: cfg.Delivery.DefaultValidity,
-				Now:             time.Now,
-				Logger:          s.Logger,
-			}),
-			ErrorLog:          slog.NewLogLogger(s.Logger.Handler(), slog.LevelWarn),
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       time.Minute,
-			WriteTimeout:      time.Minute,
-			IdleTimeout:       2 * time.Minute,
-		}
-
-		go func() { _ = s.apiServer.Serve(apiLn) }()
+		return fmt.Errorf("listen for the API: %w", err)
 	}
+
+	s.apiListener = apiLn
+	s.apiServer = &http.Server{
+		Handler: api.NewHandler(api.Config{
+			Store:           database,
+			Diameter:        diameterStatus{node: node, hss: hss},
+			Notify:          deliverer.Notify,
+			DefaultValidity: cfg.Delivery.DefaultValidity,
+			Now:             time.Now,
+			Logger:          s.Logger,
+		}),
+		ErrorLog:          slog.NewLogLogger(s.Logger.Handler(), slog.LevelWarn),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       time.Minute,
+		WriteTimeout:      time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+
+	go func() { _ = s.apiServer.Serve(apiLn) }()
 
 	go func() { _ = node.Serve(diameter.NewSCTPListener(ln, s.Logger)) }()
 
@@ -188,11 +186,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.stopDelivery = stopDelivery
 	s.deliveryDone = deliveryDone
 
-	s.Logger.Info("smsc started", "db", cfg.DB.Path, "diameter", ln.Addr().String())
-
-	if s.apiListener != nil {
-		s.Logger.Info("API listening", "address", s.apiListener.Addr().String())
-	}
+	s.Logger.Info("smsc started", "db", cfg.DB.Path, "diameter", ln.Addr().String(), "api", apiLn.Addr().String())
 
 	return nil
 }
@@ -220,10 +214,8 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.Logger.Info("smsc stopping")
 
-	if s.apiServer != nil {
-		if err := s.apiServer.Shutdown(ctx); err != nil {
-			s.Logger.Warn("failed to stop the API cleanly", slog.Any("error", err))
-		}
+	if err := s.apiServer.Shutdown(ctx); err != nil {
+		s.Logger.Warn("failed to stop the API cleanly", slog.Any("error", err))
 	}
 
 	s.stopDelivery()

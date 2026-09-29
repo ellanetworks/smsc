@@ -36,10 +36,6 @@ type API struct {
 	Port    int        `yaml:"port"`
 }
 
-func (a API) Enabled() bool {
-	return a.Address.IsValid()
-}
-
 type Numbering struct {
 	CountryCode         string `yaml:"country_code"`
 	NationalPrefix      string `yaml:"national_prefix"`
@@ -91,7 +87,7 @@ func Load(path string) (Config, error) {
 		cfg.Diameter.Port = defaultDiameterPort
 	}
 
-	if cfg.API.Enabled() && cfg.API.Port == 0 {
+	if cfg.API.Port == 0 {
 		cfg.API.Port = defaultAPIPort
 	}
 
@@ -148,9 +144,9 @@ func (c Config) validate() error {
 		return errors.New("delivery.attempt_timeout must be at least 1s")
 	case c.Delivery.Concurrency < 1:
 		return errors.New("delivery.concurrency must be at least 1")
-	case !c.API.Enabled() && c.API.Port != 0:
-		return errors.New("api.address is required when api.port is set")
-	case c.API.Enabled() && (c.API.Port < 1 || c.API.Port > 65535):
+	case !c.API.Address.IsValid():
+		return errors.New("api.address is required")
+	case c.API.Port < 1 || c.API.Port > 65535:
 		return fmt.Errorf("api.port %d is out of range", c.API.Port)
 	}
 
