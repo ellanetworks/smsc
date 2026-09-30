@@ -1,0 +1,430 @@
+openapi: "3.1.0"
+info:
+  title: Ella SMSC API
+  version: "1.0.0"
+
+servers:
+  - url: "{scheme}://{host}"
+    variables:
+      scheme:
+        default: http
+        enum: [http, https]
+      host:
+        default: localhost:5010
+
+security: []
+
+tags:
+  - name: Messages
+  - name: Diameter
+  - name: Specification
+
+paths:
+  /api/v1/messages:
+    post:
+      tags: [Messages]
+      operationId: createMessage
+      summary: Create message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMessageParams"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/CreateMessageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Messages]
+      operationId: listMessages
+      summary: List messages
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: to
+          in: query
+          schema:
+            $ref: "#/components/schemas/E164"
+        - name: from
+          in: query
+          schema:
+            $ref: "#/components/schemas/E164"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/MessageStatus"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/ListMessagesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/messages/{id}:
+    get:
+      tags: [Messages]
+      operationId: getMessage
+      summary: Get message
+      parameters:
+        - $ref: "#/components/parameters/MessageID"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/Message"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/messages/{id}/attempts:
+    get:
+      tags: [Messages]
+      operationId: listMessageAttempts
+      summary: List delivery attempts
+      parameters:
+        - $ref: "#/components/parameters/MessageID"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/ListAttemptsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/diameter:
+    get:
+      tags: [Diameter]
+      operationId: getDiameterStatus
+      summary: Get Diameter status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/DiameterStatus"
+
+  /api/v1/openapi.yaml:
+    get:
+      tags: [Specification]
+      operationId: getOpenAPISpec
+      summary: Get OpenAPI specification
+      responses:
+        "200":
+          description: OK
+          content:
+            application/openapi+yaml:
+              schema:
+                type: string
+
+components:
+  parameters:
+    MessageID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    E164:
+      type: string
+      pattern: '^\+[1-9][0-9]{0,14}$'
+      examples: ["+15551230001"]
+
+    MessageStatus:
+      type: string
+      enum: [pending, delivered, failed, expired]
+
+    CreateMessageParams:
+      type: object
+      required: [from, to, text]
+      properties:
+        from:
+          $ref: "#/components/schemas/E164"
+        to:
+          $ref: "#/components/schemas/E164"
+        text:
+          type: string
+          minLength: 1
+
+    CreateMessageResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+
+    ListMessagesResponse:
+      type: object
+      required: [items, page, per_page, total_count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total_count:
+          type: integer
+
+    ListAttemptsResponse:
+      type: object
+      required: [items, page, per_page, total_count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attempt"
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total_count:
+          type: integer
+
+    Concatenation:
+      type: object
+      required: [reference, part, total]
+      properties:
+        reference:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        part:
+          type: integer
+          minimum: 0
+          maximum: 255
+        total:
+          type: integer
+          minimum: 0
+          maximum: 255
+
+    Message:
+      type: object
+      required: [id, from, to, encoding, status, created_at, updated_at, expires_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        from:
+          type: string
+        to:
+          $ref: "#/components/schemas/E164"
+        text:
+          type: string
+        encoding:
+          type: string
+          enum: [gsm7, ucs2, binary]
+        concatenation:
+          $ref: "#/components/schemas/Concatenation"
+        status:
+          $ref: "#/components/schemas/MessageStatus"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        next_attempt_at:
+          type: string
+          format: date-time
+
+    Attempt:
+      type: object
+      required: [id, started_at, completed_at, step, outcome]
+      properties:
+        id:
+          type: integer
+          format: int64
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        step:
+          type: string
+          enum: [routing, delivery]
+        node:
+          type: string
+        node_type:
+          type: string
+          enum: [mme, sgsn, smsf_3gpp, smsf_non_3gpp]
+        outcome:
+          type: string
+          enum:
+            - success
+            - timeout
+            - no_hss
+            - unreachable
+            - diameter_error
+            - error
+            - user_unknown
+            - absent_user
+            - user_busy_for_mt_sms
+            - facility_not_supported
+            - illegal_user
+            - illegal_equipment
+            - sm_delivery_failure
+            - service_not_subscribed
+            - service_barred
+            - mwd_list_full
+        result_code:
+          type: integer
+          format: uint32
+        vendor_id:
+          type: integer
+          format: uint32
+        failure_cause:
+          type: string
+        tp_failure_cause:
+          type: string
+        absent_user_diagnostics:
+          $ref: "#/components/schemas/AbsentUserDiagnostics"
+
+    AbsentUserDiagnostics:
+      type: object
+      properties:
+        mme:
+          type: string
+        msc:
+          type: string
+        sgsn:
+          type: string
+        smsf_3gpp:
+          type: string
+        smsf_non_3gpp:
+          type: string
+
+    DiameterStatus:
+      type: object
+      required: [host, realm, hss_available, peers]
+      properties:
+        host:
+          type: string
+        realm:
+          type: string
+        hss_available:
+          type: boolean
+        peers:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiameterPeer"
+
+    DiameterPeer:
+      type: object
+      required: [host, realm, address, state, applications, since]
+      properties:
+        host:
+          type: string
+        realm:
+          type: string
+        address:
+          type: string
+        state:
+          type: string
+          enum: [down, connecting, open, suspect, reopen, closing]
+        applications:
+          type: array
+          items:
+            type: string
+        since:
+          type: string
+          format: date-time
