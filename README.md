@@ -75,7 +75,7 @@ Click **Update**. Set the switch to **ON**.
 
 **SMSC Link** shows **Connected**.
 
-### 5. Open the SMSC UI
+### 5. Open the Ella SMSC UI
 
 Open `http://192.0.2.10:5010`.
 
