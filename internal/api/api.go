@@ -42,6 +42,7 @@ func NewHandler(cfg Config) http.Handler {
 	mux.Handle("GET /api/v1/messages/{id}", GetMessage(cfg))
 	mux.Handle("GET /api/v1/messages/{id}/attempts", ListMessageAttempts(cfg))
 	mux.Handle("GET /api/v1/diameter", GetDiameterStatus(cfg))
+	mux.Handle("GET /api/v1/openapi.yaml", OpenAPISpec())
 
 	if cfg.Frontend != nil {
 		mux.Handle("GET /", Frontend(cfg.Frontend))
