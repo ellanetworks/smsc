@@ -1,4 +1,5 @@
 import {
+  Box,
   Card,
   CardContent,
   CardHeader,
@@ -15,6 +16,7 @@ import {
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { type DiameterPeerState, getDiameterStatus } from "@/queries/diameter";
+import DomainName from "@/components/DomainName";
 import Fields from "@/components/Fields";
 import QueryAlert from "@/components/QueryAlert";
 import { formatTimestamp } from "@/utils/dates";
@@ -98,8 +100,7 @@ export default function DiameterStatusCard() {
             <Table size="small" aria-labelledby="diameter-peers-title">
               <TableHead>
                 <TableRow>
-                  <TableCell>Host</TableCell>
-                  <TableCell>Realm</TableCell>
+                  <TableCell>Peer</TableCell>
                   <TableCell>Address</TableCell>
                   <TableCell>State</TableCell>
                   <TableCell>Applications</TableCell>
@@ -109,8 +110,21 @@ export default function DiameterStatusCard() {
               <TableBody>
                 {data.peers.map((peer) => (
                   <TableRow key={`${peer.host}|${peer.address}`}>
-                    <TableCell>{peer.host || "—"}</TableCell>
-                    <TableCell>{peer.realm || "—"}</TableCell>
+                    <TableCell>
+                      <Box data-field="host">
+                        {peer.host ? <DomainName name={peer.host} /> : "—"}
+                      </Box>
+                      {peer.realm && (
+                        <Typography
+                          data-field="realm"
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: "block" }}
+                        >
+                          <DomainName name={peer.realm} />
+                        </Typography>
+                      )}
+                    </TableCell>
                     <TableCell>{peer.address || "—"}</TableCell>
                     <TableCell>
                       <Chip

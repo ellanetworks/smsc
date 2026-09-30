@@ -25,6 +25,11 @@ const serve = (httpStatus: number, body: unknown) =>
     vi.fn(stubApi({ "/api/v1/diameter": () => json(httpStatus, body) })),
   );
 
+const peerName = (row: HTMLElement) => ({
+  host: row.querySelector('[data-field="host"]')?.textContent,
+  realm: row.querySelector('[data-field="realm"]')?.textContent,
+});
+
 const fields = () =>
   Object.fromEntries(
     Array.from(document.querySelectorAll("dt")).map((dt) => [
@@ -58,9 +63,12 @@ describe("DiameterStatusCard", () => {
     const cells = within(rows[1])
       .getAllByRole("cell")
       .map((c) => c.textContent);
+    expect(peerName(rows[1])).toEqual({
+      host: "hss.epc.example.org",
+      realm: "epc.example.org",
+    });
     expect(cells).toEqual([
-      "hss.epc.example.org",
-      "epc.example.org",
+      "hss.epc.example.orgepc.example.org",
       "10.0.0.5",
       "open",
       "S6c, SGd, 16777999",
@@ -99,11 +107,12 @@ describe("DiameterStatusCard", () => {
     renderWithClient(<DiameterStatusCard />);
 
     const table = await screen.findByRole("table", { name: "Peers" });
-    const cells = within(within(table).getAllByRole("row")[1])
+    const row = within(table).getAllByRole("row")[1];
+    const cells = within(row)
       .getAllByRole("cell")
       .map((c) => c.textContent);
+    expect(peerName(row)).toEqual({ host: "—", realm: undefined });
     expect(cells).toEqual([
-      "—",
       "—",
       "10.0.0.6",
       "connecting",
