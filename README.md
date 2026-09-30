@@ -21,7 +21,7 @@ SMS service centre for private cellular networks.
 
 ### Prerequisites
 
-- Ella Core deployed with MCC `001`, MNC `01`
+- [Ella Core](https://github.com/ellanetworks/core) deployed with MCC `001`, MNC `01`
 - Two phones attached to the network
 - A Linux host for the SMSC, reachable from Ella Core, e.g. `192.0.2.10`
 - Go 1.26, Node 24
