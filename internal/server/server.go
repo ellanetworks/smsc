@@ -26,6 +26,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/numbering"
 	smscs6c "github.com/ellanetworks/smsc/internal/s6c"
 	smscsgd "github.com/ellanetworks/smsc/internal/sgd"
+	"github.com/ellanetworks/smsc/ui"
 )
 
 var ErrAlreadyStarted = errors.New("server: already started")
@@ -154,6 +155,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Handler: api.NewHandler(api.Config{
 			Store:           database,
 			Diameter:        diameterStatus{node: node, hss: hss},
+			Frontend:        ui.FS(),
 			Notify:          deliverer.Notify,
 			DefaultValidity: cfg.Delivery.DefaultValidity,
 			Now:             time.Now,

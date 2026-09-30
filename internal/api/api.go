@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
@@ -26,6 +27,7 @@ type Diameter interface {
 type Config struct {
 	Store           Store
 	Diameter        Diameter
+	Frontend        fs.FS
 	Notify          func()
 	DefaultValidity time.Duration
 	Now             func() time.Time
@@ -40,6 +42,10 @@ func NewHandler(cfg Config) http.Handler {
 	mux.Handle("GET /api/v1/messages/{id}", GetMessage(cfg))
 	mux.Handle("GET /api/v1/messages/{id}/attempts", ListMessageAttempts(cfg))
 	mux.Handle("GET /api/v1/diameter", GetDiameterStatus(cfg))
+
+	if cfg.Frontend != nil {
+		mux.Handle("GET /", Frontend(cfg.Frontend))
+	}
 
 	return mux
 }
