@@ -144,7 +144,7 @@ func experimentalCode(t *testing.T, ans *diameter.Message) uint32 {
 	return v
 }
 
-func deliveryFailure(t *testing.T, ans *diameter.Message) (uint32, []byte) {
+func deliveryFailure(t *testing.T, ans *diameter.Message) (sgd.DeliveryFailureCause, []byte) {
 	t.Helper()
 
 	if code := experimentalCode(t, ans); code != tgpp.ResultErrorSMDeliveryFailure {
@@ -169,7 +169,7 @@ func deliveryFailure(t *testing.T, ans *diameter.Message) (uint32, []byte) {
 		diagnostic = d.Data
 	}
 
-	return c, diagnostic
+	return sgd.DeliveryFailureCause(c), diagnostic
 }
 
 func submitReport(t *testing.T, failureCause byte) []byte {

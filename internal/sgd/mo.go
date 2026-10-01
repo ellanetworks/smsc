@@ -191,7 +191,7 @@ func (h *Handler) invalidAVP(req *diameter.Message, offending diameter.AVP) *dia
 	return ans
 }
 
-func (h *Handler) deliveryFailure(req *diameter.Message, cause uint32, diagnostic []byte) *diameter.Message {
+func (h *Handler) deliveryFailure(req *diameter.Message, cause sgd.DeliveryFailureCause, diagnostic []byte) *diameter.Message {
 	ans, err := sgd.NewDeliveryFailureAnswer(req, h.Identity, cause, diagnostic)
 	if err != nil {
 		return h.answer(req, diameter.ResultUnableToComply)

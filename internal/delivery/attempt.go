@@ -37,7 +37,7 @@ var experimentalOutcomes = map[uint32]string{
 	tgpp.ResultErrorMWDListFull:          "mwd_list_full",
 }
 
-var deliveryFailureCauses = map[uint32]string{
+var deliveryFailureCauses = map[sgd.DeliveryFailureCause]string{
 	sgd.CauseMemoryCapacityExceeded: "memory_capacity_exceeded",
 	sgd.CauseEquipmentProtocolError: "equipment_protocol_error",
 	sgd.CauseEquipmentNotSMEquipped: "equipment_not_sm_equipped",
@@ -47,7 +47,7 @@ var deliveryFailureCauses = map[uint32]string{
 	sgd.CauseUserNotSCUser:          "user_not_sc_user",
 }
 
-var absentUserDiagnostics = map[uint32]string{
+var absentUserDiagnostics = map[tgpp.AbsentUserDiagnostic]string{
 	tgpp.AbsentUserNoPagingResponseMSC:        "no_paging_response_msc",
 	tgpp.AbsentUserIMSIDetached:               "imsi_detached",
 	tgpp.AbsentUserRoamingRestriction:         "roaming_restriction",
@@ -214,7 +214,7 @@ func absentUserDiagnosticsOf(d s6c.AbsentUserDiagnostics) db.AbsentUserDiagnosti
 	}
 }
 
-func optionalName(names map[uint32]string, v *uint32) string {
+func optionalName[T ~uint32](names map[T]string, v *T) string {
 	if v == nil {
 		return ""
 	}

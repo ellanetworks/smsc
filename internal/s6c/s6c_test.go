@@ -145,7 +145,7 @@ func TestSendRoutingInfoForSMRequest(t *testing.T) {
 	listID, _ := diameter.Find(inner, tgpp.AVPFeatureListID, tgpp.VendorID)
 	list, _ := diameter.Find(inner, tgpp.AVPFeatureList, tgpp.VendorID)
 
-	if unsigned(t, listID) != 1 || unsigned(t, list) != s6c.FeatureSMSFSupport {
+	if unsigned(t, listID) != s6c.FeatureListID || unsigned(t, list) != s6c.FeatureSMSFSupport {
 		t.Fatalf("Supported-Features = %+v", inner)
 	}
 }
