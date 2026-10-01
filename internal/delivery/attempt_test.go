@@ -50,8 +50,8 @@ func TestAttemptOutcomes(t *testing.T) {
 }
 
 func TestAttemptDetails(t *testing.T) {
-	protocolError, notSMEquipped, unknownCause := sgd.CauseEquipmentProtocolError, sgd.CauseEquipmentNotSMEquipped, uint32(9)
-	deliveryFailure := func(cause *uint32, diagnostic []byte) error {
+	protocolError, notSMEquipped, unknownCause := sgd.CauseEquipmentProtocolError, sgd.CauseEquipmentNotSMEquipped, sgd.DeliveryFailureCause(9)
+	deliveryFailure := func(cause *sgd.DeliveryFailureCause, diagnostic []byte) error {
 		return &sgd.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorSMDeliveryFailure), DeliveryFailureCause: cause, DiagnosticInfo: diagnostic}
 	}
 
@@ -92,9 +92,9 @@ func TestAttemptDetails(t *testing.T) {
 }
 
 func TestDeliveryAttemptDiagnostics(t *testing.T) {
-	detached, noPaging, unknownDiagnostic := tgpp.AbsentUserIMSIDetached, tgpp.AbsentUserNoPagingResponseMSC, uint32(99)
+	detached, noPaging, unknownDiagnostic := tgpp.AbsentUserIMSIDetached, tgpp.AbsentUserNoPagingResponseMSC, tgpp.AbsentUserDiagnostic(99)
 
-	absent := func(diagnostic *uint32) error {
+	absent := func(diagnostic *tgpp.AbsentUserDiagnostic) error {
 		return &sgd.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser), AbsentUserDiagnostic: diagnostic}
 	}
 
@@ -131,7 +131,7 @@ func TestDeliveryAttemptDiagnostics(t *testing.T) {
 }
 
 func TestRoutingAttemptDiagnostics(t *testing.T) {
-	detached, purged, noPaging, unknownDiagnostic := tgpp.AbsentUserIMSIDetached, tgpp.AbsentUserPurgedNonGPRS, tgpp.AbsentUserNoPagingResponseMSC, uint32(99)
+	detached, purged, noPaging, unknownDiagnostic := tgpp.AbsentUserIMSIDetached, tgpp.AbsentUserPurgedNonGPRS, tgpp.AbsentUserNoPagingResponseMSC, tgpp.AbsentUserDiagnostic(99)
 
 	tests := map[string]struct {
 		routing s6c.Routing

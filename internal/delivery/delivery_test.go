@@ -252,9 +252,9 @@ func experimental(code uint32, extra ...diameter.AVP) *diameter.Message {
 	}, extra...)}
 }
 
-func smDeliveryFailure(cause uint32) *diameter.Message {
+func smDeliveryFailure(cause sgd.DeliveryFailureCause) *diameter.Message {
 	return experimental(tgpp.ResultErrorSMDeliveryFailure, diameter.Grouped(sgd.AVPSMDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID,
-		diameter.Unsigned32(sgd.AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, cause)))
+		diameter.Unsigned32(sgd.AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, uint32(cause))))
 }
 
 func mmeRouting() s6c.Routing {
@@ -728,12 +728,12 @@ func TestNotifyBeforeRun(t *testing.T) {
 	<-done
 }
 
-func absentWithDiagnostic(diagnostic uint32) *diameter.Message {
+func absentWithDiagnostic(diagnostic tgpp.AbsentUserDiagnostic) *diameter.Message {
 	return experimental(tgpp.ResultErrorAbsentUser,
-		diameter.Unsigned32(tgpp.AVPAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, diagnostic))
+		diameter.Unsigned32(tgpp.AVPAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, uint32(diagnostic)))
 }
 
-func u32(v uint32) *uint32 {
+func absentDiagnostic(v tgpp.AbsentUserDiagnostic) *tgpp.AbsentUserDiagnostic {
 	return &v
 }
 
@@ -746,7 +746,7 @@ func TestAbsentUserIsReportedAndHoldsRecipient(t *testing.T) {
 
 	want := s6c.DeliveryReport{
 		MSISDN: "15551230002",
-		MME:    &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseAbsentUser, AbsentDiagnostic: u32(2)},
+		MME:    &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseAbsentUser, AbsentDiagnostic: absentDiagnostic(2)},
 		Failed: s6c.ServingNodes{Serving: mmeRouting().Serving},
 	}
 
@@ -762,15 +762,15 @@ func TestAbsentUserIsReportedAndHoldsRecipient(t *testing.T) {
 func TestReportConditions(t *testing.T) {
 	tests := map[string]struct {
 		answer     *diameter.Message
-		mwdStatus  uint32
+		mwdStatus  s6c.MWDStatus
 		absent     s6c.AbsentUserDiagnostics
 		wantReport bool
 	}{
 		"MNRF already set":                    {experimental(tgpp.ResultErrorAbsentUser), s6c.MWDStatusMNRF, s6c.AbsentUserDiagnostics{}, false},
 		"SC address not in the MWD":           {experimental(tgpp.ResultErrorAbsentUser), s6c.MWDStatusMNRF | s6c.MWDStatusSCAddressNotIncluded, s6c.AbsentUserDiagnostics{}, true},
 		"only MNRG set":                       {experimental(tgpp.ResultErrorAbsentUser), s6c.MWDStatusMNRG, s6c.AbsentUserDiagnostics{}, true},
-		"same absent diagnostic":              {absentWithDiagnostic(1), s6c.MWDStatusMNRF, s6c.AbsentUserDiagnostics{MME: u32(1)}, false},
-		"different absent diagnostic":         {absentWithDiagnostic(2), s6c.MWDStatusMNRF, s6c.AbsentUserDiagnostics{MME: u32(1)}, true},
+		"same absent diagnostic":              {absentWithDiagnostic(1), s6c.MWDStatusMNRF, s6c.AbsentUserDiagnostics{MME: absentDiagnostic(1)}, false},
+		"different absent diagnostic":         {absentWithDiagnostic(2), s6c.MWDStatusMNRF, s6c.AbsentUserDiagnostics{MME: absentDiagnostic(1)}, true},
 		"memory exceeded without MCEF":        {smDeliveryFailure(sgd.CauseMemoryCapacityExceeded), s6c.MWDStatusMNRF, s6c.AbsentUserDiagnostics{}, true},
 		"memory exceeded with MCEF":           {smDeliveryFailure(sgd.CauseMemoryCapacityExceeded), s6c.MWDStatusMCEF, s6c.AbsentUserDiagnostics{}, false},
 		"unidentified user":                   {experimental(tgpp.ResultErrorUserUnknown), 0, s6c.AbsentUserDiagnostics{}, true},
@@ -844,7 +844,7 @@ func TestSecondPathSuccessIsReported(t *testing.T) {
 
 	want := s6c.DeliveryReport{
 		MSISDN: "15551230002",
-		MME:    &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseAbsentUser, AbsentDiagnostic: u32(1)},
+		MME:    &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseAbsentUser, AbsentDiagnostic: absentDiagnostic(1)},
 		SGSN:   &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseSuccessfulTransfer},
 	}
 

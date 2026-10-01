@@ -42,7 +42,7 @@ func grouped(t *testing.T, a diameter.AVP) []diameter.AVP {
 
 func TestReportSMDeliveryStatusRequest(t *testing.T) {
 	f := &fakeRequester{answer: reportAnswer()}
-	diagnostic := uint32(2)
+	diagnostic := tgpp.AbsentUserDiagnostic(2)
 
 	_, err := newRouter(f).ReportSMDeliveryStatus(context.Background(), s6c.DeliveryReport{
 		MSISDN:        "15551230002",
@@ -100,7 +100,7 @@ func TestReportSMDeliveryStatusRequest(t *testing.T) {
 	cause, _ := diameter.Find(mmeInner, s6c.AVPSMDeliveryCause, tgpp.VendorID)
 	diag, _ := diameter.Find(mmeInner, tgpp.AVPAbsentUserDiagnosticSM, tgpp.VendorID)
 
-	if unsigned(t, cause) != s6c.DeliveryCauseAbsentUser || unsigned(t, diag) != 2 {
+	if s6c.DeliveryCause(unsigned(t, cause)) != s6c.DeliveryCauseAbsentUser || unsigned(t, diag) != 2 {
 		t.Fatalf("MME outcome = %+v", mmeInner)
 	}
 

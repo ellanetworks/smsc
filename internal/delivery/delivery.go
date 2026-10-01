@@ -102,15 +102,15 @@ type target struct {
 
 type forwardResult struct {
 	outcome    outcome
-	cause      *uint32
-	diagnostic *uint32
+	cause      *s6c.DeliveryCause
+	diagnostic *tgpp.AbsentUserDiagnostic
 }
 
 type nodeOutcome struct {
 	kind       nodeKind
 	source     nodeSource
-	cause      uint32
-	diagnostic *uint32
+	cause      s6c.DeliveryCause
+	diagnostic *tgpp.AbsentUserDiagnostic
 }
 
 type result struct {
@@ -521,7 +521,7 @@ func needsReport(failures []nodeOutcome, routing s6c.Routing) bool {
 	return false
 }
 
-func mwdFlag(o nodeOutcome) uint32 {
+func mwdFlag(o nodeOutcome) s6c.MWDStatus {
 	if o.cause == s6c.DeliveryCauseMemoryCapacityExceeded {
 		return s6c.MWDStatusMCEF
 	}
@@ -538,7 +538,7 @@ func mwdFlag(o nodeOutcome) uint32 {
 	}
 }
 
-func hssDiagnostic(a s6c.AbsentUserDiagnostics, kind nodeKind) *uint32 {
+func hssDiagnostic(a s6c.AbsentUserDiagnostics, kind nodeKind) *tgpp.AbsentUserDiagnostic {
 	switch kind {
 	case kindSGSN:
 		return a.SGSN
@@ -765,6 +765,6 @@ func classifyForwardAnswer(err error) forwardResult {
 	}
 }
 
-func ptr(v uint32) *uint32 {
+func ptr[T any](v T) *T {
 	return &v
 }

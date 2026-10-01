@@ -238,7 +238,7 @@ func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
 	case c.absent[msisdn]:
 		ans := c.experimental(req, tgpp.ResultErrorAbsentUser)
 		ans.AVPs = append(ans.AVPs,
-			diameter.Unsigned32(s6c.AVPMMEAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, tgpp.AbsentUserIMSIDetached))
+			diameter.Unsigned32(s6c.AVPMMEAbsentUserDiagnosticSM, diameter.AVPFlagMandatory, tgpp.VendorID, uint32(tgpp.AbsentUserIMSIDetached)))
 
 		return ans
 	}
@@ -676,7 +676,7 @@ func TestAbsentRecipientIsDeliveredOnAlert(t *testing.T) {
 	eventually(t, "the absent-user report", func() bool { return len(core.deliveryReports()) == 1 })
 
 	report := core.deliveryReports()[0]
-	if report.msisdn != bob.msisdn || report.cause != s6c.DeliveryCauseAbsentUser ||
+	if report.msisdn != bob.msisdn || report.cause != uint32(s6c.DeliveryCauseAbsentUser) ||
 		report.diagnostic == nil || *report.diagnostic != diagnostic || !report.failedNode {
 		t.Fatalf("report = %+v", report)
 	}
@@ -690,7 +690,7 @@ func TestAbsentRecipientIsDeliveredOnAlert(t *testing.T) {
 	}
 
 	core.setAnswerMT(nil)
-	core.setMWDStatus(bob.msisdn, s6c.MWDStatusMNRF)
+	core.setMWDStatus(bob.msisdn, uint32(s6c.MWDStatusMNRF))
 
 	if rc := core.alert(bob); rc != diameter.ResultSuccess {
 		t.Fatalf("ALA result = %d", rc)
@@ -705,7 +705,7 @@ func TestAbsentRecipientIsDeliveredOnAlert(t *testing.T) {
 
 	eventually(t, "the successful-transfer report", func() bool {
 		reports := core.deliveryReports()
-		return len(reports) >= 2 && reports[1].cause == s6c.DeliveryCauseSuccessfulTransfer && !reports[1].failedNode
+		return len(reports) >= 2 && reports[1].cause == uint32(s6c.DeliveryCauseSuccessfulTransfer) && !reports[1].failedNode
 	})
 }
 
@@ -1114,7 +1114,7 @@ func TestAPIShowsDeliveryFailureDetails(t *testing.T) {
 	core.setAnswerMT(func(string) *diameter.Message {
 		return experimental(tgpp.ResultErrorSMDeliveryFailure,
 			diameter.Grouped(sgd.AVPSMDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID,
-				diameter.Unsigned32(sgd.AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, sgd.CauseEquipmentProtocolError),
+				diameter.Unsigned32(sgd.AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, uint32(sgd.CauseEquipmentProtocolError)),
 				diameter.OctetString(sgd.AVPSMDiagnosticInfo, diameter.AVPFlagMandatory, tgpp.VendorID, []byte{0x00, 0xd0, 0x00}),
 			))
 	})
