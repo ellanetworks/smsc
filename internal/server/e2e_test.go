@@ -408,10 +408,11 @@ func (c *fakeCore) connect(s *smsc) {
 	}
 
 	if err := c.node.SetPeers([]diameter.Peer{{
-		ID:        "smsc",
-		Host:      smscHost,
-		Addresses: []netip.Addr{loopback},
-		Port:      uint16(addr.Port),
+		ID:         "smsc",
+		Host:       smscHost,
+		Addresses:  []netip.Addr{loopback},
+		Transports: []diameter.Transport{diameter.TransportSCTP},
+		Dial:       &diameter.Dial{Port: uint16(addr.Port)},
 		Applications: []diameter.Application{
 			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
 			{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},

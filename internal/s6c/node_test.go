@@ -83,7 +83,8 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 		ID:           "hss",
 		Host:         "hss.example.org",
 		Addresses:    []netip.Addr{netip.MustParseAddr("127.0.0.1")},
-		Port:         uint16(ln.Addr().(*sctp.SCTPAddr).Port),
+		Transports:   []diameter.Transport{diameter.TransportSCTP},
+		Dial:         &diameter.Dial{Port: uint16(ln.Addr().(*sctp.SCTPAddr).Port)},
 		Applications: []diameter.Application{{ID: s6c.ApplicationID, VendorID: tgpp.VendorID}},
 	}}); err != nil {
 		t.Fatal(err)

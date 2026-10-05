@@ -1,5 +1,5 @@
-github.com/ellanetworks/core/diameter v0.0.0-20261001162230-04ec81c7559b h1:WvJBIC7ycfboqXb/v6TkAg6rZKUbIcb1sAhe9bsSaP4=
-github.com/ellanetworks/core/diameter v0.0.0-20261001162230-04ec81c7559b/go.mod h1:YchLpOwehhNz8s+hXPtmjT69Jw94otkpFUP4lDdM4wM=
+github.com/ellanetworks/core/diameter v0.0.0-20261005210743-70301e51483b h1:/SXBirt/qaNVl287egEaz3Vsz9D6AbK8jrUdREfVApA=
+github.com/ellanetworks/core/diameter v0.0.0-20261005210743-70301e51483b/go.mod h1:YchLpOwehhNz8s+hXPtmjT69Jw94otkpFUP4lDdM4wM=
 github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f h1:467mMwOqgbeKZQPV/Jztg1RJFofLhJ5NqJGzT96SUrM=
 github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f/go.mod h1:qttv0gHtCuOunPG/VvNgd4p4RTzj3Q5Gh7g4Rd14MYw=
 github.com/mattn/go-sqlite3 v1.14.52 h1:wVbm2Qnf4OXkqhBTSPuCRZDRnxfbVrrmiCEroVdog8U=
