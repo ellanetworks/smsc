@@ -303,7 +303,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 	log := d.Logger.With(slog.Int64("message_id", m.ID))
 
 	if !now.Before(m.ExpiresAt) {
-		log.Info("short message expired before delivery")
+		log.Debug("short message expired before delivery")
 		return result{outcome: expired}
 	}
 
@@ -314,7 +314,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 	cancel()
 
 	if err != nil && stop.Err() != nil {
-		log.Info("short message routing lookup interrupted by shutdown")
+		log.Debug("short message routing lookup interrupted by shutdown")
 		return result{outcome: interrupted}
 	}
 
@@ -324,7 +324,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 	d.record(ctx, log, m.ID, routingAttempt)
 
 	if err != nil {
-		log.Info("routing lookup for short message failed", slog.Any("error", err))
+		log.Debug("routing lookup for short message failed", slog.Any("error", err))
 
 		return d.routingFailed(ctx, m, err)
 	}
@@ -339,7 +339,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 
 	targets := deliveryTargets(routing.ServingNodes)
 	if len(targets) == 0 {
-		log.Info("no serving node reachable over SGd for the recipient")
+		log.Debug("no serving node reachable over SGd for the recipient")
 		return result{outcome: permanent}
 	}
 
@@ -351,7 +351,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 	a := d.attempt(stop, log, m, routing.IMSI, targets, deliver, more > 0)
 
 	if a.outcome == interrupted {
-		log.Info("short message delivery interrupted by shutdown")
+		log.Debug("short message delivery interrupted by shutdown")
 		return result{outcome: interrupted}
 	}
 
@@ -381,7 +381,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) r
 		return result{outcome: temporary, hold: true}
 	}
 
-	log.Info("retrying delivery via the serving nodes the HSS reported")
+	log.Debug("retrying delivery via the serving nodes the HSS reported")
 
 	retry := d.attempt(stop, log, m, routing.IMSI, retryTargets, deliver, more > 0)
 
@@ -596,7 +596,7 @@ func (d *Deliverer) report(stop context.Context, log *slog.Logger, m db.Message,
 
 	res, err := d.Router.ReportSMDeliveryStatus(rdr, rep)
 	if err != nil {
-		log.Warn("failed to report delivery status to the HSS", slog.Any("error", err))
+		log.Debug("failed to report delivery status to the HSS", slog.Any("error", err))
 		return s6c.ReportResult{}, false
 	}
 

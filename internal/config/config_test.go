@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -10,7 +11,9 @@ import (
 	"time"
 )
 
-const validConfig = `db:
+const validConfig = `logging:
+  level: debug
+db:
   path: /var/lib/smsc/smsc.db
 service_centre:
   address: "15550000000"
@@ -54,6 +57,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	want := Config{
+		Logging:       Logging{Level: slog.LevelDebug},
 		DB:            DB{Path: "/var/lib/smsc/smsc.db"},
 		ServiceCentre: ServiceCentre{Address: "15550000000"},
 		Diameter: Diameter{
@@ -118,6 +122,7 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"negative concurrency":      {"concurrency: 5", "concurrency: -1"},
 		"unknown field":             {"db:\n", "unknown: true\ndb:\n"},
 		"missing api address":       {"  address: 127.0.0.1\n", ""},
+		"unknown log level":         {"level: debug", "level: trace"},
 		"api port out of range":     {"port: 8080", "port: 70000"},
 		"invalid api address":       {"  address: 127.0.0.1\n", "  address: localhost\n"},
 	}

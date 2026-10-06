@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"time"
@@ -22,6 +23,7 @@ const (
 var defaultRetryIntervals = []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour}
 
 type Config struct {
+	Logging       Logging       `yaml:"logging"`
 	DB            DB            `yaml:"db"`
 	ServiceCentre ServiceCentre `yaml:"service_centre"`
 	Diameter      Diameter      `yaml:"diameter"`
@@ -29,6 +31,10 @@ type Config struct {
 	Numbering     Numbering     `yaml:"numbering"`
 	Delivery      Delivery      `yaml:"delivery"`
 	API           API           `yaml:"api"`
+}
+
+type Logging struct {
+	Level slog.Level `yaml:"level"`
 }
 
 type API struct {
