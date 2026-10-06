@@ -11,9 +11,12 @@ description: |
 source-code: https://github.com/ellanetworks/smsc
 issues:
   - https://github.com/ellanetworks/smsc/issues
+website:
+  - https://docs.ellanetworks.com
 grade: stable
 confinement: strict
 license: BUSL-1.1
+icon: snap/gui/icon.svg
 
 apps:
   smscd:
