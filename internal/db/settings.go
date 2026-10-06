@@ -43,6 +43,7 @@ func (d *DB) retryIntervals(ctx context.Context) ([]time.Duration, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get retry intervals: %w", err)
 	}
+
 	defer func() { _ = rows.Close() }()
 
 	var intervals []time.Duration
@@ -101,6 +102,7 @@ func (d *DB) inTx(ctx context.Context, what string, fn func(tx *sql.Tx) error) e
 	if err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
+
 	defer func() { _ = tx.Rollback() }()
 
 	if err := fn(tx); err != nil {
