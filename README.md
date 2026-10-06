@@ -24,23 +24,20 @@ SMS service centre for private cellular networks.
 - [Ella Core](https://github.com/ellanetworks/core) deployed with MCC `001`, MNC `01`
 - Two phones attached to the network
 - A Linux host for the SMSC, reachable from Ella Core, e.g. `192.0.2.10`
-- Go 1.26, Node 24
 
-### 1. Build the SMSC
+### 1. Install the SMSC
 
 ```sh
-sudo modprobe sctp
-npm ci --prefix ui && npm run build --prefix ui
-go build -o smsc ./cmd/smsc
+sudo snap install ella-smsc --channel=edge
 ```
 
 ### 2. Configure the SMSC
 
-Create `smsc.yaml`:
+Edit `/var/snap/ella-smsc/common/smsc.yaml`:
 
 ```yaml
 db:
-  path: smsc.db
+  path: /var/snap/ella-smsc/common/smsc.db
 service_centre:
   address: "15550000000"
 diameter:
@@ -60,7 +57,7 @@ api:
 ### 3. Start the SMSC
 
 ```sh
-./smsc --config smsc.yaml
+sudo snap start --enable ella-smsc.smscd
 ```
 
 ### 4. Connect Ella Core
@@ -114,6 +111,12 @@ go build -o smsc ./cmd/smsc
 
 ```sh
 rockcraft pack
+```
+
+#### Snap
+
+```sh
+snapcraft pack
 ```
 
 ### Run

@@ -1,0 +1,25 @@
+# Ella SMSC configuration file.
+# After modifying it, restart Ella SMSC with
+# `sudo snap restart ella-smsc.smscd` for the changes to take effect.
+db:
+  path: /var/snap/ella-smsc/common/smsc.db
+service_centre:
+  address: "15550000000"
+diameter:
+  origin_host: smsc.example.org
+  origin_realm: example.org
+  address: 127.0.0.1
+  port: 3868
+hss:
+  realm: epc.mnc001.mcc001.3gppnetwork.org
+  allowed_networks: [127.0.0.0/8]
+numbering:
+  country_code: "1"
+delivery:
+  default_validity: 168h
+  retry_intervals: [1m, 5m, 15m, 1h]
+  attempt_timeout: 30s
+  concurrency: 20
+api:
+  address: 127.0.0.1
+  port: 5010
