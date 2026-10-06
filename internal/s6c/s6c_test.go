@@ -10,6 +10,7 @@ import (
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/tgpp"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 type fakeRequester struct {
@@ -28,12 +29,17 @@ func (f *fakeRequester) NewSessionID() string {
 	return "smsc.example.org;1;1"
 }
 
+func testSettings() settings.Settings {
+	return settings.Settings{Operator: settings.Operator{MCC: "001", MNC: "01", ServiceCentreAddress: "15550000000"}}
+}
+
 func newRouter(f *fakeRequester) *Router {
 	return &Router{
-		Node:                 f,
-		Identity:             diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"},
-		HSSRealm:             "example.org",
-		ServiceCentreAddress: "15550000000",
+		Node: f,
+		Identity: func() diameter.Identity {
+			return diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"}
+		},
+		Settings: testSettings,
 	}
 }
 
@@ -117,7 +123,7 @@ func TestSendRoutingInfoForSMRequest(t *testing.T) {
 		code, vendor uint32
 		want         []byte
 	}{
-		"Destination-Realm":  {diameter.AVPDestinationRealm, 0, []byte("example.org")},
+		"Destination-Realm":  {diameter.AVPDestinationRealm, 0, []byte("epc.mnc001.mcc001.3gppnetwork.org")},
 		"MSISDN":             {tgpp.AVPMSISDN, tgpp.VendorID, mustHex(t, "5155210300f2")},
 		"SC-Address":         {tgpp.AVPSCAddress, tgpp.VendorID, mustHex(t, "5155000000f0")},
 		"SM-RP-MTI":          {s6c.AVPSMRPMTI, tgpp.VendorID, mustHex(t, "00000000")},

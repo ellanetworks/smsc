@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/sgd"
 )
@@ -18,11 +17,17 @@ type DiameterPeer struct {
 	Since        string   `json:"since"`
 }
 
+type DiameterRoute struct {
+	Realm       string   `json:"realm"`
+	Application string   `json:"application"`
+	Peers       []string `json:"peers"`
+}
+
 type DiameterStatus struct {
-	Host         string         `json:"host"`
-	Realm        string         `json:"realm"`
-	HSSAvailable bool           `json:"hss_available"`
-	Peers        []DiameterPeer `json:"peers"`
+	Host   string          `json:"host"`
+	Realm  string          `json:"realm"`
+	Peers  []DiameterPeer  `json:"peers"`
+	Routes []DiameterRoute `json:"routes"`
 }
 
 func GetDiameterStatus(cfg Config) http.Handler {
@@ -30,10 +35,21 @@ func GetDiameterStatus(cfg Config) http.Handler {
 		identity := cfg.Diameter.Identity()
 
 		resp := DiameterStatus{
-			Host:         identity.OriginHost,
-			Realm:        identity.OriginRealm,
-			HSSAvailable: cfg.Diameter.HSSAvailable(),
-			Peers:        []DiameterPeer{},
+			Host:   identity.OriginHost,
+			Realm:  identity.OriginRealm,
+			Peers:  []DiameterPeer{},
+			Routes: []DiameterRoute{},
+		}
+
+		for _, r := range cfg.Diameter.Routes() {
+			route := DiameterRoute{
+				Realm:       r.Realm,
+				Application: applicationName(r.ApplicationID),
+				Peers:       []string{},
+			}
+
+			route.Peers = append(route.Peers, r.Peers...)
+			resp.Routes = append(resp.Routes, route)
 		}
 
 		for _, p := range cfg.Diameter.Peers() {
@@ -50,7 +66,7 @@ func GetDiameterStatus(cfg Config) http.Handler {
 			}
 
 			for _, a := range p.Applications {
-				peer.Applications = append(peer.Applications, applicationName(a))
+				peer.Applications = append(peer.Applications, applicationName(a.ID))
 			}
 
 			resp.Peers = append(resp.Peers, peer)
@@ -60,13 +76,13 @@ func GetDiameterStatus(cfg Config) http.Handler {
 	})
 }
 
-func applicationName(a diameter.Application) string {
-	switch a.ID {
+func applicationName(id uint32) string {
+	switch id {
 	case s6c.ApplicationID:
 		return "s6c"
 	case sgd.ApplicationID:
 		return "sgd"
 	default:
-		return strconv.FormatUint(uint64(a.ID), 10)
+		return strconv.FormatUint(uint64(id), 10)
 	}
 }

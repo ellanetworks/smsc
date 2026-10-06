@@ -16,6 +16,7 @@ import (
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/numbering"
+	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -40,13 +41,21 @@ const testSCTS = "62907221000000"
 
 func newTestHandler(store *fakeStore) *Handler {
 	return &Handler{
-		Identity:             diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"},
-		ServiceCentreAddress: "15550000000",
-		DefaultValidity:      7 * 24 * time.Hour,
-		Store:                store,
-		Numbering:            numbering.Plan{CountryCode: "1", NationalPrefix: "0", InternationalPrefix: "011"},
-		Now:                  func() time.Time { return testNow },
-		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Identity: func() diameter.Identity {
+			return diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"}
+		},
+		Settings: func() settings.Settings {
+			return settings.Settings{
+				Operator: settings.Operator{
+					ServiceCentreAddress: "15550000000",
+					Numbering:            numbering.Plan{CountryCode: "1", NationalPrefix: "0", InternationalPrefix: "011"},
+				},
+				Delivery: settings.Delivery{DefaultValidity: 7 * 24 * time.Hour},
+			}
+		},
+		Store:  store,
+		Now:    func() time.Time { return testNow },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

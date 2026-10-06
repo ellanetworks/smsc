@@ -22,13 +22,14 @@ import (
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 var testNow = time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
 
 type fakeDiameter struct {
-	peers     []diameter.PeerStatus
-	available bool
+	peers  []diameter.PeerStatus
+	routes []api.Route
 }
 
 func (f fakeDiameter) Identity() diameter.Identity {
@@ -37,12 +38,25 @@ func (f fakeDiameter) Identity() diameter.Identity {
 
 func (f fakeDiameter) Peers() []diameter.PeerStatus { return f.peers }
 
-func (f fakeDiameter) HSSAvailable() bool { return f.available }
+func (f fakeDiameter) Routes() []api.Route { return f.routes }
 
 type testAPI struct {
 	handler  http.Handler
 	store    *db.DB
 	notified atomic.Int32
+}
+
+func testSettings(t *testing.T, store *db.DB) settings.Settings {
+	t.Helper()
+
+	s, err := store.GetSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.Delivery.DefaultValidity = 24 * time.Hour
+
+	return s
 }
 
 func newTestAPI(t *testing.T, d api.Diameter) *testAPI {
@@ -57,12 +71,12 @@ func newTestAPI(t *testing.T, d api.Diameter) *testAPI {
 
 	a := &testAPI{store: store}
 	a.handler = api.NewHandler(api.Config{
-		Store:           store,
-		Diameter:        d,
-		Notify:          func() { a.notified.Add(1) },
-		DefaultValidity: 24 * time.Hour,
-		Now:             func() time.Time { return testNow },
-		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:    store,
+		Diameter: d,
+		Settings: settings.NewLive(store, testSettings(t, store)),
+		Notify:   func() { a.notified.Add(1) },
+		Now:      func() time.Time { return testNow },
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 
 	return a
@@ -426,7 +440,10 @@ func TestGetDiameterStatus(t *testing.T) {
 	since := time.Date(2026, 9, 29, 9, 59, 0, 0, time.UTC)
 
 	a := newTestAPI(t, fakeDiameter{
-		available: true,
+		routes: []api.Route{
+			{Realm: "epc.mnc001.mcc001.3gppnetwork.org", ApplicationID: s6c.ApplicationID, Peers: []string{"mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org"}},
+			{Realm: "example.net", ApplicationID: s6c.ApplicationID},
+		},
 		peers: []diameter.PeerStatus{{
 			Host:       "mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org",
 			Realm:      "epc.mnc001.mcc001.3gppnetwork.org",
@@ -447,9 +464,12 @@ func TestGetDiameterStatus(t *testing.T) {
 	}
 
 	want := api.DiameterStatus{
-		Host:         "smsc.example.org",
-		Realm:        "example.org",
-		HSSAvailable: true,
+		Host:  "smsc.example.org",
+		Realm: "example.org",
+		Routes: []api.DiameterRoute{
+			{Realm: "epc.mnc001.mcc001.3gppnetwork.org", Application: "s6c", Peers: []string{"mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org"}},
+			{Realm: "example.net", Application: "s6c", Peers: []string{}},
+		},
 		Peers: []api.DiameterPeer{{
 			Host:         "mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org",
 			Realm:        "epc.mnc001.mcc001.3gppnetwork.org",
@@ -469,7 +489,7 @@ func TestGetDiameterStatusWithoutPeers(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
 	_, result, _ := a.do(t, http.MethodGet, "/api/v1/diameter", "")
-	if !strings.Contains(string(result), `"peers":[]`) || !strings.Contains(string(result), `"hss_available":false`) {
+	if !strings.Contains(string(result), `"peers":[]`) || !strings.Contains(string(result), `"routes":[]`) {
 		t.Fatalf("result = %s", result)
 	}
 }
