@@ -76,6 +76,17 @@ describe("App", () => {
       ["Messages", "/messages"],
     ]);
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+
+    const docs = screen.getByRole("link", { name: "Documentation" });
+    expect(docs).toHaveAttribute("href", "https://docs.ellanetworks.com");
+    expect(docs).toHaveAttribute("target", "_blank");
+
+    const bug = screen.getByRole("link", { name: "Report a bug" });
+    expect(bug).toHaveAttribute(
+      "href",
+      "https://github.com/ellanetworks/smsc/issues/new/choose",
+    );
+    expect(bug).toHaveAttribute("target", "_blank");
   });
 
   it("opens the Cores page by default", async () => {
