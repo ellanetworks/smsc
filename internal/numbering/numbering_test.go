@@ -31,6 +31,30 @@ func TestInternational(t *testing.T) {
 	}
 }
 
+func TestInternationalPrefersTheLongerPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		plan   Plan
+		digits string
+		want   string
+	}{
+		{"international prefix extends the national one", Plan{CountryCode: "33", NationalPrefix: "0", InternationalPrefix: "00"}, "0044201234567", "44201234567"},
+		{"national prefix only", Plan{CountryCode: "33", NationalPrefix: "0", InternationalPrefix: "00"}, "0612345678", "33612345678"},
+		{"north american plan, national", Plan{CountryCode: "1", NationalPrefix: "1", InternationalPrefix: "011"}, "15551230002", "15551230002"},
+		{"north american plan, international", Plan{CountryCode: "1", NationalPrefix: "1", InternationalPrefix: "011"}, "011447700900123", "447700900123"},
+		{"north american plan, no prefix", Plan{CountryCode: "1", NationalPrefix: "1", InternationalPrefix: "011"}, "5551230002", "15551230002"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.plan.International(0x0, tt.digits)
+			if err != nil || got != tt.want {
+				t.Fatalf("International = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
 func TestInternationalWithoutPrefixes(t *testing.T) {
 	got, err := Plan{CountryCode: "1"}.International(0x0, "5551230002")
 	if err != nil || got != "15551230002" {

@@ -59,12 +59,14 @@ func (o Operator) Validate() error {
 		return errors.New("mnc must be 2 or 3 digits")
 	case !isDigits(o.ServiceCentreAddress) || len(o.ServiceCentreAddress) > 15:
 		return errors.New("service_centre_address must be 1 to 15 digits")
-	case !isDigits(o.Numbering.CountryCode) || len(o.Numbering.CountryCode) > 3:
-		return errors.New("numbering.country_code must be 1 to 3 digits")
-	case o.Numbering.NationalPrefix != "" && !isDigits(o.Numbering.NationalPrefix):
-		return errors.New("numbering.national_prefix must be digits")
-	case o.Numbering.InternationalPrefix != "" && !isDigits(o.Numbering.InternationalPrefix):
-		return errors.New("numbering.international_prefix must be digits")
+	case !isDigits(o.Numbering.CountryCode) || len(o.Numbering.CountryCode) > 3 || o.Numbering.CountryCode[0] == '0':
+		return errors.New("numbering.country_code must be 1 to 3 digits, not starting with 0")
+	case !isPrefix(o.Numbering.NationalPrefix):
+		return errors.New("numbering.national_prefix must be up to 4 digits")
+	case !isPrefix(o.Numbering.InternationalPrefix):
+		return errors.New("numbering.international_prefix must be up to 4 digits")
+	case o.Numbering.NationalPrefix != "" && o.Numbering.NationalPrefix == o.Numbering.InternationalPrefix:
+		return errors.New("numbering.national_prefix and numbering.international_prefix must differ")
 	}
 
 	return nil
@@ -155,6 +157,10 @@ func (l *Live) Changed() <-chan struct{} {
 	defer l.mu.Unlock()
 
 	return l.changed
+}
+
+func isPrefix(s string) bool {
+	return s == "" || (isDigits(s) && len(s) <= 4)
 }
 
 func isDigits(s string) bool {

@@ -48,7 +48,12 @@ func TestValidate(t *testing.T) {
 		"short mnc":            func(s *Settings) { s.Operator.MNC = "1" },
 		"long mnc":             func(s *Settings) { s.Operator.MNC = "0001" },
 		"missing country code": func(s *Settings) { s.Operator.Numbering.CountryCode = "" },
-		"long sc address":      func(s *Settings) { s.Operator.ServiceCentreAddress = "1234567890123456" },
+		"country code with 0":  func(s *Settings) { s.Operator.Numbering.CountryCode = "01" },
+		"long prefix":          func(s *Settings) { s.Operator.Numbering.InternationalPrefix = "00000" },
+		"same prefixes": func(s *Settings) {
+			s.Operator.Numbering.NationalPrefix, s.Operator.Numbering.InternationalPrefix = "0", "0"
+		},
+		"long sc address": func(s *Settings) { s.Operator.ServiceCentreAddress = "1234567890123456" },
 	}
 
 	if err := validSettings().Validate(); err != nil {

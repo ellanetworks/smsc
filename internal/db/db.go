@@ -76,7 +76,7 @@ var migrations = []string{
 		national_prefix TEXT NOT NULL,
 		international_prefix TEXT NOT NULL
 	);
-	INSERT INTO operator VALUES (1, '001', '01', '15550000000', '1', '', '');
+	INSERT INTO operator VALUES (1, '001', '01', '15550000000', '1', '1', '011');
 	CREATE TABLE delivery (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		default_validity INTEGER NOT NULL CHECK (default_validity > 0)

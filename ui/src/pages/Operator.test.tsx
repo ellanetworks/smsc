@@ -135,8 +135,18 @@ describe("Operator", () => {
 
     fill("Country Code", "33");
     fill("National Prefix", "0");
+    fill("Country Code", "033");
+    expect(
+      screen.getByText("1 to 3 digits, not starting with 0"),
+    ).toBeInTheDocument();
+    fill("Country Code", "33");
     fill("International Prefix", "+");
-    expect(screen.getByText("Digits only")).toBeInTheDocument();
+    expect(screen.getByText("Up to 4 digits")).toBeInTheDocument();
+    fill("International Prefix", "0");
+    expect(
+      screen.getByText("Must differ from the national prefix"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
     fill("International Prefix", "00");
     fireEvent.click(screen.getByRole("button", { name: "Update" }));
 

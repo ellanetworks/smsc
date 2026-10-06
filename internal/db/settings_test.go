@@ -24,7 +24,7 @@ func TestDefaultSettings(t *testing.T) {
 			MCC:                  "001",
 			MNC:                  "01",
 			ServiceCentreAddress: "15550000000",
-			Numbering:            numbering.Plan{CountryCode: "1"},
+			Numbering:            numbering.Plan{CountryCode: "1", NationalPrefix: "1", InternationalPrefix: "011"},
 		},
 		Delivery: settings.Delivery{
 			DefaultValidity: 7 * 24 * time.Hour,

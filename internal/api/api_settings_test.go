@@ -24,7 +24,7 @@ func TestGetSettings(t *testing.T) {
 		MCC:                  "001",
 		MNC:                  "01",
 		ServiceCentreAddress: "+15550000000",
-		Numbering:            api.NumberingSettings{CountryCode: "1"},
+		Numbering:            api.NumberingSettings{CountryCode: "1", NationalPrefix: "1", InternationalPrefix: "011"},
 	}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("operator = %+v, want %+v", got, want)
 	}
@@ -94,9 +94,12 @@ func TestUpdateSettingsRejectsInvalidInput(t *testing.T) {
 		"missing sc address":      {"/api/v1/operator", validOperator, `"+33600000000"`, `""`, "service_centre_address must be an E.164 number such as +15550000000"},
 		"sc address without +":    {"/api/v1/operator", validOperator, `"+33600000000"`, `"33600000000"`, "service_centre_address must be an E.164 number such as +15550000000"},
 		"long sc address":         {"/api/v1/operator", validOperator, `"+33600000000"`, `"+3360000000000000"`, "service_centre_address must be an E.164 number such as +15550000000"},
-		"long country code":       {"/api/v1/operator", validOperator, `"country_code": "33"`, `"country_code": "3333"`, "numbering.country_code must be 1 to 3 digits"},
-		"bad national prefix":     {"/api/v1/operator", validOperator, `"national_prefix": "0"`, `"national_prefix": "+"`, "numbering.national_prefix must be digits"},
-		"bad intl prefix":         {"/api/v1/operator", validOperator, `"international_prefix": "00"`, `"international_prefix": "+"`, "numbering.international_prefix must be digits"},
+		"long country code":       {"/api/v1/operator", validOperator, `"country_code": "33"`, `"country_code": "3333"`, "numbering.country_code must be 1 to 3 digits, not starting with 0"},
+		"country code with 0":     {"/api/v1/operator", validOperator, `"country_code": "33"`, `"country_code": "033"`, "numbering.country_code must be 1 to 3 digits, not starting with 0"},
+		"long national prefix":    {"/api/v1/operator", validOperator, `"national_prefix": "0"`, `"national_prefix": "00000"`, "numbering.national_prefix must be up to 4 digits"},
+		"same prefixes":           {"/api/v1/operator", validOperator, `"international_prefix": "00"`, `"international_prefix": "0"`, "numbering.national_prefix and numbering.international_prefix must differ"},
+		"bad national prefix":     {"/api/v1/operator", validOperator, `"national_prefix": "0"`, `"national_prefix": "+"`, "numbering.national_prefix must be up to 4 digits"},
+		"bad intl prefix":         {"/api/v1/operator", validOperator, `"international_prefix": "00"`, `"international_prefix": "+"`, "numbering.international_prefix must be up to 4 digits"},
 		"zero validity":           {"/api/v1/delivery", validDelivery, `172800`, `0`, "default_validity_seconds must be between 1 and 9223372036"},
 		"overflowing validity":    {"/api/v1/delivery", validDelivery, `172800`, `9223372037`, "default_validity_seconds must be between 1 and 9223372036"},
 		"zero retry interval":     {"/api/v1/delivery", validDelivery, `[30, 600]`, `[30, 0]`, "retry_intervals_seconds must be between 1 and 9223372036"},

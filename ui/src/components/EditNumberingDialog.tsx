@@ -22,16 +22,20 @@ export default function EditNumberingDialog({
     },
   });
 
+  const prefixError = (value: string) =>
+    /^\d{0,4}$/.test(value) ? undefined : "Up to 4 digits";
+
   const errors = {
-    country_code: /^\d{1,3}$/.test(numbering.country_code)
+    country_code: /^[1-9]\d{0,2}$/.test(numbering.country_code)
       ? undefined
-      : "1 to 3 digits",
-    national_prefix: /^\d*$/.test(numbering.national_prefix)
-      ? undefined
-      : "Digits only",
-    international_prefix: /^\d*$/.test(numbering.international_prefix)
-      ? undefined
-      : "Digits only",
+      : "1 to 3 digits, not starting with 0",
+    national_prefix: prefixError(numbering.national_prefix),
+    international_prefix:
+      prefixError(numbering.international_prefix) ??
+      (numbering.international_prefix !== "" &&
+      numbering.international_prefix === numbering.national_prefix
+        ? "Must differ from the national prefix"
+        : undefined),
   };
 
   const field = (name: keyof typeof numbering) => ({
