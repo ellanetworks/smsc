@@ -66,7 +66,27 @@ var migrations = []string{
 		held_until INTEGER,
 		updated_at INTEGER NOT NULL
 	);
-	CREATE INDEX recipients_alert_msisdn ON recipients (alert_msisdn);`,
+	CREATE INDEX recipients_alert_msisdn ON recipients (alert_msisdn);
+	CREATE TABLE operator (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		mcc TEXT NOT NULL,
+		mnc TEXT NOT NULL,
+		service_centre_address TEXT NOT NULL,
+		country_code TEXT NOT NULL,
+		national_prefix TEXT NOT NULL,
+		international_prefix TEXT NOT NULL
+	);
+	INSERT INTO operator VALUES (1, '001', '01', '15550000000', '1', '1', '011');
+	CREATE TABLE delivery (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		default_validity INTEGER NOT NULL CHECK (default_validity > 0)
+	);
+	INSERT INTO delivery VALUES (1, 604800000000000);
+	CREATE TABLE retry_intervals (
+		attempt INTEGER PRIMARY KEY CHECK (attempt > 0),
+		interval INTEGER NOT NULL CHECK (interval > 0)
+	);
+	INSERT INTO retry_intervals VALUES (1, 60000000000), (2, 300000000000), (3, 900000000000), (4, 3600000000000);`,
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {

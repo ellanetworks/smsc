@@ -11,6 +11,7 @@ import (
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/tgpp"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 var testTime = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -27,10 +28,14 @@ func (a *alerts) alert(_ context.Context, msisdn string) error {
 
 func newAlertHandler(a *alerts) *AlertHandler {
 	return &AlertHandler{
-		Identity:             diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"},
-		ServiceCentreAddress: "15550000000",
-		Alert:                a.alert,
-		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Identity: func() diameter.Identity {
+			return diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"}
+		},
+		Settings: func() settings.Settings {
+			return settings.Settings{Operator: settings.Operator{ServiceCentreAddress: "15550000000"}}
+		},
+		Alert:  a.alert,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

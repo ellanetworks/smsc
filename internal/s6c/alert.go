@@ -7,22 +7,23 @@ import (
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/tgpp"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 type AlertHandler struct {
-	Identity             diameter.Identity
-	ServiceCentreAddress string
-	Alert                func(ctx context.Context, msisdn string) error
-	Logger               *slog.Logger
+	Identity func() diameter.Identity
+	Settings func() settings.Settings
+	Alert    func(ctx context.Context, msisdn string) error
+	Logger   *slog.Logger
 }
 
 func (h *AlertHandler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
 	alert, err := s6c.ParseAlertServiceCentreRequest(req)
 	if err != nil {
-		return tgpp.NewErrorAnswer(req, h.Identity, err)
+		return tgpp.NewErrorAnswer(req, h.Identity(), err)
 	}
 
-	if alert.ServiceCentreAddress != h.ServiceCentreAddress {
+	if alert.ServiceCentreAddress != h.Settings().Operator.ServiceCentreAddress {
 		h.Logger.Warn("ignoring alert for another service centre", slog.String("sc_address", alert.ServiceCentreAddress))
 		return h.answer(req, diameter.ResultSuccess)
 	}
@@ -44,5 +45,5 @@ func (h *AlertHandler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req 
 }
 
 func (h *AlertHandler) answer(req *diameter.Message, resultCode uint32) *diameter.Message {
-	return tgpp.NewAnswer(req, h.Identity, resultCode)
+	return tgpp.NewAnswer(req, h.Identity(), resultCode)
 }

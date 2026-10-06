@@ -131,6 +131,7 @@ func CreateMessage(cfg Config) http.Handler {
 
 		recipient := db.Address{Digits: to, TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN}
 		now := cfg.Now()
+		validity := cfg.Settings.Get().Delivery.DefaultValidity
 
 		messages := make([]db.NewMessage, 0, len(parts))
 
@@ -158,7 +159,7 @@ func CreateMessage(cfg Config) http.Handler {
 				Origin:      db.OriginAPI,
 				TPDU:        b,
 				SubmittedAt: now,
-				ExpiresAt:   now.Add(cfg.DefaultValidity),
+				ExpiresAt:   now.Add(validity),
 			})
 		}
 

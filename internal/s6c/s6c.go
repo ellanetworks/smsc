@@ -8,6 +8,7 @@ import (
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/tgpp"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 var ErrNoHSS = errors.New("no HSS connected")
@@ -18,14 +19,13 @@ type Requester interface {
 }
 
 type Router struct {
-	Node                 Requester
-	Identity             diameter.Identity
-	HSSRealm             string
-	ServiceCentreAddress string
+	Node     Requester
+	Identity func() diameter.Identity
+	Settings func() settings.Settings
 }
 
 func (r *Router) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingRequest) (s6c.Routing, string, error) {
-	req.ServiceCentreAddress = r.ServiceCentreAddress
+	req.ServiceCentreAddress = r.Settings().Operator.ServiceCentreAddress
 	req.GPRSIndicator = true
 	req.SMSFSupport = true
 
@@ -45,7 +45,7 @@ func (r *Router) SendRoutingInfoForSM(ctx context.Context, req s6c.RoutingReques
 }
 
 func (r *Router) ReportSMDeliveryStatus(ctx context.Context, rep s6c.DeliveryReport) (s6c.ReportResult, error) {
-	rep.ServiceCentreAddress = r.ServiceCentreAddress
+	rep.ServiceCentreAddress = r.Settings().Operator.ServiceCentreAddress
 	rep.SMSFSupport = true
 
 	msg, err := s6c.NewReportSMDeliveryStatusRequest(r.envelope(), rep)
@@ -72,7 +72,7 @@ func originHost(ans *diameter.Message) string {
 func (r *Router) envelope() tgpp.Envelope {
 	return tgpp.Envelope{
 		SessionID:        r.Node.NewSessionID(),
-		Origin:           r.Identity,
-		DestinationRealm: r.HSSRealm,
+		Origin:           r.Identity(),
+		DestinationRealm: r.Settings().Operator.Realm(),
 	}
 }

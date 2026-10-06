@@ -29,13 +29,15 @@ import (
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/numbering"
 	"github.com/ellanetworks/smsc/internal/server"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 const (
 	coreHost             = "core.example.org"
-	smscHost             = "smsc.example.org"
-	realm                = "example.org"
+	smscHost             = "smsc.node.epc.mnc001.mcc001.3gppnetwork.org"
+	realm                = "epc.mnc001.mcc001.3gppnetwork.org"
 	serviceCentreAddress = "15550000000"
 	mmeNumber            = "15550000010"
 	waitTimeout          = 10 * time.Second
@@ -80,6 +82,7 @@ type fakeCore struct {
 	host  string
 	realm string
 	node  *diameter.Node
+	smsc  string
 
 	busy    atomic.Bool
 	dropSRR *atomic.Bool
@@ -150,8 +153,9 @@ func newRealmFakeCore(t *testing.T, host, originRealm string, subscribers ...sub
 			HostIPAddresses: []netip.Addr{loopback},
 			ProductName:     "fake-core",
 		},
-		Handler: diameter.HandlerFunc(c.serve),
-		Logger:  discardLogger(),
+		Handler:           diameter.HandlerFunc(c.serve),
+		ReconnectInterval: 100 * time.Millisecond,
+		Logger:            discardLogger(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -379,7 +383,7 @@ func (c *fakeCore) request(commandCode, applicationID uint32, avps ...diameter.A
 			authSessionState(),
 			diameter.UTF8String(diameter.AVPOriginHost, diameter.AVPFlagMandatory, 0, c.host),
 			diameter.UTF8String(diameter.AVPOriginRealm, diameter.AVPFlagMandatory, 0, c.realm),
-			diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, smscHost),
+			diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, c.smsc),
 			diameter.UTF8String(diameter.AVPDestinationRealm, diameter.AVPFlagMandatory, 0, realm),
 		}, avps...),
 	}
@@ -391,7 +395,7 @@ func (c *fakeCore) do(req *diameter.Message) *diameter.Message {
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 
-	ans, err := c.node.DoHost(ctx, smscHost, req)
+	ans, err := c.node.DoHost(ctx, c.smsc, req)
 	if err != nil {
 		c.t.Fatalf("request %d to the SMSC: %v", req.CommandCode, err)
 	}
@@ -407,9 +411,10 @@ func (c *fakeCore) connect(s *smsc) {
 		c.t.Fatalf("unexpected SMSC address %v", s.server.Addr())
 	}
 
+	c.smsc = s.server.DiameterHost()
+
 	if err := c.node.SetPeers([]diameter.Peer{{
 		ID:         "smsc",
-		Host:       smscHost,
 		Addresses:  []netip.Addr{loopback},
 		Transports: []diameter.Transport{diameter.TransportSCTP},
 		Dial:       &diameter.Dial{Port: uint16(addr.Port)},
@@ -431,7 +436,7 @@ func (c *fakeCore) waitForSMSC() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		_, err := c.node.DoHost(ctx, smscHost, c.request(s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
+		_, err := c.node.DoHost(ctx, c.smsc, c.request(s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
 
 		return err == nil
 	})
@@ -542,36 +547,55 @@ type smsc struct {
 	store  *db.DB
 }
 
-func testConfig(t *testing.T, dbPath string) config.Config {
+type smscConfig struct {
+	config.Config
+	Settings       settings.Settings
+	AttemptTimeout time.Duration
+}
+
+func testConfig(t *testing.T, dbPath string) smscConfig {
 	t.Helper()
 
-	return config.Config{
-		DB:            config.DB{Path: dbPath},
-		ServiceCentre: config.ServiceCentre{Address: serviceCentreAddress},
-		Diameter:      config.Diameter{OriginHost: smscHost, OriginRealm: realm, Address: loopback},
-		HSS:           config.HSS{Realm: realm},
-		API:           config.API{Address: loopback},
-		Numbering:     config.Numbering{CountryCode: "1"},
-		Delivery: config.Delivery{
-			DefaultValidity: time.Hour,
-			RetryIntervals:  []time.Duration{time.Hour},
-			AttemptTimeout:  5 * time.Second,
-			Concurrency:     4,
+	return smscConfig{
+		Config: config.Config{
+			DB:       config.DB{Path: dbPath},
+			Diameter: config.Diameter{Address: loopback},
+			API:      config.API{Address: loopback},
 		},
+		Settings: settings.Settings{
+			Operator: settings.Operator{
+				MCC:                  "001",
+				MNC:                  "01",
+				ServiceCentreAddress: serviceCentreAddress,
+				Numbering:            numbering.Plan{CountryCode: "1"},
+			},
+			Delivery: settings.Delivery{DefaultValidity: time.Hour, RetryIntervals: []time.Duration{time.Hour}},
+		},
+		AttemptTimeout: 5 * time.Second,
 	}
 }
 
-func startSMSC(t *testing.T, cfg config.Config) *smsc {
+func startSMSC(t *testing.T, cfg smscConfig) *smsc {
 	t.Helper()
-
-	srv := &server.Server{Config: cfg, Logger: discardLogger()}
-	if err := srv.Start(context.Background()); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
 
 	store, err := db.Open(context.Background(), cfg.DB.Path)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := errors.Join(store.UpdateOperator(ctx, cfg.Settings.Operator),
+		store.UpdateDelivery(ctx, cfg.Settings.Delivery)); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &server.Server{Config: cfg.Config, Logger: discardLogger()}
+	srv.SetAttemptTimeout(cfg.AttemptTimeout)
+
+	if err := srv.Start(context.Background()); err != nil {
+		_ = store.Close()
+
+		t.Fatalf("Start: %v", err)
 	}
 
 	s := &smsc{server: srv, store: store}
@@ -751,7 +775,7 @@ func TestStuckRecipientDoesNotBlockOthers(t *testing.T) {
 func TestPendingMessageIsDeliveredAfterRestart(t *testing.T) {
 	core := newFakeCore(t, alice, bob)
 	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
-	cfg.Delivery.RetryIntervals = []time.Duration{500 * time.Millisecond}
+	cfg.Settings.Delivery.RetryIntervals = []time.Duration{500 * time.Millisecond}
 
 	core.setAbsent(bob.msisdn, true)
 
@@ -922,10 +946,10 @@ func TestRoutingWaitsForAnHSSToConnect(t *testing.T) {
 	}
 }
 
-func TestRoutingSkipsHSSOutsideAllowedNetworks(t *testing.T) {
+func TestSettingsUpdateAppliesWithoutRestart(t *testing.T) {
 	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
-	cfg.HSS.AllowedNetworks = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
-	cfg.Delivery.AttemptTimeout = time.Second
+	cfg.Settings.Operator.MNC = "99"
+	cfg.AttemptTimeout = time.Minute
 
 	core := newFakeCore(t, alice, bob)
 	s := startSMSC(t, cfg)
@@ -935,13 +959,33 @@ func TestRoutingSkipsHSSOutsideAllowedNetworks(t *testing.T) {
 		t.Fatalf("OFA result = %d", rc)
 	}
 
-	eventually(t, "the routing lookup to time out", func() bool {
-		m, err := s.store.GetMessage(context.Background(), 1)
-		return err == nil && m.Retries == 1
-	})
+	time.Sleep(200 * time.Millisecond)
 
 	if got := core.routingRequests(); len(got) != 0 {
-		t.Fatalf("routing requests to an HSS outside the allowed networks = %v", got)
+		t.Fatalf("routing requests to a peer outside the HSS realm = %v", got)
+	}
+
+	var current api.OperatorSettings
+	if code := s.api(t, http.MethodGet, "/api/v1/operator", nil, &current); code != http.StatusOK {
+		t.Fatalf("get operator settings = %d", code)
+	}
+
+	current.MNC = "01"
+
+	if code := s.api(t, http.MethodPut, "/api/v1/operator", current, nil); code != http.StatusOK {
+		t.Fatalf("put operator settings = %d", code)
+	}
+
+	s.waitForStatus(t, 1, db.StatusDelivered)
+
+	stored, err := s.store.GetSettings(context.Background())
+	if err != nil || stored.Operator.Realm() != realm {
+		t.Fatalf("stored settings = %+v, %v", stored, err)
+	}
+
+	var status api.DiameterStatus
+	if s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status); status.Realm != realm {
+		t.Fatalf("SMSC realm after the MNC change = %q, want %q", status.Realm, realm)
 	}
 }
 
@@ -1171,15 +1215,16 @@ func TestAPIDiameterStatus(t *testing.T) {
 
 	s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status)
 
-	if status.HSSAvailable || len(status.Peers) != 0 || status.Host != smscHost {
+	if len(status.Routes) != 1 || status.Routes[0].Realm != realm || status.Routes[0].Application != "s6c" ||
+		len(status.Routes[0].Peers) != 0 || len(status.Peers) != 0 || status.Host != smscHost {
 		t.Fatalf("before connect = %+v", status)
 	}
 
 	core.connect(s)
 
-	eventually(t, "the HSS to be available", func() bool {
+	eventually(t, "the HSS route to have a peer", func() bool {
 		s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status)
-		return status.HSSAvailable
+		return len(status.Routes) == 1 && slices.Equal(status.Routes[0].Peers, []string{coreHost})
 	})
 
 	if len(status.Peers) != 1 || status.Peers[0].Host != coreHost || status.Peers[0].State != "open" ||

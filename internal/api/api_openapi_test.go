@@ -44,6 +44,10 @@ func TestOpenAPISpec(t *testing.T) {
 		"GET /api/v1/messages/{id}",
 		"GET /api/v1/messages/{id}/attempts",
 		"GET /api/v1/diameter",
+		"GET /api/v1/operator",
+		"PUT /api/v1/operator",
+		"GET /api/v1/delivery",
+		"PUT /api/v1/delivery",
 		"GET /api/v1/openapi.yaml",
 	}
 

@@ -18,6 +18,7 @@ import (
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 var testNow = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -268,15 +269,21 @@ func mmeRouting() s6c.Routing {
 
 func newDeliverer(store Store, router Router, sender Sender) *Deliverer {
 	return &Deliverer{
-		Store:                store,
-		Router:               router,
-		Sender:               sender,
-		Identity:             diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"},
-		ServiceCentreAddress: "15550000000",
-		RetryIntervals:       []time.Duration{time.Minute, 5 * time.Minute},
-		AttemptTimeout:       30 * time.Second,
-		Now:                  func() time.Time { return testNow },
-		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:  store,
+		Router: router,
+		Sender: sender,
+		Identity: func() diameter.Identity {
+			return diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org"}
+		},
+		Settings: func() settings.Settings {
+			return settings.Settings{
+				Operator: settings.Operator{ServiceCentreAddress: "15550000000"},
+				Delivery: settings.Delivery{RetryIntervals: []time.Duration{time.Minute, 5 * time.Minute}},
+			}
+		},
+		AttemptTimeout: 30 * time.Second,
+		Now:            func() time.Time { return testNow },
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

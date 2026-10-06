@@ -12,11 +12,17 @@ export interface DiameterPeer {
   since: string;
 }
 
+export interface DiameterRoute {
+  realm: string;
+  application: string;
+  peers: string[];
+}
+
 export interface DiameterStatus {
   host: string;
   realm: string;
-  hss_available: boolean;
   peers: DiameterPeer[];
+  routes: DiameterRoute[];
 }
 
 export const getDiameterStatus = (): Promise<DiameterStatus> =>

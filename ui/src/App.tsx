@@ -1,23 +1,18 @@
-import { AppBar, Container, Stack, Toolbar, Typography } from "@mui/material";
-import DiameterStatusCard from "@/components/DiameterStatusCard";
-import MessagesSection from "@/components/MessagesSection";
+import { Navigate, Route, Routes } from "react-router-dom";
+import Layout from "@/components/Layout";
+import Cores from "@/pages/Cores";
+import Messages from "@/pages/Messages";
+import Operator from "@/pages/Operator";
 
 export default function App() {
   return (
-    <>
-      <AppBar position="static" elevation={0}>
-        <Toolbar>
-          <Typography variant="h6" component="h1">
-            Ella SMSC
-          </Typography>
-        </Toolbar>
-      </AppBar>
-      <Container component="main" maxWidth="lg" sx={{ py: 4 }}>
-        <Stack spacing={3}>
-          <DiameterStatusCard />
-          <MessagesSection />
-        </Stack>
-      </Container>
-    </>
+    <Layout>
+      <Routes>
+        <Route path="/operator" element={<Operator />} />
+        <Route path="/cores" element={<Cores />} />
+        <Route path="/messages" element={<Messages />} />
+        <Route path="*" element={<Navigate to="/cores" replace />} />
+      </Routes>
+    </Layout>
   );
 }

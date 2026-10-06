@@ -13,10 +13,16 @@ import (
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
 const errorBackoff = time.Second
+
+const (
+	DefaultAttemptTimeout = 30 * time.Second
+	DefaultConcurrency    = 20
+)
 
 const mwdStatusFlags = s6c.MWDStatusMNRF | s6c.MWDStatusMCEF | s6c.MWDStatusMNRG | s6c.MWDStatusMNR5G | s6c.MWDStatusMNR5GN3G
 
@@ -43,16 +49,15 @@ type Sender interface {
 }
 
 type Deliverer struct {
-	Store                Store
-	Router               Router
-	Sender               Sender
-	Identity             diameter.Identity
-	ServiceCentreAddress string
-	RetryIntervals       []time.Duration
-	AttemptTimeout       time.Duration
-	Concurrency          int
-	Now                  func() time.Time
-	Logger               *slog.Logger
+	Store          Store
+	Router         Router
+	Sender         Sender
+	Identity       func() diameter.Identity
+	Settings       func() settings.Settings
+	AttemptTimeout time.Duration
+	Concurrency    int
+	Now            func() time.Time
+	Logger         *slog.Logger
 
 	wakeOnce sync.Once
 	wake     chan struct{}
@@ -281,11 +286,12 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 
 	now := d.Now()
 
-	if m.SingleShot || len(d.RetryIntervals) == 0 {
+	intervals := d.Settings().Delivery.RetryIntervals
+	if m.SingleShot || len(intervals) == 0 {
 		return d.Store.SetMessageStatus(ctx, m.ID, db.StatusFailed, now)
 	}
 
-	at := now.Add(d.RetryIntervals[min(m.Retries, len(d.RetryIntervals)-1)])
+	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
 
 	if err := d.Store.ScheduleRetry(ctx, m.ID, at, now); err != nil {
 		return err
@@ -688,12 +694,12 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 
 	tfr, err := sgd.NewMTForwardShortMessageRequest(tgpp.Envelope{
 		SessionID:        d.Sender.NewSessionID(),
-		Origin:           d.Identity,
+		Origin:           d.Identity(),
 		DestinationHost:  t.name,
 		DestinationRealm: t.realm,
 	}, sgd.MTForwardShortMessage{
 		IMSI:                 imsi,
-		ServiceCentreAddress: d.ServiceCentreAddress,
+		ServiceCentreAddress: d.Settings().Operator.ServiceCentreAddress,
 		SMRPUI:               smRPUI,
 		MMENumberForMTSMS:    t.mmeNumber,
 		SGSNNumber:           t.sgsnNumber,

@@ -10,7 +10,7 @@ import (
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/numbering"
+	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -19,14 +19,12 @@ type MessageStore interface {
 }
 
 type Handler struct {
-	Identity             diameter.Identity
-	ServiceCentreAddress string
-	Store                MessageStore
-	Numbering            numbering.Plan
-	DefaultValidity      time.Duration
-	Stored               func()
-	Now                  func() time.Time
-	Logger               *slog.Logger
+	Identity func() diameter.Identity
+	Settings func() settings.Settings
+	Store    MessageStore
+	Stored   func()
+	Now      func() time.Time
+	Logger   *slog.Logger
 }
 
 func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
@@ -39,7 +37,7 @@ func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diam
 
 func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Message) *diameter.Message {
 	if err := sgd.CheckMOForwardShortMessage(req); err != nil {
-		return tgpp.NewErrorAnswer(req, h.Identity, err)
+		return tgpp.NewErrorAnswer(req, h.Identity(), err)
 	}
 
 	if _, ok := req.Find(tgpp.AVPSMSMICorrelationID, tgpp.VendorID); ok {
@@ -53,7 +51,9 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		return h.invalidAVP(req, scAddress)
 	}
 
-	if scDigits != h.ServiceCentreAddress {
+	current := h.Settings()
+
+	if scDigits != current.Operator.ServiceCentreAddress {
 		return h.deliveryFailure(req, sgd.CauseUnknownServiceCentre, nil)
 	}
 
@@ -85,7 +85,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		return h.submitRejected(req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
 
-	recipient, err := h.Numbering.International(submit.Destination.TypeOfNumber, submit.Destination.Digits)
+	recipient, err := current.Operator.Numbering.International(submit.Destination.TypeOfNumber, submit.Destination.Digits)
 	if err != nil {
 		return h.submitRejected(req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
@@ -100,7 +100,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 	}
 
 	if !hasValidity {
-		expiresAt = receivedAt.Add(h.DefaultValidity)
+		expiresAt = receivedAt.Add(current.Delivery.DefaultValidity)
 	}
 
 	id, err := h.Store.CreateMessage(ctx, db.NewMessage{
@@ -177,11 +177,11 @@ func (h *Handler) submitReport(failureCause byte, receivedAt time.Time) []byte {
 }
 
 func (h *Handler) answer(req *diameter.Message, resultCode uint32) *diameter.Message {
-	return tgpp.NewAnswer(req, h.Identity, resultCode)
+	return tgpp.NewAnswer(req, h.Identity(), resultCode)
 }
 
 func (h *Handler) experimental(req *diameter.Message, resultCode uint32) *diameter.Message {
-	return tgpp.NewExperimentalAnswer(req, h.Identity, resultCode)
+	return tgpp.NewExperimentalAnswer(req, h.Identity(), resultCode)
 }
 
 func (h *Handler) invalidAVP(req *diameter.Message, offending diameter.AVP) *diameter.Message {
@@ -192,7 +192,7 @@ func (h *Handler) invalidAVP(req *diameter.Message, offending diameter.AVP) *dia
 }
 
 func (h *Handler) deliveryFailure(req *diameter.Message, cause sgd.DeliveryFailureCause, diagnostic []byte) *diameter.Message {
-	ans, err := sgd.NewDeliveryFailureAnswer(req, h.Identity, cause, diagnostic)
+	ans, err := sgd.NewDeliveryFailureAnswer(req, h.Identity(), cause, diagnostic)
 	if err != nil {
 		return h.answer(req, diameter.ResultUnableToComply)
 	}

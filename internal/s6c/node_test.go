@@ -22,7 +22,7 @@ func testNode(t *testing.T, host string, handler diameter.Handler, acceptUnknown
 	cfg := diameter.Config{
 		Identity: diameter.Identity{
 			OriginHost:      host,
-			OriginRealm:     "example.org",
+			OriginRealm:     "epc.mnc001.mcc001.3gppnetwork.org",
 			HostIPAddresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")},
 			ProductName:     "test",
 		},
@@ -99,10 +99,9 @@ func TestSendRoutingInfoForSMOverSCTP(t *testing.T) {
 	})
 
 	router := &Router{
-		Node:                 hssByID{smsc},
-		Identity:             smsc.Identity(),
-		HSSRealm:             "example.org",
-		ServiceCentreAddress: "15550000000",
+		Node:     hssByID{smsc},
+		Identity: smsc.Identity,
+		Settings: testSettings,
 	}
 
 	var (

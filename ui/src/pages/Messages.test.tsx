@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import MessagesSection from "@/components/MessagesSection";
+import Messages from "@/pages/Messages";
 import { json, renderWithClient, stubApi } from "@/test/render";
 import { attempt, message, page } from "@/test/fixtures";
 
@@ -37,7 +37,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("MessagesSection", () => {
+describe("Messages", () => {
   it("lists messages with their part and status", async () => {
     serveMessages([
       message({
@@ -50,7 +50,7 @@ describe("MessagesSection", () => {
       message({ id: 8, text: undefined, encoding: "binary" }),
     ]);
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
 
     await screen.findByText("part two");
     expect(rowCells("part two")).toEqual([
@@ -72,7 +72,7 @@ describe("MessagesSection", () => {
   it("requests the first page by default", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
 
     await screen.findByText("hello");
     expect(lastQuery(requests)).toEqual({ page: "1", per_page: "25" });
@@ -81,7 +81,7 @@ describe("MessagesSection", () => {
   it("filters by recipient once the number is valid", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
     await screen.findByText("hello");
 
     const input = screen.getByRole("textbox", { name: "To" });
@@ -107,7 +107,7 @@ describe("MessagesSection", () => {
   it("filters by status", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
     await screen.findByText("hello");
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Status" }));
@@ -121,7 +121,7 @@ describe("MessagesSection", () => {
   it("opens the message detail when a row is clicked", async () => {
     serveMessages();
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
     fireEvent.click(await screen.findByText("hello"));
 
     const drawer = await screen.findByRole("dialog", { name: "Message 1" });
@@ -160,7 +160,7 @@ describe("MessagesSection", () => {
       ),
     );
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
     await screen.findByText("hello");
     const listedBefore = listed.length;
 
@@ -194,7 +194,7 @@ describe("MessagesSection", () => {
   it("shows an empty list", async () => {
     serveMessages([]);
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
 
     expect(await screen.findByText("No messages.")).toBeInTheDocument();
   });
@@ -210,10 +210,77 @@ describe("MessagesSection", () => {
       ),
     );
 
-    renderWithClient(<MessagesSection />);
+    renderWithClient(<Messages />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load messages: Failed to list messages",
     );
+  });
+});
+
+describe("Messages delivery settings", () => {
+  const serveDelivery = () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        stubApi({
+          "/api/v1/messages": () => json(200, { result: page([]) }),
+          "/api/v1/delivery": (_url, init) => {
+            if (init?.method !== "PUT") {
+              return json(200, {
+                result: {
+                  default_validity_seconds: 604800,
+                  retry_intervals_seconds: [60, 300, 900, 3600],
+                },
+              });
+            }
+            const body = JSON.parse(String(init.body));
+            bodies.push(body);
+            return json(200, { result: body });
+          },
+        }),
+      ),
+    );
+    return bodies;
+  };
+
+  it("shows and updates the validity and retries", async () => {
+    const bodies = serveDelivery();
+
+    renderWithClient(<Messages />);
+
+    const line = screen.getByTestId("delivery-settings");
+    await waitFor(() =>
+      expect(line).toHaveTextContent("Validity: 7d · Retries: 1m, 5m, 15m, 1h"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit delivery" }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Default Validity" }),
+      {
+        target: { value: "1 week" },
+      },
+    );
+    expect(screen.getByText("e.g. 30s, 5m, 1h or 7d")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
+
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Default Validity" }),
+      {
+        target: { value: "2d" },
+      },
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Retry Intervals" }), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() =>
+      expect(line).toHaveTextContent("Validity: 2d · Retries: none"),
+    );
+    expect(bodies).toEqual([
+      { default_validity_seconds: 172800, retry_intervals_seconds: [] },
+    ]);
   });
 });

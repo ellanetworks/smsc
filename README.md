@@ -31,36 +31,32 @@ SMS service centre for private cellular networks.
 sudo snap install ella-smsc --channel=edge
 ```
 
-### 2. Configure the SMSC
-
-Edit `/var/snap/ella-smsc/common/smsc.yaml`:
+Edit the configure file at `/var/snap/ella-smsc/common/smsc.yaml` to match your network. For example:
 
 ```yaml
+logging:
+  level: info
 db:
   path: /var/snap/ella-smsc/common/smsc.db
-service_centre:
-  address: "15550000000"
-diameter:
-  origin_host: smsc.example.org
-  origin_realm: example.org
-  address: 192.0.2.10
-  port: 3868
-hss:
-  realm: epc.mnc001.mcc001.3gppnetwork.org
-numbering:
-  country_code: "1"
 api:
   address: 192.0.2.10
   port: 5010
+diameter:
+  address: 192.0.2.10
+  port: 3868
 ```
-
-### 3. Start the SMSC
 
 ```sh
 sudo snap start --enable ella-smsc.smscd
 ```
 
-### 4. Connect Ella Core
+### 2. Access the SMSC UI
+
+Open `http://192.0.2.10:5010`.
+
+Open the **Cores** page. You should not see any cores connected yet.
+
+### 3. Connect Ella Core
 
 In the Ella Core UI, go to **Operator** > **SMS**, click the edit icon, and set:
 
@@ -72,13 +68,9 @@ Click **Update**. Set the switch to **ON**.
 
 **SMSC Link** shows **Connected**.
 
-### 5. Open the Ella SMSC UI
+In the Ella SMSC UI, go to **Cores**. The Ella Core peer shows **open** with **HSS** set to **yes**.
 
-Open `http://192.0.2.10:5010`.
-
-In **Diameter**, **HSS** shows **reachable** and the Ella Core peer shows **open**.
-
-### 6. Give subscribers an MSISDN
+### 4. Give subscribers an MSISDN
 
 In the Ella Core UI, for each of the two subscribers:
 
@@ -86,11 +78,11 @@ In the Ella Core UI, for each of the two subscribers:
 - In **Provisioning**, click the edit icon next to **MSISDN**.
 - Enter `+15551230001` for the first subscriber and `+15551230002` for the second. Click **Update**.
 
-### 7. Set the SMSC number on the SIM cards
+### 5. Set the SMSC number on the SIM cards
 
 On each SIM card, set the SMSC number to `+15550000000`.
 
-### 8. Send an SMS between phones
+### 6. Send an SMS between phones
 
 From the first phone, send `hello` to `+15551230002`.
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/config"
+	"github.com/ellanetworks/smsc/internal/delivery"
 	"github.com/ellanetworks/smsc/internal/server"
 )
 
@@ -66,7 +67,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Delivery.AttemptTimeout+shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), delivery.DefaultAttemptTimeout+shutdownTimeout)
 	defer cancel()
 
 	srv.Shutdown(shutdownCtx)
