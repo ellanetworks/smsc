@@ -100,7 +100,7 @@ func (d *Deliverer) record(ctx context.Context, log *slog.Logger, messageID int6
 		log.Error("failed to record delivery attempt", slog.Any("error", err))
 	}
 
-	log.Info("short message delivery attempt", slog.String("step", string(a.Step)), slog.String("node", a.Node),
+	log.Debug("short message delivery attempt", slog.String("step", string(a.Step)), slog.String("node", a.Node),
 		slog.String("outcome", a.Outcome))
 }
 

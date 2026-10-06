@@ -1,6 +1,8 @@
 # Ella SMSC configuration file.
 # After modifying it, restart Ella SMSC with
 # `sudo snap restart ella-smsc.smscd` for the changes to take effect.
+logging:
+  level: info
 db:
   path: /var/snap/ella-smsc/common/smsc.db
 service_centre:
