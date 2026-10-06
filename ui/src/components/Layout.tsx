@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AppBar,
   Box,
+  Divider,
   Drawer,
   IconButton,
   List,
@@ -9,15 +10,19 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  ListSubheader,
   Toolbar,
   Typography,
   useMediaQuery,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import {
+  BugReport as BugReportIcon,
   Feed as FeedIcon,
   Hub as HubIcon,
+  Info as InfoIcon,
   Menu as MenuIcon,
+  OpenInNew as OpenInNewIcon,
   Sms as SmsIcon,
 } from "@mui/icons-material";
 import { Link, useLocation } from "react-router-dom";
@@ -26,6 +31,10 @@ import Logo from "@/components/Logo";
 import { MAX_WIDTH, PAGE_PADDING_X } from "@/utils/layout";
 
 const drawerWidth = 250;
+
+const DOCS_URL = "https://docs.ellanetworks.com";
+
+const NEW_ISSUE_URL = "https://github.com/ellanetworks/smsc/issues/new/choose";
 
 const drawerSelectedSx = {
   "& .MuiListItemText-primary": { color: "primary.main" },
@@ -143,11 +152,20 @@ export default function Layout({ children }: { children: ReactNode }) {
         onClose={() => setMobileOpen(false)}
         ModalProps={{ keepMounted: true }}
         sx={{
-          "& .MuiDrawer-paper": { width: drawerWidth, boxSizing: "border-box" },
+          "& .MuiDrawer-paper": {
+            width: drawerWidth,
+            boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "column",
+          },
         }}
       >
         <Toolbar />
-        <Box component="nav" aria-label="Main" sx={{ overflow: "auto" }}>
+        <Box
+          component="nav"
+          aria-label="Main"
+          sx={{ flexGrow: 1, overflow: "auto" }}
+        >
           <List>
             {navItems.map(({ to, label, icon }) => {
               const current = pathname.startsWith(to);
@@ -167,6 +185,49 @@ export default function Layout({ children }: { children: ReactNode }) {
                 </ListItem>
               );
             })}
+          </List>
+        </Box>
+
+        <Divider />
+        <Box>
+          <List>
+            <ListSubheader>Support</ListSubheader>
+            <ListItem disablePadding>
+              <ListItemButton
+                component="a"
+                href={DOCS_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={handleNavClick}
+                sx={drawerSelectedSx}
+              >
+                <ListItemIcon>
+                  <InfoIcon color="primary" />
+                </ListItemIcon>
+                <ListItemText primary="Documentation" />
+                <OpenInNewIcon
+                  sx={{ fontSize: 16, ml: 1, color: "action.active" }}
+                />
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding>
+              <ListItemButton
+                component="a"
+                href={NEW_ISSUE_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={handleNavClick}
+                sx={drawerSelectedSx}
+              >
+                <ListItemIcon>
+                  <BugReportIcon color="primary" />
+                </ListItemIcon>
+                <ListItemText primary="Report a bug" />
+                <OpenInNewIcon
+                  sx={{ fontSize: 16, ml: 1, color: "action.active" }}
+                />
+              </ListItemButton>
+            </ListItem>
           </List>
         </Box>
       </Drawer>

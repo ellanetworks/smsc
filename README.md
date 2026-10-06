@@ -46,6 +46,8 @@ diameter:
   port: 3868
 ```
 
+Start the SMSC:
+
 ```sh
 sudo snap start --enable ella-smsc.smscd
 ```
