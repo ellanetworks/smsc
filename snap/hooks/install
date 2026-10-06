@@ -1,0 +1,3 @@
+#!/bin/sh -e
+
+cp "$SNAP/smsc.yaml" "$SNAP_COMMON/smsc.yaml"

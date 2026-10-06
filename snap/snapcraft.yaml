@@ -1,0 +1,44 @@
+name: ella-smsc
+title: Ella SMSC
+base: core26
+version: 0.0.1
+summary: Ella SMSC is a secure, reliable, and easy to operate SMS service center.
+description: |
+  Ella SMSC is a secure, reliable, and easy to operate SMS service center for private cellular networks. It works with Ella Core over Diameter (SGd and S6c).
+
+  After installing, edit /var/snap/ella-smsc/common/smsc.yaml, then start the service with `sudo snap start --enable ella-smsc.smscd`.
+
+source-code: https://github.com/ellanetworks/smsc
+issues:
+  - https://github.com/ellanetworks/smsc/issues
+grade: stable
+confinement: strict
+license: BUSL-1.1
+
+apps:
+  smscd:
+    daemon: simple
+    install-mode: disable
+    command: bin/smsc --config $SNAP_COMMON/smsc.yaml
+    restart-condition: on-failure
+    plugs:
+      - network-bind
+
+parts:
+  smsc:
+    plugin: go
+    source: .
+    source-type: local
+    build-packages:
+      - gcc
+    build-snaps:
+      - go/1.26/stable
+      - node/24/stable
+    override-build: |
+      npm ci --prefix ui
+      npm run build --prefix ui
+      craftctl default
+
+  config:
+    plugin: dump
+    source: snap/local
