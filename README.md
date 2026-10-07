@@ -48,6 +48,7 @@ In the Ella Core UI, go to **Operator** and scroll to the **SMS** section.
 
 Click **Add Service Center** and set:
 
+- **Diameter Identity**: `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`
 - **Address**: `127.0.0.1`
 - **Numbers**: `+15550000000`
 
