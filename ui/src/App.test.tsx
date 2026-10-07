@@ -38,6 +38,8 @@ const serve = () =>
               retry_intervals_seconds: [],
             },
           }),
+        "/api/v1/status": () =>
+          json(200, { result: { version: "v0.0.1", revision: "" } }),
         "/api/v1/messages": () =>
           json(200, {
             result: { items: [], page: 1, per_page: 25, total_count: 0 },
@@ -58,7 +60,7 @@ afterEach(() => {
 });
 
 describe("App", () => {
-  it("renders the top bar, the navigation and the footer", () => {
+  it("renders the top bar, the navigation and the footer", async () => {
     serve();
     renderAt("/cores");
 
@@ -66,6 +68,9 @@ describe("App", () => {
       screen.getByRole("img", { name: "Ella SMSC Logo" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("banner")).toHaveTextContent("Ella SMSC");
+    expect(
+      await within(screen.getByRole("banner")).findByText("v0.0.1"),
+    ).toBeInTheDocument();
     expect(
       within(screen.getByRole("navigation", { name: "Main" }))
         .getAllByRole("link")

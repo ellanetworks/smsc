@@ -26,6 +26,7 @@ import {
   Sms as SmsIcon,
 } from "@mui/icons-material";
 import { Link, useLocation } from "react-router-dom";
+import DeploymentIdentity from "@/components/DeploymentIdentity";
 import Footer from "@/components/Footer";
 import Logo from "@/components/Logo";
 import { MAX_WIDTH, PAGE_PADDING_X } from "@/utils/layout";
@@ -143,6 +144,10 @@ export default function Layout({ children }: { children: ReactNode }) {
           <Typography variant="h6" noWrap component="div" sx={{ ml: 2 }}>
             Ella SMSC
           </Typography>
+          <Box sx={{ flexGrow: 1 }} />
+          <Box sx={{ minWidth: 0 }}>
+            <DeploymentIdentity />
+          </Box>
         </Toolbar>
       </AppBar>
 

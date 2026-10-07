@@ -1,21 +1,19 @@
 # Ella SMSC (beta)
 
-**Ella SMSC** lets private cellular network subscribers send and receive SMS messages. It is an SMS Service Center (SMSC) that integrates with 4G and 5G core networks.
-
 <p align="center">
   <img src="ui/public/logo-mark.svg" alt="Ella SMSC Logo" width="120"/>
 </p>
 
+[![ella-smsc](https://snapcraft.io/ella-smsc/badge.svg)](https://snapcraft.io/ella-smsc)
+
+**Ella SMSC** lets private cellular network subscribers send and receive SMS messages. It is an SMS Service Center (SMSC) that integrates with 4G and 5G core networks.
+
 ## Key Features
 
-- SMS over Diameter (SCTP)
-  - SGd: MO/MT forwarding with the MME
-  - S6c: routing info, delivery status reports, and alerts with the HSS
-- Store-and-forward with retries and validity periods
-- Delivery attempt history with failure causes
-- HTTP API
-- Web UI
-- SQLite storage
+- **SMS for your private network**: Subscribers send and receive text messages from their phones.
+- **4G & 5G Compliant**: Connects to Ella Core, or other 3GPP-compliant cores, with the SGd and S6c Diameter interfaces over SCTP. Messages are stored and forwarded, retried, expired after their validity period, and delivered as soon as a phone becomes reachable again.
+- **All-in-One**: A single application with an embedded SQLite database, a web UI, and an HTTP API. Install it in one command.
+- **Source Available**: Ella SMSC is available under the Business Source License 1.1 (BUSL-1.1).
 
 ## Getting Started
 
@@ -84,8 +82,9 @@ The second phone receives `hello`.
 #### From source
 
 ```sh
-npm ci --prefix ui && npm run build --prefix ui
-go build -o smsc ./cmd/smsc
+npm install --prefix ui
+npm run build --prefix ui
+go build -o smsc -ldflags "-s -w -X github.com/ellanetworks/smsc/version.GitCommit=$(git rev-parse HEAD)" ./cmd/smsc
 ```
 
 #### Container Image

@@ -19,6 +19,7 @@ tags:
   - name: Operator
   - name: Diameter
   - name: Delivery
+  - name: Status
   - name: Specification
 
 paths:
@@ -203,6 +204,23 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /api/v1/status:
+    get:
+      tags: [Status]
+      operationId: getStatus
+      summary: Get status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/Status"
 
   /api/v1/openapi.yaml:
     get:
@@ -466,6 +484,17 @@ components:
           type: string
         smsf_non_3gpp:
           type: string
+
+    Status:
+      type: object
+      required: [version, revision]
+      properties:
+        version:
+          type: string
+          example: v0.0.1
+        revision:
+          type: string
+          description: Git commit the binary was built from. Empty for development builds.
 
     DiameterStatus:
       type: object

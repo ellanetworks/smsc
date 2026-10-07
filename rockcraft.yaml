@@ -1,7 +1,7 @@
 name: ella-smsc
 base: bare
 build-base: ubuntu@26.04
-version: 0.0.1
+adopt-info: smsc-release-data
 summary: Ella SMSC is a secure, reliable, and easy to operate SMS service center.
 description: |
  Ella SMSC is a secure, reliable, and easy to operate SMS service center.
@@ -32,4 +32,12 @@ parts:
     override-build: |
       npm ci --prefix ui
       npm run build --prefix ui
-      craftctl default
+      REVISION=`git rev-parse HEAD`
+      go build -v -o ${CRAFT_PART_INSTALL}/bin/smsc -ldflags "-s -w -X github.com/ellanetworks/smsc/version.GitCommit=${REVISION}" ./cmd/smsc
+
+  smsc-release-data:
+    plugin: nil
+    source: .
+    override-build: |
+      version="$(cat version/VERSION)"
+      craftctl set version="$version"
