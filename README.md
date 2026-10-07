@@ -11,7 +11,7 @@
 ## Key Features
 
 - **SMS for your private network**: Subscribers send and receive text messages from their phones.
-- **4G & 5G Compliant**: Connects to Ella Core, or other 3GPP-compliant cores, with the SGd and S6c Diameter interfaces over SCTP. Messages are stored and forwarded, retried, expired after their validity period, and delivered as soon as a phone becomes reachable again.
+- **4G & 5G Compliant**: Connects to [Ella Core][ella-core], or other 3GPP-compliant cores, with the SGd and S6c Diameter interfaces over SCTP. Messages are stored and forwarded, retried, expired after their validity period, and delivered as soon as a phone becomes reachable again.
 - **All-in-One**: A single application with an embedded SQLite database, a web UI, and an HTTP API. Install it in one command.
 - **Source Available**: Ella SMSC is available under the Business Source License 1.1 (BUSL-1.1).
 
@@ -19,7 +19,7 @@
 
 ### Prerequisites
 
-- [Ella Core](https://github.com/ellanetworks/core) running with PLMN `00101`
+- [Ella Core][ella-core] running with PLMN `00101`
 - Two phones attached to the network
 
 ### 1. Install the SMSC
@@ -122,3 +122,5 @@ See [`smsc.yaml`](smsc.yaml).
 ### API
 
 [`openapi.yaml`](internal/api/openapi.yaml), served at `GET /api/v1/openapi.yaml`.
+
+[ella-core]: https://github.com/ellanetworks/core
