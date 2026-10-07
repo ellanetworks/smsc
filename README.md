@@ -51,7 +51,7 @@ Click **Add Service Center** and set:
 - **Address**: `127.0.0.1`
 - **Numbers**: `+15550000000`
 
-Click **Add**. Set the switch to **SMS is ON**.
+Click **Add**.
 
 The service center shows **Connected**.
 
