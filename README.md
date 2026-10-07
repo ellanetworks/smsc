@@ -21,7 +21,7 @@
 
 ### Prerequisites
 
-- [Ella Core](https://github.com/ellanetworks/core) running
+- [Ella Core](https://github.com/ellanetworks/core) running with PLMN `00101`
 - Two phones attached to the network
 
 ### 1. Install the SMSC
@@ -32,21 +32,6 @@ Connect to the host running Ella Core and install the SMSC snap:
 sudo snap install ella-smsc
 ```
 
-Edit the SMSC configuration file `/var/snap/ella-smsc/common/smsc.yaml` to use port `3869` for Diameter:
-
-```yaml
-logging:
-  level: info
-db:
-  path: /var/snap/ella-smsc/common/smsc.db
-api:
-  address: 0.0.0.0
-  port: 5010
-diameter:
-  address: 127.0.0.1
-  port: 3869
-```
-
 Start the SMSC:
 
 ```sh
@@ -55,21 +40,22 @@ sudo snap start --enable ella-smsc.smscd
 
 ### 2. Access the SMSC UI
 
-Open `http://192.0.2.10:5010`.
+Open your browser at `http://<host-ip>:5010`.
 
-Open the **Cores** page. You should not see any cores connected yet.
+The **Cores** page shows no connected cores yet.
 
 ### 3. Connect Ella Core
 
-In the Ella Core UI, go to **Operator** > **SMS**, click the edit icon, and set:
+In the Ella Core UI, go to **Operator** and scroll to the **SMS** section.
 
-- **SMSC Address**: `127.0.0.1`
-- **SMSC Port**: `3869`
-- **SMS Number**: `+15550001111`
+Click **Add Service Center** and set:
 
-Click **Update**. Set the switch to **ON**.
+- **Address**: `127.0.0.1`
+- **Numbers**: `+15550000000`
 
-**SMSC Link** shows **Connected**.
+Click **Add**. Set the switch to **SMS is ON**.
+
+The service center shows **Connected**.
 
 In the Ella SMSC UI, go to **Cores**. The Ella Core peer shows **open** with **HSS** set to **yes**.
 
