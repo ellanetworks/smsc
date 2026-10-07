@@ -1,10 +1,10 @@
 # Ella SMSC (beta)
 
-SMS service centre for private cellular networks.
+**Ella SMSC** lets private cellular network subscribers send and receive SMS messages. It is an SMS Service Center (SMSC) that integrates with 4G and 5G core networks.
 
-> [!WARNING]
-> - SMS messages are stored in plain text.
-> - The API and configuration may change without notice.
+<p align="center">
+  <img src="ui/public/logo-mark.svg" alt="Ella SMSC Logo" width="120"/>
+</p>
 
 ## Key Features
 
@@ -21,17 +21,18 @@ SMS service centre for private cellular networks.
 
 ### Prerequisites
 
-- [Ella Core](https://github.com/ellanetworks/core) deployed with MCC `001`, MNC `01`
+- [Ella Core](https://github.com/ellanetworks/core) running
 - Two phones attached to the network
-- A Linux host for the SMSC, reachable from Ella Core, e.g. `192.0.2.10`
 
 ### 1. Install the SMSC
 
+Connect to the host running Ella Core and install the SMSC snap:
+
 ```sh
-sudo snap install ella-smsc --channel=edge
+sudo snap install ella-smsc
 ```
 
-Edit the configure file at `/var/snap/ella-smsc/common/smsc.yaml` to match your network. For example:
+Edit the SMSC configuration file `/var/snap/ella-smsc/common/smsc.yaml` to use port `3869` for Diameter:
 
 ```yaml
 logging:
@@ -39,11 +40,11 @@ logging:
 db:
   path: /var/snap/ella-smsc/common/smsc.db
 api:
-  address: 192.0.2.10
+  address: 0.0.0.0
   port: 5010
 diameter:
-  address: 192.0.2.10
-  port: 3868
+  address: 127.0.0.1
+  port: 3869
 ```
 
 Start the SMSC:
@@ -62,8 +63,8 @@ Open the **Cores** page. You should not see any cores connected yet.
 
 In the Ella Core UI, go to **Operator** > **SMS**, click the edit icon, and set:
 
-- **SMSC Address**: `192.0.2.10`
-- **SMSC Port**: `3868`
+- **SMSC Address**: `127.0.0.1`
+- **SMSC Port**: `3869`
 - **SMS Number**: `+15550001111`
 
 Click **Update**. Set the switch to **ON**.
