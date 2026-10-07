@@ -6,7 +6,7 @@ logging:
 db:
   path: /var/snap/ella-smsc/common/smsc.db
 api:
-  address: 127.0.0.1
+  address: 0.0.0.0
   port: 5010
 diameter:
   address: 127.0.0.1

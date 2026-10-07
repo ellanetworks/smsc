@@ -1,49 +1,33 @@
 # Ella SMSC (beta)
 
-SMS service centre for private cellular networks.
+<p align="center">
+  <img src="ui/public/logo-mark.svg" alt="Ella SMSC Logo" width="120"/>
+</p>
 
-> [!WARNING]
-> - SMS messages are stored in plain text.
-> - The API and configuration may change without notice.
+[![ella-smsc](https://snapcraft.io/ella-smsc/badge.svg)](https://snapcraft.io/ella-smsc)
+
+**Ella SMSC** lets private cellular network subscribers send and receive SMS messages. It is an SMS Service Center (SMSC) that integrates with 4G and 5G core networks.
 
 ## Key Features
 
-- SMS over Diameter (SCTP)
-  - SGd: MO/MT forwarding with the MME
-  - S6c: routing info, delivery status reports, and alerts with the HSS
-- Store-and-forward with retries and validity periods
-- Delivery attempt history with failure causes
-- HTTP API
-- Web UI
-- SQLite storage
+- **SMS for your private network**: Subscribers send and receive text messages from their phones.
+- **4G & 5G Compliant**: Connects to [Ella Core][ella-core], or other 3GPP-compliant cores, with the SGd and S6c Diameter interfaces over SCTP. Messages are stored and forwarded, retried, expired after their validity period, and delivered as soon as a phone becomes reachable again.
+- **All-in-One**: A single application with an embedded SQLite database, a web UI, and an HTTP API. Install it in one command.
+- **Source Available**: Ella SMSC is available under the Business Source License 1.1 (BUSL-1.1).
 
 ## Getting Started
 
 ### Prerequisites
 
-- [Ella Core](https://github.com/ellanetworks/core) deployed with MCC `001`, MNC `01`
+- [Ella Core][ella-core] running with PLMN `00101`
 - Two phones attached to the network
-- A Linux host for the SMSC, reachable from Ella Core, e.g. `192.0.2.10`
 
 ### 1. Install the SMSC
 
+Connect to the host running Ella Core and install the SMSC snap:
+
 ```sh
-sudo snap install ella-smsc --channel=edge
-```
-
-Edit the configure file at `/var/snap/ella-smsc/common/smsc.yaml` to match your network. For example:
-
-```yaml
-logging:
-  level: info
-db:
-  path: /var/snap/ella-smsc/common/smsc.db
-api:
-  address: 192.0.2.10
-  port: 5010
-diameter:
-  address: 192.0.2.10
-  port: 3868
+sudo snap install ella-smsc
 ```
 
 Start the SMSC:
@@ -54,21 +38,22 @@ sudo snap start --enable ella-smsc.smscd
 
 ### 2. Access the SMSC UI
 
-Open `http://192.0.2.10:5010`.
+Open your browser at `http://<host-ip>:5010`.
 
-Open the **Cores** page. You should not see any cores connected yet.
+The **Cores** page shows no connected cores yet.
 
 ### 3. Connect Ella Core
 
-In the Ella Core UI, go to **Operator** > **SMS**, click the edit icon, and set:
+In the Ella Core UI, go to **Operator** and scroll to the **SMS** section.
 
-- **SMSC Address**: `192.0.2.10`
-- **SMSC Port**: `3868`
-- **SMS Number**: `+15550001111`
+Click **Add Service Center** and set:
 
-Click **Update**. Set the switch to **ON**.
+- **Address**: `127.0.0.1`
+- **Numbers**: `+15550000000`
 
-**SMSC Link** shows **Connected**.
+Click **Add**. Set the switch to **SMS is ON**.
+
+The service center shows **Connected**.
 
 In the Ella SMSC UI, go to **Cores**. The Ella Core peer shows **open** with **HSS** set to **yes**.
 
@@ -97,8 +82,9 @@ The second phone receives `hello`.
 #### From source
 
 ```sh
-npm ci --prefix ui && npm run build --prefix ui
-go build -o smsc ./cmd/smsc
+npm install --prefix ui
+npm run build --prefix ui
+go build -o smsc -ldflags "-s -w -X github.com/ellanetworks/smsc/version.GitCommit=$(git rev-parse HEAD)" ./cmd/smsc
 ```
 
 #### Container Image
@@ -136,3 +122,5 @@ See [`smsc.yaml`](smsc.yaml).
 ### API
 
 [`openapi.yaml`](internal/api/openapi.yaml), served at `GET /api/v1/openapi.yaml`.
+
+[ella-core]: https://github.com/ellanetworks/core

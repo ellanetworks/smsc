@@ -61,6 +61,7 @@ func NewHandler(cfg Config) http.Handler {
 	mux.Handle("PUT /api/v1/operator", UpdateOperator(cfg))
 	mux.Handle("GET /api/v1/delivery", GetDelivery(cfg))
 	mux.Handle("PUT /api/v1/delivery", UpdateDelivery(cfg))
+	mux.Handle("GET /api/v1/status", GetStatus(cfg))
 	mux.Handle("GET /api/v1/openapi.yaml", OpenAPISpec())
 
 	if cfg.Frontend != nil {

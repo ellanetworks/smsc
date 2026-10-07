@@ -26,6 +26,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/settings"
 	smscsgd "github.com/ellanetworks/smsc/internal/sgd"
 	"github.com/ellanetworks/smsc/ui"
+	"github.com/ellanetworks/smsc/version"
 )
 
 var ErrAlreadyStarted = errors.New("server: already started")
@@ -168,7 +169,10 @@ func (s *Server) Start(ctx context.Context) error {
 	s.stopDelivery = stopDelivery
 	s.deliveryDone = deliveryDone
 
-	s.Logger.Info("smsc started", "db", cfg.DB.Path, "diameter", nodes.Addr().String(), "api", apiLn.Addr().String())
+	v := version.Get()
+
+	s.Logger.Info("smsc started", "version", v.Version, "revision", v.Revision, "db", cfg.DB.Path,
+		"diameter", nodes.Addr().String(), "api", apiLn.Addr().String())
 
 	return nil
 }
