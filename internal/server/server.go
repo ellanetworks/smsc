@@ -69,6 +69,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	live := settings.NewLive(database, initial)
+	m := newMetrics(database)
 
 	hss := newHSSRequester(live)
 	mux := diameter.NewMux()
@@ -78,10 +79,12 @@ func (s *Server) Start(ctx context.Context) error {
 		port:              cfg.Diameter.Port,
 		mux:               mux,
 		onPeerStateChange: hss.peersChanged,
+		metrics:           m.peers,
 		logger:            s.Logger,
 	}
 
 	hss.nodes = nodes
+	m.watchHSS(hss)
 
 	deliverer := &delivery.Deliverer{
 		Store: database,
@@ -95,6 +98,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Settings:       live.Get,
 		AttemptTimeout: cmp.Or(s.attemptTimeout, delivery.DefaultAttemptTimeout),
 		Concurrency:    delivery.DefaultConcurrency,
+		Metrics:        m.delivery,
 		Now:            time.Now,
 		Logger:         s.Logger,
 	}
@@ -104,6 +108,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Settings: live.Get,
 		Store:    database,
 		Stored:   deliverer.Notify,
+		Received: m.received,
 		Now:      time.Now,
 		Logger:   s.Logger,
 	})
@@ -138,6 +143,8 @@ func (s *Server) Start(ctx context.Context) error {
 			Frontend: ui.FS(),
 			Settings: live,
 			Notify:   deliverer.Notify,
+			Received: m.received,
+			Metrics:  m.registry,
 			Now:      time.Now,
 			Logger:   s.Logger,
 		}),
@@ -266,7 +273,7 @@ func (r *hssRequester) Do(ctx context.Context, req *diameter.Message) (*diameter
 	for i := range uint32(len(hosts)) {
 		host := hosts[(start+i)%uint32(len(hosts))]
 
-		ans, err := r.nodes.Node().DoHost(ctx, host, req)
+		ans, err := r.nodes.doHost(ctx, host, req)
 
 		switch {
 		case err == nil && !isRelayFailure(ans):
@@ -374,7 +381,7 @@ func (r *hssRequester) NewSessionID() string { return r.nodes.Node().NewSessionI
 type hostSender struct{ nodes *nodeManager }
 
 func (h hostSender) Do(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
-	return h.nodes.Node().DoHost(ctx, host, req)
+	return h.nodes.doHost(ctx, host, req)
 }
 
 func (h hostSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }

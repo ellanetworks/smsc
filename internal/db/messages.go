@@ -75,7 +75,9 @@ func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
 	return ids[0], nil
 }
 
-func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) ([]int64, error) {
+func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int64, err error) {
+	defer d.observe(&err)()
+
 	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create message: %w", err)
@@ -278,7 +280,9 @@ func scanMessage(row rowScanner) (Message, error) {
 	return m, nil
 }
 
-func (d *DB) GetMessage(ctx context.Context, id int64) (Message, error) {
+func (d *DB) GetMessage(ctx context.Context, id int64) (_ Message, err error) {
+	defer d.observe(&err)()
+
 	m, err := scanMessage(d.conn.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrNotFound
@@ -297,7 +301,9 @@ type MessageFilter struct {
 	Status     MessageStatus
 }
 
-func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) ([]Message, int, error) {
+func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) (_ []Message, _ int, err error) {
+	defer d.observe(&err)()
+
 	var (
 		where []string
 		args  []any
@@ -351,7 +357,9 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 	return messages, total, nil
 }
 
-func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (Message, bool, error) {
+func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (_ Message, _ bool, err error) {
+	defer d.observe(&err)()
+
 	exclude, args := excludeMSISDNs(busy)
 
 	m, err := scanMessage(d.conn.QueryRowContext(ctx,
@@ -368,12 +376,14 @@ func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (Message
 	return m, true, nil
 }
 
-func (d *DB) NextWakeup(ctx context.Context, busy []string) (time.Time, bool, error) {
+func (d *DB) NextWakeup(ctx context.Context, busy []string) (_ time.Time, _ bool, err error) {
+	defer d.observe(&err)()
+
 	var at sql.Null[int64]
 
 	exclude, args := excludeMSISDNs(busy)
 
-	err := d.conn.QueryRowContext(ctx,
+	err = d.conn.QueryRowContext(ctx,
 		`SELECT MIN(next_attempt_at) FROM messages WHERE status = ?`+exclude,
 		append([]any{StatusPending}, args...)...).Scan(&at)
 	if err != nil {
@@ -400,7 +410,9 @@ func excludeMSISDNs(busy []string) (string, []any) {
 	return ` AND msisdn NOT IN (?` + strings.Repeat(`, ?`, len(busy)-1) + `)`, args
 }
 
-func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time) error {
+func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time) (err error) {
+	defer d.observe(&err)()
+
 	res, err := d.conn.ExecContext(ctx,
 		`UPDATE messages SET next_attempt_at = ?, retries = retries + 1, updated_at = ? WHERE id = ? AND status = ?`,
 		at.UTC().UnixNano(), now.UTC().UnixNano(), id, StatusPending)
@@ -420,10 +432,27 @@ func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time) err
 	return nil
 }
 
-func (d *DB) CountPendingFor(ctx context.Context, msisdn string, excludeID int64) (int, error) {
+// CountPending returns how many messages wait for delivery at now: those due, which NextDue returns, and those
+// waiting for a later attempt.
+func (d *DB) CountPending(ctx context.Context, now time.Time) (due, waiting int, err error) {
+	defer d.observe(&err)()
+
+	var total int
+	if err := d.conn.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(next_attempt_at <= ?), 0), COUNT(*) FROM messages WHERE status = ?`,
+		now.UTC().UnixNano(), StatusPending).Scan(&due, &total); err != nil {
+		return 0, 0, fmt.Errorf("count pending messages: %w", err)
+	}
+
+	return due, total - due, nil
+}
+
+func (d *DB) CountPendingFor(ctx context.Context, msisdn string, excludeID int64) (_ int, err error) {
+	defer d.observe(&err)()
+
 	var n int
 
-	err := d.conn.QueryRowContext(ctx,
+	err = d.conn.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM messages WHERE msisdn = ? AND status = ? AND id != ?`,
 		msisdn, StatusPending, excludeID).Scan(&n)
 	if err != nil {
@@ -433,7 +462,9 @@ func (d *DB) CountPendingFor(ctx context.Context, msisdn string, excludeID int64
 	return n, nil
 }
 
-func (d *DB) HoldRecipient(ctx context.Context, msisdn string, until, now time.Time) error {
+func (d *DB) HoldRecipient(ctx context.Context, msisdn string, until, now time.Time) (err error) {
+	defer d.observe(&err)()
+
 	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("hold recipient: %w", err)
@@ -466,7 +497,9 @@ func (d *DB) HoldRecipient(ctx context.Context, msisdn string, until, now time.T
 	return nil
 }
 
-func (d *DB) AlertRecipient(ctx context.Context, msisdn string, now time.Time) ([]string, error) {
+func (d *DB) AlertRecipient(ctx context.Context, msisdn string, now time.Time) (_ []string, err error) {
+	defer d.observe(&err)()
+
 	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("alert recipient: %w", err)
@@ -521,10 +554,12 @@ func (d *DB) AlertRecipient(ctx context.Context, msisdn string, now time.Time) (
 	return recipients, nil
 }
 
-func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error {
+func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) (err error) {
+	defer d.observe(&err)()
+
 	alert := sql.Null[string]{V: alertMSISDN, Valid: alertMSISDN != "" && alertMSISDN != msisdn}
 
-	_, err := d.conn.ExecContext(ctx,
+	_, err = d.conn.ExecContext(ctx,
 		`INSERT INTO recipients (msisdn, alert_msisdn, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT (msisdn) DO UPDATE SET alert_msisdn = excluded.alert_msisdn, updated_at = excluded.updated_at`,
 		msisdn, alert, now.UTC().UnixNano())
@@ -535,7 +570,9 @@ func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now
 	return nil
 }
 
-func (d *DB) SetMessageStatus(ctx context.Context, id int64, status MessageStatus, at time.Time) error {
+func (d *DB) SetMessageStatus(ctx context.Context, id int64, status MessageStatus, at time.Time) (err error) {
+	defer d.observe(&err)()
+
 	res, err := d.conn.ExecContext(ctx,
 		`UPDATE messages SET status = ?, updated_at = ? WHERE id = ?`, status, at.UTC().UnixNano(), id)
 	if err != nil {

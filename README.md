@@ -13,6 +13,7 @@
 - **SMS for your private network**: Subscribers send and receive text messages from their phones.
 - **4G & 5G Compliant**: Connects to [Ella Core][ella-core], or other 3GPP-compliant cores, with the SGd and S6c Diameter interfaces over SCTP. Messages are stored and forwarded, retried, expired after their validity period, and delivered as soon as a phone becomes reachable again.
 - **All-in-One**: A single application with an embedded SQLite database, a web UI, and an HTTP API. Install it in one command.
+- **Observable**: Prometheus metrics.
 - **Source Available**: Ella SMSC is available under the Business Source License 1.1 (BUSL-1.1).
 
 ## Getting Started
@@ -123,5 +124,25 @@ See [`smsc.yaml`](smsc.yaml).
 ### API
 
 [`openapi.yaml`](internal/api/openapi.yaml), served at `GET /api/v1/openapi.yaml`.
+
+### Metrics
+
+Prometheus metrics, served at `GET /api/v1/metrics`.
+
+| Metric | Type | Description |
+| --- | --- | --- |
+| `ellasmsc_build_info` | Gauge | Always 1; the version and revision of the running build are in its labels |
+| `ellasmsc_messages_received_total` | Counter | Short messages received, one per part, by origin (`mobile`, `api`) and result (`accepted`, `rejected`, `error`) |
+| `ellasmsc_messages_completed_total` | Counter | Short messages that reached a final status, by status (`delivered`, `failed`, `expired`) |
+| `ellasmsc_messages_pending` | Gauge | Short messages waiting for delivery, by state (`due`: to be delivered now or being delivered; `waiting`: for a retry or for the phone to be reachable) |
+| `ellasmsc_message_delivery_duration_seconds` | Histogram | Time from submission to delivery of the short messages delivered, including the time the phone was unreachable |
+| `ellasmsc_hss_peers` | Gauge | Connected HSSs that the SMSC can route messages through; at 0, messages to phones wait |
+| `ellasmsc_peer_requests_total` | Counter | Requests to the HSS and the MME or AMF, by interface (`s6c`, `sgd`) and result (`success`, `failure`, `absent_user`, `error`, `timeout`) |
+| `ellasmsc_peer_request_duration_seconds` | Histogram | How long requests to the HSS and the MME or AMF take, by interface |
+| `ellasmsc_database_query_duration_seconds` | Histogram | How long database calls take, including the wait for the connection |
+| `ellasmsc_database_query_errors_total` | Counter | Database calls that failed |
+| `ellasmsc_database_storage_bytes` | Gauge | Size of the database on disk, by file (`main`, `wal`) |
+| `go_*` | Gauge, Counter, Summary | Go runtime health: goroutines, heap, garbage-collection pauses |
+| `process_*` | Gauge, Counter | Process health: memory, CPU, open file descriptors, start time |
 
 [ella-core]: https://github.com/ellanetworks/core

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -165,10 +166,13 @@ func CreateMessage(cfg Config) http.Handler {
 
 		ids, err := cfg.Store.CreateMessages(r.Context(), messages)
 		if err != nil {
+			cfg.Received.Add(intake.OriginAPI, intake.Error, len(messages))
 			writeError(w, http.StatusInternalServerError, "Failed to store message", err, cfg.Logger)
+
 			return
 		}
 
+		cfg.Received.Add(intake.OriginAPI, intake.Accepted, len(ids))
 		cfg.Notify()
 
 		resp := CreateMessageResponse{Items: make([]Message, 0, len(ids))}

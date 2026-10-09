@@ -802,3 +802,33 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatalf("held message next attempt = %v, %v; want the alert time", m.NextAttemptAt, err)
 	}
 }
+
+func TestCountPending(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	for i := range uint8(3) {
+		if _, err := d.CreateMessage(ctx, testMessage(i, false, []byte{0x01}, now)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One is delivered, one waits for a retry, and one is due.
+	if err := d.SetMessageStatus(ctx, 1, StatusDelivered, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now); err != nil {
+		t.Fatal(err)
+	}
+
+	if due, waiting, err := d.CountPending(ctx, now); err != nil || due != 1 || waiting != 1 {
+		t.Fatalf("CountPending = %d due, %d waiting, %v, want 1 and 1", due, waiting, err)
+	}
+
+	// Once its retry is due, the second is due too.
+	if due, waiting, err := d.CountPending(ctx, now.Add(time.Minute)); err != nil || due != 2 || waiting != 0 {
+		t.Fatalf("CountPending a minute later = %d due, %d waiting, %v, want 2 and 0", due, waiting, err)
+	}
+}

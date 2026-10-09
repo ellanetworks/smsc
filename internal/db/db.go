@@ -13,6 +13,9 @@ var ErrNotFound = errors.New("not found")
 
 type DB struct {
 	conn *sql.DB
+	// path is the database file, whose size the metrics report.
+	path    string
+	metrics metrics
 }
 
 var migrations = []string{
@@ -102,7 +105,7 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	d := &DB{conn: conn}
+	d := &DB{conn: conn, path: path, metrics: newMetrics()}
 	if err := d.migrate(ctx); err != nil {
 		_ = conn.Close()
 		return nil, err
