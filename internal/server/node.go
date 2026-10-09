@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
@@ -28,7 +29,9 @@ type nodeManager struct {
 	port              int
 	mux               *diameter.Mux
 	onPeerStateChange func(diameter.PeerStatus)
-	logger            *slog.Logger
+	// metrics count and time the requests to the peers. They outlive the node.
+	metrics *peerMetrics
+	logger  *slog.Logger
 
 	mu       sync.Mutex
 	node     *diameter.Node
@@ -40,6 +43,20 @@ func (m *nodeManager) Node() *diameter.Node {
 	defer m.mu.Unlock()
 
 	return m.node
+}
+
+// doHost sends a request to a peer, and counts and times it if it is on one of the SMSC's interfaces.
+func (m *nodeManager) doHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
+	iface, ok := interfaceOf(req.ApplicationID)
+	if !ok || m.metrics == nil {
+		return m.Node().DoHost(ctx, host, req)
+	}
+
+	start := time.Now()
+	ans, err := m.Node().DoHost(ctx, host, req)
+	m.metrics.request(iface, peerResult(ans, err), time.Since(start))
+
+	return ans, err
 }
 
 func (m *nodeManager) Identity() diameter.Identity {

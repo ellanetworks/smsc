@@ -9,7 +9,9 @@ import (
 
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type Store interface {
@@ -45,8 +47,12 @@ type Config struct {
 	Frontend fs.FS
 	Settings Settings
 	Notify   func()
-	Now      func() time.Time
-	Logger   *slog.Logger
+	// Received counts the messages the API submits.
+	Received *intake.Received
+	// Metrics are the metrics GET /api/v1/metrics serves.
+	Metrics prometheus.Gatherer
+	Now     func() time.Time
+	Logger  *slog.Logger
 }
 
 func NewHandler(cfg Config) http.Handler {
@@ -62,6 +68,7 @@ func NewHandler(cfg Config) http.Handler {
 	mux.Handle("GET /api/v1/delivery", GetDelivery(cfg))
 	mux.Handle("PUT /api/v1/delivery", UpdateDelivery(cfg))
 	mux.Handle("GET /api/v1/status", GetStatus(cfg))
+	mux.Handle("GET /api/v1/metrics", GetMetrics(cfg))
 	mux.Handle("GET /api/v1/openapi.yaml", OpenAPISpec())
 
 	if cfg.Frontend != nil {

@@ -56,6 +56,7 @@ type Deliverer struct {
 	Settings       func() settings.Settings
 	AttemptTimeout time.Duration
 	Concurrency    int
+	Metrics        *Metrics
 	Now            func() time.Time
 	Logger         *slog.Logger
 
@@ -275,11 +276,11 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 
 	switch r.outcome {
 	case delivered:
-		return d.Store.SetMessageStatus(ctx, m.ID, db.StatusDelivered, d.Now())
+		return d.complete(ctx, m, db.StatusDelivered, d.Now())
 	case expired:
-		return d.Store.SetMessageStatus(ctx, m.ID, db.StatusExpired, d.Now())
+		return d.complete(ctx, m, db.StatusExpired, d.Now())
 	case permanent:
-		return d.Store.SetMessageStatus(ctx, m.ID, db.StatusFailed, d.Now())
+		return d.complete(ctx, m, db.StatusFailed, d.Now())
 	case interrupted:
 		return nil
 	}
@@ -288,7 +289,7 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 
 	intervals := d.Settings().Delivery.RetryIntervals
 	if m.SingleShot || len(intervals) == 0 {
-		return d.Store.SetMessageStatus(ctx, m.ID, db.StatusFailed, now)
+		return d.complete(ctx, m, db.StatusFailed, now)
 	}
 
 	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
@@ -302,6 +303,18 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 	}
 
 	return d.Store.HoldRecipient(ctx, m.MSISDN, at, now)
+}
+
+// complete sets the final status of a message, and counts it once it is stored, so that a message whose status
+// failed to be stored, which stays pending, is not counted twice.
+func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, at time.Time) error {
+	if err := d.Store.SetMessageStatus(ctx, m.ID, status, at); err != nil {
+		return err
+	}
+
+	d.Metrics.complete(m, status, at)
+
+	return nil
 }
 
 func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) result {

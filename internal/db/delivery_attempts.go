@@ -52,7 +52,9 @@ const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, 
 	failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
 	absent_user_diagnostic_sgsn, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp`
 
-func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (int64, error) {
+func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ int64, err error) {
+	defer d.observe(&err)()
+
 	res, err := d.conn.ExecContext(ctx,
 		`INSERT INTO delivery_attempts (message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 			failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
@@ -75,7 +77,9 @@ func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (int6
 	return id, nil
 }
 
-func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) ([]DeliveryAttempt, int, error) {
+func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) (_ []DeliveryAttempt, _ int, err error) {
+	defer d.observe(&err)()
+
 	var total int
 	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM delivery_attempts WHERE message_id = ?`, messageID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)

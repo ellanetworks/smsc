@@ -9,7 +9,9 @@ import (
 	"github.com/ellanetworks/smsc/internal/settings"
 )
 
-func (d *DB) GetSettings(ctx context.Context) (settings.Settings, error) {
+func (d *DB) GetSettings(ctx context.Context) (_ settings.Settings, err error) {
+	defer d.observe(&err)()
+
 	var (
 		s        settings.Settings
 		validity int64
@@ -28,8 +30,6 @@ func (d *DB) GetSettings(ctx context.Context) (settings.Settings, error) {
 	}
 
 	s.Delivery.DefaultValidity = time.Duration(validity)
-
-	var err error
 
 	if s.Delivery.RetryIntervals, err = d.retryIntervals(ctx); err != nil {
 		return settings.Settings{}, err
@@ -64,7 +64,9 @@ func (d *DB) retryIntervals(ctx context.Context) ([]time.Duration, error) {
 	return intervals, nil
 }
 
-func (d *DB) UpdateOperator(ctx context.Context, o settings.Operator) error {
+func (d *DB) UpdateOperator(ctx context.Context, o settings.Operator) (err error) {
+	defer d.observe(&err)()
+
 	if _, err := d.conn.ExecContext(ctx, `UPDATE operator SET mcc = ?, mnc = ?, service_centre_address = ?,
 		country_code = ?, national_prefix = ?, international_prefix = ? WHERE id = 1`, o.MCC, o.MNC,
 		o.ServiceCentreAddress, o.Numbering.CountryCode, o.Numbering.NationalPrefix,
@@ -75,7 +77,9 @@ func (d *DB) UpdateOperator(ctx context.Context, o settings.Operator) error {
 	return nil
 }
 
-func (d *DB) UpdateDelivery(ctx context.Context, dl settings.Delivery) error {
+func (d *DB) UpdateDelivery(ctx context.Context, dl settings.Delivery) (err error) {
+	defer d.observe(&err)()
+
 	return d.inTx(ctx, "update delivery", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE delivery SET default_validity = ? WHERE id = 1`,
 			int64(dl.DefaultValidity)); err != nil {

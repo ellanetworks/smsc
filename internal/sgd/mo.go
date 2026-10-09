@@ -10,6 +10,7 @@ import (
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
@@ -23,6 +24,8 @@ type Handler struct {
 	Settings func() settings.Settings
 	Store    MessageStore
 	Stored   func()
+	// Received counts the messages that phones send.
+	Received *intake.Received
 	Now      func() time.Time
 	Logger   *slog.Logger
 }
@@ -36,6 +39,11 @@ func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diam
 }
 
 func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Message) *diameter.Message {
+	// Every answer but those that store the message, or fail to, refuses it.
+	result := intake.Rejected
+
+	defer func() { h.Received.Add(intake.OriginMobile, result, 1) }()
+
 	if err := sgd.CheckMOForwardShortMessage(req); err != nil {
 		return tgpp.NewErrorAnswer(req, h.Identity(), err)
 	}
@@ -130,10 +138,14 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 	}
 
 	if err != nil {
+		result = intake.Error
+
 		h.Logger.Error("failed to store mobile-originated short message", slog.Any("error", err))
 
 		return h.deliveryFailure(req, sgd.CauseSCCongestion, h.submitReport(tpdu.FailureSCSystemFailure, receivedAt))
 	}
+
+	result = intake.Accepted
 
 	if h.Stored != nil {
 		h.Stored()
