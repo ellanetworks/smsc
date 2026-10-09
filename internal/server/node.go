@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -49,14 +50,60 @@ func (m *nodeManager) Node() *diameter.Node {
 func (m *nodeManager) doHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
 	iface, ok := interfaceOf(req.ApplicationID)
 	if !ok || m.metrics == nil {
-		return m.Node().DoHost(ctx, host, req)
+		return m.sendHost(ctx, host, req)
 	}
 
 	start := time.Now()
-	ans, err := m.Node().DoHost(ctx, host, req)
+	ans, err := m.sendHost(ctx, host, req)
 	m.metrics.request(iface, peerResult(ans, err), time.Since(start))
 
 	return ans, err
+}
+
+// sendHost addresses a request to a peer by its Destination-Host. The node
+// falls back to realm routing for a host it has no peer for, and the SMSC has
+// no routes, so that ends as an unknown peer.
+func (m *nodeManager) sendHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
+	addressed := *req
+	addressed.AVPs = withDestinationHost(req.AVPs, host)
+
+	ans, err := m.Node().Send(ctx, &addressed)
+	if errors.Is(err, diameter.ErrUnableToDeliver) {
+		return nil, fmt.Errorf("%w %s: %w", diameter.ErrUnknownPeer, host, err)
+	}
+
+	return ans, err
+}
+
+// withDestinationHost sets the Destination-Host AVP, placed before
+// Destination-Realm when the request has none.
+func withDestinationHost(avps []diameter.AVP, host string) []diameter.AVP {
+	destHost := diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, host)
+	out := make([]diameter.AVP, 0, len(avps)+1)
+	set := false
+
+	for _, a := range avps {
+		switch {
+		case a.Code == diameter.AVPDestinationHost && a.VendorID == 0:
+			if !set {
+				out = append(out, destHost)
+				set = true
+			}
+
+			continue
+		case a.Code == diameter.AVPDestinationRealm && a.VendorID == 0 && !set:
+			out = append(out, destHost)
+			set = true
+		}
+
+		out = append(out, a)
+	}
+
+	if !set {
+		out = append(out, destHost)
+	}
+
+	return out
 }
 
 func (m *nodeManager) Identity() diameter.Identity {

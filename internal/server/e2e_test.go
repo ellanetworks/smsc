@@ -395,7 +395,7 @@ func (c *fakeCore) do(req *diameter.Message) *diameter.Message {
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 
-	ans, err := c.node.DoHost(ctx, c.smsc, req)
+	ans, err := c.node.Send(ctx, req)
 	if err != nil {
 		c.t.Fatalf("request %d to the SMSC: %v", req.CommandCode, err)
 	}
@@ -436,7 +436,7 @@ func (c *fakeCore) waitForSMSC() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		_, err := c.node.DoHost(ctx, c.smsc, c.request(s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
+		_, err := c.node.Send(ctx, c.request(s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
 
 		return err == nil
 	})
