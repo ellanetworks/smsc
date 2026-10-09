@@ -3,7 +3,7 @@ module github.com/ellanetworks/smsc
 go 1.26.5
 
 require (
-	github.com/ellanetworks/core/diameter v0.0.0-20261009155647-5bfe3c9f788b
+	github.com/ellanetworks/core/diameter v0.0.0-20261009170906-739e7ad3a0f3
 	github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/prometheus/client_golang v1.24.1
