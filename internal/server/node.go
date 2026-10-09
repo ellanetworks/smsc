@@ -26,10 +26,9 @@ var applications = []diameter.Application{
 // nodeManager owns the Diameter node. The node's identity comes from the
 // operator settings, so a change of MCC/MNC replaces the node and its listener.
 type nodeManager struct {
-	address           netip.Addr
-	port              int
-	mux               *diameter.Mux
-	onPeerStateChange func(diameter.PeerStatus)
+	address netip.Addr
+	port    int
+	mux     *diameter.Mux
 	// metrics count and time the requests to the peers. They outlive the node.
 	metrics *peerMetrics
 	logger  *slog.Logger
@@ -37,6 +36,7 @@ type nodeManager struct {
 	mu       sync.Mutex
 	node     *diameter.Node
 	listener *sctp.Listener
+	replaced chan struct{}
 }
 
 func (m *nodeManager) Node() *diameter.Node {
@@ -46,28 +46,41 @@ func (m *nodeManager) Node() *diameter.Node {
 	return m.node
 }
 
-// doHost sends a request to a peer, and counts and times it if it is on one of the SMSC's interfaces.
-func (m *nodeManager) doHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
+func (m *nodeManager) current() (*diameter.Node, <-chan struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.replaced == nil {
+		m.replaced = make(chan struct{})
+	}
+
+	return m.node, m.replaced
+}
+
+func (m *nodeManager) do(ctx context.Context, node *diameter.Node, req *diameter.Message, opts ...diameter.RequestOption) (*diameter.Message, error) {
 	iface, ok := interfaceOf(req.ApplicationID)
 	if !ok || m.metrics == nil {
-		return m.sendHost(ctx, host, req)
+		return node.Send(ctx, req, opts...)
 	}
 
 	start := time.Now()
-	ans, err := m.sendHost(ctx, host, req)
-	m.metrics.request(iface, peerResult(ans, err), time.Since(start))
+	ans, err := node.Send(ctx, req, opts...)
+
+	if !errors.Is(err, diameter.ErrNotConnected) && !errors.Is(err, diameter.ErrUnableToDeliver) {
+		m.metrics.request(iface, peerResult(ans, err), time.Since(start))
+	}
 
 	return ans, err
 }
 
-// sendHost addresses a request to a peer by its Destination-Host. The node
-// falls back to realm routing for a host it has no peer for, and the SMSC has
+// doHost addresses a request to a peer by its Destination-Host. The node falls
+// back to static realm routes for a host it has no peer for, and the SMSC has
 // no routes, so that ends as an unknown peer.
-func (m *nodeManager) sendHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
+func (m *nodeManager) doHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
 	addressed := *req
 	addressed.AVPs = withDestinationHost(req.AVPs, host)
 
-	ans, err := m.Node().Send(ctx, &addressed)
+	ans, err := m.do(ctx, m.Node(), &addressed, diameter.FailFast())
 	if errors.Is(err, diameter.ErrUnableToDeliver) {
 		return nil, fmt.Errorf("%w %s: %w", diameter.ErrUnknownPeer, host, err)
 	}
@@ -132,7 +145,6 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator) err
 		Handler:                 m.mux,
 		AcceptUnknownPeers:      true,
 		UnknownPeerApplications: applications,
-		OnPeerStateChange:       m.onPeerStateChange,
 		Logger:                  m.logger,
 	})
 	if err != nil {
@@ -153,6 +165,11 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator) err
 
 	m.mu.Lock()
 	m.node, m.listener = node, ln
+
+	if m.replaced != nil {
+		close(m.replaced)
+		m.replaced = nil
+	}
 	m.mu.Unlock()
 
 	go func() { _ = node.Serve(diameter.NewSCTPListener(ln, m.logger)) }()

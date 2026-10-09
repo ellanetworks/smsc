@@ -59,10 +59,9 @@ func newMetrics(database *db.DB) *metrics {
 }
 
 // watchHSS registers the count of the HSSs the SMSC can route through, read from the node in place when scraped.
-func (m *metrics) watchHSS(hss *hssRequester) {
+func (m *metrics) watchHSS(hss hssSender) {
 	m.registry.MustRegister(hssPeersCollector{count: func() int {
-		_, hosts := hss.candidates()
-		return len(hosts)
+		return len(hss.hosts())
 	}})
 }
 

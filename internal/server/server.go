@@ -11,8 +11,6 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ellanetworks/core/diameter"
@@ -71,19 +69,17 @@ func (s *Server) Start(ctx context.Context) error {
 	live := settings.NewLive(database, initial)
 	m := newMetrics(database)
 
-	hss := newHSSRequester(live)
 	mux := diameter.NewMux()
 
 	nodes := &nodeManager{
-		address:           cfg.Diameter.Address,
-		port:              cfg.Diameter.Port,
-		mux:               mux,
-		onPeerStateChange: hss.peersChanged,
-		metrics:           m.peers,
-		logger:            s.Logger,
+		address: cfg.Diameter.Address,
+		port:    cfg.Diameter.Port,
+		mux:     mux,
+		metrics: m.peers,
+		logger:  s.Logger,
 	}
 
-	hss.nodes = nodes
+	hss := hssSender{nodes: nodes, settings: live}
 	m.watchHSS(hss)
 
 	deliverer := &delivery.Deliverer{
@@ -228,96 +224,36 @@ func (s *Server) Shutdown(ctx context.Context) {
 	}
 }
 
-type hssRequester struct {
+type hssSender struct {
 	nodes    *nodeManager
 	settings *settings.Live
-	next     atomic.Uint32
-
-	mu      sync.Mutex
-	changed chan struct{}
 }
 
-func newHSSRequester(live *settings.Live) *hssRequester {
-	return &hssRequester{settings: live, changed: make(chan struct{})}
-}
+func (h hssSender) Do(ctx context.Context, req *diameter.Message) (*diameter.Message, error) {
+	for {
+		node, replaced := h.nodes.current()
+		realm := node.Identity().OriginRealm
 
-func (r *hssRequester) peersChanged(diameter.PeerStatus) {
-	r.mu.Lock()
-	close(r.changed)
-	r.changed = make(chan struct{})
-	r.mu.Unlock()
-}
+		setDestinationRealm(req, realm)
 
-func (r *hssRequester) waitChan() <-chan struct{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	return r.changed
-}
-
-func (r *hssRequester) Do(ctx context.Context, req *diameter.Message) (*diameter.Message, error) {
-	realm, hosts, err := r.waitForCandidates(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	setDestinationRealm(req, realm)
-
-	start := r.next.Add(1)
-
-	var (
-		lastAns *diameter.Message
-		lastErr error
-	)
-
-	for i := range uint32(len(hosts)) {
-		host := hosts[(start+i)%uint32(len(hosts))]
-
-		ans, err := r.nodes.doHost(ctx, host, req)
+		ans, err := h.nodes.do(ctx, node, req)
 
 		switch {
-		case err == nil && !isRelayFailure(ans):
-			return ans, nil
-		case err == nil:
-			lastAns, lastErr = ans, nil
-		case errors.Is(err, diameter.ErrNotConnected) || errors.Is(err, diameter.ErrUnknownPeer) ||
-			errors.Is(err, diameter.ErrApplicationUnsupported):
-			lastAns, lastErr = nil, err
-		default:
-			return nil, err
+		case errors.Is(err, diameter.ErrClosed):
+			select {
+			case <-replaced:
+				continue
+			case <-ctx.Done():
+				return nil, fmt.Errorf("%w in realm %s: %w", smscs6c.ErrNoHSS, realm, ctx.Err())
+			}
+		case errors.Is(err, diameter.ErrNotConnected) || errors.Is(err, diameter.ErrUnableToDeliver):
+			return nil, fmt.Errorf("%w in realm %s: %w", smscs6c.ErrNoHSS, realm, err)
 		}
 
-		if ctx.Err() != nil {
-			break
-		}
-	}
-
-	if lastAns != nil {
-		return lastAns, nil
-	}
-
-	return nil, lastErr
-}
-
-func (r *hssRequester) waitForCandidates(ctx context.Context) (string, []string, error) {
-	for {
-		changed := r.waitChan()
-
-		realm, hosts := r.candidates()
-		if len(hosts) > 0 {
-			return realm, hosts, nil
-		}
-
-		select {
-		case <-changed:
-		case <-ctx.Done():
-			return "", nil, fmt.Errorf("%w in realm %s: %w", smscs6c.ErrNoHSS, realm, ctx.Err())
-		}
+		return ans, err
 	}
 }
 
-// setDestinationRealm keeps a request that waited for an HSS addressed to the
-// realm its candidates were chosen from, in case the HSS realm changed meanwhile.
 func setDestinationRealm(req *diameter.Message, realm string) {
 	for i, a := range req.AVPs {
 		if a.Code == diameter.AVPDestinationRealm && a.VendorID == 0 {
@@ -326,44 +262,33 @@ func setDestinationRealm(req *diameter.Message, realm string) {
 	}
 }
 
-func isRelayFailure(ans *diameter.Message) bool {
-	if ans.Flags&diameter.FlagError == 0 {
-		return false
-	}
+func (h hssSender) realm() string { return h.settings.Get().Operator.Realm() }
 
-	rc, ok := ans.Find(diameter.AVPResultCode, 0)
-	if !ok {
-		return false
-	}
-
-	code, err := rc.Unsigned32()
-
-	return err == nil && (code == diameter.ResultTooBusy || code == diameter.ResultUnableToDeliver)
-}
-
-func (r *hssRequester) candidates() (string, []string) {
+func (h hssSender) hosts() []string {
 	var hosts []string
 
-	realm := r.settings.Get().Operator.Realm()
+	realm := h.realm()
 
-	for _, p := range r.nodes.Node().Peers() {
-		if p.State != diameter.PeerOpen || !strings.EqualFold(p.Realm, realm) {
+	for _, r := range h.nodes.Node().Routes() {
+		if r.Application != s6c.ApplicationID || !strings.EqualFold(r.Realm, realm) {
 			continue
 		}
 
-		if slices.ContainsFunc(p.Applications, func(a diameter.Application) bool { return a.ID == s6c.ApplicationID }) {
-			hosts = append(hosts, p.Host)
+		for _, p := range r.Peers {
+			if p.State == diameter.PeerOpen {
+				hosts = append(hosts, p.Host)
+			}
 		}
 	}
 
 	slices.Sort(hosts)
 
-	return realm, hosts
+	return hosts
 }
 
 type diameterStatus struct {
 	nodes *nodeManager
-	hss   *hssRequester
+	hss   hssSender
 }
 
 func (d diameterStatus) Identity() diameter.Identity { return d.nodes.Identity() }
@@ -371,12 +296,10 @@ func (d diameterStatus) Identity() diameter.Identity { return d.nodes.Identity()
 func (d diameterStatus) Peers() []diameter.PeerStatus { return d.nodes.Node().Peers() }
 
 func (d diameterStatus) Routes() []api.Route {
-	realm, hosts := d.hss.candidates()
-
-	return []api.Route{{Realm: realm, ApplicationID: s6c.ApplicationID, Peers: hosts}}
+	return []api.Route{{Realm: d.hss.realm(), ApplicationID: s6c.ApplicationID, Peers: d.hss.hosts()}}
 }
 
-func (r *hssRequester) NewSessionID() string { return r.nodes.Node().NewSessionID() }
+func (h hssSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
 
 type hostSender struct{ nodes *nodeManager }
 
