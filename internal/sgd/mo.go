@@ -41,6 +41,7 @@ func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diam
 func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Message) *diameter.Message {
 	// Every answer but those that store the message, or fail to, refuses it.
 	result := intake.Rejected
+
 	defer func() { h.Received.Add(intake.OriginMobile, result, 1) }()
 
 	if err := sgd.CheckMOForwardShortMessage(req); err != nil {

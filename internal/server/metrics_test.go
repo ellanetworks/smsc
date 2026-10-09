@@ -223,6 +223,7 @@ func scrape(t *testing.T, s *smsc) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != http.StatusOK {
