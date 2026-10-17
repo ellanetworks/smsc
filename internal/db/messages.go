@@ -45,10 +45,12 @@ type Message struct {
 	Status             MessageStatus
 	SingleShot         bool
 	SubmittedAt        time.Time
-	ExpiresAt          time.Time
-	NextAttemptAt      time.Time
-	Retries            int
-	UpdatedAt          time.Time
+	// TimeStamp is the SC time stamp of the message, unique among the messages to its recipient.
+	TimeStamp     time.Time
+	ExpiresAt     time.Time
+	NextAttemptAt time.Time
+	Retries       int
+	UpdatedAt     time.Time
 }
 
 type NewMessage struct {
@@ -137,41 +139,59 @@ func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 	return id, nil
 }
 
-func heldUntil(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (int64, error) {
-	var held sql.Null[int64]
+// arrive records that a message to the recipient arrived at the given time. It returns when the message is first due,
+// which is no earlier than the end of a hold on the recipient, and its SC time stamp. TS 23.040 clause 6.2 requires
+// the time stamps of the messages to an MS to differ, changed as little as possible, so a message that arrives within
+// the second of the previous one to the same recipient takes the next free second.
+func arrive(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (next, stamp int64, err error) {
+	var held, last sql.Null[int64]
 
-	err := tx.QueryRowContext(ctx, `SELECT held_until FROM recipients WHERE msisdn = ?`, msisdn).Scan(&held)
-	if errors.Is(err, sql.ErrNoRows) {
-		return at, nil
+	err = tx.QueryRowContext(ctx, `SELECT held_until, last_time_stamp FROM recipients WHERE msisdn = ?`, msisdn).
+		Scan(&held, &last)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, err
 	}
 
-	if err != nil {
-		return 0, err
-	}
-
+	next = at
 	if held.Valid && held.V > at {
-		return held.V, nil
+		next = held.V
 	}
 
-	return at, nil
+	second := int64(time.Second)
+
+	stamp = at - at%second
+	if last.Valid && last.V >= stamp {
+		stamp = last.V + second
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO recipients (msisdn, last_time_stamp, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT (msisdn) DO UPDATE SET last_time_stamp = excluded.last_time_stamp, updated_at = excluded.updated_at`,
+		msisdn, stamp, at)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return next, stamp, nil
 }
 
 func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error) {
 	at := m.SubmittedAt.UTC().UnixNano()
 
-	next, err := heldUntil(ctx, tx, m.MSISDN, at)
+	next, stamp, err := arrive(ctx, tx, m.MSISDN, at)
 	if err != nil {
 		return 0, err
 	}
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO messages (originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi,
-		msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, expires_at,
-		next_attempt_at, retries, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp,
+		expires_at, next_attempt_at, retries, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.Origin,
-		m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, m.ExpiresAt.UTC().UnixNano(), next, at)
+		m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, stamp,
+		m.ExpiresAt.UTC().UnixNano(), next, at)
 	if err != nil {
 		return 0, err
 	}
@@ -197,17 +217,18 @@ func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error
 
 	at := m.SubmittedAt.UTC().UnixNano()
 
-	next, err := heldUntil(ctx, tx, m.MSISDN, at)
+	next, stamp, err := arrive(ctx, tx, m.MSISDN, at)
 	if err != nil {
 		return 0, err
 	}
 
 	_, err = tx.ExecContext(ctx,
 		`UPDATE messages SET recipient = ?, recipient_ton = ?, recipient_npi = ?, msisdn = ?, message_reference = ?,
-		tpdu = ?, single_shot = ?, submitted_at = ?, expires_at = ?, next_attempt_at = ?, retries = 0, updated_at = ?
+		tpdu = ?, single_shot = ?, submitted_at = ?, time_stamp = ?, expires_at = ?, next_attempt_at = ?, retries = 0,
+		updated_at = ?
 		WHERE id = ?`,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.MessageReference, m.TPDU,
-		m.SingleShot, at, m.ExpiresAt.UTC().UnixNano(), next, at, id)
+		m.SingleShot, at, stamp, m.ExpiresAt.UTC().UnixNano(), next, at, id)
 	if err != nil {
 		return 0, err
 	}
@@ -251,8 +272,8 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 }
 
 const messageColumns = `id, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi, msisdn,
-	origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, expires_at, next_attempt_at,
-	retries, updated_at`
+	origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp, expires_at,
+	next_attempt_at, retries, updated_at`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -260,19 +281,20 @@ type rowScanner interface {
 
 func scanMessage(row rowScanner) (Message, error) {
 	var (
-		m                                                Message
-		submittedAt, expiresAt, nextAttemptAt, updatedAt int64
+		m                                                           Message
+		submittedAt, timeStamp, expiresAt, nextAttemptAt, updatedAt int64
 	)
 
 	err := row.Scan(&m.ID, &m.Originator.Digits, &m.Originator.TypeOfNumber, &m.Originator.NumberingPlan,
 		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN, &m.Origin,
 		&m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status, &m.SingleShot,
-		&submittedAt, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt)
+		&submittedAt, &timeStamp, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt)
 	if err != nil {
 		return Message{}, err
 	}
 
 	m.SubmittedAt = time.Unix(0, submittedAt).UTC()
+	m.TimeStamp = time.Unix(0, timeStamp).UTC()
 	m.ExpiresAt = time.Unix(0, expiresAt).UTC()
 	m.NextAttemptAt = time.Unix(0, nextAttemptAt).UTC()
 	m.UpdatedAt = time.Unix(0, updatedAt).UTC()
@@ -410,23 +432,43 @@ func excludeMSISDNs(busy []string) (string, []any) {
 	return ` AND msisdn NOT IN (?` + strings.Repeat(`, ?`, len(busy)-1) + `)`, args
 }
 
-func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time) (err error) {
+// ScheduleRetry schedules the next attempt of a pending message. With hold, it also holds the message's recipient
+// until then, in the same transaction: the recipient's other pending messages, and those that arrive meanwhile, wait
+// for that attempt, unless an alert ends the hold first.
+func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) (err error) {
 	defer d.observe(&err)()
 
-	res, err := d.conn.ExecContext(ctx,
-		`UPDATE messages SET next_attempt_at = ?, retries = retries + 1, updated_at = ? WHERE id = ? AND status = ?`,
-		at.UTC().UnixNano(), now.UTC().UnixNano(), id, StatusPending)
+	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("schedule retry: %w", err)
 	}
 
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("schedule retry: %w", err)
-	}
+	defer func() { _ = tx.Rollback() }()
 
-	if n == 0 {
+	next, updated := at.UTC().UnixNano(), now.UTC().UnixNano()
+
+	var msisdn string
+
+	err = tx.QueryRowContext(ctx,
+		`UPDATE messages SET next_attempt_at = ?, retries = retries + 1, updated_at = ? WHERE id = ? AND status = ?
+		RETURNING msisdn`,
+		next, updated, id, StatusPending).Scan(&msisdn)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
+	}
+
+	if err != nil {
+		return fmt.Errorf("schedule retry: %w", err)
+	}
+
+	if hold {
+		if err := holdRecipient(ctx, tx, msisdn, next, updated); err != nil {
+			return fmt.Errorf("schedule retry: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("schedule retry: %w", err)
 	}
 
 	return nil
@@ -447,54 +489,42 @@ func (d *DB) CountPending(ctx context.Context, now time.Time) (due, waiting int,
 	return due, total - due, nil
 }
 
-func (d *DB) CountPendingFor(ctx context.Context, msisdn string, excludeID int64) (_ int, err error) {
+// NextDueFor returns the next message to the recipient, other than the given one, that is due and unexpired at now:
+// the message that the SC sends the recipient next, in the order NextDue would.
+func (d *DB) NextDueFor(ctx context.Context, msisdn string, excludeID int64, now time.Time) (_ Message, _ bool, err error) {
 	defer d.observe(&err)()
 
-	var n int
+	at := now.UTC().UnixNano()
 
-	err = d.conn.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM messages WHERE msisdn = ? AND status = ? AND id != ?`,
-		msisdn, StatusPending, excludeID).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("count pending messages: %w", err)
+	m, err := scanMessage(d.conn.QueryRowContext(ctx,
+		`SELECT `+messageColumns+` FROM messages WHERE msisdn = ? AND status = ? AND next_attempt_at <= ? AND expires_at > ?
+		AND id != ? ORDER BY next_attempt_at, id LIMIT 1`, msisdn, StatusPending, at, at, excludeID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, false, nil
 	}
 
-	return n, nil
+	if err != nil {
+		return Message{}, false, fmt.Errorf("next due message for a recipient: %w", err)
+	}
+
+	return m, true, nil
 }
 
-func (d *DB) HoldRecipient(ctx context.Context, msisdn string, until, now time.Time) (err error) {
-	defer d.observe(&err)()
-
-	tx, err := d.conn.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("hold recipient: %w", err)
-	}
-
-	defer func() { _ = tx.Rollback() }()
-
-	at, updated := until.UTC().UnixNano(), now.UTC().UnixNano()
-
-	_, err = tx.ExecContext(ctx,
+func holdRecipient(ctx context.Context, tx *sql.Tx, msisdn string, until, now int64) error {
+	_, err := tx.ExecContext(ctx,
 		`INSERT INTO recipients (msisdn, held_until, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT (msisdn) DO UPDATE SET held_until = MAX(COALESCE(held_until, 0), excluded.held_until),
 		updated_at = excluded.updated_at`,
-		msisdn, at, updated)
+		msisdn, until, now)
 	if err != nil {
-		return fmt.Errorf("hold recipient: %w", err)
+		return err
 	}
 
 	_, err = tx.ExecContext(ctx,
 		`UPDATE messages SET next_attempt_at = ?, updated_at = ? WHERE msisdn = ? AND status = ? AND next_attempt_at < ?`,
-		at, updated, msisdn, StatusPending, at)
-	if err != nil {
-		return fmt.Errorf("hold recipient: %w", err)
-	}
+		until, now, msisdn, StatusPending, until)
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("hold recipient: %w", err)
-	}
-
-	return nil
+	return err
 }
 
 func (d *DB) AlertRecipient(ctx context.Context, msisdn string, now time.Time) (_ []string, err error) {

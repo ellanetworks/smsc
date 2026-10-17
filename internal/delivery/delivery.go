@@ -30,11 +30,10 @@ type Store interface {
 	NextDue(ctx context.Context, now time.Time, busy []string) (db.Message, bool, error)
 	NextWakeup(ctx context.Context, busy []string) (time.Time, bool, error)
 	SetMessageStatus(ctx context.Context, id int64, status db.MessageStatus, at time.Time) error
-	ScheduleRetry(ctx context.Context, id int64, at, now time.Time) error
-	HoldRecipient(ctx context.Context, msisdn string, until, now time.Time) error
+	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) error
 	AlertRecipient(ctx context.Context, msisdn string, now time.Time) ([]string, error)
 	SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error
-	CountPendingFor(ctx context.Context, msisdn string, excludeID int64) (int, error)
+	NextDueFor(ctx context.Context, msisdn string, excludeID int64, now time.Time) (db.Message, bool, error)
 	CreateDeliveryAttempt(ctx context.Context, a db.DeliveryAttempt) (int64, error)
 }
 
@@ -110,6 +109,8 @@ type forwardResult struct {
 	outcome    outcome
 	cause      *s6c.DeliveryCause
 	diagnostic *tgpp.AbsentUserDiagnostic
+	// rejected is set when the MS refused this message, rather than being unable to take any message for now.
+	rejected bool
 }
 
 type nodeOutcome struct {
@@ -122,6 +123,29 @@ type nodeOutcome struct {
 type result struct {
 	outcome outcome
 	hold    bool
+}
+
+// session is what the delivery of a message to a recipient leaves for the next one: the serving node that took it, and
+// what the HSS said about the recipient. When the SC announces more messages to send, the serving node keeps the MS
+// connected for them (TS 23.040 clause 3.7), so the SC sends them there in turn, without another routing lookup, as
+// in the multiple short message transfer of TS 29.002 clause 23.3.
+type session struct {
+	routing s6c.Routing
+	target  target
+}
+
+// targets returns the serving nodes to try for the next message: the one that took the previous message, then the
+// others the HSS gave, as a routing lookup would.
+func (s *session) targets() []target {
+	targets := []target{s.target}
+
+	for _, t := range deliveryTargets(s.routing.ServingNodes) {
+		if !strings.EqualFold(t.name, s.target.name) {
+			targets = append(targets, t)
+		}
+	}
+
+	return targets
 }
 
 func (d *Deliverer) Notify() {
@@ -270,10 +294,36 @@ func (d *Deliverer) finish(ctx context.Context, msisdn string) {
 	}
 }
 
+// process delivers the message, then the recipient's next messages for as long as each delivery announced the next.
+// The recipient stays busy throughout, so it never has more than one SMS-DELIVER outstanding (TS 23.040 clause 6.2).
 func (d *Deliverer) process(stop context.Context, m db.Message) error {
-	r := d.deliver(stop, m, d.Now())
 	ctx := context.WithoutCancel(stop)
 
+	var s *session
+
+	for {
+		r, next := d.deliver(stop, m, d.Now(), s)
+
+		if err := d.settle(ctx, m, r); err != nil {
+			return err
+		}
+
+		if next == nil || stop.Err() != nil {
+			return nil
+		}
+
+		n, ok, err := d.Store.NextDueFor(ctx, m.MSISDN, m.ID, d.Now())
+		if err != nil || !ok {
+			return err
+		}
+
+		m, s = n, next
+	}
+}
+
+// settle stores the outcome of a delivery. A message that is to be retried holds its recipient's other messages until
+// the retry, so that they keep their order, unless the MS refused that message itself.
+func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 	switch r.outcome {
 	case delivered:
 		return d.complete(ctx, m, db.StatusDelivered, d.Now())
@@ -294,15 +344,7 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 
 	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
 
-	if err := d.Store.ScheduleRetry(ctx, m.ID, at, now); err != nil {
-		return err
-	}
-
-	if !r.hold {
-		return nil
-	}
-
-	return d.Store.HoldRecipient(ctx, m.MSISDN, at, now)
+	return d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold)
 }
 
 // complete sets the final status of a message, and counts it once it is stored, so that a message whose status
@@ -317,103 +359,147 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 	return nil
 }
 
-func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time) result {
+// deliver makes one delivery attempt of the message. Within a session it goes to the serving node that took the
+// previous message; otherwise it starts with a routing lookup. It returns the session for the recipient's next message
+// when the delivery announced one.
+func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s *session) (result, *session) {
 	ctx := context.WithoutCancel(stop)
 	log := d.Logger.With(slog.Int64("message_id", m.ID))
 
 	if !now.Before(m.ExpiresAt) {
 		log.Debug("short message expired before delivery")
-		return result{outcome: expired}
+		return result{outcome: expired}, nil
 	}
 
-	started := d.Now()
-	sri, cancel := context.WithTimeout(stop, d.AttemptTimeout)
-	routing, hss, err := d.Router.SendRoutingInfoForSM(sri, s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
+	var (
+		routing s6c.Routing
+		targets []target
+	)
 
-	cancel()
+	if s != nil {
+		routing, targets = s.routing, s.targets()
+	} else {
+		started := d.Now()
+		sri, cancel := context.WithTimeout(stop, d.AttemptTimeout)
 
-	if err != nil && stop.Err() != nil {
-		log.Debug("short message routing lookup interrupted by shutdown")
-		return result{outcome: interrupted}
+		var (
+			hss string
+			err error
+		)
+
+		routing, hss, err = d.Router.SendRoutingInfoForSM(sri, s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
+
+		cancel()
+
+		if err != nil && stop.Err() != nil {
+			log.Debug("short message routing lookup interrupted by shutdown")
+			return result{outcome: interrupted}, nil
+		}
+
+		routingAttempt := routingAttemptOf(routing, err)
+		routingAttempt.Step, routingAttempt.Node, routingAttempt.StartedAt = db.StepRouting, hss, started
+
+		d.record(ctx, log, m.ID, routingAttempt)
+
+		if err != nil {
+			log.Debug("routing lookup for short message failed", slog.Any("error", err))
+
+			return d.routingFailed(ctx, m, err), nil
+		}
+
+		d.setAlertMSISDN(ctx, m.MSISDN, routing.AlertMSISDN)
+
+		targets = deliveryTargets(routing.ServingNodes)
 	}
-
-	routingAttempt := routingAttemptOf(routing, err)
-	routingAttempt.Step, routingAttempt.Node, routingAttempt.StartedAt = db.StepRouting, hss, started
-
-	d.record(ctx, log, m.ID, routingAttempt)
-
-	if err != nil {
-		log.Debug("routing lookup for short message failed", slog.Any("error", err))
-
-		return d.routingFailed(ctx, m, err)
-	}
-
-	d.setAlertMSISDN(ctx, m.MSISDN, routing.AlertMSISDN)
 
 	deliver, err := buildDeliver(m)
 	if err != nil {
 		log.Error("stored short message cannot be turned into an SMS-DELIVER", slog.Any("error", err))
-		return result{outcome: permanent}
+		return result{outcome: permanent}, nil
 	}
 
-	targets := deliveryTargets(routing.ServingNodes)
 	if len(targets) == 0 {
 		log.Debug("no serving node reachable over SGd for the recipient")
-		return result{outcome: permanent}
+		return result{outcome: permanent}, nil
 	}
 
-	more, err := d.Store.CountPendingFor(ctx, m.MSISDN, m.ID)
+	// More messages are to send when another one is due now, which the SC sends right after this one.
+	_, more, err := d.Store.NextDueFor(ctx, m.MSISDN, m.ID, d.Now())
 	if err != nil {
-		log.Error("failed to count pending messages", slog.Any("error", err))
+		log.Error("failed to look for more messages to the recipient", slog.Any("error", err))
 	}
 
-	a := d.attempt(stop, log, m, routing.IMSI, targets, deliver, more > 0)
+	a := d.attempt(stop, log, m, routing.IMSI, targets, deliver, more)
 
 	if a.outcome == interrupted {
 		log.Debug("short message delivery interrupted by shutdown")
-		return result{outcome: interrupted}
+		return result{outcome: interrupted}, nil
 	}
 
 	if a.outcome == delivered {
+		reported := true
+
 		if success := a.successReport(); routing.MWDStatus&mwdStatusFlags != 0 || len(success) > 1 {
-			d.report(stop, log, m, success, nil)
+			_, reported = d.report(stop, log, m, success, nil)
 		}
 
-		return result{outcome: delivered}
+		return result{outcome: delivered}, follow(routing, a.via, more && reported)
 	}
 
-	if a.outcome == permanent || len(a.failures()) == 0 {
-		return result{outcome: a.outcome}
+	if a.outcome == permanent {
+		return result{outcome: permanent}, nil
+	}
+
+	if len(a.failures()) == 0 {
+		return result{outcome: temporary, hold: !a.rejected}, nil
 	}
 
 	if !needsReport(a.failures(), routing) {
-		return result{outcome: temporary, hold: true}
+		return result{outcome: temporary, hold: true}, nil
 	}
 
 	alert, ok := d.report(stop, log, m, a.outcomes, &routing.ServingNodes)
 	if !ok {
-		return result{outcome: temporary, hold: true}
+		return result{outcome: temporary, hold: true}, nil
 	}
 
 	retryTargets := deliveryTargets(alert.ServingNodes)
 	if len(retryTargets) == 0 || stop.Err() != nil {
-		return result{outcome: temporary, hold: true}
+		return result{outcome: temporary, hold: true}, nil
 	}
 
 	log.Debug("retrying delivery via the serving nodes the HSS reported")
 
-	retry := d.attempt(stop, log, m, routing.IMSI, retryTargets, deliver, more > 0)
+	retry := d.attempt(stop, log, m, routing.IMSI, retryTargets, deliver, more)
 
 	switch retry.outcome {
 	case delivered:
-		d.report(stop, log, m, retry.successReport(), nil)
+		_, reported := d.report(stop, log, m, retry.successReport(), nil)
+		routing.ServingNodes = alert.ServingNodes
 
-		return result{outcome: delivered}
+		return result{outcome: delivered}, follow(routing, retry.via, more && reported)
 	case permanent:
-		return result{outcome: permanent}
+		return result{outcome: permanent}, nil
 	default:
-		return result{outcome: temporary, hold: true}
+		return result{outcome: temporary, hold: true}, nil
 	}
+}
+
+// follow returns the session for the recipient's next message after a delivery via the given serving node, or nil
+// when the delivery announced no more messages. It also returns nil when the HSS may still hold message waiting data
+// that the delivery should have cleared, since the HSS then needs to hear of the next delivery too: the next message
+// starts over with a routing lookup, whose answer tells.
+func follow(routing s6c.Routing, via target, announced bool) *session {
+	if !announced {
+		return nil
+	}
+
+	// The HSS holds no message waiting flags once a delivery succeeds: they were either clear, or the success report
+	// cleared them.
+	routing.MWDStatus &^= mwdStatusFlags
+	routing.Absent = s6c.AbsentUserDiagnostics{}
+
+	return &session{routing: routing, target: via}
 }
 
 func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) result {
@@ -432,7 +518,7 @@ func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) 
 		}
 	}
 
-	return result{outcome: temporary, hold: tgpp.IsExperimental(err, tgpp.ResultErrorAbsentUser)}
+	return result{outcome: temporary, hold: true}
 }
 
 func (d *Deliverer) setAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string) {
@@ -444,6 +530,10 @@ func (d *Deliverer) setAlertMSISDN(ctx context.Context, msisdn, alertMSISDN stri
 type attemptResult struct {
 	outcome  outcome
 	outcomes []nodeOutcome
+	// via is the serving node that took the message, when it was delivered.
+	via target
+	// rejected is set when an MS refused the message itself.
+	rejected bool
 }
 
 func (a attemptResult) failures() []nodeOutcome {
@@ -503,9 +593,14 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 			retry = true
 		}
 
+		a.rejected = a.rejected || r.rejected
+
 		switch r.outcome {
-		case delivered, permanent:
-			a.outcome = r.outcome
+		case delivered:
+			a.outcome, a.via = delivered, t
+			return a
+		case permanent:
+			a.outcome = permanent
 			return a
 		case temporary:
 			retry = true
@@ -639,7 +734,7 @@ func buildDeliver(m db.Message) (func(more bool) ([]byte, error), error) {
 	}
 
 	return func(more bool) ([]byte, error) {
-		deliver := tpdu.DeliverFromSubmit(submit, originator, m.SubmittedAt)
+		deliver := tpdu.DeliverFromSubmit(submit, originator, m.TimeStamp)
 		deliver.MoreMessagesToSend = more
 
 		return deliver.Encode()
@@ -776,11 +871,30 @@ func classifyForwardAnswer(err error) forwardResult {
 			return forwardResult{outcome: permanent}
 		case cause != nil && *cause == sgd.CauseMemoryCapacityExceeded:
 			return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded)}
+		case cause != nil && *cause == sgd.CauseEquipmentProtocolError:
+			return forwardResult{outcome: temporary, rejected: rejectsMessage(re.DiagnosticInfo)}
 		default:
 			return forwardResult{outcome: temporary}
 		}
 	default:
 		return forwardResult{outcome: temporary}
+	}
+}
+
+// rejectsMessage tells whether an MS that answered with a protocol error refused the message itself, rather than being
+// unable to take any message for now. The TP-Failure-Cause of its SMS-DELIVER-REPORT says which (TS 23.040 clause
+// 9.2.3.22); without one, the error is about the message.
+func rejectsMessage(diagnostic []byte) bool {
+	fcs, ok := tpdu.DeliverReportFailureCause(diagnostic)
+	if !ok {
+		return true
+	}
+
+	switch fcs {
+	case tpdu.FailureUSIMStorageFull, tpdu.FailureMemoryCapacityExceeded, tpdu.FailureUSIMToolkitBusy:
+		return false
+	default:
+		return true
 	}
 }
 

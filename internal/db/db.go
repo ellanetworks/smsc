@@ -35,6 +35,7 @@ var migrations = []string{
 		status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'expired')),
 		single_shot INTEGER NOT NULL CHECK (single_shot IN (0, 1)),
 		submitted_at INTEGER NOT NULL,
+		time_stamp INTEGER NOT NULL,
 		expires_at INTEGER NOT NULL,
 		next_attempt_at INTEGER NOT NULL,
 		retries INTEGER NOT NULL,
@@ -67,6 +68,7 @@ var migrations = []string{
 		msisdn TEXT PRIMARY KEY,
 		alert_msisdn TEXT,
 		held_until INTEGER,
+		last_time_stamp INTEGER,
 		updated_at INTEGER NOT NULL
 	);
 	CREATE INDEX recipients_alert_msisdn ON recipients (alert_msisdn);

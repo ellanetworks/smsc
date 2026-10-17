@@ -18,13 +18,13 @@ type Deliver struct {
 	UserData               []byte
 }
 
-func DeliverFromSubmit(s Submit, originator Address, receivedAt time.Time) Deliver {
+func DeliverFromSubmit(s Submit, originator Address, timeStamp time.Time) Deliver {
 	return Deliver{
 		UserDataHeader:         s.UserDataHeader,
 		Originator:             originator,
 		ProtocolIdentifier:     s.ProtocolIdentifier,
 		DataCodingScheme:       s.DataCodingScheme,
-		ServiceCentreTimeStamp: receivedAt,
+		ServiceCentreTimeStamp: timeStamp,
 		UserDataLength:         s.UserDataLength,
 		UserData:               s.UserData,
 	}
