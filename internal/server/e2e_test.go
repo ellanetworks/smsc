@@ -78,7 +78,7 @@ type deliveryReport struct {
 }
 
 type fakeCore struct {
-	t     *testing.T
+	t     testing.TB
 	host  string
 	realm string
 	node  *diameter.Node
@@ -87,6 +87,8 @@ type fakeCore struct {
 	busy    atomic.Bool
 	dropSRR *atomic.Bool
 	busied  atomic.Int32
+	// delay is how long, in nanoseconds, the core takes to answer each request.
+	delay atomic.Int64
 
 	mu          sync.Mutex
 	subscribers map[string]subscriber
@@ -98,7 +100,7 @@ type fakeCore struct {
 	reports     []deliveryReport
 }
 
-func skipIfNoSCTP(t *testing.T) {
+func skipIfNoSCTP(t testing.TB) {
 	t.Helper()
 
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, syscall.IPPROTO_SCTP)
@@ -117,19 +119,19 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newFakeCore(t *testing.T, subscribers ...subscriber) *fakeCore {
+func newFakeCore(t testing.TB, subscribers ...subscriber) *fakeCore {
 	t.Helper()
 
 	return newNamedFakeCore(t, coreHost, subscribers...)
 }
 
-func newNamedFakeCore(t *testing.T, host string, subscribers ...subscriber) *fakeCore {
+func newNamedFakeCore(t testing.TB, host string, subscribers ...subscriber) *fakeCore {
 	t.Helper()
 
 	return newRealmFakeCore(t, host, realm, subscribers...)
 }
 
-func newRealmFakeCore(t *testing.T, host, originRealm string, subscribers ...subscriber) *fakeCore {
+func newRealmFakeCore(t testing.TB, host, originRealm string, subscribers ...subscriber) *fakeCore {
 	t.Helper()
 	skipIfNoSCTP(t)
 
@@ -174,6 +176,10 @@ func newRealmFakeCore(t *testing.T, host, originRealm string, subscribers ...sub
 }
 
 func (c *fakeCore) serve(ctx context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
+	if d := time.Duration(c.delay.Load()); d > 0 {
+		time.Sleep(d)
+	}
+
 	switch req.CommandCode {
 	case s6c.CommandSendRoutingInfoForSM:
 		return c.routeOrFail(ctx, req)
@@ -482,7 +488,7 @@ func experimental(resultCode uint32, extra ...diameter.AVP) *diameter.Message {
 	}, extra...)}
 }
 
-func resultOf(t *testing.T, ans *diameter.Message) uint32 {
+func resultOf(t testing.TB, ans *diameter.Message) uint32 {
 	t.Helper()
 
 	rc, ok := ans.Find(diameter.AVPResultCode, 0)
@@ -498,7 +504,7 @@ func resultOf(t *testing.T, ans *diameter.Message) uint32 {
 	return v
 }
 
-func mustTBCD(t *testing.T, digits string) []byte {
+func mustTBCD(t testing.TB, digits string) []byte {
 	t.Helper()
 
 	b, err := tbcd.Encode(digits)
@@ -509,7 +515,7 @@ func mustTBCD(t *testing.T, digits string) []byte {
 	return b
 }
 
-func semiOctets(t *testing.T, digits string) []byte {
+func semiOctets(t testing.TB, digits string) []byte {
 	t.Helper()
 
 	out := []byte{byte(len(digits)), 0x91}
@@ -517,7 +523,7 @@ func semiOctets(t *testing.T, digits string) []byte {
 	return append(out, mustTBCD(t, digits)...)
 }
 
-func smsSubmit(t *testing.T, to, text string) []byte {
+func smsSubmit(t testing.TB, to, text string) []byte {
 	t.Helper()
 
 	out := []byte{0x01, 0x00}
@@ -527,7 +533,7 @@ func smsSubmit(t *testing.T, to, text string) []byte {
 	return append(out, text...)
 }
 
-func eventually(t *testing.T, what string, cond func() bool) {
+func eventually(t testing.TB, what string, cond func() bool) {
 	t.Helper()
 
 	deadline := time.Now().Add(waitTimeout)
@@ -553,7 +559,7 @@ type smscConfig struct {
 	AttemptTimeout time.Duration
 }
 
-func testConfig(t *testing.T, dbPath string) smscConfig {
+func testConfig(t testing.TB, dbPath string) smscConfig {
 	t.Helper()
 
 	return smscConfig{
@@ -575,7 +581,7 @@ func testConfig(t *testing.T, dbPath string) smscConfig {
 	}
 }
 
-func startSMSC(t *testing.T, cfg smscConfig) *smsc {
+func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 	t.Helper()
 
 	store, err := db.Open(context.Background(), cfg.DB.Path)
@@ -989,7 +995,7 @@ func TestSettingsUpdateAppliesWithoutRestart(t *testing.T) {
 	}
 }
 
-func (s *smsc) api(t *testing.T, method, path string, body any, out any) int {
+func (s *smsc) api(t testing.TB, method, path string, body any, out any) int {
 	t.Helper()
 
 	var reader io.Reader
