@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
 var testNow = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -29,7 +31,6 @@ type fakeStore struct {
 	mu           sync.Mutex
 	messages     map[int64]*db.Message
 	attempts     []db.DeliveryAttempt
-	pending      int
 	holds        []hold
 	alerts       []string
 	alertMSISDNs map[string]string
@@ -47,21 +48,55 @@ type hold struct {
 	until  time.Time
 }
 
-func newFakeStore(m db.Message) *fakeStore {
-	return &fakeStore{messages: map[int64]*db.Message{m.ID: &m}, alertMSISDNs: map[string]string{}}
+func newFakeStore(messages ...db.Message) *fakeStore {
+	s := &fakeStore{messages: map[int64]*db.Message{}, alertMSISDNs: map[string]string{}}
+
+	for _, m := range messages {
+		s.messages[m.ID] = &m
+	}
+
+	return s
+}
+
+// first returns the pending message due at now that NextDue returns first, among those that match.
+func (s *fakeStore) first(now time.Time, match func(*db.Message) bool) (db.Message, bool) {
+	var next *db.Message
+
+	for _, m := range s.messages {
+		if m.Status != db.StatusPending || m.NextAttemptAt.After(now) || !match(m) {
+			continue
+		}
+
+		if next == nil || m.NextAttemptAt.Before(next.NextAttemptAt) || m.NextAttemptAt.Equal(next.NextAttemptAt) && m.ID < next.ID {
+			next = m
+		}
+	}
+
+	if next == nil {
+		return db.Message{}, false
+	}
+
+	return *next, true
 }
 
 func (s *fakeStore) NextDue(_ context.Context, now time.Time, busy []string) (db.Message, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, m := range s.messages {
-		if m.Status == db.StatusPending && !m.NextAttemptAt.After(now) && !slices.Contains(busy, m.MSISDN) {
-			return *m, true, nil
-		}
-	}
+	m, ok := s.first(now, func(m *db.Message) bool { return !slices.Contains(busy, m.MSISDN) })
 
-	return db.Message{}, false, nil
+	return m, ok, nil
+}
+
+func (s *fakeStore) NextDueFor(_ context.Context, msisdn string, excludeID int64, now time.Time) (db.Message, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, ok := s.first(now, func(m *db.Message) bool {
+		return m.MSISDN == msisdn && m.ID != excludeID && now.Before(m.ExpiresAt)
+	})
+
+	return m, ok, nil
 }
 
 func (s *fakeStore) NextWakeup(context.Context, []string) (time.Time, bool, error) {
@@ -77,21 +112,25 @@ func (s *fakeStore) SetMessageStatus(_ context.Context, id int64, status db.Mess
 	return nil
 }
 
-func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time) error {
+func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.messages[id].NextAttemptAt = at
-	s.messages[id].Retries++
+	m := s.messages[id]
+	m.NextAttemptAt = at
+	m.Retries++
 
-	return nil
-}
+	if !holdRecipient {
+		return nil
+	}
 
-func (s *fakeStore) HoldRecipient(_ context.Context, msisdn string, until, _ time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.holds = append(s.holds, hold{m.MSISDN, at})
 
-	s.holds = append(s.holds, hold{msisdn, until})
+	for _, other := range s.messages {
+		if other.MSISDN == m.MSISDN && other.Status == db.StatusPending && other.NextAttemptAt.Before(at) {
+			other.NextAttemptAt = at
+		}
+	}
 
 	return nil
 }
@@ -116,13 +155,6 @@ func (s *fakeStore) SetAlertMSISDN(_ context.Context, msisdn, alertMSISDN string
 	s.alertMSISDNs[msisdn] = alertMSISDN
 
 	return nil
-}
-
-func (s *fakeStore) CountPendingFor(context.Context, string, int64) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.pending, nil
 }
 
 func (s *fakeStore) CreateDeliveryAttempt(_ context.Context, a db.DeliveryAttempt) (int64, error) {
@@ -221,6 +253,7 @@ func pendingMessage(t *testing.T) db.Message {
 		TPDU:               mustHex(t, submitTPDU),
 		Status:             db.StatusPending,
 		SubmittedAt:        testNow.Add(-time.Minute),
+		TimeStamp:          testNow.Add(-time.Minute),
 		ExpiresAt:          testNow.Add(24 * time.Hour),
 		NextAttemptAt:      testNow,
 		ProtocolIdentifier: 0,
@@ -419,8 +452,10 @@ func TestDeliverViaMME(t *testing.T) {
 }
 
 func TestDeliverSignalsMoreMessages(t *testing.T) {
-	store := newFakeStore(pendingMessage(t))
-	store.pending = 2
+	next := pendingMessage(t)
+	next.ID = 2
+
+	store := newFakeStore(pendingMessage(t), next)
 	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
 
 	process(t, newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender))
@@ -1191,5 +1226,277 @@ func TestShutdownInterruptsRoutingLookup(t *testing.T) {
 
 	if m := store.messages[1]; m.Status != db.StatusPending || m.Retries != 0 || !m.NextAttemptAt.Equal(testNow) {
 		t.Fatalf("message = %+v; an interrupted routing lookup must leave the message untouched", m)
+	}
+}
+
+func protocolError(diagnostic []byte) *diameter.Message {
+	return experimental(tgpp.ResultErrorSMDeliveryFailure, diameter.Grouped(sgd.AVPSMDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID,
+		diameter.Unsigned32(sgd.AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, uint32(sgd.CauseEquipmentProtocolError)),
+		diameter.OctetString(sgd.AVPSMDiagnosticInfo, diameter.AVPFlagMandatory, tgpp.VendorID, diagnostic),
+	))
+}
+
+func TestRecipientFailuresHoldItsOtherMessages(t *testing.T) {
+	tests := map[string]struct {
+		answer     *diameter.Message
+		sendErr    error
+		routingErr error
+		wantHold   bool
+	}{
+		"busy for MT SMS":                        {answer: experimental(tgpp.ResultErrorUserBusyForMTSMS), wantHold: true},
+		"serving node unreachable":               {sendErr: diameter.ErrNotConnected, wantHold: true},
+		"serving node too busy":                  {answer: &diameter.Message{AVPs: []diameter.AVP{diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, diameter.ResultTooBusy)}}, wantHold: true},
+		"HSS unreachable":                        {routingErr: diameter.ErrNotConnected, wantHold: true},
+		"HSS too busy":                           {routingErr: &s6c.ResultError{Result: tgpp.Result{Code: diameter.ResultTooBusy}}, wantHold: true},
+		"USIM storage full":                      {answer: protocolError([]byte{0x00, tpdu.FailureUSIMStorageFull, 0x00}), wantHold: true},
+		"USIM toolkit busy":                      {answer: protocolError([]byte{0x00, tpdu.FailureUSIMToolkitBusy, 0x00}), wantHold: true},
+		"MS refuses the data coding scheme":      {answer: protocolError([]byte{0x00, 0x90, 0x00}), wantHold: false},
+		"protocol error without a failure cause": {answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError), wantHold: false},
+		"protocol error with an unspecified fcs": {answer: protocolError([]byte{0x00, tpdu.FailureUnspecified, 0x00}), wantHold: false},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			next := pendingMessage(t)
+			next.ID = 2
+
+			store := newFakeStore(pendingMessage(t), next)
+			router := &fakeRouter{routing: mmeRouting(), err: tt.routingErr}
+			sender := &fakeSender{
+				answers: map[string]*diameter.Message{"mme.example.org": tt.answer},
+				errs:    map[string]error{"mme.example.org": tt.sendErr},
+			}
+
+			process(t, newDeliverer(store, router, sender))
+
+			if m := store.messages[1]; m.Status != db.StatusPending || m.Retries != 1 || !m.NextAttemptAt.Equal(testNow.Add(time.Minute)) {
+				t.Fatalf("failed message = %+v", m)
+			}
+
+			if got := len(store.holds) == 1; got != tt.wantHold {
+				t.Fatalf("held = %v, want %v (%+v)", got, tt.wantHold, store.holds)
+			}
+
+			want := testNow
+			if tt.wantHold {
+				want = testNow.Add(time.Minute)
+			}
+
+			if m := store.messages[2]; m.Retries != 0 || !m.NextAttemptAt.Equal(want) {
+				t.Fatalf("next message = %+v; want it due at %v and its retries untouched", m, want)
+			}
+		})
+	}
+}
+
+func queuedMessages(t *testing.T, n int) []db.Message {
+	t.Helper()
+
+	messages := make([]db.Message, n)
+	for i := range messages {
+		messages[i] = pendingMessage(t)
+		messages[i].ID = int64(i + 1)
+		messages[i].TimeStamp = testNow.Add(time.Duration(i-60) * time.Second)
+	}
+
+	return messages
+}
+
+func moreMessagesToSend(t *testing.T, tfr *diameter.Message) bool {
+	t.Helper()
+
+	flags, ok := tfr.Find(sgd.AVPTFRFlags, tgpp.VendorID)
+	tpMMS := avpData(t, tfr, sgd.AVPSMRPUI, tgpp.VendorID)[0]&0x04 == 0
+
+	if ok != tpMMS || ok && !bytes.Equal(flags.Data, mustHex(t, "00000001")) {
+		t.Fatalf("TFR-Flags %x and TP-MMS %v disagree", flags.Data, tpMMS)
+	}
+
+	return ok
+}
+
+func TestSessionDeliversTheRecipientsQueueInOrder(t *testing.T) {
+	store := newFakeStore(queuedMessages(t, 3)...)
+	router := &fakeRouter{routing: mmeRouting(), hss: "hss.example.org"}
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+
+	process(t, newDeliverer(store, router, sender))
+
+	for id, m := range store.messages {
+		if m.Status != db.StatusDelivered {
+			t.Fatalf("message %d status = %s", id, m.Status)
+		}
+	}
+
+	if len(router.requests) != 1 {
+		t.Fatalf("routing requests = %d; the messages that follow go to the same serving node", len(router.requests))
+	}
+
+	if !slices.Equal(sender.peers, []string{"mme.example.org", "mme.example.org", "mme.example.org"}) {
+		t.Fatalf("TFRs to %v", sender.peers)
+	}
+
+	for i, tfr := range sender.requests {
+		if got, want := moreMessagesToSend(t, tfr), i < 2; got != want {
+			t.Fatalf("TFR %d announces more messages = %v, want %v", i+1, got, want)
+		}
+
+		// The SC time stamp sits after the originator address, the TP-PID and the TP-DCS.
+		scts := avpData(t, tfr, sgd.AVPSMRPUI, tgpp.VendorID)[11:18]
+		if want := mustHex(t, fmt.Sprintf("6290721195%d000", i)); !bytes.Equal(scts, want) {
+			t.Fatalf("TFR %d TP-SCTS = %x, want %x; the messages go out in order", i+1, scts, want)
+		}
+	}
+
+	if got := store.recorded(db.StepRouting); len(got) != 1 {
+		t.Fatalf("routing attempts = %+v", got)
+	}
+
+	if got := store.recorded(db.StepDelivery); len(got) != 3 {
+		t.Fatalf("delivery attempts = %+v", got)
+	}
+}
+
+func TestSessionAnnouncesOnlyMessagesItSends(t *testing.T) {
+	tests := map[string]func(*db.Message){
+		"waiting for a retry": func(m *db.Message) { m.NextAttemptAt = testNow.Add(time.Hour) },
+		"expired":             func(m *db.Message) { m.ExpiresAt = testNow },
+		"to another MSISDN":   func(m *db.Message) { m.MSISDN = "15551230003" },
+	}
+
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			messages := queuedMessages(t, 2)
+			change(&messages[1])
+
+			store := newFakeStore(messages...)
+			router := &fakeRouter{routing: mmeRouting()}
+			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+
+			process(t, newDeliverer(store, router, sender))
+
+			if len(sender.requests) != 1 || moreMessagesToSend(t, sender.requests[0]) {
+				t.Fatalf("TFRs = %d; a message the SC does not send now must not be announced", len(sender.requests))
+			}
+
+			if store.messages[2].Status != db.StatusPending {
+				t.Fatalf("other message status = %s", store.messages[2].Status)
+			}
+		})
+	}
+}
+
+type answerSequence struct {
+	*fakeSender
+	answers []*diameter.Message
+}
+
+func (s *answerSequence) Do(ctx context.Context, peer string, req *diameter.Message) (*diameter.Message, error) {
+	if _, err := s.fakeSender.Do(ctx, peer, req); err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ans := s.answers[0]
+	s.answers = s.answers[1:]
+
+	return ans, nil
+}
+
+func TestSessionFailureIsReportedAndHoldsTheRest(t *testing.T) {
+	routing := mmeRouting()
+	routing.MWDStatus = s6c.MWDStatusMNRF
+	routing.Absent = s6c.AbsentUserDiagnostics{MME: absentDiagnostic(1)}
+
+	store := newFakeStore(queuedMessages(t, 3)...)
+	router := &fakeRouter{routing: routing}
+	sender := &answerSequence{fakeSender: &fakeSender{}, answers: []*diameter.Message{success(), absentWithDiagnostic(1)}}
+
+	process(t, newDeliverer(store, router, sender))
+
+	if store.messages[1].Status != db.StatusDelivered || store.messages[2].Status != db.StatusPending || len(sender.requests) != 2 {
+		t.Fatalf("statuses %s, %s after %d TFRs", store.messages[1].Status, store.messages[2].Status, len(sender.requests))
+	}
+
+	// The success report cleared the MNRF and the stored diagnostic at the HSS, so the absence that follows is new to
+	// it and is reported, although the routing answer carried the same flag and diagnostic.
+	if len(router.reports) != 2 || router.reports[0].MME.Cause != s6c.DeliveryCauseSuccessfulTransfer ||
+		router.reports[1].MME.Cause != s6c.DeliveryCauseAbsentUser || router.reports[1].Failed.Serving == nil {
+		t.Fatalf("reports = %+v", router.reports)
+	}
+
+	if len(store.holds) != 1 || !store.messages[3].NextAttemptAt.Equal(testNow.Add(time.Minute)) {
+		t.Fatalf("holds = %+v, last message = %+v", store.holds, store.messages[3])
+	}
+}
+
+func TestSessionStartsOverWhenTheSuccessReportFails(t *testing.T) {
+	routing := mmeRouting()
+	routing.MWDStatus = s6c.MWDStatusMNRF
+
+	store := newFakeStore(queuedMessages(t, 2)...)
+	router := &fakeRouter{routing: routing, reportErr: diameter.ErrNotConnected}
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+
+	process(t, newDeliverer(store, router, sender))
+
+	if store.messages[1].Status != db.StatusDelivered || len(sender.requests) != 1 {
+		t.Fatalf("status %s after %d TFRs", store.messages[1].Status, len(sender.requests))
+	}
+
+	if m := store.messages[2]; m.Status != db.StatusPending || m.Retries != 0 || !m.NextAttemptAt.Equal(testNow) {
+		t.Fatalf("next message = %+v; it must start over with a routing lookup, untouched", m)
+	}
+}
+
+func TestShutdownEndsTheSession(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := newFakeStore(queuedMessages(t, 2)...)
+	sender := &cancellingSender{
+		fakeSender: &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}},
+		cancel:     cancel,
+	}
+
+	newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender).Run(ctx)
+
+	if store.messages[1].Status != db.StatusDelivered || len(sender.requests) != 1 {
+		t.Fatalf("status %s after %d TFRs", store.messages[1].Status, len(sender.requests))
+	}
+
+	if m := store.messages[2]; m.Status != db.StatusPending || m.Retries != 0 {
+		t.Fatalf("next message = %+v", m)
+	}
+}
+
+func TestSessionFallsBackToTheOtherServingNodes(t *testing.T) {
+	routing := mmeRouting()
+	routing.Additional = &s6c.ServingNode{SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"}}
+
+	store := newFakeStore(queuedMessages(t, 2)...)
+	router := &fakeRouter{routing: routing}
+	sender := &answerSequence{fakeSender: &fakeSender{}, answers: []*diameter.Message{
+		experimental(tgpp.ResultErrorAbsentUser), success(), // the first message reaches the MS over the SGSN
+		success(), // and so does the second, which goes there first
+	}}
+
+	process(t, newDeliverer(store, router, sender))
+
+	if !slices.Equal(sender.peers, []string{"mme.example.org", "sgsn.example.org", "sgsn.example.org"}) {
+		t.Fatalf("TFRs to %v", sender.peers)
+	}
+
+	sender.peers, sender.answers = nil, []*diameter.Message{success(), experimental(tgpp.ResultErrorAbsentUser), success()}
+
+	store = newFakeStore(queuedMessages(t, 2)...)
+	process(t, newDeliverer(store, router, sender))
+
+	// Once the MS leaves the node that took the first message, the second falls back to the other node.
+	if !slices.Equal(sender.peers, []string{"mme.example.org", "mme.example.org", "sgsn.example.org"}) ||
+		store.messages[2].Status != db.StatusDelivered {
+		t.Fatalf("TFRs to %v, second message %s", sender.peers, store.messages[2].Status)
 	}
 }

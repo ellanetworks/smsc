@@ -530,7 +530,7 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("NextDue = %+v, %v, %v; want message %d", m, ok, err, first)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute)); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -549,9 +549,12 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("NextWakeup = %v, %v, %v", wakeup, ok, err)
 	}
 
-	pending, err := d.CountPendingFor(ctx, testMSISDN, first)
-	if err != nil || pending != 1 {
-		t.Fatalf("CountPendingFor = %d, %v", pending, err)
+	if next, ok, err := d.NextDueFor(ctx, testMSISDN, second, base.Add(time.Minute)); err != nil || ok {
+		t.Fatalf("NextDueFor with the other message waiting for its retry = %+v, %v, %v", next, ok, err)
+	}
+
+	if next, ok, err := d.NextDueFor(ctx, testMSISDN, first, base.Add(time.Minute)); err != nil || !ok || next.ID != second {
+		t.Fatalf("NextDueFor = %+v, %v, %v; want message %d", next, ok, err, second)
 	}
 
 	if err := d.SetMessageStatus(ctx, second, StatusExpired, base); err != nil {
@@ -562,7 +565,7 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base, base); !errors.Is(err, ErrNotFound) {
+	if err := d.ScheduleRetry(ctx, first, base, base, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ScheduleRetry on a delivered message = %v, want ErrNotFound", err)
 	}
 
@@ -623,12 +626,12 @@ func TestHoldAndAlertRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base); err != nil {
+	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base, false); err != nil {
 		t.Fatal(err)
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.HoldRecipient(ctx, testMSISDN, until, base); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -668,7 +671,7 @@ func TestAlertMSISDN(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.HoldRecipient(ctx, testMSISDN, base.Add(time.Hour), base); err != nil {
+	if err := d.ScheduleRetry(ctx, id, base.Add(time.Hour), base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -710,12 +713,13 @@ func TestNewMessageJoinsRecipientHold(t *testing.T) {
 	d := openTestDB(t)
 	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 
-	if _, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base)); err != nil {
+	first, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base))
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.HoldRecipient(ctx, testMSISDN, until, base); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -758,7 +762,7 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -771,11 +775,11 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatalf("message after a plain retry next attempt = %v, %v; a retry is not a hold", m.NextAttemptAt, err)
 	}
 
-	if err := d.HoldRecipient(ctx, testMSISDN, base.Add(2*time.Hour), base.Add(time.Minute)); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(2*time.Hour), base.Add(time.Minute), true); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.HoldRecipient(ctx, testMSISDN, base.Add(90*time.Minute), base.Add(time.Minute)); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(90*time.Minute), base.Add(time.Minute), true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -819,7 +823,7 @@ func TestCountPending(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now); err != nil {
+	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -830,5 +834,128 @@ func TestCountPending(t *testing.T) {
 	// Once its retry is due, the second is due too.
 	if due, waiting, err := d.CountPending(ctx, now.Add(time.Minute)); err != nil || due != 2 || waiting != 0 {
 		t.Fatalf("CountPending a minute later = %d due, %d waiting, %v, want 2 and 0", due, waiting, err)
+	}
+}
+
+func TestScheduleRetryHoldsOnlyWhenAsked(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	first, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if m, err := d.GetMessage(ctx, second); err != nil || !m.NextAttemptAt.Equal(base) {
+		t.Fatalf("other message after a retry without hold = %v, %v; want it still due", m.NextAttemptAt, err)
+	}
+
+	if err := d.ScheduleRetry(ctx, second, base.Add(time.Minute), base, true); err != nil {
+		t.Fatal(err)
+	}
+
+	for id, want := range map[int64]time.Time{first: base.Add(time.Hour), second: base.Add(time.Minute)} {
+		if m, err := d.GetMessage(ctx, id); err != nil || !m.NextAttemptAt.Equal(want) {
+			t.Fatalf("message %d next attempt = %v, %v; want %v", id, m.NextAttemptAt, err, want)
+		}
+	}
+}
+
+func TestNextDueForSkipsExpiredMessages(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	first, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expiring := testMessage(2, false, []byte{0x02}, base)
+	expiring.ExpiresAt = base.Add(time.Minute)
+
+	if _, err := d.CreateMessage(ctx, expiring); err != nil {
+		t.Fatal(err)
+	}
+
+	other := testMessage(3, false, []byte{0x03}, base)
+	other.MSISDN = "15551230003"
+
+	if _, err := d.CreateMessage(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+
+	if m, ok, err := d.NextDueFor(ctx, testMSISDN, first, base.Add(time.Minute)); err != nil || ok {
+		t.Fatalf("NextDueFor = %+v, %v, %v; want nothing, since the only other message has expired", m, ok, err)
+	}
+}
+
+func TestTimeStampsDifferPerRecipient(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	arrivals := []struct {
+		msisdn string
+		at     time.Time
+		want   time.Time
+	}{
+		{testMSISDN, base.Add(100 * time.Millisecond), base},
+		{testMSISDN, base.Add(200 * time.Millisecond), base.Add(time.Second)},
+		{testMSISDN, base.Add(900 * time.Millisecond), base.Add(2 * time.Second)},
+		{"15551230003", base.Add(900 * time.Millisecond), base},
+		{testMSISDN, base.Add(5 * time.Second), base.Add(5 * time.Second)},
+	}
+
+	for i, a := range arrivals {
+		m := testMessage(uint8(i), false, []byte{byte(i)}, a.at)
+		m.MSISDN = a.msisdn
+
+		id, err := d.CreateMessage(ctx, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := d.GetMessage(ctx, id)
+		if err != nil || !got.TimeStamp.Equal(a.want) {
+			t.Fatalf("message %d time stamp = %v, %v; want %v", i, got.TimeStamp, err, a.want)
+		}
+	}
+}
+
+func TestReplacedMessageTakesANewTimeStamp(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	original := testMessage(1, false, []byte{0x01}, base)
+	original.ProtocolIdentifier = 0x41
+	original.Replace = true
+
+	id, err := d.CreateMessage(ctx, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := testMessage(2, false, []byte{0x02}, base.Add(300*time.Millisecond))
+	replacement.ProtocolIdentifier = 0x41
+	replacement.Replace = true
+
+	if replaced, err := d.CreateMessage(ctx, replacement); err != nil || replaced != id {
+		t.Fatalf("replacement stored as %d, %v; want %d", replaced, err, id)
+	}
+
+	if m, err := d.GetMessage(ctx, id); err != nil || !m.TimeStamp.Equal(base.Add(time.Second)) {
+		t.Fatalf("time stamp = %v, %v; want one the recipient has not seen", m.TimeStamp, err)
 	}
 }

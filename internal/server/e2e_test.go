@@ -1238,3 +1238,110 @@ func TestAPIDiameterStatus(t *testing.T) {
 		t.Fatalf("peers = %+v", status.Peers)
 	}
 }
+
+func TestTransientFailureKeepsTheRecipientsOrder(t *testing.T) {
+	core, s := newSMSC(t, alice, bob)
+
+	release := make(chan struct{})
+
+	var first atomic.Bool
+
+	first.Store(true)
+
+	core.setAnswerMT(func(string) *diameter.Message {
+		if !first.CompareAndSwap(true, false) {
+			return nil
+		}
+
+		<-release
+
+		return &diameter.Message{AVPs: []diameter.AVP{
+			diameter.UTF8String(diameter.AVPOriginHost, diameter.AVPFlagMandatory, 0, coreHost),
+			diameter.UTF8String(diameter.AVPOriginRealm, diameter.AVPFlagMandatory, 0, realm),
+			diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, diameter.ResultTooBusy),
+			authSessionState(),
+		}}
+	})
+
+	core.submit(alice, bob, "part one")
+
+	eventually(t, "delivery of part one to start", func() bool { return len(core.routingRequests()) == 1 })
+
+	core.submit(alice, bob, "part two")
+	close(release)
+
+	eventually(t, "part one to be rescheduled", func() bool {
+		m, err := s.store.GetMessage(context.Background(), 1)
+		return err == nil && m.Retries == 1
+	})
+
+	time.Sleep(200 * time.Millisecond)
+
+	if got := core.deliveredTo(bob.imsi); len(got) != 0 {
+		t.Fatalf("delivered %d messages while part one waits for its retry; part two must not overtake it", len(got))
+	}
+
+	if m, err := s.store.GetMessage(context.Background(), 2); err != nil || m.Status != db.StatusPending || m.Retries != 0 {
+		t.Fatalf("part two = %+v, %v; want it pending behind part one, with its retries untouched", m, err)
+	}
+
+	if rc := core.alert(bob); rc != diameter.ResultSuccess {
+		t.Fatalf("ALA result = %d", rc)
+	}
+
+	s.waitForStatus(t, 2, db.StatusDelivered)
+
+	got := core.deliveredTo(bob.imsi)
+	if len(got) != 2 || !bytes.HasSuffix(got[0].tpdu, []byte("part one")) || !bytes.HasSuffix(got[1].tpdu, []byte("part two")) {
+		t.Fatalf("delivered = %+v; want part one, then part two", got)
+	}
+}
+
+func TestHeldMessagesFollowInOneSession(t *testing.T) {
+	core, s := newSMSC(t, alice, bob)
+	core.setAbsent(bob.msisdn, true)
+
+	texts := []string{"one", "two", "three"}
+
+	for _, text := range texts {
+		core.submit(alice, bob, text)
+	}
+
+	eventually(t, "the recipient to be held", func() bool {
+		_, waiting, err := s.store.CountPending(context.Background(), time.Now())
+		return err == nil && waiting == len(texts)
+	})
+
+	core.setAbsent(bob.msisdn, false)
+
+	if rc := core.alert(bob); rc != diameter.ResultSuccess {
+		t.Fatalf("ALA result = %d", rc)
+	}
+
+	s.waitForStatus(t, int64(len(texts)), db.StatusDelivered)
+
+	if routings := core.routingRequests(); len(routings) != 2 {
+		t.Fatalf("routing requests = %v; want one before the alert and one for the whole queue after it", routings)
+	}
+
+	got := core.deliveredTo(bob.imsi)
+	if len(got) != len(texts) {
+		t.Fatalf("delivered %d messages", len(got))
+	}
+
+	var stamps [][]byte
+
+	for i, m := range got {
+		// TP-MMS is 0 when more messages wait.
+		if more := m.tpdu[0]&0x04 == 0; !bytes.HasSuffix(m.tpdu, []byte(texts[i])) || more != (i < len(texts)-1) {
+			t.Fatalf("message %d = %x; want %q, announcing more messages unless last", i+1, m.tpdu, texts[i])
+		}
+
+		stamp := m.tpdu[2+len(mustTBCD(t, alice.msisdn))+2:][:7]
+		if slices.ContainsFunc(stamps, func(b []byte) bool { return bytes.Equal(b, stamp) }) {
+			t.Fatalf("message %d repeats the time stamp %x; TS 23.040 clause 6.2 requires them to differ", i+1, stamp)
+		}
+
+		stamps = append(stamps, stamp)
+	}
+}
