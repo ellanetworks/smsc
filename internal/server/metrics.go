@@ -67,13 +67,14 @@ func (m *metrics) watchHSS(hss hssSender) {
 
 var pendingDesc = prometheus.NewDesc(
 	"ellasmsc_messages_pending",
-	"Short messages waiting for delivery, by state: due (to be delivered now, or being delivered) or waiting (for a "+
-		"retry or for the phone to be reachable). Due messages that stay due mean the deliverer is falling behind.",
-	[]string{"state"}, nil,
+	"Short messages and status reports waiting for delivery, by type (message, status_report) and state: due (to be "+
+		"delivered now, or being delivered) or waiting (for a retry or for the phone to be reachable). Due messages "+
+		"that stay due mean the deliverer is falling behind.",
+	[]string{"type", "state"}, nil,
 )
 
 // pendingCollector counts the pending messages in the database when scraped, so that the count is that of the
-// messages the API lists.
+// messages, and of the status reports on them, that the API shows.
 type pendingCollector struct {
 	database *db.DB
 }
@@ -86,13 +87,15 @@ func (c pendingCollector) Collect(ch chan<- prometheus.Metric) {
 	ctx, cancel := context.WithTimeout(context.Background(), pendingTimeout)
 	defer cancel()
 
-	due, waiting, err := c.database.CountPending(ctx, time.Now())
+	counts, err := c.database.CountPending(ctx, time.Now())
 	if err != nil {
 		ch <- prometheus.NewInvalidMetric(pendingDesc, err)
 		return
 	}
 
-	ch <- prometheus.MustNewConstMetric(pendingDesc, prometheus.GaugeValue, float64(due), "due")
+	for kind, count := range counts {
+		ch <- prometheus.MustNewConstMetric(pendingDesc, prometheus.GaugeValue, float64(count.Due), string(kind), "due")
 
-	ch <- prometheus.MustNewConstMetric(pendingDesc, prometheus.GaugeValue, float64(waiting), "waiting")
+		ch <- prometheus.MustNewConstMetric(pendingDesc, prometheus.GaugeValue, float64(count.Waiting), string(kind), "waiting")
+	}
 }

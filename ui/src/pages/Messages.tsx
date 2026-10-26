@@ -44,7 +44,13 @@ const FILTER_DEBOUNCE_MS = 300;
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
-const STATUSES: MessageStatus[] = ["pending", "delivered", "failed", "expired"];
+const STATUSES: MessageStatus[] = [
+  "pending",
+  "delivered",
+  "failed",
+  "expired",
+  "replaced",
+];
 
 const E164_HINT = "E.164, e.g. +15551230002";
 

@@ -19,6 +19,7 @@ type Store interface {
 	GetMessage(ctx context.Context, id int64) (db.Message, error)
 	ListMessages(ctx context.Context, f db.MessageFilter, page, perPage int) ([]db.Message, int, error)
 	ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) ([]db.DeliveryAttempt, int, error)
+	StatusReportsFor(ctx context.Context, messageIDs []int64) (map[int64][]db.Message, error)
 }
 
 type Diameter interface {
@@ -62,6 +63,7 @@ func NewHandler(cfg Config) http.Handler {
 	mux.Handle("GET /api/v1/messages", ListMessages(cfg))
 	mux.Handle("GET /api/v1/messages/{id}", GetMessage(cfg))
 	mux.Handle("GET /api/v1/messages/{id}/attempts", ListMessageAttempts(cfg))
+	mux.Handle("GET /api/v1/messages/{id}/status_reports/{report_id}/attempts", ListStatusReportAttempts(cfg))
 	mux.Handle("GET /api/v1/diameter", GetDiameterStatus(cfg))
 	mux.Handle("GET /api/v1/operator", GetOperator(cfg))
 	mux.Handle("PUT /api/v1/operator", UpdateOperator(cfg))

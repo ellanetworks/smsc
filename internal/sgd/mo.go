@@ -12,6 +12,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"github.com/ellanetworks/smsc/internal/statusreport"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -132,6 +133,9 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		SingleShot:         submit.SingleShot(),
 		SubmittedAt:        receivedAt,
 		ExpiresAt:          expiresAt,
+		ReportReplaced: func(replaced db.Message) (*db.NewStatusReport, error) {
+			return h.replacedReport(replaced, receivedAt, current), nil
+		},
 	})
 	if errors.Is(err, db.ErrDuplicate) {
 		return h.submitRejected(req, tpdu.FailureRejectedDuplicate, receivedAt)
@@ -155,6 +159,18 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		slog.Int64("message_id", id), slog.String("originator", originator), slog.String("recipient", recipient))
 
 	return h.answer(req, diameter.ResultSuccess)
+}
+
+// replacedReport returns the status report on a message that the new one replaced, if its originator asked for one. A
+// report that cannot be made does not stop the new message.
+func (h *Handler) replacedReport(replaced db.Message, at time.Time, current settings.Settings) *db.NewStatusReport {
+	report, err := statusreport.For(replaced, tpdu.StatusReplaced, at, current)
+	if err != nil {
+		h.Logger.Error("failed to make the status report on a replaced short message",
+			slog.Int64("message_id", replaced.ID), slog.Any("error", err))
+	}
+
+	return report
 }
 
 func submitFailureCause(b []byte, err error) byte {

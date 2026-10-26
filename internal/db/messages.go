@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
 type MessageStatus string
@@ -16,6 +18,17 @@ const (
 	StatusDelivered MessageStatus = "delivered"
 	StatusFailed    MessageStatus = "failed"
 	StatusExpired   MessageStatus = "expired"
+	// StatusReplaced is the status of a message that a later one replaced before its delivery (TS 23.040 clause 6.2).
+	StatusReplaced MessageStatus = "replaced"
+)
+
+// MessageKind tells what the SC delivers: a short message, or an SMS-STATUS-REPORT on one to its originator, which
+// the SC delivers as it does a short message (TS 23.040 clause 3.2.9).
+type MessageKind string
+
+const (
+	KindMessage      MessageKind = "message"
+	KindStatusReport MessageKind = "status_report"
 )
 
 type MessageOrigin string
@@ -25,7 +38,10 @@ const (
 	OriginAPI    MessageOrigin = "api"
 )
 
-var ErrDuplicate = errors.New("duplicate message")
+var (
+	ErrDuplicate  = errors.New("duplicate message")
+	ErrNotPending = errors.New("message is no longer pending")
+)
 
 type Address struct {
 	Digits        string
@@ -34,7 +50,11 @@ type Address struct {
 }
 
 type Message struct {
-	ID                 int64
+	ID   int64
+	Kind MessageKind
+	// ReportFor is the message that a status report is on, and ReportStatus its TP-Status. Both are zero for a message.
+	ReportFor          int64
+	ReportStatus       uint8
 	Originator         Address
 	Recipient          Address
 	MSISDN             string
@@ -66,6 +86,21 @@ type NewMessage struct {
 	SingleShot         bool
 	SubmittedAt        time.Time
 	ExpiresAt          time.Time
+	// ReportReplaced returns the status report on the message that this one replaces, or nil when there is none to
+	// send. The report is stored with the replacement. It runs in the transaction that stores them, so it must not use
+	// the database.
+	ReportReplaced func(replaced Message) (*NewStatusReport, error)
+}
+
+// NewStatusReport is an SMS-STATUS-REPORT on a message from an MS, to that MS.
+type NewStatusReport struct {
+	// Originator is the address that the report shows as its sender: the SC's.
+	Originator Address
+	Status     uint8
+	// TPDU is the SMS-STATUS-REPORT, of which the SC sets TP-MMS when it sends it.
+	TPDU      []byte
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
@@ -89,8 +124,10 @@ func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int
 
 	ids := make([]int64, 0, len(messages))
 
+	var c changes
+
 	for _, m := range messages {
-		id, err := createMessage(ctx, tx, m)
+		id, err := createMessage(ctx, tx, m, &c)
 		if err != nil {
 			return nil, err
 		}
@@ -102,10 +139,12 @@ func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int
 		return nil, fmt.Errorf("create message: %w", err)
 	}
 
+	d.metrics.count(c)
+
 	return ids, nil
 }
 
-func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error) {
+func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage, c *changes) (int64, error) {
 	if m.RejectDuplicates {
 		duplicate, err := isDuplicate(ctx, tx, m)
 		if err != nil {
@@ -117,81 +156,89 @@ func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 		}
 	}
 
-	var (
-		id  int64
-		err error
-	)
-
 	if m.Replace {
-		id, err = replacePending(ctx, tx, m)
-		if err != nil {
+		if err := replacePending(ctx, tx, m, c); err != nil {
 			return 0, fmt.Errorf("create message: %w", err)
 		}
 	}
 
-	if id == 0 {
-		id, err = insertMessage(ctx, tx, m)
-		if err != nil {
-			return 0, fmt.Errorf("create message: %w", err)
-		}
+	id, err := insertMessage(ctx, tx, m)
+	if err != nil {
+		return 0, fmt.Errorf("create message: %w", err)
 	}
 
 	return id, nil
 }
 
-// arrive records that a message to the recipient arrived at the given time. It returns when the message is first due,
-// which is no earlier than the end of a hold on the recipient, and its SC time stamp. TS 23.040 clause 6.2 requires
-// the time stamps of the messages to an MS to differ, changed as little as possible, so a message that arrives within
-// the second of the previous one to the same recipient takes the next free second.
-func arrive(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (next, stamp int64, err error) {
-	var held, last sql.Null[int64]
+// due returns when a message to the recipient that arrives at the given time is first due: no earlier than the end of
+// a hold on the recipient, and no later than the message expires.
+func due(ctx context.Context, tx *sql.Tx, msisdn string, at, expiresAt int64) (int64, error) {
+	var held sql.Null[int64]
 
-	err = tx.QueryRowContext(ctx, `SELECT held_until, last_time_stamp FROM recipients WHERE msisdn = ?`, msisdn).
-		Scan(&held, &last)
+	err := tx.QueryRowContext(ctx, `SELECT held_until FROM recipients WHERE msisdn = ?`, msisdn).Scan(&held)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, err
+		return 0, err
 	}
 
-	next = at
+	next := at
 	if held.Valid && held.V > at {
 		next = held.V
 	}
 
+	return min(next, expiresAt), nil
+}
+
+// stamp records that a short message to the recipient arrived at the given time, and returns its SC time stamp. TS
+// 23.040 clause 6.2 requires the time stamps of the messages to an MS to differ, changed as little as possible, so a
+// message that arrives within the second of the previous one to the same recipient takes the next free second.
+func stamp(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (int64, error) {
+	var last sql.Null[int64]
+
+	err := tx.QueryRowContext(ctx, `SELECT last_time_stamp FROM recipients WHERE msisdn = ?`, msisdn).Scan(&last)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+
 	second := int64(time.Second)
 
-	stamp = at - at%second
-	if last.Valid && last.V >= stamp {
-		stamp = last.V + second
+	s := at - at%second
+	if last.Valid && last.V >= s {
+		s = last.V + second
 	}
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO recipients (msisdn, last_time_stamp, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT (msisdn) DO UPDATE SET last_time_stamp = excluded.last_time_stamp, updated_at = excluded.updated_at`,
-		msisdn, stamp, at)
+		msisdn, s, at)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 
-	return next, stamp, nil
+	return s, nil
 }
 
 func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error) {
-	at := m.SubmittedAt.UTC().UnixNano()
+	at, expiresAt := m.SubmittedAt.UTC().UnixNano(), m.ExpiresAt.UTC().UnixNano()
 
-	next, stamp, err := arrive(ctx, tx, m.MSISDN, at)
+	next, err := due(ctx, tx, m.MSISDN, at, expiresAt)
+	if err != nil {
+		return 0, err
+	}
+
+	timeStamp, err := stamp(ctx, tx, m.MSISDN, at)
 	if err != nil {
 		return 0, err
 	}
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO messages (originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi,
+		`INSERT INTO messages (kind, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi,
 		msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp,
 		expires_at, next_attempt_at, retries, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.Origin,
-		m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, stamp,
-		m.ExpiresAt.UTC().UnixNano(), next, at)
+		m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, timeStamp,
+		expiresAt, next, at)
 	if err != nil {
 		return 0, err
 	}
@@ -199,50 +246,113 @@ func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 	return res.LastInsertId()
 }
 
-func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error) {
-	var id int64
+// insertStatusReport stores a status report on a message from an MS, to be delivered to that MS. A status report
+// carries the time stamp of the message it is on, so it takes none of its recipient's time stamps.
+func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewStatusReport, c *changes) error {
+	var (
+		recipient   Address
+		reference   uint8
+		submittedAt int64
+	)
 
 	err := tx.QueryRowContext(ctx,
-		`SELECT id FROM messages WHERE originator = ? AND originator_ton = ? AND originator_npi = ?
-		AND protocol_identifier = ? AND status = ? ORDER BY id DESC LIMIT 1`,
-		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, m.ProtocolIdentifier, StatusPending).
-		Scan(&id)
+		`SELECT originator, originator_ton, originator_npi, message_reference, submitted_at FROM messages
+		WHERE id = ? AND kind = ? AND origin = ?`, messageID, KindMessage, OriginMobile).
+		Scan(&recipient.Digits, &recipient.TypeOfNumber, &recipient.NumberingPlan, &reference, &submittedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+		return fmt.Errorf("status report on message %d: %w: no message from an MS", messageID, ErrNotFound)
 	}
 
 	if err != nil {
-		return 0, err
+		return err
 	}
 
-	at := m.SubmittedAt.UTC().UnixNano()
+	at, expiresAt := r.CreatedAt.UTC().UnixNano(), r.ExpiresAt.UTC().UnixNano()
 
-	next, stamp, err := arrive(ctx, tx, m.MSISDN, at)
+	// The originator of a message from an MS is the MSISDN of the MS, in international format.
+	next, err := due(ctx, tx, recipient.Digits, at, expiresAt)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`UPDATE messages SET recipient = ?, recipient_ton = ?, recipient_npi = ?, msisdn = ?, message_reference = ?,
-		tpdu = ?, single_shot = ?, submitted_at = ?, time_stamp = ?, expires_at = ?, next_attempt_at = ?, retries = 0,
-		updated_at = ?
-		WHERE id = ?`,
-		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.MessageReference, m.TPDU,
-		m.SingleShot, at, stamp, m.ExpiresAt.UTC().UnixNano(), next, at, id)
+		`INSERT INTO messages (kind, report_for, report_status, originator, originator_ton, originator_npi, recipient,
+		recipient_ton, recipient_npi, msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot,
+		submitted_at, time_stamp, expires_at, next_attempt_at, retries, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?, 0, ?)`,
+		KindStatusReport, messageID, r.Status, r.Originator.Digits, r.Originator.TypeOfNumber, r.Originator.NumberingPlan,
+		recipient.Digits, recipient.TypeOfNumber, recipient.NumberingPlan, recipient.Digits, OriginMobile, reference,
+		r.TPDU, StatusPending, at, submittedAt, expiresAt, next, at)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
-	return id, nil
+	c.reports = append(c.reports, tpdu.Status(r.Status))
+
+	return nil
+}
+
+// insertInterimReport stores the interim status report on a message, one with a "still trying" TP-ST, unless the
+// message already has one.
+func insertInterimReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewStatusReport, c *changes) error {
+	var reported bool
+
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM messages WHERE report_for = ? AND report_status BETWEEN 0x20 AND 0x3f)`,
+		messageID).Scan(&reported); err != nil {
+		return err
+	}
+
+	if reported {
+		return nil
+	}
+
+	return insertStatusReport(ctx, tx, messageID, r, c)
+}
+
+// replacePending marks replaced the pending message that the new one replaces, if any: the latest from the same
+// originator to the same recipient, of the same replace type. It stores the status report on it, if any.
+func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, c *changes) error {
+	replaced, err := scanMessage(tx.QueryRowContext(ctx,
+		`SELECT `+messageColumns+` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
+		AND originator_npi = ? AND msisdn = ? AND protocol_identifier = ? AND status = ? ORDER BY id DESC LIMIT 1`,
+		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, m.MSISDN,
+		m.ProtocolIdentifier, StatusPending))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET status = ?, updated_at = ? WHERE id = ?`,
+		StatusReplaced, m.SubmittedAt.UTC().UnixNano(), replaced.ID); err != nil {
+		return err
+	}
+
+	replaced.Status = StatusReplaced
+	c.completed = append(c.completed, completion{KindMessage, StatusReplaced})
+
+	if m.ReportReplaced == nil {
+		return nil
+	}
+
+	report, err := m.ReportReplaced(replaced)
+	if err != nil || report == nil {
+		return err
+	}
+
+	return insertStatusReport(ctx, tx, replaced.ID, *report, c)
 }
 
 func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 	var held int
 
 	err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM messages WHERE originator = ? AND originator_ton = ? AND originator_npi = ? AND origin = ?
-		AND message_reference = ? AND recipient = ? AND recipient_ton = ? AND recipient_npi = ? AND status = ?`,
-		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, OriginMobile, m.MessageReference,
+		`SELECT COUNT(*) FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ? AND originator_npi = ?
+		AND origin = ? AND message_reference = ? AND recipient = ? AND recipient_ton = ? AND recipient_npi = ? AND status = ?`,
+		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, OriginMobile, m.MessageReference,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, StatusPending).
 		Scan(&held)
 	if err != nil {
@@ -256,9 +366,9 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 	var previous uint8
 
 	err = tx.QueryRowContext(ctx,
-		`SELECT message_reference FROM messages WHERE originator = ? AND originator_ton = ? AND originator_npi = ?
-		AND origin = ? ORDER BY id DESC LIMIT 1`,
-		m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, OriginMobile).
+		`SELECT message_reference FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
+		AND originator_npi = ? AND origin = ? ORDER BY id DESC LIMIT 1`,
+		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, OriginMobile).
 		Scan(&previous)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -271,7 +381,7 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 	return previous == m.MessageReference, nil
 }
 
-const messageColumns = `id, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi, msisdn,
+const messageColumns = `id, kind, report_for, report_status, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi, msisdn,
 	origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp, expires_at,
 	next_attempt_at, retries, updated_at`
 
@@ -282,10 +392,12 @@ type rowScanner interface {
 func scanMessage(row rowScanner) (Message, error) {
 	var (
 		m                                                           Message
+		reportFor                                                   sql.Null[int64]
+		reportStatus                                                sql.Null[uint8]
 		submittedAt, timeStamp, expiresAt, nextAttemptAt, updatedAt int64
 	)
 
-	err := row.Scan(&m.ID, &m.Originator.Digits, &m.Originator.TypeOfNumber, &m.Originator.NumberingPlan,
+	err := row.Scan(&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber, &m.Originator.NumberingPlan,
 		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN, &m.Origin,
 		&m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status, &m.SingleShot,
 		&submittedAt, &timeStamp, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt)
@@ -293,6 +405,7 @@ func scanMessage(row rowScanner) (Message, error) {
 		return Message{}, err
 	}
 
+	m.ReportFor, m.ReportStatus = reportFor.V, reportStatus.V
 	m.SubmittedAt = time.Unix(0, submittedAt).UTC()
 	m.TimeStamp = time.Unix(0, timeStamp).UTC()
 	m.ExpiresAt = time.Unix(0, expiresAt).UTC()
@@ -326,10 +439,8 @@ type MessageFilter struct {
 func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) (_ []Message, _ int, err error) {
 	defer d.observe(&err)()
 
-	var (
-		where []string
-		args  []any
-	)
+	// Status reports show with the message they are on.
+	where, args := []string{"kind = ?"}, []any{KindMessage}
 
 	if f.MSISDN != "" {
 		where, args = append(where, "msisdn = ?"), append(args, f.MSISDN)
@@ -343,10 +454,7 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 		where, args = append(where, "status = ?"), append(args, f.Status)
 	}
 
-	clause := ""
-	if len(where) > 0 {
-		clause = " WHERE " + strings.Join(where, " AND ")
-	}
+	clause := " WHERE " + strings.Join(where, " AND ")
 
 	var total int
 	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`+clause, args...).Scan(&total); err != nil {
@@ -434,8 +542,10 @@ func excludeMSISDNs(busy []string) (string, []any) {
 
 // ScheduleRetry schedules the next attempt of a pending message. With hold, it also holds the message's recipient
 // until then, in the same transaction: the recipient's other pending messages, and those that arrive meanwhile, wait
-// for that attempt, unless an alert ends the hold first.
-func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) (err error) {
+// for that attempt, unless an alert ends the hold first. A message is never due later than it expires, so that it ends
+// expired on time rather than at an attempt after its validity period. The interim status report, if any, is stored in
+// the same transaction, unless the message already has one: its originator learns once that the SC still tries.
+func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, interim *NewStatusReport) (err error) {
 	defer d.observe(&err)()
 
 	tx, err := d.conn.BeginTx(ctx, nil)
@@ -450,7 +560,8 @@ func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hol
 	var msisdn string
 
 	err = tx.QueryRowContext(ctx,
-		`UPDATE messages SET next_attempt_at = ?, retries = retries + 1, updated_at = ? WHERE id = ? AND status = ?
+		`UPDATE messages SET next_attempt_at = MIN(?, expires_at), retries = retries + 1, updated_at = ?
+		WHERE id = ? AND status = ?
 		RETURNING msisdn`,
 		next, updated, id, StatusPending).Scan(&msisdn)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -467,26 +578,63 @@ func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hol
 		}
 	}
 
+	var c changes
+
+	if interim != nil {
+		if err := insertInterimReport(ctx, tx, id, *interim, &c); err != nil {
+			return fmt.Errorf("schedule retry: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("schedule retry: %w", err)
 	}
 
+	d.metrics.count(c)
+
 	return nil
 }
 
-// CountPending returns how many messages wait for delivery at now: those due, which NextDue returns, and those
-// waiting for a later attempt.
-func (d *DB) CountPending(ctx context.Context, now time.Time) (due, waiting int, err error) {
+// PendingCount is how many messages of a kind wait for delivery: those due, which NextDue returns, and those waiting
+// for a later attempt.
+type PendingCount struct {
+	Due     int
+	Waiting int
+}
+
+// CountPending returns how many messages of each kind wait for delivery at now.
+func (d *DB) CountPending(ctx context.Context, now time.Time) (_ map[MessageKind]PendingCount, err error) {
 	defer d.observe(&err)()
 
-	var total int
-	if err := d.conn.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(next_attempt_at <= ?), 0), COUNT(*) FROM messages WHERE status = ?`,
-		now.UTC().UnixNano(), StatusPending).Scan(&due, &total); err != nil {
-		return 0, 0, fmt.Errorf("count pending messages: %w", err)
+	rows, err := d.conn.QueryContext(ctx,
+		`SELECT kind, COALESCE(SUM(next_attempt_at <= ?), 0), COUNT(*) FROM messages WHERE status = ? GROUP BY kind`,
+		now.UTC().UnixNano(), StatusPending)
+	if err != nil {
+		return nil, fmt.Errorf("count pending messages: %w", err)
 	}
 
-	return due, total - due, nil
+	defer func() { _ = rows.Close() }()
+
+	counts := map[MessageKind]PendingCount{KindMessage: {}, KindStatusReport: {}}
+
+	for rows.Next() {
+		var (
+			kind       MessageKind
+			due, total int
+		)
+
+		if err := rows.Scan(&kind, &due, &total); err != nil {
+			return nil, fmt.Errorf("count pending messages: %w", err)
+		}
+
+		counts[kind] = PendingCount{Due: due, Waiting: total - due}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count pending messages: %w", err)
+	}
+
+	return counts, nil
 }
 
 // NextDueFor returns the next message to the recipient, other than the given one, that is due and unexpired at now:
@@ -521,7 +669,8 @@ func holdRecipient(ctx context.Context, tx *sql.Tx, msisdn string, until, now in
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`UPDATE messages SET next_attempt_at = ?, updated_at = ? WHERE msisdn = ? AND status = ? AND next_attempt_at < ?`,
+		`UPDATE messages SET next_attempt_at = MIN(?, expires_at), updated_at = ?
+		WHERE msisdn = ? AND status = ? AND next_attempt_at < MIN(?, expires_at)`,
 		until, now, msisdn, StatusPending, until)
 
 	return err
@@ -600,23 +749,119 @@ func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now
 	return nil
 }
 
-func (d *DB) SetMessageStatus(ctx context.Context, id int64, status MessageStatus, at time.Time) (err error) {
+// CompleteMessage sets the final status of a pending message, and stores the status report on it, if any, in the same
+// transaction, so that the report is neither lost nor stored twice. It returns ErrNotPending, and leaves the message as
+// is, when the message already has a final status, as a message that a later one replaced during its delivery does.
+func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus, at time.Time, report *NewStatusReport) (err error) {
 	defer d.observe(&err)()
 
-	res, err := d.conn.ExecContext(ctx,
-		`UPDATE messages SET status = ?, updated_at = ? WHERE id = ?`, status, at.UTC().UnixNano(), id)
-	if err != nil {
-		return fmt.Errorf("set message status: %w", err)
+	switch status {
+	case StatusDelivered, StatusFailed, StatusExpired:
+	default:
+		return fmt.Errorf("complete message: %q is not a final status of a delivery", status)
 	}
 
-	n, err := res.RowsAffected()
+	tx, err := d.conn.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("set message status: %w", err)
+		return fmt.Errorf("complete message: %w", err)
 	}
 
-	if n == 0 {
+	defer func() { _ = tx.Rollback() }()
+
+	var kind MessageKind
+
+	err = tx.QueryRowContext(ctx,
+		`UPDATE messages SET status = ?, updated_at = ? WHERE id = ? AND status = ? RETURNING kind`,
+		status, at.UTC().UnixNano(), id, StatusPending).Scan(&kind)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("complete message: %w", err)
+	}
+
+	if errors.Is(err, sql.ErrNoRows) {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM messages WHERE id = ?)`, id).Scan(&exists); err != nil {
+			return fmt.Errorf("complete message: %w", err)
+		}
+
+		if exists {
+			return ErrNotPending
+		}
+
 		return ErrNotFound
 	}
 
+	c := changes{completed: []completion{{kind, status}}}
+
+	if report != nil {
+		if err := insertStatusReport(ctx, tx, id, *report, &c); err != nil {
+			return fmt.Errorf("complete message: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("complete message: %w", err)
+	}
+
+	d.metrics.count(c)
+
 	return nil
+}
+
+// ListStatusReports returns the status reports on a message, oldest first.
+func (d *DB) ListStatusReports(ctx context.Context, messageID int64) (_ []Message, err error) {
+	defer d.observe(&err)()
+
+	reports, err := d.statusReportsFor(ctx, []int64{messageID})
+	if err != nil {
+		return nil, err
+	}
+
+	if reports[messageID] == nil {
+		return []Message{}, nil
+	}
+
+	return reports[messageID], nil
+}
+
+// StatusReportsFor returns the status reports on each of the messages that has some, oldest first.
+func (d *DB) StatusReportsFor(ctx context.Context, messageIDs []int64) (_ map[int64][]Message, err error) {
+	defer d.observe(&err)()
+
+	return d.statusReportsFor(ctx, messageIDs)
+}
+
+func (d *DB) statusReportsFor(ctx context.Context, messageIDs []int64) (map[int64][]Message, error) {
+	reports := map[int64][]Message{}
+	if len(messageIDs) == 0 {
+		return reports, nil
+	}
+
+	args := make([]any, len(messageIDs))
+	for i, id := range messageIDs {
+		args[i] = id
+	}
+
+	rows, err := d.conn.QueryContext(ctx,
+		`SELECT `+messageColumns+` FROM messages WHERE report_for IN (?`+strings.Repeat(`, ?`, len(messageIDs)-1)+`)
+		ORDER BY id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list status reports: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list status reports: %w", err)
+		}
+
+		reports[m.ReportFor] = append(reports[m.ReportFor], m)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list status reports: %w", err)
+	}
+
+	return reports, nil
 }

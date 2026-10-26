@@ -14,6 +14,7 @@ import (
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"github.com/ellanetworks/smsc/internal/statusreport"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -29,8 +30,8 @@ const mwdStatusFlags = s6c.MWDStatusMNRF | s6c.MWDStatusMCEF | s6c.MWDStatusMNRG
 type Store interface {
 	NextDue(ctx context.Context, now time.Time, busy []string) (db.Message, bool, error)
 	NextWakeup(ctx context.Context, busy []string) (time.Time, bool, error)
-	SetMessageStatus(ctx context.Context, id int64, status db.MessageStatus, at time.Time) error
-	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) error
+	CompleteMessage(ctx context.Context, id int64, status db.MessageStatus, at time.Time, report *db.NewStatusReport) error
+	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, interim *db.NewStatusReport) error
 	AlertRecipient(ctx context.Context, msisdn string, now time.Time) ([]string, error)
 	SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error
 	NextDueFor(ctx context.Context, msisdn string, excludeID int64, now time.Time) (db.Message, bool, error)
@@ -111,6 +112,8 @@ type forwardResult struct {
 	diagnostic *tgpp.AbsentUserDiagnostic
 	// rejected is set when the MS refused this message, rather than being unable to take any message for now.
 	rejected bool
+	// status is the TP-Status of a status report on an attempt that did not deliver the message.
+	status tpdu.Status
 }
 
 type nodeOutcome struct {
@@ -120,10 +123,22 @@ type nodeOutcome struct {
 	diagnostic *tgpp.AbsentUserDiagnostic
 }
 
+// result is the outcome of a delivery attempt, and the TP-Status of a status report on it (TS 23.040 clause
+// 9.2.3.15). The status of a temporary error is the one for once the SC makes no more transfer attempts.
 type result struct {
 	outcome outcome
 	hold    bool
+	status  tpdu.Status
 }
+
+// The statuses of the outcomes of delivery attempts, which the SC reports to the originator of a message.
+var (
+	statusCongestion      = tpdu.TemporaryCongestion.GaveUp()
+	statusNoResponse      = tpdu.TemporaryNoResponse.GaveUp()
+	statusSMEBusy         = tpdu.TemporarySMEBusy.GaveUp()
+	statusErrorInSME      = tpdu.TemporaryErrorInSME.GaveUp()
+	statusServiceRejected = tpdu.TemporaryServiceRejected.GaveUp()
+)
 
 // session is what the delivery of a message to a recipient leaves for the next one: the serving node that took it, and
 // what the HSS said about the recipient. When the SC announces more messages to send, the serving node keeps the MS
@@ -326,11 +341,11 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 	switch r.outcome {
 	case delivered:
-		return d.complete(ctx, m, db.StatusDelivered, d.Now())
+		return d.complete(ctx, m, db.StatusDelivered, r.status, d.Now())
 	case expired:
-		return d.complete(ctx, m, db.StatusExpired, d.Now())
+		return d.complete(ctx, m, db.StatusExpired, r.status, d.Now())
 	case permanent:
-		return d.complete(ctx, m, db.StatusFailed, d.Now())
+		return d.complete(ctx, m, db.StatusFailed, r.status, d.Now())
 	case interrupted:
 		return nil
 	}
@@ -339,22 +354,52 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 
 	intervals := d.Settings().Delivery.RetryIntervals
 	if m.SingleShot || len(intervals) == 0 {
-		return d.complete(ctx, m, db.StatusFailed, now)
+		return d.complete(ctx, m, db.StatusFailed, r.status, now)
 	}
 
 	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
 
-	return d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold)
+	// The interim report tells the temporary error of this attempt, as of now (TS 23.040 clause 9.2.3.13).
+	var interim *db.NewStatusReport
+
+	if r.status.Class() == tpdu.ClassGaveUp {
+		var err error
+
+		interim, err = statusreport.For(m, r.status.StillTrying(), now, d.Settings())
+		if err != nil {
+			d.Logger.Error("failed to make the interim status report on a short message", slog.Int64("message_id", m.ID),
+				slog.Any("error", err))
+		}
+	}
+
+	return d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold, interim)
 }
 
-// complete sets the final status of a message, and counts it once it is stored, so that a message whose status
-// failed to be stored, which stays pending, is not counted twice.
-func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, at time.Time) error {
-	if err := d.Store.SetMessageStatus(ctx, m.ID, status, at); err != nil {
+// complete sets the final status of a message, with the status report on it that its originator asked for, if any. It
+// times a delivered message once its status is stored, so that a message whose status failed to be stored, which stays
+// pending, is not timed twice. A message that a later one replaced during its delivery keeps its status.
+func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, reported tpdu.Status, at time.Time) error {
+	report, err := statusreport.For(m, reported, at, d.Settings())
+	if err != nil {
+		d.Logger.Error("failed to make the status report on a short message", slog.Int64("message_id", m.ID),
+			slog.Any("error", err))
+	}
+
+	err = d.Store.CompleteMessage(ctx, m.ID, status, at, report)
+	if errors.Is(err, db.ErrNotPending) {
+		d.Logger.Debug("short message replaced during its delivery", slog.Int64("message_id", m.ID),
+			slog.String("status", string(status)))
+
+		return nil
+	}
+
+	if err != nil {
 		return err
 	}
 
-	d.Metrics.complete(m, status, at)
+	if status == db.StatusDelivered {
+		d.Metrics.delivered(m, at)
+	}
 
 	return nil
 }
@@ -368,7 +413,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 
 	if !now.Before(m.ExpiresAt) {
 		log.Debug("short message expired before delivery")
-		return result{outcome: expired}, nil
+		return result{outcome: expired, status: tpdu.StatusValidityPeriodExpired}, nil
 	}
 
 	var (
@@ -387,7 +432,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 			err error
 		)
 
-		routing, hss, err = d.Router.SendRoutingInfoForSM(sri, s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot})
+		routing, hss, err = d.Router.SendRoutingInfoForSM(sri, d.routingRequest(log, m))
 
 		cancel()
 
@@ -414,13 +459,13 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 
 	deliver, err := buildDeliver(m)
 	if err != nil {
-		log.Error("stored short message cannot be turned into an SMS-DELIVER", slog.Any("error", err))
-		return result{outcome: permanent}, nil
+		log.Error("stored short message cannot be turned into a TPDU to deliver", slog.Any("error", err))
+		return result{outcome: permanent, status: tpdu.StatusRemoteProcedureError}, nil
 	}
 
 	if len(targets) == 0 {
 		log.Debug("no serving node reachable over SGd for the recipient")
-		return result{outcome: permanent}, nil
+		return result{outcome: permanent, status: tpdu.StatusNoInterworking}, nil
 	}
 
 	// More messages are to send when another one is due now, which the SC sends right after this one.
@@ -443,29 +488,29 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 			_, reported = d.report(stop, log, m, success, nil)
 		}
 
-		return result{outcome: delivered}, follow(routing, a.via, more && reported)
+		return result{outcome: delivered, status: tpdu.StatusReceived}, follow(routing, a.via, more && reported)
 	}
 
 	if a.outcome == permanent {
-		return result{outcome: permanent}, nil
+		return result{outcome: permanent, status: a.status}, nil
 	}
 
 	if len(a.failures()) == 0 {
-		return result{outcome: temporary, hold: !a.rejected}, nil
+		return result{outcome: temporary, hold: !a.rejected, status: a.status}, nil
 	}
 
 	if !needsReport(a.failures(), routing) {
-		return result{outcome: temporary, hold: true}, nil
+		return result{outcome: temporary, hold: true, status: a.status}, nil
 	}
 
 	alert, ok := d.report(stop, log, m, a.outcomes, &routing.ServingNodes)
 	if !ok {
-		return result{outcome: temporary, hold: true}, nil
+		return result{outcome: temporary, hold: true, status: a.status}, nil
 	}
 
 	retryTargets := deliveryTargets(alert.ServingNodes)
 	if len(retryTargets) == 0 || stop.Err() != nil {
-		return result{outcome: temporary, hold: true}, nil
+		return result{outcome: temporary, hold: true, status: a.status}, nil
 	}
 
 	log.Debug("retrying delivery via the serving nodes the HSS reported")
@@ -477,11 +522,11 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		_, reported := d.report(stop, log, m, retry.successReport(), nil)
 		routing.ServingNodes = alert.ServingNodes
 
-		return result{outcome: delivered}, follow(routing, retry.via, more && reported)
+		return result{outcome: delivered, status: tpdu.StatusReceived}, follow(routing, retry.via, more && reported)
 	case permanent:
-		return result{outcome: permanent}, nil
+		return result{outcome: permanent, status: retry.status}, nil
 	default:
-		return result{outcome: temporary, hold: true}, nil
+		return result{outcome: temporary, hold: true, status: retry.status}, nil
 	}
 }
 
@@ -507,18 +552,55 @@ func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) 
 		d.setAlertMSISDN(ctx, m.MSISDN, re.AlertMSISDN)
 	}
 
-	for _, code := range []uint32{
-		tgpp.ResultErrorUserUnknown,
-		tgpp.ResultErrorServiceNotSubscribed,
-		tgpp.ResultErrorServiceBarred,
-		tgpp.ResultErrorFacilityNotSupported,
+	for code, status := range map[uint32]tpdu.Status{
+		tgpp.ResultErrorUserUnknown:          tpdu.StatusNotObtainable,
+		tgpp.ResultErrorServiceNotSubscribed: tpdu.StatusConnectionRejected,
+		tgpp.ResultErrorServiceBarred:        tpdu.StatusConnectionRejected,
+		tgpp.ResultErrorFacilityNotSupported: tpdu.StatusIncompatibleDestination,
 	} {
 		if tgpp.IsExperimental(err, code) {
-			return result{outcome: permanent}
+			return result{outcome: permanent, status: status}
 		}
 	}
 
-	return result{outcome: temporary, hold: true}
+	if tgpp.IsExperimental(err, tgpp.ResultErrorAbsentUser) {
+		return result{outcome: temporary, hold: true, status: statusNoResponse}
+	}
+
+	return result{outcome: temporary, hold: true, status: statusCongestion}
+}
+
+// routingRequest returns the routing lookup for the delivery of a message or a status report, which the HSS tells
+// apart by SM-RP-MTI (TS 29.338 clause 5.3.3.2).
+func (d *Deliverer) routingRequest(log *slog.Logger, m db.Message) s6c.RoutingRequest {
+	req := s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot}
+
+	if m.Kind == db.KindStatusReport {
+		// SM-RP-SMEA is the TP-OA of the TPDU, which an SMS-STATUS-REPORT does not have (TS 23.040 clause 9.3.2.2).
+		req.MTI = s6c.SMRPMTIStatusReport
+		return req
+	}
+
+	req.MTI = s6c.SMRPMTIDeliver
+	req.SMEA = d.originatingSME(log, m)
+
+	return req
+}
+
+// originatingSME returns the SM-RP-SMEA of the routing lookup: the TP-OA of the SMS-DELIVER (TS 23.040 clause 9.3.2.2).
+// The SC asks the HSS for both an MME and an SGSN, so it must send it (TS 29.338 clause 5.2.1.1).
+func (d *Deliverer) originatingSME(log *slog.Logger, m db.Message) []byte {
+	smea, err := tpdu.Address{
+		TypeOfNumber:  m.Originator.TypeOfNumber,
+		NumberingPlan: m.Originator.NumberingPlan,
+		Digits:        m.Originator.Digits,
+	}.Encode()
+	if err != nil {
+		log.Error("cannot encode the originator for the routing lookup", slog.Any("error", err))
+		return nil
+	}
+
+	return smea
 }
 
 func (d *Deliverer) setAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string) {
@@ -534,6 +616,10 @@ type attemptResult struct {
 	via target
 	// rejected is set when an MS refused the message itself.
 	rejected bool
+	// status is the TP-Status of the first serving node that did not take the message, or of the one that refused it
+	// for good.
+	status    tpdu.Status
+	hasStatus bool
 }
 
 func (a attemptResult) failures() []nodeOutcome {
@@ -594,6 +680,10 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 		}
 
 		a.rejected = a.rejected || r.rejected
+
+		if r.outcome != delivered && (!a.hasStatus || r.outcome == permanent) {
+			a.status, a.hasStatus = r.status, true
+		}
 
 		switch r.outcome {
 		case delivered:
@@ -721,7 +811,21 @@ func (d *Deliverer) report(stop context.Context, log *slog.Logger, m db.Message,
 	return res, true
 }
 
+// buildDeliver returns the TPDU to deliver for a message, given whether more messages wait for the recipient: the
+// SMS-DELIVER of a short message, or the SMS-STATUS-REPORT that the SC stored.
 func buildDeliver(m db.Message) (func(more bool) ([]byte, error), error) {
+	if m.Kind == db.KindStatusReport {
+		report, err := tpdu.DecodeStatusReport(m.TPDU)
+		if err != nil {
+			return nil, err
+		}
+
+		return func(more bool) ([]byte, error) {
+			report.MoreMessagesToSend = more
+			return report.Encode()
+		}, nil
+	}
+
 	submit, err := tpdu.DecodeSubmit(m.TPDU)
 	if err != nil {
 		return nil, err
@@ -736,6 +840,8 @@ func buildDeliver(m db.Message) (func(more bool) ([]byte, error), error) {
 	return func(more bool) ([]byte, error) {
 		deliver := tpdu.DeliverFromSubmit(submit, originator, m.TimeStamp)
 		deliver.MoreMessagesToSend = more
+		// The SC returns status reports on the short messages that an MS submits, when asked (TS 23.040 clause 3.2.9).
+		deliver.StatusReportIndication = m.Origin == db.OriginMobile && submit.StatusReportRequest
 
 		return deliver.Encode()
 	}, nil
@@ -797,7 +903,7 @@ func deliveryTargets(n s6c.ServingNodes) []target {
 func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver func(bool) ([]byte, error), more bool) (forwardResult, error) {
 	smRPUI, err := deliver(more)
 	if err != nil {
-		return forwardResult{outcome: permanent}, err
+		return forwardResult{outcome: permanent, status: tpdu.StatusRemoteProcedureError}, err
 	}
 
 	tfr, err := sgd.NewMTForwardShortMessageRequest(tgpp.Envelope{
@@ -816,7 +922,7 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 		DeliveryStartTime:    d.Now(),
 	})
 	if err != nil {
-		return forwardResult{outcome: permanent}, err
+		return forwardResult{outcome: permanent, status: tpdu.StatusRemoteProcedureError}, err
 	}
 
 	attempt, cancel := context.WithTimeout(ctx, d.AttemptTimeout)
@@ -824,7 +930,7 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 
 	ans, err := d.Sender.Do(attempt, t.name, tfr)
 	if err != nil {
-		return forwardResult{outcome: temporary}, err
+		return forwardResult{outcome: temporary, status: statusCongestion}, err
 	}
 
 	_, err = sgd.ParseMTForwardShortMessageAnswer(ans)
@@ -839,45 +945,56 @@ func classifyForwardAnswer(err error) forwardResult {
 
 	var re *sgd.ResultError
 	if !errors.As(err, &re) {
-		return forwardResult{outcome: temporary}
+		return forwardResult{outcome: temporary, status: statusCongestion}
 	}
 
 	code := re.Code
 
 	if !re.Experimental {
 		if code >= 5000 && code < 6000 {
-			return forwardResult{outcome: targetFailed}
+			return forwardResult{outcome: targetFailed, status: statusCongestion}
 		}
 
-		return forwardResult{outcome: temporary}
+		return forwardResult{outcome: temporary, status: statusCongestion}
 	}
 
 	if re.VendorID != tgpp.VendorID {
-		return forwardResult{outcome: temporary}
+		return forwardResult{outcome: temporary, status: statusCongestion}
 	}
 
 	switch code {
 	case tgpp.ResultErrorUserUnknown:
-		return forwardResult{outcome: targetFailed, cause: ptr(s6c.DeliveryCauseAbsentUser)}
+		return forwardResult{outcome: targetFailed, cause: ptr(s6c.DeliveryCauseAbsentUser), status: statusNoResponse}
 	case tgpp.ResultErrorAbsentUser:
-		return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseAbsentUser), diagnostic: re.AbsentUserDiagnostic}
+		return forwardResult{
+			outcome: temporary, cause: ptr(s6c.DeliveryCauseAbsentUser), diagnostic: re.AbsentUserDiagnostic,
+			status: statusNoResponse,
+		}
+	case tgpp.ResultErrorUserBusyForMTSMS:
+		return forwardResult{outcome: temporary, status: statusSMEBusy}
 	case tgpp.ResultErrorIllegalUser, tgpp.ResultErrorIllegalEquipment:
-		return forwardResult{outcome: permanent}
+		return forwardResult{outcome: permanent, status: tpdu.StatusConnectionRejected}
 	case tgpp.ResultErrorSMDeliveryFailure:
 		cause := re.DeliveryFailureCause
 
 		switch {
 		case cause != nil && *cause == sgd.CauseEquipmentNotSMEquipped:
-			return forwardResult{outcome: permanent}
+			return forwardResult{outcome: permanent, status: tpdu.StatusIncompatibleDestination}
 		case cause != nil && *cause == sgd.CauseMemoryCapacityExceeded:
-			return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded)}
+			return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded), status: statusErrorInSME}
 		case cause != nil && *cause == sgd.CauseEquipmentProtocolError:
-			return forwardResult{outcome: temporary, rejected: rejectsMessage(re.DiagnosticInfo)}
+			if rejectsMessage(re.DiagnosticInfo) {
+				return forwardResult{outcome: temporary, rejected: true, status: statusServiceRejected}
+			}
+
+			return forwardResult{outcome: temporary, status: statusErrorInSME}
 		default:
-			return forwardResult{outcome: temporary}
+			return forwardResult{outcome: temporary, status: statusErrorInSME}
 		}
+	case tgpp.ResultErrorFacilityNotSupported:
+		return forwardResult{outcome: temporary, status: statusServiceRejected}
 	default:
-		return forwardResult{outcome: temporary}
+		return forwardResult{outcome: temporary, status: statusCongestion}
 	}
 }
 

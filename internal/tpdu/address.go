@@ -59,7 +59,8 @@ func decodeAddress(b []byte) (Address, int, error) {
 	return addr, 2 + valueOctets, nil
 }
 
-func (a Address) encode() ([]byte, error) {
+// Encode returns the address field of TS 23.040 clause 9.1.2.5.
+func (a Address) Encode() ([]byte, error) {
 	if a.TypeOfNumber == TypeOfNumberAlphanumeric {
 		return nil, fmt.Errorf("address: %w: alphanumeric", ErrUnsupportedAddress)
 	}

@@ -136,7 +136,7 @@ func (s Submit) Encode() ([]byte, error) {
 		return nil, fmt.Errorf("sms-submit: %w", ErrUserDataTooLong)
 	}
 
-	da, err := s.Destination.encode()
+	da, err := s.Destination.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("sms-submit: destination %w", err)
 	}

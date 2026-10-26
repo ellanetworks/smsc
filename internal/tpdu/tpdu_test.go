@@ -227,7 +227,7 @@ func TestAddressRoundTrip(t *testing.T) {
 	for _, digits := range []string{"", "1", "12", "123*#abc", "15551230001"} {
 		in := Address{TypeOfNumber: 0x1, NumberingPlan: 0x1, Digits: digits}
 
-		b, err := in.encode()
+		b, err := in.Encode()
 		if err != nil {
 			t.Fatalf("encode %q: %v", digits, err)
 		}
@@ -243,7 +243,7 @@ func TestAddressRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDeliverFromSubmitDoesNotPromiseStatusReport(t *testing.T) {
+func TestDeliverFromSubmitLeavesStatusReportIndicationToTheSC(t *testing.T) {
 	s, err := DecodeSubmit(mustHex(t, "31"+"07"+"0b91"+"5155210300f0"+"00"+"00"+"aa"+"05"+"e8329bfd06"))
 	if err != nil || !s.StatusReportRequest {
 		t.Fatalf("DecodeSubmit = %+v, %v", s, err)
@@ -255,6 +255,6 @@ func TestDeliverFromSubmitDoesNotPromiseStatusReport(t *testing.T) {
 	}
 
 	if b[0]&0x20 != 0 {
-		t.Fatalf("TP-SRI set (first octet %02x) with no SMS-STATUS-REPORT support", b[0])
+		t.Fatalf("TP-SRI set (first octet %02x): whether the SC returns a status report is for the SC to tell", b[0])
 	}
 }

@@ -291,12 +291,12 @@ func BenchmarkAlertDrainsHeldMessages(b *testing.B) {
 	}
 
 	waitFor(b, "every recipient to be held", func() bool {
-		_, waiting, err := s.store.CountPending(context.Background(), time.Now())
+		counts, err := s.store.CountPending(context.Background(), time.Now())
 		if err != nil {
 			b.Fatal(err)
 		}
 
-		return waiting == b.N
+		return counts[db.KindMessage].Waiting == b.N
 	})
 
 	alerts := make([]*diameter.Message, b.N)

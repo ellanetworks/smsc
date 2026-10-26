@@ -76,8 +76,8 @@ func TestMessageLifecycle(t *testing.T) {
 		t.Fatalf("GetMessage: %v", err)
 	}
 
-	if m.Originator != testOriginator || m.Recipient != testRecipient || !bytes.Equal(m.TPDU, tpdu) ||
-		m.MessageReference != 7 || m.Origin != OriginMobile {
+	if m.Kind != KindMessage || m.ReportFor != 0 || m.Originator != testOriginator || m.Recipient != testRecipient ||
+		!bytes.Equal(m.TPDU, tpdu) || m.MessageReference != 7 || m.Origin != OriginMobile {
 		t.Fatalf("message = %+v", m)
 	}
 
@@ -86,8 +86,8 @@ func TestMessageLifecycle(t *testing.T) {
 	}
 
 	delivered := submitted.Add(time.Second)
-	if err := d.SetMessageStatus(ctx, id, StatusDelivered, delivered); err != nil {
-		t.Fatalf("SetMessageStatus: %v", err)
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, nil); err != nil {
+		t.Fatalf("CompleteMessage: %v", err)
 	}
 
 	m, err = d.GetMessage(ctx, id)
@@ -106,14 +106,14 @@ func TestGetMessageNotFound(t *testing.T) {
 	}
 }
 
-func TestSetMessageStatusNotFound(t *testing.T) {
-	err := openTestDB(t).SetMessageStatus(context.Background(), 42, StatusFailed, time.Now())
+func TestCompleteMessageNotFound(t *testing.T) {
+	err := openTestDB(t).CompleteMessage(context.Background(), 42, StatusFailed, time.Now(), nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 
-func TestSetMessageStatusRejectsUnknownStatus(t *testing.T) {
+func TestCompleteMessageRejectsOtherStatuses(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 
@@ -122,8 +122,38 @@ func TestSetMessageStatusRejectsUnknownStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.SetMessageStatus(ctx, id, "lost", time.Now()); err == nil {
-		t.Fatal("expected an error for an unknown status")
+	for _, status := range []MessageStatus{StatusPending, StatusReplaced, "lost"} {
+		if err := d.CompleteMessage(ctx, id, status, time.Now(), nil); err == nil {
+			t.Fatalf("expected an error for status %q", status)
+		}
+	}
+}
+
+func TestCompleteMessageOnlyCompletesPendingMessages(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.CompleteMessage(ctx, id, StatusFailed, now, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	err = d.CompleteMessage(ctx, id, StatusDelivered, now.Add(time.Second), testReport(now))
+	if !errors.Is(err, ErrNotPending) {
+		t.Fatalf("err = %v, want ErrNotPending", err)
+	}
+
+	if m, err := d.GetMessage(ctx, id); err != nil || m.Status != StatusFailed || !m.UpdatedAt.Equal(now) {
+		t.Fatalf("message = %+v, %v; want it left failed", m, err)
+	}
+
+	if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 0 {
+		t.Fatalf("reports = %+v, %v; want none", reports, err)
 	}
 }
 
@@ -300,7 +330,7 @@ func TestListMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.SetMessageStatus(ctx, ids[3], StatusDelivered, now); err != nil {
+	if err := d.CompleteMessage(ctx, ids[3], StatusDelivered, now, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -384,7 +414,7 @@ func TestRejectDuplicates(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := d.SetMessageStatus(ctx, id, StatusDelivered, now); err != nil {
+		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -445,65 +475,159 @@ func TestExpiryAndSingleShotStored(t *testing.T) {
 	}
 }
 
+func replaceType(m NewMessage) NewMessage {
+	m.ProtocolIdentifier = 0x41
+	m.Replace = true
+
+	return m
+}
+
 func TestReplaceShortMessage(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 
-	original := testMessage(1, false, []byte{0x01}, now)
-	original.ProtocolIdentifier = 0x41
-	original.Replace = true
-
-	id, err := d.CreateMessage(ctx, original)
+	id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, []byte{0x01}, now)))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	replacement := testMessage(2, false, []byte{0x02}, now.Add(time.Minute))
-	replacement.ProtocolIdentifier = 0x41
-	replacement.Replace = true
-	replacement.Recipient.Digits = "15551239999"
+	// The same recipient, dialled as a national number.
+	replacement := replaceType(testMessage(2, false, []byte{0x02}, now.Add(time.Minute)))
+	replacement.Recipient = Address{Digits: "5551230002", TypeOfNumber: 2, NumberingPlan: 1}
 
-	replacedID, err := d.CreateMessage(ctx, replacement)
+	replacementID, err := d.CreateMessage(ctx, replacement)
+	if err != nil || replacementID == id {
+		t.Fatalf("replacement stored as %d, %v; want a new message", replacementID, err)
+	}
+
+	if m, err := d.GetMessage(ctx, id); err != nil || m.Status != StatusReplaced || !bytes.Equal(m.TPDU, []byte{0x01}) ||
+		m.MessageReference != 1 || !m.UpdatedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("replaced message = %+v, %v", m, err)
+	}
+
+	if m, err := d.GetMessage(ctx, replacementID); err != nil || m.Status != StatusPending ||
+		!bytes.Equal(m.TPDU, []byte{0x02}) || m.Recipient != replacement.Recipient {
+		t.Fatalf("replacement = %+v, %v", m, err)
+	}
+
+	tests := map[string]func(NewMessage) NewMessage{
+		"another replace type": func(m NewMessage) NewMessage {
+			m.ProtocolIdentifier = 0x42
+			return m
+		},
+		"another recipient": func(m NewMessage) NewMessage {
+			m.Recipient.Digits, m.MSISDN = "15551239999", "15551239999"
+			return m
+		},
+		"another originator": func(m NewMessage) NewMessage {
+			m.Originator.Digits = "15551239999"
+			return m
+		},
+	}
+
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := d.CreateMessage(ctx, change(replaceType(testMessage(3, false, []byte{0x03}, now)))); err != nil {
+				t.Fatal(err)
+			}
+
+			if m, err := d.GetMessage(ctx, replacementID); err != nil || m.Status != StatusPending {
+				t.Fatalf("replacement = %+v, %v; want it still pending", m, err)
+			}
+		})
+	}
+
+	if err := d.CompleteMessage(ctx, replacementID, StatusDelivered, now, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	afterDelivery, err := d.CreateMessage(ctx, replaceType(testMessage(4, false, []byte{0x04}, now)))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if replacedID != id {
-		t.Fatalf("replacement stored as %d, want it to replace %d", replacedID, id)
+	if m, err := d.GetMessage(ctx, replacementID); err != nil || m.Status != StatusDelivered || afterDelivery == replacementID {
+		t.Fatalf("delivered message = %+v, %v; want it left delivered", m, err)
 	}
+}
 
-	m, err := d.GetMessage(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestReplacedMessageStatusReport(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 
-	if !bytes.Equal(m.TPDU, []byte{0x02}) || m.Recipient.Digits != "15551239999" || m.MessageReference != 2 ||
-		!m.SubmittedAt.Equal(now.Add(time.Minute)) {
-		t.Fatalf("replaced message = %+v", m)
-	}
+	t.Run("stored with the replacement", func(t *testing.T) {
+		d := openTestDB(t)
 
-	otherType := testMessage(3, false, []byte{0x03}, now)
-	otherType.ProtocolIdentifier = 0x42
-	otherType.Replace = true
+		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, []byte{0x01}, now)))
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	otherID, err := d.CreateMessage(ctx, otherType)
-	if err != nil || otherID == id {
-		t.Fatalf("different replace type stored as %d, %v; want a new message", otherID, err)
-	}
+		var seen Message
 
-	if err := d.SetMessageStatus(ctx, id, StatusDelivered, now); err != nil {
-		t.Fatal(err)
-	}
+		replacement := replaceType(testMessage(2, false, []byte{0x02}, now.Add(time.Minute)))
+		replacement.ReportReplaced = func(replaced Message) (*NewStatusReport, error) {
+			seen = replaced
+			return testReport(now.Add(time.Minute)), nil
+		}
 
-	afterDelivery := testMessage(4, false, []byte{0x04}, now)
-	afterDelivery.ProtocolIdentifier = 0x41
-	afterDelivery.Replace = true
+		if _, err := d.CreateMessage(ctx, replacement); err != nil {
+			t.Fatal(err)
+		}
 
-	newID, err := d.CreateMessage(ctx, afterDelivery)
-	if err != nil || newID == id {
-		t.Fatalf("replace after delivery stored as %d, %v; want a new message", newID, err)
-	}
+		if seen.ID != id || seen.Status != StatusReplaced || !bytes.Equal(seen.TPDU, []byte{0x01}) {
+			t.Fatalf("ReportReplaced got %+v", seen)
+		}
+
+		if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 1 {
+			t.Fatalf("reports = %+v, %v; want one", reports, err)
+		}
+	})
+
+	t.Run("none when not wanted", func(t *testing.T) {
+		d := openTestDB(t)
+
+		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, []byte{0x01}, now)))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		replacement := replaceType(testMessage(2, false, []byte{0x02}, now))
+		replacement.ReportReplaced = func(Message) (*NewStatusReport, error) { return nil, nil }
+
+		if _, err := d.CreateMessage(ctx, replacement); err != nil {
+			t.Fatal(err)
+		}
+
+		if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 0 {
+			t.Fatalf("reports = %+v, %v; want none", reports, err)
+		}
+	})
+
+	t.Run("a failure stores nothing", func(t *testing.T) {
+		d := openTestDB(t)
+
+		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, []byte{0x01}, now)))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		replacement := replaceType(testMessage(2, false, []byte{0x02}, now))
+		replacement.ReportReplaced = func(Message) (*NewStatusReport, error) { return nil, errors.New("no report") }
+
+		if _, err := d.CreateMessage(ctx, replacement); err == nil {
+			t.Fatal("expected an error")
+		}
+
+		if m, err := d.GetMessage(ctx, id); err != nil || m.Status != StatusPending {
+			t.Fatalf("message = %+v, %v; want it still pending", m, err)
+		}
+
+		if messages, total, err := d.ListMessages(ctx, MessageFilter{}, 1, 10); err != nil || total != 1 {
+			t.Fatalf("messages = %+v, %d, %v; want only the original", messages, total, err)
+		}
+	})
 }
 
 func TestDeliveryScheduling(t *testing.T) {
@@ -530,7 +654,7 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("NextDue = %+v, %v, %v; want message %d", m, ok, err, first)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute), false); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute), false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -557,15 +681,15 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("NextDueFor = %+v, %v, %v; want message %d", next, ok, err, second)
 	}
 
-	if err := d.SetMessageStatus(ctx, second, StatusExpired, base); err != nil {
+	if err := d.CompleteMessage(ctx, second, StatusExpired, base, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.SetMessageStatus(ctx, first, StatusDelivered, base); err != nil {
+	if err := d.CompleteMessage(ctx, first, StatusDelivered, base, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base, base, false); !errors.Is(err, ErrNotFound) {
+	if err := d.ScheduleRetry(ctx, first, base, base, false, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ScheduleRetry on a delivered message = %v, want ErrNotFound", err)
 	}
 
@@ -626,12 +750,12 @@ func TestHoldAndAlertRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base, false); err != nil {
+	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -671,7 +795,7 @@ func TestAlertMSISDN(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, id, base.Add(time.Hour), base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, id, base.Add(time.Hour), base, true, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -719,7 +843,7 @@ func TestNewMessageJoinsRecipientHold(t *testing.T) {
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -762,7 +886,7 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -775,11 +899,11 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatalf("message after a plain retry next attempt = %v, %v; a retry is not a hold", m.NextAttemptAt, err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(2*time.Hour), base.Add(time.Minute), true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(2*time.Hour), base.Add(time.Minute), true, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(90*time.Minute), base.Add(time.Minute), true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(90*time.Minute), base.Add(time.Minute), true, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -818,22 +942,34 @@ func TestCountPending(t *testing.T) {
 		}
 	}
 
-	// One is delivered, one waits for a retry, and one is due.
-	if err := d.SetMessageStatus(ctx, 1, StatusDelivered, now); err != nil {
+	// One is delivered, with a status report that is due, one waits for a retry, and one is due.
+	if err := d.CompleteMessage(ctx, 1, StatusDelivered, now, testReport(now)); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now, false); err != nil {
+	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	if due, waiting, err := d.CountPending(ctx, now); err != nil || due != 1 || waiting != 1 {
-		t.Fatalf("CountPending = %d due, %d waiting, %v, want 1 and 1", due, waiting, err)
+	want := map[MessageKind]PendingCount{KindMessage: {Due: 1, Waiting: 1}, KindStatusReport: {Due: 1}}
+	if got, err := d.CountPending(ctx, now); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("CountPending = %+v, %v, want %+v", got, err, want)
 	}
 
 	// Once its retry is due, the second is due too.
-	if due, waiting, err := d.CountPending(ctx, now.Add(time.Minute)); err != nil || due != 2 || waiting != 0 {
-		t.Fatalf("CountPending a minute later = %d due, %d waiting, %v, want 2 and 0", due, waiting, err)
+	want[KindMessage] = PendingCount{Due: 2}
+	if got, err := d.CountPending(ctx, now.Add(time.Minute)); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("CountPending a minute later = %+v, %v, want %+v", got, err, want)
+	}
+
+	if err := d.CompleteMessage(ctx, 4, StatusDelivered, now, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without pending status reports, their count is zero.
+	want[KindStatusReport] = PendingCount{}
+	if got, err := d.CountPending(ctx, now.Add(time.Minute)); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("CountPending without reports = %+v, %v, want %+v", got, err, want)
 	}
 }
 
@@ -852,7 +988,7 @@ func TestScheduleRetryHoldsOnlyWhenAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -860,11 +996,62 @@ func TestScheduleRetryHoldsOnlyWhenAsked(t *testing.T) {
 		t.Fatalf("other message after a retry without hold = %v, %v; want it still due", m.NextAttemptAt, err)
 	}
 
-	if err := d.ScheduleRetry(ctx, second, base.Add(time.Minute), base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, second, base.Add(time.Minute), base, true, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	for id, want := range map[int64]time.Time{first: base.Add(time.Hour), second: base.Add(time.Minute)} {
+		if m, err := d.GetMessage(ctx, id); err != nil || !m.NextAttemptAt.Equal(want) {
+			t.Fatalf("message %d next attempt = %v, %v; want %v", id, m.NextAttemptAt, err, want)
+		}
+	}
+}
+
+func TestMessagesAreDueNoLaterThanTheyExpire(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	retried := testMessage(1, false, []byte{0x01}, base)
+	retried.ExpiresAt = base.Add(30 * time.Minute)
+
+	first, err := d.CreateMessage(ctx, retried)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waiting, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expiring := testMessage(3, false, []byte{0x03}, base)
+	expiring.ExpiresAt = base.Add(10 * time.Minute)
+
+	held, err := d.CreateMessage(ctx, expiring)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	until := base.Add(time.Hour)
+	if err := d.ScheduleRetry(ctx, first, until, base, true, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	arriving := testMessage(4, false, []byte{0x04}, base.Add(time.Minute))
+	arriving.ExpiresAt = base.Add(20 * time.Minute)
+
+	late, err := d.CreateMessage(ctx, arriving)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for id, want := range map[int64]time.Time{
+		first:   base.Add(30 * time.Minute),
+		waiting: until,
+		held:    base.Add(10 * time.Minute),
+		late:    base.Add(20 * time.Minute),
+	} {
 		if m, err := d.GetMessage(ctx, id); err != nil || !m.NextAttemptAt.Equal(want) {
 			t.Fatalf("message %d next attempt = %v, %v; want %v", id, m.NextAttemptAt, err, want)
 		}
@@ -951,11 +1138,12 @@ func TestReplacedMessageTakesANewTimeStamp(t *testing.T) {
 	replacement.ProtocolIdentifier = 0x41
 	replacement.Replace = true
 
-	if replaced, err := d.CreateMessage(ctx, replacement); err != nil || replaced != id {
-		t.Fatalf("replacement stored as %d, %v; want %d", replaced, err, id)
+	replacementID, err := d.CreateMessage(ctx, replacement)
+	if err != nil || replacementID == id {
+		t.Fatalf("replacement stored as %d, %v; want a new message", replacementID, err)
 	}
 
-	if m, err := d.GetMessage(ctx, id); err != nil || !m.TimeStamp.Equal(base.Add(time.Second)) {
+	if m, err := d.GetMessage(ctx, replacementID); err != nil || !m.TimeStamp.Equal(base.Add(time.Second)) {
 		t.Fatalf("time stamp = %v, %v; want one the recipient has not seen", m.TimeStamp, err)
 	}
 }

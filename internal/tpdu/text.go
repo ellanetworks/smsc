@@ -2,7 +2,6 @@ package tpdu
 
 import (
 	"errors"
-	"fmt"
 	"unicode/utf16"
 )
 
@@ -224,17 +223,14 @@ type Content struct {
 }
 
 func (s Submit) Content() (Content, error) {
-	var (
-		c      Content
-		header []byte
-	)
+	var c Content
 
-	if s.UserDataHeader {
-		if len(s.UserData) == 0 || int(s.UserData[0])+1 > len(s.UserData) {
-			return Content{}, fmt.Errorf("user data header: %w", errTruncated)
-		}
+	header, err := userDataHeader(s.UserDataHeader, s.UserData)
+	if err != nil {
+		return Content{}, err
+	}
 
-		header = s.UserData[:1+int(s.UserData[0])]
+	if header != nil {
 		c.Concatenation = concatenation(header[1:])
 	}
 
@@ -252,25 +248,21 @@ func (s Submit) Content() (Content, error) {
 	return c, nil
 }
 
-func concatenation(ies []byte) *Concatenation {
+func concatenation(header []byte) *Concatenation {
+	ies, ok := informationElements(header)
+	if !ok {
+		return nil
+	}
+
 	var last *Concatenation
 
-	for len(ies) > 0 {
-		if len(ies) < 2 || len(ies) < 2+int(ies[1]) {
-			return nil
-		}
-
-		iei, length := ies[0], int(ies[1])
-		data := ies[2 : 2+length]
-
+	for _, ie := range ies {
 		switch {
-		case iei == ieiConcat8 && length == 3:
-			last = &Concatenation{Reference: uint16(data[0]), Total: data[1], Part: data[2]}
-		case iei == ieiConcat16 && length == 4:
-			last = &Concatenation{Reference: uint16(data[0])<<8 | uint16(data[1]), Total: data[2], Part: data[3]}
+		case ie.id == ieiConcat8 && len(ie.data) == 3:
+			last = &Concatenation{Reference: uint16(ie.data[0]), Total: ie.data[1], Part: ie.data[2]}
+		case ie.id == ieiConcat16 && len(ie.data) == 4:
+			last = &Concatenation{Reference: uint16(ie.data[0])<<8 | uint16(ie.data[1]), Total: ie.data[2], Part: ie.data[3]}
 		}
-
-		ies = ies[2+length:]
 	}
 
 	if last == nil || last.Total == 0 || last.Part == 0 || last.Part > last.Total {

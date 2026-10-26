@@ -478,3 +478,36 @@ func TestMOForwardNotifiesWhenStored(t *testing.T) {
 		t.Fatalf("notified %d times, want once for the stored message only", notified)
 	}
 }
+
+func TestMOForwardReportsTheMessageItReplaces(t *testing.T) {
+	store := &fakeStore{}
+
+	// A Replace Short Message Type 1, which replaces the pending message of the same type.
+	newTestHandler(store).ServeDiameter(context.Background(), nil,
+		ofrWithSubmit(t, "01"+"08"+"0b91"+"5155210300f2"+"41"+"00"+"00"))
+
+	if len(store.stored) != 1 || !store.stored[0].Replace || store.stored[0].ReportReplaced == nil {
+		t.Fatalf("stored = %+v", store.stored)
+	}
+
+	replaced := func(submit string) db.Message {
+		return db.Message{
+			ID: 3, Kind: db.KindMessage, Origin: db.OriginMobile, TPDU: mustHex(t, submit),
+			SubmittedAt: testNow.Add(-time.Hour),
+		}
+	}
+
+	report, err := store.stored[0].ReportReplaced(replaced("21" + "07" + "0b91" + "5155210300f2" + "41" + "00" + "00"))
+	if err != nil || report == nil || report.Status != uint8(tpdu.StatusReplaced) || !report.CreatedAt.Equal(testNow) {
+		t.Fatalf("report = %+v, %v; want one on the replaced message", report, err)
+	}
+
+	for name, submit := range map[string]string{
+		"not requested": "01" + "07" + "0b91" + "5155210300f2" + "41" + "00" + "00",
+		"undecodable":   "00",
+	} {
+		if report, err := store.stored[0].ReportReplaced(replaced(submit)); err != nil || report != nil {
+			t.Fatalf("%s: report = %+v, %v; want none, and the replacement stored", name, report, err)
+		}
+	}
+}

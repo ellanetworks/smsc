@@ -70,6 +70,12 @@ type mtMessage struct {
 	tpdu []byte
 }
 
+type routingRequest struct {
+	msisdn string
+	mti    s6c.MTI
+	smea   []byte
+}
+
 type deliveryReport struct {
 	msisdn     string
 	cause      uint32
@@ -95,7 +101,7 @@ type fakeCore struct {
 	absent      map[string]bool
 	mwdStatus   map[string]uint32
 	answerMT    func(imsi string) *diameter.Message
-	routings    []string
+	routings    []routingRequest
 	delivered   []mtMessage
 	reports     []deliveryReport
 }
@@ -235,10 +241,21 @@ func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
 		return c.answer(req, diameter.ResultInvalidAVPValue)
 	}
 
+	r := routingRequest{msisdn: msisdn}
+
+	if a, ok := req.Find(s6c.AVPSMRPMTI, tgpp.VendorID); ok {
+		mti, _ := a.Unsigned32()
+		r.mti = s6c.MTI(mti)
+	}
+
+	if a, ok := req.Find(s6c.AVPSMRPSMEA, tgpp.VendorID); ok {
+		r.smea = a.Data
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.routings = append(c.routings, msisdn)
+	c.routings = append(c.routings, r)
 
 	sub, ok := c.subscribers[msisdn]
 
@@ -369,7 +386,19 @@ func (c *fakeCore) routingRequests() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return append([]string(nil), c.routings...)
+	out := make([]string, 0, len(c.routings))
+	for _, r := range c.routings {
+		out = append(out, r.msisdn)
+	}
+
+	return out
+}
+
+func (c *fakeCore) routingDetails() []routingRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]routingRequest(nil), c.routings...)
 }
 
 func (c *fakeCore) deliveryReports() []deliveryReport {
@@ -451,12 +480,18 @@ func (c *fakeCore) waitForSMSC() {
 func (c *fakeCore) submit(from, to subscriber, text string) uint32 {
 	c.t.Helper()
 
+	return c.submitTPDU(from, smsSubmit(c.t, to.msisdn, text))
+}
+
+func (c *fakeCore) submitTPDU(from subscriber, submit []byte) uint32 {
+	c.t.Helper()
+
 	ans := c.do(c.request(sgd.CommandMOForwardShortMessage, sgd.ApplicationID,
 		diameter.OctetString(tgpp.AVPSCAddress, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(c.t, serviceCentreAddress)),
 		diameter.Grouped(tgpp.AVPUserIdentifier, diameter.AVPFlagMandatory, tgpp.VendorID,
 			diameter.UTF8String(diameter.AVPUserName, diameter.AVPFlagMandatory, 0, from.imsi),
 			diameter.OctetString(tgpp.AVPMSISDN, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(c.t, from.msisdn))),
-		diameter.OctetString(sgd.AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, smsSubmit(c.t, to.msisdn, text)),
+		diameter.OctetString(sgd.AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, submit),
 	))
 
 	return resultOf(c.t, ans)
@@ -1308,8 +1343,8 @@ func TestHeldMessagesFollowInOneSession(t *testing.T) {
 	}
 
 	eventually(t, "the recipient to be held", func() bool {
-		_, waiting, err := s.store.CountPending(context.Background(), time.Now())
-		return err == nil && waiting == len(texts)
+		counts, err := s.store.CountPending(context.Background(), time.Now())
+		return err == nil && counts[db.KindMessage].Waiting == len(texts)
 	})
 
 	core.setAbsent(bob.msisdn, false)

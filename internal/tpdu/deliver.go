@@ -36,7 +36,7 @@ func (d Deliver) Encode() ([]byte, error) {
 			len(d.UserData), d.UserDataLength, userDataOctets(d.DataCodingScheme, d.UserDataLength))
 	}
 
-	oa, err := d.Originator.encode()
+	oa, err := d.Originator.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("sms-deliver: originator %w", err)
 	}

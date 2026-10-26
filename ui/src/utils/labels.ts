@@ -4,6 +4,8 @@ import type {
   Message,
   MessageEncoding,
   NodeType,
+  StatusReport,
+  StatusReportClass,
 } from "@/queries/messages";
 
 export const encodingLabels: Record<MessageEncoding, string> = {
@@ -36,3 +38,16 @@ export const partLabel = (m: Message): string =>
   m.concatenation ? `${m.concatenation.part} of ${m.concatenation.total}` : "—";
 
 export const messageText = (m: Message): string => m.text ?? "(binary)";
+
+export const reportClassLabels: Record<StatusReportClass, string> = {
+  completed: "Completed",
+  still_trying: "Still trying",
+  permanent: "Permanent error",
+  gave_up: "Gave up",
+};
+
+const hex = (n: number): string => `0x${n.toString(16).padStart(2, "0")}`;
+
+// tpStatusLabel names a TP-Status (TS 23.040 clause 9.2.3.15) with its value, such as "no response (0x22)".
+export const tpStatusLabel = (r: StatusReport): string =>
+  `${r.tp_status_name.replaceAll("_", " ")} (${hex(r.tp_status)})`;

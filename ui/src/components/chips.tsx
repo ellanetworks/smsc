@@ -6,6 +6,7 @@ const statusColors: Record<MessageStatus, ChipProps["color"]> = {
   delivered: "success",
   failed: "error",
   expired: "warning",
+  replaced: "default",
 };
 
 export function MessageStatusChip({ status }: { status: MessageStatus }) {

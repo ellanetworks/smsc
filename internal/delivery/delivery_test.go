@@ -35,6 +35,8 @@ type fakeStore struct {
 	alerts       []string
 	alertMSISDNs map[string]string
 	recipients   []string
+	reports      map[int64]*db.NewStatusReport
+	interims     map[int64][]*db.NewStatusReport
 }
 
 type attempt struct {
@@ -49,7 +51,12 @@ type hold struct {
 }
 
 func newFakeStore(messages ...db.Message) *fakeStore {
-	s := &fakeStore{messages: map[int64]*db.Message{}, alertMSISDNs: map[string]string{}}
+	s := &fakeStore{
+		messages:     map[int64]*db.Message{},
+		alertMSISDNs: map[string]string{},
+		reports:      map[int64]*db.NewStatusReport{},
+		interims:     map[int64][]*db.NewStatusReport{},
+	}
 
 	for _, m := range messages {
 		s.messages[m.ID] = &m
@@ -103,22 +110,34 @@ func (s *fakeStore) NextWakeup(context.Context, []string) (time.Time, bool, erro
 	return time.Time{}, false, nil
 }
 
-func (s *fakeStore) SetMessageStatus(_ context.Context, id int64, status db.MessageStatus, _ time.Time) error {
+func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.MessageStatus, _ time.Time, report *db.NewStatusReport) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.messages[id].Status != db.StatusPending {
+		return db.ErrNotPending
+	}
+
 	s.messages[id].Status = status
+
+	if report != nil {
+		s.reports[id] = report
+	}
 
 	return nil
 }
 
-func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool) error {
+func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool, interim *db.NewStatusReport) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	m := s.messages[id]
 	m.NextAttemptAt = at
 	m.Retries++
+
+	if interim != nil {
+		s.interims[id] = append(s.interims[id], interim)
+	}
 
 	if !holdRecipient {
 		return nil
@@ -246,6 +265,8 @@ func pendingMessage(t *testing.T) db.Message {
 
 	return db.Message{
 		ID:                 1,
+		Kind:               db.KindMessage,
+		Origin:             db.OriginMobile,
 		Originator:         db.Address{Digits: "15551230001", TypeOfNumber: 1, NumberingPlan: 1},
 		Recipient:          db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1},
 		MSISDN:             "15551230002",
@@ -311,7 +332,10 @@ func newDeliverer(store Store, router Router, sender Sender) *Deliverer {
 		Settings: func() settings.Settings {
 			return settings.Settings{
 				Operator: settings.Operator{ServiceCentreAddress: "15550000000"},
-				Delivery: settings.Delivery{RetryIntervals: []time.Duration{time.Minute, 5 * time.Minute}},
+				Delivery: settings.Delivery{
+					DefaultValidity: 24 * time.Hour,
+					RetryIntervals:  []time.Duration{time.Minute, 5 * time.Minute},
+				},
 			}
 		},
 		AttemptTimeout: 30 * time.Second,
@@ -401,7 +425,8 @@ func TestDeliverViaMME(t *testing.T) {
 		t.Fatalf("status = %s", store.messages[1].Status)
 	}
 
-	if len(router.requests) != 1 || router.requests[0].MSISDN != "15551230002" || router.requests[0].SingleAttempt {
+	if len(router.requests) != 1 || router.requests[0].MSISDN != "15551230002" || router.requests[0].SingleAttempt ||
+		router.requests[0].MTI != s6c.SMRPMTIDeliver || !bytes.Equal(router.requests[0].SMEA, mustHex(t, "0b91"+"5155210300f1")) {
 		t.Fatalf("routing requests = %+v", router.requests)
 	}
 

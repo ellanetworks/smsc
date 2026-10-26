@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
-import MessageDrawer from "@/components/MessageDrawer";
+import MessageDrawer, { inProgress } from "@/components/MessageDrawer";
 import type { Attempt, Message } from "@/queries/messages";
 import { json, renderWithClient, stubApi } from "@/test/render";
 import { attempt, message, page } from "@/test/fixtures";
@@ -136,9 +136,169 @@ describe("MessageDrawer", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the status reports on the message", async () => {
+    const m = message({
+      status: "delivered",
+      status_report: {
+        requested: true,
+        classes: ["still_trying", "completed", "permanent", "gave_up"],
+        reports: [
+          {
+            id: 2,
+            tp_status: 0x22,
+            tp_status_name: "no_response",
+            class: "still_trying",
+            status: "delivered",
+            created_at: "2026-09-30T12:01:00.000Z",
+            updated_at: "2026-09-30T12:01:02.000Z",
+            expires_at: "2026-10-01T12:01:00.000Z",
+          },
+          {
+            id: 3,
+            tp_status: 0x00,
+            tp_status_name: "received",
+            class: "completed",
+            status: "pending",
+            created_at: "2026-09-30T12:30:00.000Z",
+            updated_at: "2026-09-30T12:30:00.000Z",
+            expires_at: "2026-10-01T12:30:00.000Z",
+            next_attempt_at: "2026-09-30T12:35:00.000Z",
+          },
+        ],
+      },
+    });
+    const reportAttempts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        stubApi({
+          [`/api/v1/messages/1`]: () => json(200, { result: m }),
+          [`/api/v1/messages/1/attempts`]: () =>
+            json(200, { result: page([attempt()]) }),
+          [`/api/v1/messages/1/status_reports/3/attempts`]: (url) => {
+            reportAttempts.push(url.pathname);
+            return json(200, {
+              result: page([
+                attempt({ id: 7, outcome: "absent_user", result_code: 5550 }),
+              ]),
+            });
+          },
+        }),
+      ),
+    );
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    const drawer = screen.getByRole("dialog");
+    const section = within(drawer).getByRole("region", {
+      name: "Status reports (2)",
+    });
+    expect(
+      within(section).getByText(
+        "Requested for: Still trying, Completed, Permanent error, Gave up.",
+      ),
+    ).toBeInTheDocument();
+
+    const reports = within(section).getAllByRole("listitem");
+    expect(reports).toHaveLength(2);
+    expect(
+      within(reports[0]).getByRole("heading", { name: "no response (0x22)" }),
+    ).toBeInTheDocument();
+    expect(fields(reports[0])).toEqual({
+      Class: "Still trying",
+      Created: "2026-09-30 12:01:00",
+      Updated: "2026-09-30 12:01:02",
+    });
+    expect(fields(reports[1])).toMatchObject({
+      Class: "Completed",
+      "Next attempt": "2026-09-30 12:35:00",
+    });
+    expect(within(reports[1]).getByText("pending")).toBeInTheDocument();
+
+    // A report's delivery attempts load on request.
+    expect(reportAttempts).toEqual([]);
+    fireEvent.click(
+      within(reports[1]).getByRole("button", {
+        name: "Show delivery attempts",
+      }),
+    );
+    expect(
+      await within(reports[1]).findByRole("heading", {
+        name: "Delivery attempts (1)",
+      }),
+    ).toBeInTheDocument();
+    expect(within(reports[1]).getByText("absent user")).toBeInTheDocument();
+    expect(reportAttempts).toEqual([
+      "/api/v1/messages/1/status_reports/3/attempts",
+    ]);
+  });
+
+  it.each([
+    [{ requested: false, classes: [], reports: [] }, "Not requested."],
+    [
+      { requested: true, classes: [], reports: [] },
+      "Requested, for no outcome.",
+    ],
+  ] as const)("summarizes a request without reports", (status_report, text) => {
+    const m = message({
+      status_report: {
+        ...status_report,
+        classes: [...status_report.classes],
+        reports: [],
+      },
+    });
+    serve(m, [[]]);
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    const section = within(screen.getByRole("dialog")).getByRole("region", {
+      name: "Status reports",
+    });
+    expect(within(section).getByText(text)).toBeInTheDocument();
+    expect(within(section).queryByRole("listitem")).not.toBeInTheDocument();
+  });
+
+  it("shows a replaced message", () => {
+    const m = message({ status: "replaced" });
+    serve(m, [[]]);
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    expect(fields(screen.getByRole("dialog"))).toMatchObject({
+      Status: "replaced",
+    });
+  });
+
   it("renders nothing when no message is selected", () => {
     renderWithClient(<MessageDrawer message={null} onClose={() => {}} />);
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("refreshes while the message or a report on it is pending", () => {
+    const report = (status: "pending" | "delivered") => ({
+      id: 2,
+      tp_status: 0,
+      tp_status_name: "received",
+      class: "completed" as const,
+      status,
+      created_at: "2026-09-30T12:01:00.000Z",
+      updated_at: "2026-09-30T12:01:00.000Z",
+      expires_at: "2026-10-01T12:01:00.000Z",
+    });
+    const reports = (status: "pending" | "delivered") => ({
+      requested: true,
+      classes: ["completed" as const],
+      reports: [report(status)],
+    });
+
+    expect(inProgress(message({ status: "pending" }))).toBe(true);
+    expect(inProgress(message())).toBe(false);
+    expect(inProgress(message({ status_report: reports("pending") }))).toBe(
+      true,
+    );
+    expect(inProgress(message({ status_report: reports("delivered") }))).toBe(
+      false,
+    );
   });
 });

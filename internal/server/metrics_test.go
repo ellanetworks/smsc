@@ -44,6 +44,7 @@ func TestMetrics(t *testing.T) {
 		"ellasmsc_messages_received_total",
 		"ellasmsc_messages_completed_total",
 		"ellasmsc_messages_pending",
+		"ellasmsc_status_reports_created_total",
 		"ellasmsc_message_delivery_duration_seconds",
 		"ellasmsc_peer_requests_total",
 		"ellasmsc_peer_request_duration_seconds",
@@ -85,14 +86,15 @@ func TestMetricsOfMessages(t *testing.T) {
 	s.waitForStatus(t, 2, db.StatusFailed)
 
 	want := map[string]float64{
-		`ellasmsc_messages_received_total{origin="mobile",result="accepted"}`: 2,
-		`ellasmsc_messages_received_total{origin="mobile",result="rejected"}`: 0,
-		`ellasmsc_messages_completed_total{status="delivered"}`:               1,
-		`ellasmsc_messages_completed_total{status="failed"}`:                  1,
-		`ellasmsc_messages_completed_total{status="expired"}`:                 0,
-		`ellasmsc_messages_pending{state="due"}`:                              0,
-		`ellasmsc_messages_pending{state="waiting"}`:                          0,
-		`ellasmsc_message_delivery_duration_seconds_count`:                    1,
+		`ellasmsc_messages_received_total{origin="mobile",result="accepted"}`:  2,
+		`ellasmsc_messages_received_total{origin="mobile",result="rejected"}`:  0,
+		`ellasmsc_messages_completed_total{status="delivered",type="message"}`: 1,
+		`ellasmsc_messages_completed_total{status="failed",type="message"}`:    1,
+		`ellasmsc_messages_completed_total{status="expired",type="message"}`:   0,
+		`ellasmsc_messages_completed_total{status="replaced",type="message"}`:  0,
+		`ellasmsc_messages_pending{state="due",type="message"}`:                0,
+		`ellasmsc_messages_pending{state="waiting",type="message"}`:            0,
+		`ellasmsc_message_delivery_duration_seconds_count`:                     1,
 	}
 
 	// A message's status is stored before it is counted, so the counts may lag the status by a moment.
@@ -132,9 +134,9 @@ func TestMetricsOfPeers(t *testing.T) {
 		`ellasmsc_peer_requests_total{interface="sgd",result="failure"}`:     0,
 		`ellasmsc_peer_request_duration_seconds_count{interface="s6c"}`:      2,
 		`ellasmsc_peer_request_duration_seconds_count{interface="sgd"}`:      1,
-		`ellasmsc_hss_peers`:                         1,
-		`ellasmsc_messages_pending{state="due"}`:     0,
-		`ellasmsc_messages_pending{state="waiting"}`: 1,
+		`ellasmsc_hss_peers`: 1,
+		`ellasmsc_messages_pending{state="due",type="message"}`:     0,
+		`ellasmsc_messages_pending{state="waiting",type="message"}`: 1,
 	}
 
 	eventually(t, "peer metrics", func() bool {
@@ -236,4 +238,37 @@ func scrape(t *testing.T, s *smsc) []byte {
 	}
 
 	return body
+}
+
+func TestMetricsOfStatusReports(t *testing.T) {
+	core, s := newSMSC(t, alice, bob)
+
+	if rc := core.submitTPDU(alice, smsSubmitRequestingReport(t, bob, 0x01, "tell me", nil)); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	s.waitForStatus(t, 1, db.StatusDelivered)
+	waitForReportDelivered(t, s)
+
+	// The report is counted on its own, and is not a short message delivered.
+	want := map[string]float64{
+		`ellasmsc_messages_completed_total{status="delivered",type="message"}`:       1,
+		`ellasmsc_messages_completed_total{status="delivered",type="status_report"}`: 1,
+		`ellasmsc_status_reports_created_total{class="completed"}`:                   1,
+		`ellasmsc_status_reports_created_total{class="still_trying"}`:                0,
+		`ellasmsc_messages_pending{state="due",type="status_report"}`:                0,
+		`ellasmsc_messages_pending{state="waiting",type="status_report"}`:            0,
+		`ellasmsc_message_delivery_duration_seconds_count`:                           1,
+	}
+
+	eventually(t, "status report metrics", func() bool {
+		got := values(parseFamilies(t, scrape(t, s)))
+		for k, v := range want {
+			if got[k] != v {
+				return false
+			}
+		}
+
+		return true
+	})
 }

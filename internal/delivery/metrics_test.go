@@ -7,18 +7,11 @@ import (
 	"time"
 
 	"github.com/ellanetworks/core/diameter"
-	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 )
-
-func completed(t *testing.T, m *Metrics, status db.MessageStatus) float64 {
-	t.Helper()
-
-	return testutil.ToFloat64(m.completed.WithLabelValues(string(status)))
-}
 
 func durations(t *testing.T, m *Metrics) *dto.Histogram {
 	t.Helper()
@@ -31,47 +24,35 @@ func durations(t *testing.T, m *Metrics) *dto.Histogram {
 	return out.GetHistogram()
 }
 
-func TestMetricsCountFinalStatuses(t *testing.T) {
+func TestMetricsTimeDeliveredMessagesOnly(t *testing.T) {
 	expiredMessage := pendingMessage(t)
 	expiredMessage.ExpiresAt = testNow
+
+	report := pendingMessage(t)
+	report.Kind = db.KindStatusReport
+	report.TPDU = mustHex(t, "06"+"07"+"0b91"+"5155210300f2"+"62907211950000"+"62907211950000"+"00")
 
 	for _, tt := range []struct {
 		name    string
 		message db.Message
-		routing s6c.Routing
 		answer  *diameter.Message
-		want    db.MessageStatus
+		want    uint64
 	}{
-		{"delivered", pendingMessage(t), mmeRouting(), success(), db.StatusDelivered},
-		{"expired", expiredMessage, mmeRouting(), success(), db.StatusExpired},
-		{"failed", pendingMessage(t), mmeRouting(), experimental(tgpp.ResultErrorIllegalUser), db.StatusFailed},
-		{"retried", pendingMessage(t), mmeRouting(), experimental(tgpp.ResultErrorAbsentUser), db.StatusPending},
+		{"delivered", pendingMessage(t), success(), 1},
+		{"status report delivered", report, success(), 0},
+		{"expired", expiredMessage, success(), 0},
+		{"failed", pendingMessage(t), experimental(tgpp.ResultErrorIllegalUser), 0},
+		{"retried", pendingMessage(t), experimental(tgpp.ResultErrorAbsentUser), 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": tt.answer}}
-			d := newDeliverer(newFakeStore(tt.message), &fakeRouter{routing: tt.routing}, sender)
+			d := newDeliverer(newFakeStore(tt.message), &fakeRouter{routing: mmeRouting()}, sender)
 			d.Metrics = NewMetrics()
 
 			process(t, d)
 
-			for _, status := range finalStatuses {
-				want := 0.0
-				if status == tt.want {
-					want = 1
-				}
-
-				if got := completed(t, d.Metrics, status); got != want {
-					t.Errorf("completed{status=%q} = %v, want %v", status, got, want)
-				}
-			}
-
-			wantDelivered := uint64(0)
-			if tt.want == db.StatusDelivered {
-				wantDelivered = 1
-			}
-
-			if got := durations(t, d.Metrics).GetSampleCount(); got != wantDelivered {
-				t.Errorf("delivery durations observed = %d, want %d", got, wantDelivered)
+			if got := durations(t, d.Metrics).GetSampleCount(); got != tt.want {
+				t.Errorf("delivery durations observed = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -97,7 +78,7 @@ type statusFailingStore struct {
 	*fakeStore
 }
 
-func (s statusFailingStore) SetMessageStatus(context.Context, int64, db.MessageStatus, time.Time) error {
+func (s statusFailingStore) CompleteMessage(context.Context, int64, db.MessageStatus, time.Time, *db.NewStatusReport) error {
 	return errors.New("disk I/O error")
 }
 
@@ -111,12 +92,30 @@ func TestMetricsDoNotCountUnstoredStatus(t *testing.T) {
 		t.Fatal("process succeeded although the status was not stored")
 	}
 
-	if got := completed(t, d.Metrics, db.StatusDelivered); got != 0 {
-		t.Fatalf("completed{status=delivered} = %v, want 0: the message is still pending", got)
+	if got := durations(t, d.Metrics).GetSampleCount(); got != 0 {
+		t.Fatalf("delivery durations observed = %d, want 0: the message is still pending", got)
+	}
+}
+
+func TestMessageReplacedDuringDeliveryKeepsItsStatus(t *testing.T) {
+	store := newFakeStore(pendingMessage(t))
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+	d := newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender)
+	d.Metrics = NewMetrics()
+
+	m, _, _ := d.Store.NextDue(context.Background(), d.Now(), nil)
+	store.messages[m.ID].Status = db.StatusReplaced
+
+	if err := d.process(context.Background(), m); err != nil {
+		t.Fatalf("process = %v", err)
+	}
+
+	if store.messages[m.ID].Status != db.StatusReplaced || len(sender.requests) != 1 {
+		t.Fatalf("status = %s, TFRs = %d", store.messages[m.ID].Status, len(sender.requests))
 	}
 
 	if got := durations(t, d.Metrics).GetSampleCount(); got != 0 {
-		t.Fatalf("delivery durations observed = %d, want 0", got)
+		t.Fatalf("delivery durations observed = %d, want 0: the message was replaced", got)
 	}
 }
 
@@ -132,9 +131,5 @@ func TestMetricsLint(t *testing.T) {
 		for _, p := range problems {
 			t.Errorf("lint: %s: %s", p.Metric, p.Text)
 		}
-	}
-
-	if n := testutil.CollectAndCount(m.completed); n != len(finalStatuses) {
-		t.Errorf("completed has %d series, want %d", n, len(finalStatuses))
 	}
 }

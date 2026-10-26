@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -177,4 +178,131 @@ func startsObserved(fn *ast.FuncDecl) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 
 	return ok && sel.Sel.Name == "observe"
+}
+
+// messageCounts returns the counts of messages completed, by type and status, and of status reports created, by class,
+// that are not zero.
+func messageCounts(t *testing.T, d *DB) map[string]float64 {
+	t.Helper()
+
+	counts := map[string]float64{}
+
+	for kind, statuses := range finalStatuses {
+		for _, status := range statuses {
+			if v := testutil.ToFloat64(d.metrics.completed.WithLabelValues(string(kind), string(status))); v != 0 {
+				counts[string(kind)+"/"+string(status)] = v
+			}
+		}
+	}
+
+	for _, class := range reportClasses {
+		if v := testutil.ToFloat64(d.metrics.reports.WithLabelValues(class.String())); v != 0 {
+			counts["report/"+class.String()] = v
+		}
+	}
+
+	return counts
+}
+
+func TestMetricsCountWhatMessagesBecome(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	delivered, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.CompleteMessage(ctx, delivered, StatusDelivered, now, testReport(now)); err != nil {
+		t.Fatal(err)
+	}
+
+	// A message retried twice has one interim report.
+	retried, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		interim := testReport(now)
+		interim.Status = 0x22
+
+		if err := d.ScheduleRetry(ctx, retried, now, now, false, interim); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := d.CompleteMessage(ctx, retried, StatusFailed, now, &NewStatusReport{
+		Originator: testServiceCentre, Status: 0x62, TPDU: []byte{0x06}, CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A message replaced, with a report on it.
+	replaced, err := d.CreateMessage(ctx, replaceType(testMessage(3, false, []byte{0x03}, now)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := replaceType(testMessage(4, false, []byte{0x04}, now))
+	replacement.ReportReplaced = func(Message) (*NewStatusReport, error) {
+		r := testReport(now)
+		r.Status = 0x02
+
+		return r, nil
+	}
+
+	if _, err := d.CreateMessage(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	// A report delivered.
+	reports, err := d.ListStatusReports(ctx, delivered)
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("reports = %+v, %v", reports, err)
+	}
+
+	if err := d.CompleteMessage(ctx, reports[0].ID, StatusDelivered, now, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]float64{
+		"message/delivered":       1,
+		"message/failed":          1,
+		"message/replaced":        1,
+		"status_report/delivered": 1,
+		"report/completed":        2,
+		"report/still_trying":     1,
+		"report/gave_up":          1,
+	}
+
+	if got := messageCounts(t, d); !reflect.DeepEqual(got, want) {
+		t.Fatalf("counts = %v, want %v", got, want)
+	}
+
+	// Neither a message no longer pending, nor a transaction rolled back, counts.
+	if err := d.CompleteMessage(ctx, replaced, StatusDelivered, now, nil); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("err = %v, want ErrNotPending", err)
+	}
+
+	fromAPI := testMessage(0, false, []byte{0x05}, now)
+	fromAPI.Origin = OriginAPI
+
+	id, err := d.CreateMessage(ctx, fromAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+
+	if err := d.ScheduleRetry(ctx, id, now, now, false, testReport(now)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+
+	if got := messageCounts(t, d); !reflect.DeepEqual(got, want) {
+		t.Fatalf("counts after failed calls = %v, want %v", got, want)
+	}
 }

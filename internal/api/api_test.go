@@ -153,6 +153,7 @@ func TestCreateMessage(t *testing.T) {
 		UpdatedAt:     "2026-09-29T10:00:00.000Z",
 		ExpiresAt:     "2026-09-30T10:00:00.000Z",
 		NextAttemptAt: "2026-09-29T10:00:00.000Z",
+		StatusReport:  api.StatusReports{Classes: []string{}, Reports: []api.StatusReport{}},
 	}}
 
 	if !reflect.DeepEqual(got, want) {
@@ -387,7 +388,7 @@ func TestListMessages(t *testing.T) {
 	a.create(t, "+15550001111", "+15551230003", "two")
 	a.create(t, "+15551230003", "+15551230002", "three")
 
-	if err := a.store.SetMessageStatus(context.Background(), 3, db.StatusDelivered, testNow); err != nil {
+	if err := a.store.CompleteMessage(context.Background(), 3, db.StatusDelivered, testNow, nil); err != nil {
 		t.Fatal(err)
 	}
 

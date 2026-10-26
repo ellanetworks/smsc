@@ -21,6 +21,9 @@ type DB struct {
 var migrations = []string{
 	`CREATE TABLE messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		kind TEXT NOT NULL CHECK (kind IN ('message', 'status_report')),
+		report_for INTEGER REFERENCES messages (id) ON DELETE CASCADE,
+		report_status INTEGER CHECK (report_status BETWEEN 0 AND 255),
 		originator TEXT NOT NULL,
 		originator_ton INTEGER NOT NULL,
 		originator_npi INTEGER NOT NULL,
@@ -32,16 +35,20 @@ var migrations = []string{
 		message_reference INTEGER NOT NULL,
 		protocol_identifier INTEGER NOT NULL,
 		tpdu BLOB NOT NULL,
-		status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'expired')),
+		status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'expired', 'replaced')),
 		single_shot INTEGER NOT NULL CHECK (single_shot IN (0, 1)),
 		submitted_at INTEGER NOT NULL,
 		time_stamp INTEGER NOT NULL,
 		expires_at INTEGER NOT NULL,
 		next_attempt_at INTEGER NOT NULL,
 		retries INTEGER NOT NULL,
-		updated_at INTEGER NOT NULL
+		updated_at INTEGER NOT NULL,
+		CHECK (kind = 'message' AND report_for IS NULL AND report_status IS NULL
+			OR kind = 'status_report' AND report_for IS NOT NULL AND report_status IS NOT NULL),
+		CHECK (kind = 'message' OR status != 'replaced')
 	);
 	CREATE INDEX messages_due ON messages (status, next_attempt_at);
+	CREATE INDEX messages_report_for ON messages (report_for);
 	CREATE INDEX messages_originator ON messages (originator, originator_ton, originator_npi, id);
 	CREATE INDEX messages_msisdn ON messages (msisdn, status, next_attempt_at);
 	CREATE TABLE delivery_attempts (

@@ -137,6 +137,36 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/messages/{id}/status_reports/{report_id}/attempts:
+    get:
+      tags: [Messages]
+      operationId: listStatusReportAttempts
+      summary: List delivery attempts of a status report
+      description: >-
+        The attempts to deliver a status report on a message to the phone that sent the message.
+      parameters:
+        - $ref: "#/components/parameters/MessageID"
+        - $ref: "#/components/parameters/StatusReportID"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/ListAttemptsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/diameter:
     get:
       tags: [Diameter]
@@ -258,6 +288,13 @@ components:
       schema:
         type: integer
         format: int64
+    StatusReportID:
+      name: report_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
     Page:
       name: page
       in: query
@@ -329,7 +366,77 @@ components:
 
     MessageStatus:
       type: string
-      enum: [pending, delivered, failed, expired]
+      description: >-
+        replaced: a later message from the same phone, with the same replace type (TS 23.040 clause 9.2.3.9),
+        replaced it before its delivery.
+      enum: [pending, delivered, failed, expired, replaced]
+
+    StatusReportClass:
+      type: string
+      description: >-
+        The class of a TP-Status (TS 23.040 clause 9.2.3.15): the transaction completed, a temporary error while
+        the SMSC still tries, a permanent error, or a temporary error after which the SMSC gave up.
+      enum: [completed, still_trying, permanent, gave_up]
+
+    StatusReports:
+      type: object
+      description: >-
+        What the phone that sent the message asked of status reports, and the SMS-STATUS-REPORTs the SMSC
+        returned to it (TS 23.040 clause 3.2.9). A message submitted through the API never asks for reports.
+      required: [requested, classes, reports]
+      properties:
+        requested:
+          type: boolean
+          description: TP-SRR of the SMS-SUBMIT.
+        classes:
+          type: array
+          description: >-
+            The classes the phone wants reports with: all but still_trying, unless the SMSC Control Parameters
+            of its SMS-SUBMIT select them (TS 23.040 clause 9.2.3.24.5). Empty when not requested.
+          items:
+            $ref: "#/components/schemas/StatusReportClass"
+        reports:
+          type: array
+          description: Oldest first. At most one is still_trying.
+          items:
+            $ref: "#/components/schemas/StatusReport"
+
+    StatusReport:
+      type: object
+      required: [id, tp_status, tp_status_name, class, status, created_at, updated_at, expires_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        tp_status:
+          type: integer
+          minimum: 0
+          maximum: 255
+          description: The TP-Status that the report tells (TS 23.040 clause 9.2.3.15).
+        tp_status_name:
+          type: string
+          description: >-
+            The meaning of tp_status, which is the same for a temporary error whether the SMSC still tries
+            or gave up; reserved and sc_specific for values the specification does not name.
+          examples: [received, replaced, no_response, validity_period_expired]
+        class:
+          $ref: "#/components/schemas/StatusReportClass"
+        status:
+          type: string
+          description: The delivery of the report to the phone.
+          enum: [pending, delivered, failed, expired]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        next_attempt_at:
+          type: string
+          format: date-time
 
     CreateMessageParams:
       type: object
@@ -401,7 +508,7 @@ components:
 
     Message:
       type: object
-      required: [id, from, to, encoding, status, created_at, updated_at, expires_at]
+      required: [id, from, to, encoding, status, created_at, updated_at, expires_at, status_report]
       properties:
         id:
           type: integer
@@ -431,6 +538,8 @@ components:
         next_attempt_at:
           type: string
           format: date-time
+        status_report:
+          $ref: "#/components/schemas/StatusReports"
 
     Attempt:
       type: object
