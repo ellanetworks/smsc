@@ -52,12 +52,14 @@ export interface Message {
 
 export type AttemptStep = "routing" | "delivery";
 
-export type NodeType = "mme" | "sgsn" | "smsf_3gpp" | "smsf_non_3gpp";
+export type NodeType =
+  "mme" | "sgsn" | "ip_sm_gw" | "smsf_3gpp" | "smsf_non_3gpp";
 
 export interface AbsentUserDiagnostics {
   mme?: string;
   msc?: string;
   sgsn?: string;
+  ip_sm_gw?: string;
   smsf_3gpp?: string;
   smsf_non_3gpp?: string;
 }

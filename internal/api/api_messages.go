@@ -88,6 +88,7 @@ type AbsentUserDiagnostics struct {
 	MME         string `json:"mme,omitempty"`
 	MSC         string `json:"msc,omitempty"`
 	SGSN        string `json:"sgsn,omitempty"`
+	IPSMGW      string `json:"ip_sm_gw,omitempty"`
 	SMSF3GPP    string `json:"smsf_3gpp,omitempty"`
 	SMSFNon3GPP string `json:"smsf_non_3gpp,omitempty"`
 }

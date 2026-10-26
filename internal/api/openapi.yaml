@@ -507,7 +507,7 @@ components:
           type: string
         node_type:
           type: string
-          enum: [mme, sgsn, smsf_3gpp, smsf_non_3gpp]
+          enum: [mme, sgsn, ip_sm_gw, smsf_3gpp, smsf_non_3gpp]
         outcome:
           type: string
           enum:
@@ -548,6 +548,8 @@ components:
         msc:
           type: string
         sgsn:
+          type: string
+        ip_sm_gw:
           type: string
         smsf_3gpp:
           type: string

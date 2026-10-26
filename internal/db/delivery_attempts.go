@@ -19,6 +19,7 @@ type NodeType string
 const (
 	NodeTypeMME         NodeType = "mme"
 	NodeTypeSGSN        NodeType = "sgsn"
+	NodeTypeIPSMGW      NodeType = "ip_sm_gw"
 	NodeTypeSMSF3GPP    NodeType = "smsf_3gpp"
 	NodeTypeSMSFNon3GPP NodeType = "smsf_non_3gpp"
 )
@@ -44,13 +45,14 @@ type AbsentUserDiagnostics struct {
 	MME         string
 	MSC         string
 	SGSN        string
+	IPSMGW      string
 	SMSF3GPP    string
 	SMSFNon3GPP string
 }
 
 const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 	failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
-	absent_user_diagnostic_sgsn, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp`
+	absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp`
 
 func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ int64, err error) {
 	defer d.observe(&err)()
@@ -58,13 +60,13 @@ func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ in
 	res, err := d.conn.ExecContext(ctx,
 		`INSERT INTO delivery_attempts (message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 			failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
-			absent_user_diagnostic_sgsn, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.MessageID, a.StartedAt.UTC().UnixNano(), a.CompletedAt.UTC().UnixNano(), a.Step, a.Node,
 		nullableString(string(a.NodeType)), a.Outcome, nullable(a.ResultCode), nullable(a.VendorID),
 		nullableString(a.FailureCause), nullableString(a.TPFailureCause),
 		nullableString(a.AbsentUserDiagnostics.MME), nullableString(a.AbsentUserDiagnostics.MSC), nullableString(a.AbsentUserDiagnostics.SGSN),
-		nullableString(a.AbsentUserDiagnostics.SMSF3GPP), nullableString(a.AbsentUserDiagnostics.SMSFNon3GPP))
+		nullableString(a.AbsentUserDiagnostics.IPSMGW), nullableString(a.AbsentUserDiagnostics.SMSF3GPP), nullableString(a.AbsentUserDiagnostics.SMSFNon3GPP))
 	if err != nil {
 		return 0, fmt.Errorf("create delivery attempt: %w", err)
 	}
@@ -114,18 +116,19 @@ func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, pe
 
 func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {
 	var (
-		a                                 DeliveryAttempt
-		startedAt, completedAt            int64
-		nodeType                          sql.NullString
-		resultCode, vendorID              sql.Null[uint32]
-		failureCause, tpFailureCause      sql.NullString
-		absentMME, absentMSC, absentSGSN  sql.NullString
-		absentSMSF3GPP, absentSMSFNon3GPP sql.NullString
+		a                                DeliveryAttempt
+		startedAt, completedAt           int64
+		nodeType                         sql.NullString
+		resultCode, vendorID             sql.Null[uint32]
+		failureCause, tpFailureCause     sql.NullString
+		absentMME, absentMSC, absentSGSN sql.NullString
+		absentIPSMGW, absentSMSF3GPP     sql.NullString
+		absentSMSFNon3GPP                sql.NullString
 	)
 
 	if err := rows.Scan(&a.ID, &a.MessageID, &startedAt, &completedAt, &a.Step, &a.Node, &nodeType, &a.Outcome,
 		&resultCode, &vendorID, &failureCause, &tpFailureCause,
-		&absentMME, &absentMSC, &absentSGSN, &absentSMSF3GPP, &absentSMSFNon3GPP); err != nil {
+		&absentMME, &absentMSC, &absentSGSN, &absentIPSMGW, &absentSMSF3GPP, &absentSMSFNon3GPP); err != nil {
 		return DeliveryAttempt{}, err
 	}
 
@@ -140,6 +143,7 @@ func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {
 		MME:         absentMME.String,
 		MSC:         absentMSC.String,
 		SGSN:        absentSGSN.String,
+		IPSMGW:      absentIPSMGW.String,
 		SMSF3GPP:    absentSMSF3GPP.String,
 		SMSFNon3GPP: absentSMSFNon3GPP.String,
 	}

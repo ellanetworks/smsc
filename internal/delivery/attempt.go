@@ -108,6 +108,8 @@ func (k nodeKind) nodeType() db.NodeType {
 	switch k {
 	case kindSGSN:
 		return db.NodeTypeSGSN
+	case kindIPSMGW:
+		return db.NodeTypeIPSMGW
 	case kindSMSF3GPP:
 		return db.NodeTypeSMSF3GPP
 	case kindSMSFNon3GPP:
@@ -146,6 +148,8 @@ func deliveryAttemptOf(kind nodeKind, err error) db.DeliveryAttempt {
 	switch kind {
 	case kindSGSN:
 		a.AbsentUserDiagnostics.SGSN = diagnostic
+	case kindIPSMGW:
+		a.AbsentUserDiagnostics.IPSMGW = diagnostic
 	case kindSMSF3GPP:
 		a.AbsentUserDiagnostics.SMSF3GPP = diagnostic
 	case kindSMSFNon3GPP:

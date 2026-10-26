@@ -40,6 +40,7 @@ const (
 	realm                = "epc.mnc001.mcc001.3gppnetwork.org"
 	serviceCentreAddress = "15550000000"
 	mmeNumber            = "15550000010"
+	ipSMGWNumber         = "15550000040"
 	waitTimeout          = 10 * time.Second
 
 	avpServingNode            uint32 = 2401
@@ -100,10 +101,12 @@ type fakeCore struct {
 	subscribers map[string]subscriber
 	absent      map[string]bool
 	mwdStatus   map[string]uint32
-	answerMT    func(imsi string) *diameter.Message
-	routings    []routingRequest
-	delivered   []mtMessage
-	reports     []deliveryReport
+	// ipSMGW is the host of the IP-SM-GW that the routing answers name, if any, without its realm.
+	ipSMGW    string
+	answerMT  func(imsi string) *diameter.Message
+	routings  []routingRequest
+	delivered []mtMessage
+	reports   []deliveryReport
 }
 
 func skipIfNoSCTP(t testing.TB) {
@@ -270,14 +273,23 @@ func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
 		return ans
 	}
 
+	servingNode := diameter.Grouped(avpServingNode, diameter.AVPFlagMandatory, tgpp.VendorID,
+		diameter.UTF8String(avpMMEName, diameter.AVPFlagMandatory, tgpp.VendorID, c.host),
+		diameter.UTF8String(avpMMERealm, 0, tgpp.VendorID, c.realm),
+		diameter.OctetString(tgpp.AVPMMENumberForMTSMS, 0, tgpp.VendorID, mustTBCD(c.t, mmeNumber)),
+	)
+
+	if c.ipSMGW != "" {
+		servingNode = diameter.Grouped(avpServingNode, diameter.AVPFlagMandatory, tgpp.VendorID,
+			diameter.OctetString(s6c.AVPIPSMGWNumber, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(c.t, ipSMGWNumber)),
+			diameter.UTF8String(s6c.AVPIPSMGWName, diameter.AVPFlagMandatory, tgpp.VendorID, c.ipSMGW),
+		)
+	}
+
 	ans := c.answer(req, diameter.ResultSuccess)
 	ans.AVPs = append(ans.AVPs,
 		diameter.UTF8String(diameter.AVPUserName, diameter.AVPFlagMandatory, 0, sub.imsi),
-		diameter.Grouped(avpServingNode, diameter.AVPFlagMandatory, tgpp.VendorID,
-			diameter.UTF8String(avpMMEName, diameter.AVPFlagMandatory, tgpp.VendorID, c.host),
-			diameter.UTF8String(avpMMERealm, 0, tgpp.VendorID, c.realm),
-			diameter.OctetString(tgpp.AVPMMENumberForMTSMS, 0, tgpp.VendorID, mustTBCD(c.t, mmeNumber)),
-		),
+		servingNode,
 		diameter.Unsigned32(avpMWDStatus, diameter.AVPFlagMandatory, tgpp.VendorID, c.mwdStatus[msisdn]),
 	)
 
@@ -704,6 +716,36 @@ func TestMobileOriginatedMessageIsDelivered(t *testing.T) {
 
 	if reports := core.deliveryReports(); len(reports) != 0 {
 		t.Fatalf("unexpected delivery reports = %+v", reports)
+	}
+}
+
+// The HSS forwards the routing request to the IP-SM-GW, which answers with itself and no realm (TS 29.338 clause
+// 5.3.3.6), so the SMSC sends the message to the IP-SM-GW in the realm of its connection.
+func TestMessageIsDeliveredViaIPSMGW(t *testing.T) {
+	hss, s := newSMSC(t, alice, bob)
+	ipSMGW := newRealmFakeCore(t, "ipsmgw.example.org", "ims.example.org")
+	ipSMGW.connect(s)
+
+	hss.mu.Lock()
+	hss.ipSMGW = ipSMGW.host
+	hss.mu.Unlock()
+
+	if rc := hss.submit(alice, bob, "hello over IMS"); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	s.waitForStatus(t, 1, db.StatusDelivered)
+
+	if got := ipSMGW.deliveredTo(bob.imsi); len(got) != 1 {
+		t.Fatalf("messages delivered via the IP-SM-GW = %+v", got)
+	}
+
+	if got := hss.deliveredTo(bob.imsi); len(got) != 0 {
+		t.Fatalf("messages delivered via the MME = %+v", got)
+	}
+
+	if got := ipSMGW.routingRequests(); len(got) != 0 {
+		t.Fatalf("routing requests to the IP-SM-GW = %v", got)
 	}
 }
 

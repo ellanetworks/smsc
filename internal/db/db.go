@@ -58,7 +58,7 @@ var migrations = []string{
 		completed_at INTEGER NOT NULL,
 		step TEXT NOT NULL CHECK (step IN ('routing', 'delivery')),
 		node TEXT NOT NULL,
-		node_type TEXT CHECK (node_type IN ('mme', 'sgsn', 'smsf_3gpp', 'smsf_non_3gpp')),
+		node_type TEXT CHECK (node_type IN ('mme', 'sgsn', 'ip_sm_gw', 'smsf_3gpp', 'smsf_non_3gpp')),
 		outcome TEXT NOT NULL,
 		result_code INTEGER,
 		vendor_id INTEGER,
@@ -67,6 +67,7 @@ var migrations = []string{
 		absent_user_diagnostic_mme TEXT,
 		absent_user_diagnostic_msc TEXT,
 		absent_user_diagnostic_sgsn TEXT,
+		absent_user_diagnostic_ip_sm_gw TEXT,
 		absent_user_diagnostic_smsf_3gpp TEXT,
 		absent_user_diagnostic_smsf_non_3gpp TEXT
 	);

@@ -21,6 +21,7 @@ export const stepLabels: Record<AttemptStep, string> = {
 export const nodeTypeLabels: Record<NodeType, string> = {
   mme: "MME",
   sgsn: "SGSN",
+  ip_sm_gw: "IP-SM-GW",
   smsf_3gpp: "SMSF (3GPP)",
   smsf_non_3gpp: "SMSF (non-3GPP)",
 };
@@ -29,6 +30,7 @@ export const diagnosticsLabels: Record<keyof AbsentUserDiagnostics, string> = {
   mme: "MME",
   msc: "MSC",
   sgsn: "SGSN",
+  ip_sm_gw: "IP-SM-GW",
   smsf_3gpp: "SMSF (3GPP)",
   smsf_non_3gpp: "SMSF (non-3GPP)",
 };

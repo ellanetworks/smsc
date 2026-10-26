@@ -307,4 +307,14 @@ func (h hostSender) Do(ctx context.Context, host string, req *diameter.Message) 
 	return h.nodes.doHost(ctx, host, req)
 }
 
+func (h hostSender) PeerRealm(host string) (string, bool) {
+	for _, p := range h.nodes.Node().Peers() {
+		if p.State == diameter.PeerOpen && strings.EqualFold(p.Host, host) {
+			return p.Realm, true
+		}
+	}
+
+	return "", false
+}
+
 func (h hostSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }

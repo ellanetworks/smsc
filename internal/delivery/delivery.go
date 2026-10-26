@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -45,6 +46,8 @@ type Router interface {
 
 type Sender interface {
 	Do(ctx context.Context, peerHost string, req *diameter.Message) (*diameter.Message, error)
+	// PeerRealm returns the Origin-Realm of the connected peer with the given host.
+	PeerRealm(peerHost string) (string, bool)
 	NewSessionID() string
 }
 
@@ -84,6 +87,7 @@ type nodeKind int
 const (
 	kindMME nodeKind = iota
 	kindSGSN
+	kindIPSMGW
 	kindSMSF3GPP
 	kindSMSFNon3GPP
 )
@@ -724,6 +728,9 @@ func mwdFlag(o nodeOutcome) s6c.MWDStatus {
 	switch o.kind {
 	case kindSGSN:
 		return s6c.MWDStatusMNRG
+	case kindIPSMGW:
+		// MWD-Status has no flag for the UNRI (TS 29.338 clause 5.3.3.8).
+		return 0
 	case kindSMSF3GPP:
 		return s6c.MWDStatusMNR5G
 	case kindSMSFNon3GPP:
@@ -737,6 +744,8 @@ func hssDiagnostic(a s6c.AbsentUserDiagnostics, kind nodeKind) *tgpp.AbsentUserD
 	switch kind {
 	case kindSGSN:
 		return a.SGSN
+	case kindIPSMGW:
+		return nil
 	case kindSMSF3GPP:
 		return a.SMSF3GPP
 	case kindSMSFNon3GPP:
@@ -775,6 +784,8 @@ func (d *Deliverer) report(stop context.Context, log *slog.Logger, m db.Message,
 		switch o.kind {
 		case kindSGSN:
 			slot = &rep.SGSN
+		case kindIPSMGW:
+			slot = &rep.IPSMGW
 		case kindSMSF3GPP:
 			slot = &rep.SMSF3GPP
 		case kindSMSFNon3GPP:
@@ -872,6 +883,12 @@ func deliveryTargets(n s6c.ServingNodes) []target {
 				sgsnNumber: sn.node.SGSN.Number,
 			})
 		}
+
+		// The IP-SM-GW takes the message as an MME or SGSN would, and selects the domain to deliver it in (TS 23.204
+		// clause 6.4).
+		if sn.node.IPSMGW != nil {
+			add(target{kind: kindIPSMGW, source: sn.source, name: sn.node.IPSMGW.Name, realm: sn.node.IPSMGW.Realm})
+		}
 	}
 
 	if n.SMSF3GPP != nil {
@@ -891,11 +908,21 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 		return forwardResult{outcome: permanent, status: tpdu.StatusRemoteProcedureError}, err
 	}
 
+	// The HSS may give an IP-SM-GW without its realm (TS 29.338 clause 5.3.3.6), which is then the realm of the
+	// peer.
+	realm := t.realm
+	if realm == "" {
+		var ok bool
+		if realm, ok = d.Sender.PeerRealm(t.name); !ok {
+			return forwardResult{outcome: temporary, status: statusCongestion}, fmt.Errorf("%w %s", diameter.ErrUnknownPeer, t.name)
+		}
+	}
+
 	tfr, err := sgd.NewMTForwardShortMessageRequest(tgpp.Envelope{
 		SessionID:        d.Sender.NewSessionID(),
 		Origin:           d.Identity(),
 		DestinationHost:  t.name,
-		DestinationRealm: t.realm,
+		DestinationRealm: realm,
 	}, sgd.MTForwardShortMessage{
 		IMSI:                 imsi,
 		ServiceCentreAddress: d.Settings().Operator.ServiceCentreAddress,

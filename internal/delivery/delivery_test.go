@@ -234,6 +234,7 @@ type fakeSender struct {
 	peers    []string
 	answers  map[string]*diameter.Message
 	errs     map[string]error
+	realms   map[string]string
 }
 
 func (s *fakeSender) Do(_ context.Context, peer string, req *diameter.Message) (*diameter.Message, error) {
@@ -248,6 +249,12 @@ func (s *fakeSender) Do(_ context.Context, peer string, req *diameter.Message) (
 	}
 
 	return s.answers[peer], nil
+}
+
+func (s *fakeSender) PeerRealm(peer string) (string, bool) {
+	realm, ok := s.realms[peer]
+
+	return realm, ok
 }
 
 func (s *fakeSender) NewSessionID() string {
@@ -536,6 +543,77 @@ func TestDeliverToSMSF(t *testing.T) {
 	}
 }
 
+func ipSMGWRouting(realm string) s6c.Routing {
+	return s6c.Routing{
+		IMSI: "001010000012345",
+		ServingNodes: s6c.ServingNodes{
+			Serving: &s6c.ServingNode{IPSMGW: &s6c.NodeAddress{Name: "ipsmgw.example.org", Realm: realm, Number: "15550000040"}},
+		},
+	}
+}
+
+func TestDeliverViaIPSMGW(t *testing.T) {
+	tests := map[string]struct {
+		realm  string
+		realms map[string]string
+		want   string
+	}{
+		"realm from the HSS":  {"ims.example.org", nil, "ims.example.org"},
+		"realm from the peer": {"", map[string]string{"ipsmgw.example.org": "peer.example.org"}, "peer.example.org"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore(pendingMessage(t))
+			sender := &fakeSender{answers: map[string]*diameter.Message{"ipsmgw.example.org": success()}, realms: tt.realms}
+
+			process(t, newDeliverer(store, &fakeRouter{routing: ipSMGWRouting(tt.realm)}, sender))
+
+			if store.messages[1].Status != db.StatusDelivered || sender.peers[0] != "ipsmgw.example.org" {
+				t.Fatalf("status %s via %v", store.messages[1].Status, sender.peers)
+			}
+
+			tfr := sender.requests[0]
+
+			if got := string(avpData(t, tfr, diameter.AVPDestinationRealm, 0)); got != tt.want {
+				t.Fatalf("Destination-Realm = %s, want %s", got, tt.want)
+			}
+
+			// The User-Name holds the MT Correlation ID that the IP-SM-GW gave in place of the IMSI (TS 23.040 clause
+			// 3.2.7a).
+			if got := string(avpData(t, tfr, diameter.AVPUserName, 0)); got != "001010000012345" {
+				t.Fatalf("User-Name = %s", got)
+			}
+
+			for _, code := range []uint32{tgpp.AVPMMENumberForMTSMS, tgpp.AVPSGSNNumber} {
+				if _, ok := tfr.Find(code, tgpp.VendorID); ok {
+					t.Fatalf("AVP %d sent to an IP-SM-GW", code)
+				}
+			}
+
+			if a := store.attempts[1]; a.NodeType != db.NodeTypeIPSMGW {
+				t.Fatalf("node type = %s", a.NodeType)
+			}
+		})
+	}
+}
+
+func TestDeliverViaIPSMGWWithoutRealmOrPeer(t *testing.T) {
+	store := newFakeStore(pendingMessage(t))
+	sender := &fakeSender{}
+
+	process(t, newDeliverer(store, &fakeRouter{routing: ipSMGWRouting("")}, sender))
+
+	if len(sender.requests) != 0 || store.messages[1].Status != db.StatusPending {
+		t.Fatalf("status %s after %d requests", store.messages[1].Status, len(sender.requests))
+	}
+
+	want := []attempt{{db.StepDelivery, "ipsmgw.example.org", "unreachable"}}
+	if got := store.recorded(db.StepDelivery); !reflect.DeepEqual(got, want) {
+		t.Fatalf("attempts = %+v, want %+v", got, want)
+	}
+}
+
 func TestDeliverOutcomes(t *testing.T) {
 	tests := map[string]struct {
 		answer     *diameter.Message
@@ -818,6 +896,57 @@ func TestAbsentUserIsReportedAndHoldsRecipient(t *testing.T) {
 
 	if len(store.holds) != 1 || store.holds[0] != (hold{"15551230002", testNow.Add(time.Minute)}) {
 		t.Fatalf("holds = %+v", store.holds)
+	}
+}
+
+func TestIPSMGWFailureIsReported(t *testing.T) {
+	tests := map[string]struct {
+		answer    *diameter.Message
+		mwdStatus s6c.MWDStatus
+		want      s6c.DeliveryReport
+	}{
+		// The MWD-Status has no flag for the UNRI, so the SC reports every absent user via the IP-SM-GW.
+		"absent user": {absentWithDiagnostic(tgpp.AbsentUserNoResponseIPSMGW), s6c.MWDStatusMNRF, s6c.DeliveryReport{
+			MSISDN: "15551230002",
+			IPSMGW: &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseAbsentUser, AbsentDiagnostic: absentDiagnostic(tgpp.AbsentUserNoResponseIPSMGW)},
+			Failed: s6c.ServingNodes{Serving: ipSMGWRouting("ims.example.org").Serving},
+		}},
+		"memory exceeded": {smDeliveryFailure(sgd.CauseMemoryCapacityExceeded), 0, s6c.DeliveryReport{
+			MSISDN: "15551230002",
+			IPSMGW: &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseMemoryCapacityExceeded},
+		}},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			routing := ipSMGWRouting("ims.example.org")
+			routing.MWDStatus = tt.mwdStatus
+
+			store := newFakeStore(pendingMessage(t))
+			router := &fakeRouter{routing: routing}
+			sender := &fakeSender{answers: map[string]*diameter.Message{"ipsmgw.example.org": tt.answer}}
+
+			process(t, newDeliverer(store, router, sender))
+
+			if len(router.reports) != 1 || !reflect.DeepEqual(router.reports[0], tt.want) {
+				t.Fatalf("reports = %+v", router.reports)
+			}
+
+			if len(store.holds) != 1 {
+				t.Fatalf("holds = %+v", store.holds)
+			}
+		})
+	}
+
+	store := newFakeStore(pendingMessage(t))
+	sender := &fakeSender{answers: map[string]*diameter.Message{
+		"ipsmgw.example.org": absentWithDiagnostic(tgpp.AbsentUserDeregisteredIMS),
+	}}
+
+	process(t, newDeliverer(store, &fakeRouter{routing: ipSMGWRouting("ims.example.org")}, sender))
+
+	if got := store.attempts[1].AbsentUserDiagnostics; got != (db.AbsentUserDiagnostics{IPSMGW: "deregistered_ims"}) {
+		t.Fatalf("absent user diagnostics = %+v", got)
 	}
 }
 
