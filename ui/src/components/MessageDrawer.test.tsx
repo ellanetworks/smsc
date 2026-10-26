@@ -136,28 +136,16 @@ describe("MessageDrawer", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the status reports on the message", async () => {
+  it("shows the status reports on the message", () => {
     const m = message({
-      status: "delivered",
+      status: "failed",
       status_report: {
         requested: true,
-        classes: ["still_trying", "completed", "permanent", "gave_up"],
         reports: [
           {
             id: 2,
-            tp_status: 0x22,
+            tp_status: 0x62,
             tp_status_name: "no_response",
-            class: "still_trying",
-            status: "delivered",
-            created_at: "2026-09-30T12:01:00.000Z",
-            updated_at: "2026-09-30T12:01:02.000Z",
-            expires_at: "2026-10-01T12:01:00.000Z",
-          },
-          {
-            id: 3,
-            tp_status: 0x00,
-            tp_status_name: "received",
-            class: "completed",
             status: "pending",
             created_at: "2026-09-30T12:30:00.000Z",
             updated_at: "2026-09-30T12:30:00.000Z",
@@ -167,86 +155,31 @@ describe("MessageDrawer", () => {
         ],
       },
     });
-    const reportAttempts: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        stubApi({
-          [`/api/v1/messages/1`]: () => json(200, { result: m }),
-          [`/api/v1/messages/1/attempts`]: () =>
-            json(200, { result: page([attempt()]) }),
-          [`/api/v1/messages/1/status_reports/3/attempts`]: (url) => {
-            reportAttempts.push(url.pathname);
-            return json(200, {
-              result: page([
-                attempt({ id: 7, outcome: "absent_user", result_code: 5550 }),
-              ]),
-            });
-          },
-        }),
-      ),
-    );
+    serve(m, [[]]);
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
-    const drawer = screen.getByRole("dialog");
-    const section = within(drawer).getByRole("region", {
-      name: "Status reports (2)",
+    const section = within(screen.getByRole("dialog")).getByRole("region", {
+      name: "Status reports (1)",
     });
-    expect(
-      within(section).getByText(
-        "Requested for: Still trying, Completed, Permanent error, Gave up.",
-      ),
-    ).toBeInTheDocument();
-
     const reports = within(section).getAllByRole("listitem");
-    expect(reports).toHaveLength(2);
+    expect(reports).toHaveLength(1);
     expect(
-      within(reports[0]).getByRole("heading", { name: "no response (0x22)" }),
+      within(reports[0]).getByRole("heading", { name: "no response (0x62)" }),
     ).toBeInTheDocument();
+    expect(within(reports[0]).getByText("pending")).toBeInTheDocument();
     expect(fields(reports[0])).toEqual({
-      Class: "Still trying",
-      Created: "2026-09-30 12:01:00",
-      Updated: "2026-09-30 12:01:02",
-    });
-    expect(fields(reports[1])).toMatchObject({
-      Class: "Completed",
+      Created: "2026-09-30 12:30:00",
+      Updated: "2026-09-30 12:30:00",
       "Next attempt": "2026-09-30 12:35:00",
     });
-    expect(within(reports[1]).getByText("pending")).toBeInTheDocument();
-
-    // A report's delivery attempts load on request.
-    expect(reportAttempts).toEqual([]);
-    fireEvent.click(
-      within(reports[1]).getByRole("button", {
-        name: "Show delivery attempts",
-      }),
-    );
-    expect(
-      await within(reports[1]).findByRole("heading", {
-        name: "Delivery attempts (1)",
-      }),
-    ).toBeInTheDocument();
-    expect(within(reports[1]).getByText("absent user")).toBeInTheDocument();
-    expect(reportAttempts).toEqual([
-      "/api/v1/messages/1/status_reports/3/attempts",
-    ]);
   });
 
   it.each([
-    [{ requested: false, classes: [], reports: [] }, "Not requested."],
-    [
-      { requested: true, classes: [], reports: [] },
-      "Requested, for no outcome.",
-    ],
-  ] as const)("summarizes a request without reports", (status_report, text) => {
-    const m = message({
-      status_report: {
-        ...status_report,
-        classes: [...status_report.classes],
-        reports: [],
-      },
-    });
+    [false, "Not requested."],
+    [true, "None yet."],
+  ])("says when there is no report (requested: %s)", (requested, text) => {
+    const m = message({ status_report: { requested, reports: [] } });
     serve(m, [[]]);
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
@@ -280,7 +213,6 @@ describe("MessageDrawer", () => {
       id: 2,
       tp_status: 0,
       tp_status_name: "received",
-      class: "completed" as const,
       status,
       created_at: "2026-09-30T12:01:00.000Z",
       updated_at: "2026-09-30T12:01:00.000Z",
@@ -288,7 +220,6 @@ describe("MessageDrawer", () => {
     });
     const reports = (status: "pending" | "delivered") => ({
       requested: true,
-      classes: ["completed" as const],
       reports: [report(status)],
     });
 

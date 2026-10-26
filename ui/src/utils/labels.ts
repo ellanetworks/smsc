@@ -5,7 +5,6 @@ import type {
   MessageEncoding,
   NodeType,
   StatusReport,
-  StatusReportClass,
 } from "@/queries/messages";
 
 export const encodingLabels: Record<MessageEncoding, string> = {
@@ -38,13 +37,6 @@ export const partLabel = (m: Message): string =>
   m.concatenation ? `${m.concatenation.part} of ${m.concatenation.total}` : "—";
 
 export const messageText = (m: Message): string => m.text ?? "(binary)";
-
-export const reportClassLabels: Record<StatusReportClass, string> = {
-  completed: "Completed",
-  still_trying: "Still trying",
-  permanent: "Permanent error",
-  gave_up: "Gave up",
-};
 
 const hex = (n: number): string => `0x${n.toString(16).padStart(2, "0")}`;
 

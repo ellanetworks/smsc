@@ -2,11 +2,6 @@ package tpdu
 
 import "fmt"
 
-const (
-	ieiSMSCControlParameters = 0x06
-	ieiUDHSourceIndicator    = 0x07
-)
-
 type informationElement struct {
 	id   byte
 	data []byte
@@ -42,8 +37,4 @@ func informationElements(ies []byte) ([]informationElement, bool) {
 	}
 
 	return out, true
-}
-
-func (ie informationElement) encode() []byte {
-	return append([]byte{ie.id, byte(len(ie.data))}, ie.data...)
 }

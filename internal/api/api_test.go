@@ -153,7 +153,7 @@ func TestCreateMessage(t *testing.T) {
 		UpdatedAt:     "2026-09-29T10:00:00.000Z",
 		ExpiresAt:     "2026-09-30T10:00:00.000Z",
 		NextAttemptAt: "2026-09-29T10:00:00.000Z",
-		StatusReport:  api.StatusReports{Classes: []string{}, Reports: []api.StatusReport{}},
+		StatusReport:  api.StatusReports{Reports: []api.StatusReport{}},
 	}}
 
 	if !reflect.DeepEqual(got, want) {

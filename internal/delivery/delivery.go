@@ -31,7 +31,7 @@ type Store interface {
 	NextDue(ctx context.Context, now time.Time, busy []string) (db.Message, bool, error)
 	NextWakeup(ctx context.Context, busy []string) (time.Time, bool, error)
 	CompleteMessage(ctx context.Context, id int64, status db.MessageStatus, at time.Time, report *db.NewStatusReport) error
-	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, interim *db.NewStatusReport) error
+	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) error
 	AlertRecipient(ctx context.Context, msisdn string, now time.Time) ([]string, error)
 	SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error
 	NextDueFor(ctx context.Context, msisdn string, excludeID int64, now time.Time) (db.Message, bool, error)
@@ -359,20 +359,7 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 
 	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
 
-	// The interim report tells the temporary error of this attempt, as of now (TS 23.040 clause 9.2.3.13).
-	var interim *db.NewStatusReport
-
-	if r.status.Class() == tpdu.ClassGaveUp {
-		var err error
-
-		interim, err = statusreport.For(m, r.status.StillTrying(), now, d.Settings())
-		if err != nil {
-			d.Logger.Error("failed to make the interim status report on a short message", slog.Int64("message_id", m.ID),
-				slog.Any("error", err))
-		}
-	}
-
-	return d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold, interim)
+	return d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold)
 }
 
 // complete sets the final status of a message, with the status report on it that its originator asked for, if any. It
@@ -552,19 +539,22 @@ func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) 
 		d.setAlertMSISDN(ctx, m.MSISDN, re.AlertMSISDN)
 	}
 
+	// An unknown subscriber, and one without SMS, are permanent errors; barring, and SMS not provided in the visited
+	// network, are temporary (TS 23.040 clause 3.3, table 1).
 	for code, status := range map[uint32]tpdu.Status{
 		tgpp.ResultErrorUserUnknown:          tpdu.StatusNotObtainable,
 		tgpp.ResultErrorServiceNotSubscribed: tpdu.StatusConnectionRejected,
-		tgpp.ResultErrorServiceBarred:        tpdu.StatusConnectionRejected,
-		tgpp.ResultErrorFacilityNotSupported: tpdu.StatusIncompatibleDestination,
 	} {
 		if tgpp.IsExperimental(err, code) {
 			return result{outcome: permanent, status: status}
 		}
 	}
 
-	if tgpp.IsExperimental(err, tgpp.ResultErrorAbsentUser) {
+	switch {
+	case tgpp.IsExperimental(err, tgpp.ResultErrorAbsentUser):
 		return result{outcome: temporary, hold: true, status: statusNoResponse}
+	case tgpp.IsExperimental(err, tgpp.ResultErrorServiceBarred), tgpp.IsExperimental(err, tgpp.ResultErrorFacilityNotSupported):
+		return result{outcome: temporary, hold: true, status: statusServiceRejected}
 	}
 
 	return result{outcome: temporary, hold: true, status: statusCongestion}
@@ -573,22 +563,23 @@ func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) 
 // routingRequest returns the routing lookup for the delivery of a message or a status report, which the HSS tells
 // apart by SM-RP-MTI (TS 29.338 clause 5.3.3.2).
 func (d *Deliverer) routingRequest(log *slog.Logger, m db.Message) s6c.RoutingRequest {
-	req := s6c.RoutingRequest{MSISDN: m.MSISDN, SingleAttempt: m.SingleShot}
-
-	if m.Kind == db.KindStatusReport {
-		// SM-RP-SMEA is the TP-OA of the TPDU, which an SMS-STATUS-REPORT does not have (TS 23.040 clause 9.3.2.2).
-		req.MTI = s6c.SMRPMTIStatusReport
-		return req
+	req := s6c.RoutingRequest{
+		MSISDN:        m.MSISDN,
+		MTI:           s6c.SMRPMTIDeliver,
+		SMEA:          d.originatingSME(log, m),
+		SingleAttempt: m.SingleShot,
 	}
 
-	req.MTI = s6c.SMRPMTIDeliver
-	req.SMEA = d.originatingSME(log, m)
+	if m.Kind == db.KindStatusReport {
+		req.MTI = s6c.SMRPMTIStatusReport
+	}
 
 	return req
 }
 
 // originatingSME returns the SM-RP-SMEA of the routing lookup: the TP-OA of the SMS-DELIVER (TS 23.040 clause 9.3.2.2).
-// The SC asks the HSS for both an MME and an SGSN, so it must send it (TS 29.338 clause 5.2.1.1).
+// The SC asks the HSS for both an MME and an SGSN, so it must send it (TS 29.338 clause 5.2.1.1). An SMS-STATUS-REPORT
+// has no TP-OA: its originator is the SC, whose address the report's message holds.
 func (d *Deliverer) originatingSME(log *slog.Logger, m db.Message) []byte {
 	smea, err := tpdu.Address{
 		TypeOfNumber:  m.Originator.TypeOfNumber,
@@ -815,14 +806,8 @@ func (d *Deliverer) report(stop context.Context, log *slog.Logger, m db.Message,
 // SMS-DELIVER of a short message, or the SMS-STATUS-REPORT that the SC stored.
 func buildDeliver(m db.Message) (func(more bool) ([]byte, error), error) {
 	if m.Kind == db.KindStatusReport {
-		report, err := tpdu.DecodeStatusReport(m.TPDU)
-		if err != nil {
-			return nil, err
-		}
-
 		return func(more bool) ([]byte, error) {
-			report.MoreMessagesToSend = more
-			return report.Encode()
+			return tpdu.SetMoreMessagesToSend(m.TPDU, more), nil
 		}, nil
 	}
 
@@ -979,7 +964,8 @@ func classifyForwardAnswer(err error) forwardResult {
 
 		switch {
 		case cause != nil && *cause == sgd.CauseEquipmentNotSMEquipped:
-			return forwardResult{outcome: permanent, status: tpdu.StatusIncompatibleDestination}
+			// SMS lower layers capabilities not provisioned is a temporary error (TS 23.040 clause 3.3, table 1).
+			return forwardResult{outcome: temporary, status: statusServiceRejected}
 		case cause != nil && *cause == sgd.CauseMemoryCapacityExceeded:
 			return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded), status: statusErrorInSME}
 		case cause != nil && *cause == sgd.CauseEquipmentProtocolError:

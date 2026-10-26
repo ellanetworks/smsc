@@ -38,7 +38,7 @@ func TestCompleteMessageStoresStatusReport(t *testing.T) {
 		t.Fatalf("CompleteMessage: %v", err)
 	}
 
-	reports, err := d.ListStatusReports(ctx, id)
+	reports, err := listStatusReports(ctx, d, id)
 	if err != nil || len(reports) != 1 {
 		t.Fatalf("reports = %+v, %v; want one", reports, err)
 	}
@@ -83,7 +83,7 @@ func TestStatusReportJoinsTheRecipientsQueue(t *testing.T) {
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, held, until, base, true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, held, until, base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,7 +96,7 @@ func TestStatusReportJoinsTheRecipientsQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reports, err := d.ListStatusReports(ctx, id)
+	reports, err := listStatusReports(ctx, d, id)
 	if err != nil || len(reports) != 1 || !reports[0].NextAttemptAt.Equal(until) {
 		t.Fatalf("reports = %+v, %v; want one held until %v", reports, err, until)
 	}
@@ -147,7 +147,7 @@ func TestStatusReportOnlyOnMessagesFromAnMS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reports, err := d.ListStatusReports(ctx, mobile)
+	reports, err := listStatusReports(ctx, d, mobile)
 	if err != nil || len(reports) != 1 {
 		t.Fatalf("reports = %+v, %v", reports, err)
 	}
@@ -223,78 +223,9 @@ func TestSchemaKeepsStatusReportsConsistent(t *testing.T) {
 	}
 }
 
-func TestScheduleRetryStoresOneInterimReport(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+// listStatusReports returns the status reports on a message, oldest first.
+func listStatusReports(ctx context.Context, d *DB, messageID int64) ([]Message, error) {
+	reports, err := d.StatusReportsFor(ctx, []int64{messageID})
 
-	id, err := d.CreateMessage(ctx, testMessage(3, false, []byte{0x01}, now))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for i, status := range []uint8{0x22, 0x21} {
-		at := now.Add(time.Duration(i) * time.Minute)
-
-		interim := testReport(at)
-		interim.Status = status
-
-		if err := d.ScheduleRetry(ctx, id, at.Add(time.Minute), at, true, interim); err != nil {
-			t.Fatalf("ScheduleRetry %d: %v", i, err)
-		}
-	}
-
-	reports, err := d.ListStatusReports(ctx, id)
-	if err != nil || len(reports) != 1 {
-		t.Fatalf("reports = %+v, %v; want one interim report", reports, err)
-	}
-
-	if r := reports[0]; r.ReportStatus != 0x22 || !r.SubmittedAt.Equal(now) || r.MSISDN != testOriginator.Digits {
-		t.Fatalf("interim report = %+v; want the first", r)
-	}
-
-	if m, err := d.GetMessage(ctx, id); err != nil || m.Status != StatusPending || m.Retries != 2 {
-		t.Fatalf("message = %+v, %v; want it pending after two retries", m, err)
-	}
-
-	// The final report follows the interim one.
-	final := testReport(now.Add(time.Hour))
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, now.Add(time.Hour), final); err != nil {
-		t.Fatal(err)
-	}
-
-	if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 2 || reports[1].ReportStatus != 0x00 {
-		t.Fatalf("reports = %+v, %v; want the interim and the final report", reports, err)
-	}
-}
-
-func TestScheduleRetryWithoutInterimReport(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
-
-	fromAPI := testMessage(0, false, []byte{0x01}, now)
-	fromAPI.Origin = OriginAPI
-
-	id, err := d.CreateMessage(ctx, fromAPI)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// A failed report leaves the retry unscheduled, so that a retry is never without the report it owes.
-	if err := d.ScheduleRetry(ctx, id, now.Add(time.Hour), now, false, testReport(now)); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
-	}
-
-	if m, err := d.GetMessage(ctx, id); err != nil || m.Retries != 0 || !m.NextAttemptAt.Equal(now) {
-		t.Fatalf("message = %+v, %v; want it unchanged", m, err)
-	}
-
-	if err := d.ScheduleRetry(ctx, id, now.Add(time.Hour), now, false, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 0 {
-		t.Fatalf("reports = %+v, %v; want none", reports, err)
-	}
+	return reports[messageID], err
 }

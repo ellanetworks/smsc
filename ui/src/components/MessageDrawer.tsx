@@ -1,4 +1,4 @@
-import { type ReactNode, useId, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Box,
   Button,
@@ -19,11 +19,9 @@ import {
   type Attempt,
   getMessage,
   listMessageAttempts,
-  listStatusReportAttempts,
   type Message,
   type StatusReport,
 } from "@/queries/messages";
-import type { Page } from "@/queries/utils";
 import { formatTimestamp } from "@/utils/dates";
 import {
   diagnosticsLabels,
@@ -31,7 +29,6 @@ import {
   messageText,
   nodeTypeLabels,
   partLabel,
-  reportClassLabels,
   stepLabels,
   tpStatusLabel,
 } from "@/utils/labels";
@@ -97,27 +94,17 @@ function AttemptCard({ attempt, index }: { attempt: Attempt; index: number }) {
   );
 }
 
-interface AttemptsProps {
-  queryKey: readonly unknown[];
-  list: (page: number) => Promise<Page<Attempt>>;
-  pending: boolean;
-  title: string;
-  headingComponent?: "h3" | "h4";
-}
-
-function Attempts({
-  queryKey,
-  list,
-  pending,
-  title,
-  headingComponent = "h3",
-}: AttemptsProps) {
-  const titleId = useId();
+function Attempts({ message }: { message: Message }) {
+  const pending = message.status === "pending";
 
   const { data, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery({
-      queryKey,
-      queryFn: ({ pageParam }) => list(pageParam),
+      queryKey: ["attempts", message.id],
+      queryFn: ({ pageParam }) =>
+        listMessageAttempts(message.id, {
+          page: pageParam,
+          perPage: ATTEMPTS_PER_PAGE,
+        }),
       initialPageParam: 1,
       getNextPageParam: (last) =>
         last.page * last.per_page < last.total_count
@@ -130,15 +117,14 @@ function Attempts({
   const total = data?.pages[0]?.total_count;
 
   return (
-    <Box component="section" aria-labelledby={titleId}>
+    <Box component="section" aria-labelledby="attempts-title">
       <Typography
-        id={titleId}
-        variant={headingComponent === "h3" ? "subtitle1" : "subtitle2"}
-        component={headingComponent}
+        id="attempts-title"
+        variant="subtitle1"
+        component="h3"
         sx={{ mb: 1 }}
       >
-        {title}
-        {total !== undefined ? ` (${total})` : ""}
+        Delivery attempts{total !== undefined ? ` (${total})` : ""}
       </Typography>
       <QueryAlert
         error={error}
@@ -175,17 +161,8 @@ function Attempts({
   );
 }
 
-function StatusReportCard({
-  messageId,
-  report,
-}: {
-  messageId: number;
-  report: StatusReport;
-}) {
-  const [showAttempts, setShowAttempts] = useState(false);
-
+function StatusReportCard({ report }: { report: StatusReport }) {
   const rows: [string, ReactNode][] = [
-    ["Class", reportClassLabels[report.class]],
     ["Created", formatTimestamp(report.created_at)],
     ["Updated", formatTimestamp(report.updated_at)],
   ];
@@ -202,49 +179,14 @@ function StatusReportCard({
         <MessageStatusChip status={report.status} />
       </Stack>
       <Fields rows={rows} />
-      <Button
-        size="small"
-        onClick={() => setShowAttempts((v) => !v)}
-        aria-expanded={showAttempts}
-        sx={{ mt: 1 }}
-      >
-        {showAttempts ? "Hide delivery attempts" : "Show delivery attempts"}
-      </Button>
-      {showAttempts && (
-        <Box sx={{ mt: 1 }}>
-          <Attempts
-            queryKey={["status-report-attempts", messageId, report.id]}
-            list={(page) =>
-              listStatusReportAttempts(messageId, report.id, {
-                page,
-                perPage: ATTEMPTS_PER_PAGE,
-              })
-            }
-            pending={report.status === "pending"}
-            title="Delivery attempts"
-            headingComponent="h4"
-          />
-        </Box>
-      )}
     </Paper>
   );
 }
 
-// StatusReports shows what the phone that sent the message asked of status reports, and those the SMSC returned
+// StatusReports shows whether the phone that sent the message asked for status reports, and those the SMSC returned
 // to it (TS 23.040 clause 3.2.9).
 function StatusReports({ message }: { message: Message }) {
-  const { requested, classes, reports } = message.status_report;
-
-  let summary: string;
-  if (!requested) {
-    summary = "Not requested.";
-  } else if (classes.length === 0) {
-    summary = "Requested, for no outcome.";
-  } else {
-    summary = `Requested for: ${classes
-      .map((c) => reportClassLabels[c])
-      .join(", ")}.`;
-  }
+  const { requested, reports } = message.status_report;
 
   return (
     <Box component="section" aria-labelledby="status-reports-title">
@@ -256,9 +198,11 @@ function StatusReports({ message }: { message: Message }) {
       >
         Status reports{reports.length > 0 ? ` (${reports.length})` : ""}
       </Typography>
-      <Typography color="text.secondary" sx={{ mb: 1 }}>
-        {summary}
-      </Typography>
+      {reports.length === 0 && (
+        <Typography color="text.secondary">
+          {requested ? "None yet." : "Not requested."}
+        </Typography>
+      )}
       {reports.length > 0 && (
         <Stack
           component="ol"
@@ -266,7 +210,7 @@ function StatusReports({ message }: { message: Message }) {
           sx={{ listStyle: "none", p: 0, m: 0 }}
         >
           {reports.map((r) => (
-            <StatusReportCard key={r.id} messageId={message.id} report={r} />
+            <StatusReportCard key={r.id} report={r} />
           ))}
         </Stack>
       )}
@@ -350,17 +294,7 @@ function MessageDetail({
         {messageText(message)}
       </Paper>
       <Divider />
-      <Attempts
-        queryKey={["attempts", message.id]}
-        list={(page) =>
-          listMessageAttempts(message.id, {
-            page,
-            perPage: ATTEMPTS_PER_PAGE,
-          })
-        }
-        pending={message.status === "pending"}
-        title="Delivery attempts"
-      />
+      <Attempts message={message} />
       <Divider />
       <StatusReports message={message} />
     </Stack>

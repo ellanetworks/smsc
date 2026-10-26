@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/ellanetworks/smsc/internal/tpdu"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -14,7 +13,6 @@ type metrics struct {
 	duration  prometheus.Histogram
 	errors    prometheus.Counter
 	completed *prometheus.CounterVec
-	reports   *prometheus.CounterVec
 }
 
 // finalStatuses are the statuses that each kind of message ends with. Only a short message is replaced.
@@ -23,14 +21,9 @@ var finalStatuses = map[MessageKind][]MessageStatus{
 	KindStatusReport: {StatusDelivered, StatusFailed, StatusExpired},
 }
 
-var reportClasses = []tpdu.StatusClass{tpdu.ClassCompleted, tpdu.ClassStillTrying, tpdu.ClassPermanent, tpdu.ClassGaveUp}
-
 func newMetrics() metrics {
-	completed, reports := newMessageMetrics()
-
 	return metrics{
-		completed: completed,
-		reports:   reports,
+		completed: newCompleted(),
 		duration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name: "ellasmsc_database_query_duration_seconds",
 			Help: "Duration of database calls, the wait for the connection, statements, transaction and row scanning included.",
@@ -47,10 +40,10 @@ func newMetrics() metrics {
 	}
 }
 
-// newMessageMetrics returns the counts of what the stored messages become, which the database counts once the
-// transaction that stores it commits.
-func newMessageMetrics() (completed, reports *prometheus.CounterVec) {
-	completed = prometheus.NewCounterVec(prometheus.CounterOpts{
+// newCompleted returns the count of the messages that reached a final status, which the database counts once the
+// transaction that stores the status commits.
+func newCompleted() *prometheus.CounterVec {
+	completed := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "ellasmsc_messages_completed_total",
 		Help: "Short messages and status reports that reached a final status, by type (message, status_report) and " +
 			"status (delivered, failed, expired, and replaced for a message).",
@@ -62,38 +55,19 @@ func newMessageMetrics() (completed, reports *prometheus.CounterVec) {
 		}
 	}
 
-	reports = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "ellasmsc_status_reports_created_total",
-		Help: "Status reports that the SMSC created for phones that asked for them, by the class of their TP-Status " +
-			"(completed, still_trying, permanent, gave_up).",
-	}, []string{"class"})
-
-	for _, class := range reportClasses {
-		reports.WithLabelValues(class.String())
-	}
-
-	return completed, reports
+	return completed
 }
 
-// changes are what a transaction does to the messages that the metrics count once it commits.
-type changes struct {
-	completed []completion
-	reports   []tpdu.Status
-}
-
+// completion is a final status that a transaction stores, which the metrics count once it commits.
 type completion struct {
 	kind   MessageKind
 	status MessageStatus
 }
 
-// count counts the changes of a transaction that committed.
-func (m metrics) count(c changes) {
-	for _, done := range c.completed {
+// count counts the final statuses that a transaction stored, once it committed.
+func (m metrics) count(completed []completion) {
+	for _, done := range completed {
 		m.completed.WithLabelValues(string(done.kind), string(done.status)).Inc()
-	}
-
-	for _, status := range c.reports {
-		m.reports.WithLabelValues(status.Class().String()).Inc()
 	}
 }
 
@@ -120,7 +94,7 @@ func failed(err error) bool {
 // call's duration includes the wait for the connection, which every call shares.
 func (d *DB) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		d.metrics.duration, d.metrics.errors, storageCollector{path: d.path}, d.metrics.completed, d.metrics.reports,
+		d.metrics.duration, d.metrics.errors, storageCollector{path: d.path}, d.metrics.completed,
 	}
 }
 

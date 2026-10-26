@@ -135,7 +135,6 @@ Prometheus metrics, served at `GET /api/v1/metrics`.
 | `ellasmsc_messages_received_total` | Counter | Short messages received, one per part, by origin (`mobile`, `api`) and result (`accepted`, `rejected`, `error`) |
 | `ellasmsc_messages_completed_total` | Counter | Short messages and status reports that reached a final status, by type (`message`, `status_report`) and status (`delivered`, `failed`, `expired`, and `replaced` for a message) |
 | `ellasmsc_messages_pending` | Gauge | Short messages and status reports waiting for delivery, by type (`message`, `status_report`) and state (`due`: to be delivered now or being delivered; `waiting`: for a retry or for the phone to be reachable) |
-| `ellasmsc_status_reports_created_total` | Counter | Status reports created for phones that asked for them, by the class of their status (`completed`, `still_trying`, `permanent`, `gave_up`) |
 | `ellasmsc_message_delivery_duration_seconds` | Histogram | Time from submission to delivery of the short messages delivered, including the time the phone was unreachable; status reports are left out |
 | `ellasmsc_hss_peers` | Gauge | Connected HSSs that the SMSC can route messages through; at 0, messages to phones wait |
 | `ellasmsc_peer_requests_total` | Counter | Requests to the HSS and the MME or AMF, by interface (`s6c`, `sgd`) and result (`success`, `failure`, `absent_user`, `error`, `timeout`) |

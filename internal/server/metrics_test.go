@@ -44,7 +44,6 @@ func TestMetrics(t *testing.T) {
 		"ellasmsc_messages_received_total",
 		"ellasmsc_messages_completed_total",
 		"ellasmsc_messages_pending",
-		"ellasmsc_status_reports_created_total",
 		"ellasmsc_message_delivery_duration_seconds",
 		"ellasmsc_peer_requests_total",
 		"ellasmsc_peer_request_duration_seconds",
@@ -254,8 +253,6 @@ func TestMetricsOfStatusReports(t *testing.T) {
 	want := map[string]float64{
 		`ellasmsc_messages_completed_total{status="delivered",type="message"}`:       1,
 		`ellasmsc_messages_completed_total{status="delivered",type="status_report"}`: 1,
-		`ellasmsc_status_reports_created_total{class="completed"}`:                   1,
-		`ellasmsc_status_reports_created_total{class="still_trying"}`:                0,
 		`ellasmsc_messages_pending{state="due",type="status_report"}`:                0,
 		`ellasmsc_messages_pending{state="waiting",type="status_report"}`:            0,
 		`ellasmsc_message_delivery_duration_seconds_count`:                           1,

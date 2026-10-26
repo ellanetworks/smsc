@@ -22,8 +22,9 @@ var (
 // submitTPDU is an SMS-SUBMIT with TP-SRR, TP-MR 7, to +15551230002.
 const submitTPDU = "21" + "07" + "0b91" + "5155210300f2" + "00" + "00" + "05" + "e8329bfd06"
 
-// permanentOnlyTPDU is an SMS-SUBMIT with TP-SRR and a Selective Status Report for permanent errors only.
-const permanentOnlyTPDU = "61" + "07" + "0b91" + "5155210300f2" + "00" + "04" + "04" + "03" + "060102"
+// selectiveTPDU is an SMS-SUBMIT with TP-SRR and a Selective Status Report for permanent errors only (TS 23.040 clause
+// 9.2.3.24.5), which the SC does not support.
+const selectiveTPDU = "61" + "07" + "0b91" + "5155210300f2" + "00" + "04" + "04" + "03" + "060102"
 
 func message(t *testing.T, tpduHex string) db.Message {
 	t.Helper()
@@ -67,52 +68,25 @@ func TestForWantsNone(t *testing.T) {
 	report := message(t, submitTPDU)
 	report.Kind = db.KindStatusReport
 
-	tests := map[string]struct {
-		message db.Message
-		status  tpdu.Status
-	}{
-		"not requested":           {message(t, "01"+submitTPDU[2:]), tpdu.StatusReceived},
-		"from the API":            {fromAPI, tpdu.StatusReceived},
-		"on a status report":      {report, tpdu.StatusReceived},
-		"while still trying":      {message(t, submitTPDU), tpdu.TemporaryNoResponse.StillTrying()},
-		"completion not selected": {message(t, permanentOnlyTPDU), tpdu.StatusReceived},
-		"given up not selected":   {message(t, permanentOnlyTPDU), tpdu.TemporarySMEBusy.GaveUp()},
+	tests := map[string]db.Message{
+		"not requested":      message(t, "01"+submitTPDU[2:]),
+		"from the API":       fromAPI,
+		"on a status report": report,
 	}
 
-	for name, tt := range tests {
+	for name, m := range tests {
 		t.Run(name, func(t *testing.T) {
-			if report, err := For(tt.message, tt.status, discharge, current); err != nil || report != nil {
+			if report, err := For(m, tpdu.StatusReceived, discharge, current); err != nil || report != nil {
 				t.Fatalf("For = %+v, %v; want no report", report, err)
 			}
 		})
 	}
 }
 
-// stillTryingTPDU is an SMS-SUBMIT with TP-SRR and a Selective Status Report for every outcome, the SC still trying
-// included.
-const stillTryingTPDU = "61" + "07" + "0b91" + "5155210300f2" + "00" + "04" + "04" + "03" + "06010f"
-
-func TestForSelectedOutcome(t *testing.T) {
-	tests := map[string]struct {
-		tpdu   string
-		status tpdu.Status
-	}{
-		"permanent error": {permanentOnlyTPDU, tpdu.StatusNotObtainable},
-		"still trying":    {stillTryingTPDU, tpdu.TemporaryNoResponse.StillTrying()},
-		"completed":       {stillTryingTPDU, tpdu.StatusReceived},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			report, err := For(message(t, tt.tpdu), tt.status, discharge, current)
-			if err != nil || report == nil || report.Status != uint8(tt.status) {
-				t.Fatalf("For = %+v, %v; want a report with status %#x", report, err, byte(tt.status))
-			}
-
-			if r, err := tpdu.DecodeStatusReport(report.TPDU); err != nil || r.Status != tt.status || !r.DischargeTime.Equal(discharge) {
-				t.Fatalf("SMS-STATUS-REPORT = %+v, %v", r, err)
-			}
-		})
+func TestForIgnoresSelectiveStatusReport(t *testing.T) {
+	report, err := For(message(t, selectiveTPDU), tpdu.StatusReceived, discharge, current)
+	if err != nil || report == nil || report.Status != 0x00 {
+		t.Fatalf("For = %+v, %v; want a report", report, err)
 	}
 }
 

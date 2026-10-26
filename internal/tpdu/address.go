@@ -21,6 +21,9 @@ type Address struct {
 
 const bcdDigits = "0123456789*#abc"
 
+// maxAddressDigits is the most digits of an address field (TS 23.040 clause 9.1.2.5).
+const maxAddressDigits = 20
+
 func decodeAddress(b []byte) (Address, int, error) {
 	if len(b) < 2 {
 		return Address{}, 0, fmt.Errorf("address: %w", errTruncated)
@@ -29,6 +32,10 @@ func decodeAddress(b []byte) (Address, int, error) {
 	length := int(b[0])
 	toa := b[1]
 	valueOctets := (length + 1) / 2
+
+	if (toa>>4)&0x7 != TypeOfNumberAlphanumeric && length > maxAddressDigits {
+		return Address{}, 0, fmt.Errorf("address: %w: %d digits exceeds %d", ErrUnsupportedAddress, length, maxAddressDigits)
+	}
 
 	if len(b) < 2+valueOctets {
 		return Address{}, 0, fmt.Errorf("address: %w", errTruncated)
@@ -69,8 +76,8 @@ func (a Address) Encode() ([]byte, error) {
 		return nil, fmt.Errorf("address: invalid type of address %d/%d", a.TypeOfNumber, a.NumberingPlan)
 	}
 
-	if len(a.Digits) > 20 {
-		return nil, fmt.Errorf("address: %d digits exceeds 20", len(a.Digits))
+	if len(a.Digits) > maxAddressDigits {
+		return nil, fmt.Errorf("address: %d digits exceeds %d", len(a.Digits), maxAddressDigits)
 	}
 
 	out := make([]byte, 2, 2+(len(a.Digits)+1)/2)

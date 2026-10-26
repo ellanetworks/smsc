@@ -16,12 +16,6 @@ import (
 // reportingSubmitTPDU is submitTPDU with TP-SRR set.
 const reportingSubmitTPDU = "31" + "07" + "0b91" + "5155210300f2" + "00" + "00" + "aa" + "05" + "e8329bfd06"
 
-// selectiveSubmitTPDU is an SMS-SUBMIT of 8-bit data with TP-SRR set, and a Selective Status Report (TS 23.040 clause
-// 9.2.3.24.5) for the given outcomes.
-func selectiveSubmitTPDU(selective string) string {
-	return "71" + "07" + "0b91" + "5155210300f2" + "00" + "04" + "aa" + "06" + "030601" + selective + "6869"
-}
-
 func reportingMessage(t *testing.T) db.Message {
 	t.Helper()
 
@@ -48,9 +42,9 @@ func TestStatusReportOnFinalOutcomes(t *testing.T) {
 		"delivered":                       {answer: success(), wantStatus: db.StatusDelivered, want: 0x00},
 		"expired":                         {expired: true, wantStatus: db.StatusExpired, want: 0x46},
 		"unknown to the HSS":              {routingErr: routingError(tgpp.ResultErrorUserUnknown), wantStatus: db.StatusFailed, want: 0x43},
-		"barred":                          {routingErr: routingError(tgpp.ResultErrorServiceBarred), wantStatus: db.StatusFailed, want: 0x42},
+		"barred, single attempt":          {routingErr: routingError(tgpp.ResultErrorServiceBarred), singleShot: true, wantStatus: db.StatusFailed, want: 0x63},
 		"not subscribed":                  {routingErr: routingError(tgpp.ResultErrorServiceNotSubscribed), wantStatus: db.StatusFailed, want: 0x42},
-		"facility not supported (HSS)":    {routingErr: routingError(tgpp.ResultErrorFacilityNotSupported), wantStatus: db.StatusFailed, want: 0x41},
+		"no SMS in the VPLMN (HSS)":       {routingErr: routingError(tgpp.ResultErrorFacilityNotSupported), singleShot: true, wantStatus: db.StatusFailed, want: 0x63},
 		"absent (HSS), single attempt":    {routingErr: routingError(tgpp.ResultErrorAbsentUser), singleShot: true, wantStatus: db.StatusFailed, want: 0x62},
 		"HSS unreachable, single attempt": {routingErr: diameter.ErrNotConnected, singleShot: true, wantStatus: db.StatusFailed, want: 0x60},
 		"no node over SGd":                {routing: &mscOnly, wantStatus: db.StatusFailed, want: 0x45},
@@ -58,7 +52,7 @@ func TestStatusReportOnFinalOutcomes(t *testing.T) {
 		"busy, single attempt":            {answer: experimental(tgpp.ResultErrorUserBusyForMTSMS), singleShot: true, wantStatus: db.StatusFailed, want: 0x61},
 		"illegal user":                    {answer: experimental(tgpp.ResultErrorIllegalUser), wantStatus: db.StatusFailed, want: 0x42},
 		"illegal equipment":               {answer: experimental(tgpp.ResultErrorIllegalEquipment), wantStatus: db.StatusFailed, want: 0x42},
-		"not SM equipped":                 {answer: smDeliveryFailure(sgd.CauseEquipmentNotSMEquipped), wantStatus: db.StatusFailed, want: 0x41},
+		"not SM equipped, single attempt": {answer: smDeliveryFailure(sgd.CauseEquipmentNotSMEquipped), singleShot: true, wantStatus: db.StatusFailed, want: 0x63},
 		"memory exceeded, single attempt": {answer: smDeliveryFailure(sgd.CauseMemoryCapacityExceeded), singleShot: true, wantStatus: db.StatusFailed, want: 0x65},
 		"message refused, single attempt": {answer: protocolError(mustHex(t, "00"+"91"+"00")), singleShot: true, wantStatus: db.StatusFailed, want: 0x63},
 		"storage full, single attempt":    {answer: protocolError(mustHex(t, "00"+"d0"+"00")), singleShot: true, wantStatus: db.StatusFailed, want: 0x65},
@@ -146,8 +140,8 @@ func TestNoStatusReport(t *testing.T) {
 				t.Fatalf("TFRs = %d", len(sender.requests))
 			}
 
-			if r, interims := store.reports[1], store.interims[1]; r != nil || len(interims) != 0 {
-				t.Fatalf("report = %+v, interim reports = %+v, want none", r, interims)
+			if r := store.reports[1]; r != nil {
+				t.Fatalf("report = %+v, want none", r)
 			}
 		})
 	}
@@ -186,6 +180,7 @@ func TestDeliverStatusReport(t *testing.T) {
 	report := pendingMessage(t)
 	report.Kind = db.KindStatusReport
 	report.ReportFor = 9
+	report.Originator = db.Address{Digits: "15550000000", TypeOfNumber: 1, NumberingPlan: 1}
 	report.MSISDN = "15551230001"
 	report.TPDU = mustHex(t, stored)
 
@@ -211,7 +206,9 @@ func TestDeliverStatusReport(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if req := router.requests[0]; req.MSISDN != "15551230001" || req.MTI != s6c.SMRPMTIStatusReport || req.SMEA != nil {
+			// The SC originates the report (TS 29.338 clause 5.2.1.1).
+			if req := router.requests[0]; req.MSISDN != "15551230001" || req.MTI != s6c.SMRPMTIStatusReport ||
+				!bytes.Equal(req.SMEA, mustHex(t, "0b91"+"5155000000f0")) {
 				t.Fatalf("routing request = %+v", req)
 			}
 
@@ -258,97 +255,6 @@ func TestStatusReportTellsTheFirstNodesError(t *testing.T) {
 
 			if r := store.reports[1]; r == nil || r.Status != uint8(tt.want) {
 				t.Fatalf("report = %+v, want status %#x", r, byte(tt.want))
-			}
-		})
-	}
-}
-
-func TestInterimStatusReport(t *testing.T) {
-	tests := map[string]struct {
-		selective string
-		answer    *diameter.Message
-		want      tpdu.Status
-	}{
-		"absent":            {"0f", experimental(tgpp.ResultErrorAbsentUser), 0x22},
-		"busy":              {"08", experimental(tgpp.ResultErrorUserBusyForMTSMS), 0x21},
-		"memory exceeded":   {"08", smDeliveryFailure(sgd.CauseMemoryCapacityExceeded), 0x25},
-		"message refused":   {"08", protocolError(mustHex(t, "00"+"91"+"00")), 0x23},
-		"transport failure": {"08", nil, 0x20},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			m := reportingMessage(t)
-			m.TPDU = mustHex(t, selectiveSubmitTPDU(tt.selective))
-
-			store := newFakeStore(m)
-			sender := &fakeSender{
-				answers: map[string]*diameter.Message{"mme.example.org": tt.answer},
-				errs:    map[string]error{},
-			}
-
-			if tt.answer == nil {
-				sender.errs["mme.example.org"] = diameter.ErrNotConnected
-			}
-
-			process(t, newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender))
-
-			if store.messages[1].Status != db.StatusPending || store.messages[1].Retries != 1 || store.reports[1] != nil {
-				t.Fatalf("message = %+v, final report = %+v; want a retry", store.messages[1], store.reports[1])
-			}
-
-			interims := store.interims[1]
-			if len(interims) != 1 {
-				t.Fatalf("interim reports = %+v, want one", interims)
-			}
-
-			if r := interims[0]; r.Status != uint8(tt.want) || !r.CreatedAt.Equal(testNow) || !r.ExpiresAt.Equal(testNow.Add(24*time.Hour)) {
-				t.Fatalf("interim report = %+v, want status %#x", r, byte(tt.want))
-			}
-
-			r, err := tpdu.DecodeStatusReport(interims[0].TPDU)
-			if err != nil {
-				t.Fatalf("DecodeStatusReport: %v", err)
-			}
-
-			// TS 23.040 clause 9.2.3.13: the time of the last transfer attempt.
-			if r.Status != tt.want || r.MessageReference != 7 || !r.DischargeTime.Equal(testNow) {
-				t.Fatalf("SMS-STATUS-REPORT = %+v", r)
-			}
-		})
-	}
-}
-
-func TestNoInterimStatusReportOnceTheSCGivesUp(t *testing.T) {
-	tests := map[string]struct {
-		selective string
-		want      bool
-	}{
-		"still trying only":          {"08", false},
-		"still trying, and given up": {"0c", true},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			m := reportingMessage(t)
-			m.TPDU = mustHex(t, selectiveSubmitTPDU(tt.selective))
-			m.SingleShot = true
-
-			store := newFakeStore(m)
-			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": experimental(tgpp.ResultErrorAbsentUser)}}
-
-			process(t, newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender))
-
-			if len(store.interims[1]) != 0 || store.messages[1].Status != db.StatusFailed {
-				t.Fatalf("interim reports = %+v, status = %s", store.interims[1], store.messages[1].Status)
-			}
-
-			if got := store.reports[1] != nil; got != tt.want {
-				t.Fatalf("final report = %+v, want one: %v", store.reports[1], tt.want)
-			}
-
-			if tt.want && store.reports[1].Status != 0x62 {
-				t.Fatalf("final report = %+v, want status 0x62", store.reports[1])
 			}
 		})
 	}

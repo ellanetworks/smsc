@@ -11,14 +11,10 @@ export type MessageStatus =
 // A status report is delivered as a message is, but is never replaced.
 export type StatusReportDelivery = Exclude<MessageStatus, "replaced">;
 
-export type StatusReportClass =
-  "completed" | "still_trying" | "permanent" | "gave_up";
-
 export interface StatusReport {
   id: number;
   tp_status: number;
   tp_status_name: string;
-  class: StatusReportClass;
   status: StatusReportDelivery;
   created_at: string;
   updated_at: string;
@@ -28,7 +24,6 @@ export interface StatusReport {
 
 export interface StatusReports {
   requested: boolean;
-  classes: StatusReportClass[];
   reports: StatusReport[];
 }
 
@@ -129,16 +124,4 @@ export const listMessageAttempts = (
       page: params.page,
       per_page: params.perPage,
     }),
-  );
-
-export const listStatusReportAttempts = (
-  messageId: number,
-  reportId: number,
-  params: PageParams = {},
-): Promise<Page<Attempt>> =>
-  apiFetch<Page<Attempt>>(
-    withQuery(
-      `/api/v1/messages/${messageId}/status_reports/${reportId}/attempts`,
-      { page: params.page, per_page: params.perPage },
-    ),
   );

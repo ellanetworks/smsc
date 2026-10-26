@@ -10,7 +10,7 @@ export const message = (overrides: Partial<Message> = {}): Message => ({
   created_at: "2026-09-30T12:00:00.000Z",
   updated_at: "2026-09-30T12:00:01.000Z",
   expires_at: "2026-10-07T12:00:00.000Z",
-  status_report: { requested: false, classes: [], reports: [] },
+  status_report: { requested: false, reports: [] },
   ...overrides,
 });
 

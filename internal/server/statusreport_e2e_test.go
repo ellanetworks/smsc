@@ -3,13 +3,10 @@ package server_test
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"net/http"
 	"testing"
 
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
-	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
@@ -52,8 +49,8 @@ func waitForReportDelivered(t *testing.T, s *smsc) {
 	t.Helper()
 
 	eventually(t, "the status report delivered", func() bool {
-		reports, err := s.store.ListStatusReports(context.Background(), 1)
-		return err == nil && len(reports) == 1 && reports[0].Status == db.StatusDelivered
+		reports, err := s.store.StatusReportsFor(context.Background(), []int64{1})
+		return err == nil && len(reports[1]) == 1 && reports[1][0].Status == db.StatusDelivered
 	})
 }
 
@@ -86,7 +83,7 @@ func TestStatusReportIsReturnedToTheOriginator(t *testing.T) {
 		t.Fatalf("routing request for the message = %+v", r)
 	}
 
-	if r := routings[1]; r.msisdn != alice.msisdn || r.mti != s6c.SMRPMTIStatusReport || r.smea != nil {
+	if r := routings[1]; r.msisdn != alice.msisdn || r.mti != s6c.SMRPMTIStatusReport || !bytes.Equal(r.smea, semiOctets(t, serviceCentreAddress)) {
 		t.Fatalf("routing request for the report = %+v", r)
 	}
 
@@ -94,18 +91,11 @@ func TestStatusReportIsReturnedToTheOriginator(t *testing.T) {
 		t.Fatalf("messages = %+v, %d, %v; want only the short message", messages, total, err)
 	}
 
-	// The API shows the report under the message, with the attempts to deliver it to alice.
+	// The API shows the report under the message.
 	status := s.message(t, 1).StatusReport
 	if !status.Requested || len(status.Reports) != 1 || status.Reports[0].TPStatusName != "received" ||
 		status.Reports[0].Status != "delivered" {
 		t.Fatalf("status_report = %+v", status)
-	}
-
-	var attempts api.ListAttemptsResponse
-
-	path := fmt.Sprintf("/api/v1/messages/1/status_reports/%d/attempts", status.Reports[0].ID)
-	if code := s.api(t, http.MethodGet, path, nil, &attempts); code != http.StatusOK || attempts.TotalCount != 2 {
-		t.Fatalf("GET %s = %d, %+v; want the routing lookup and the delivery", path, code, attempts)
 	}
 }
 
@@ -148,43 +138,4 @@ func TestUnknownRecipientIsReported(t *testing.T) {
 	}
 
 	waitForReportDelivered(t, s)
-}
-
-func TestInterimStatusReportWhileTheRecipientIsAbsent(t *testing.T) {
-	core, s := newSMSC(t, alice, bob)
-	core.setAbsent(bob.msisdn, true)
-
-	// TP-SRR and TP-UDHI, with a Selective Status Report for every outcome, the SC still trying included.
-	submit := []byte{0x61, 0x09}
-	submit = append(submit, semiOctets(t, bob.msisdn)...)
-	submit = append(submit, 0x00, 0x04, 0x07, 0x03, 0x06, 0x01, 0x0f, 'l', 'a', 't')
-
-	if rc := core.submitTPDU(alice, submit); rc != diameter.ResultSuccess {
-		t.Fatalf("OFA result = %d", rc)
-	}
-
-	interim := statusReportTo(t, core, alice)
-	if interim.MessageReference != 0x09 || interim.Status != tpdu.TemporaryNoResponse.StillTrying() {
-		t.Fatalf("interim SMS-STATUS-REPORT = %+v", interim)
-	}
-
-	eventually(t, "the interim report delivered", func() bool {
-		reports, err := s.store.ListStatusReports(context.Background(), 1)
-		return err == nil && len(reports) == 1 && reports[0].Status == db.StatusDelivered
-	})
-
-	core.setAbsent(bob.msisdn, false)
-
-	if rc := core.alert(bob); rc != diameter.ResultSuccess {
-		t.Fatalf("ALA result = %d", rc)
-	}
-
-	s.waitForStatus(t, 1, db.StatusDelivered)
-
-	eventually(t, "the final status report to alice", func() bool { return len(core.deliveredTo(alice.imsi)) == 2 })
-
-	final, err := tpdu.DecodeStatusReport(core.deliveredTo(alice.imsi)[1].tpdu)
-	if err != nil || final.MessageReference != 0x09 || final.Status != tpdu.StatusReceived {
-		t.Fatalf("final SMS-STATUS-REPORT = %+v, %v", final, err)
-	}
 }

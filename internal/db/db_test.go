@@ -152,7 +152,7 @@ func TestCompleteMessageOnlyCompletesPendingMessages(t *testing.T) {
 		t.Fatalf("message = %+v, %v; want it left failed", m, err)
 	}
 
-	if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 0 {
+	if reports, err := listStatusReports(ctx, d, id); err != nil || len(reports) != 0 {
 		t.Fatalf("reports = %+v, %v; want none", reports, err)
 	}
 }
@@ -492,9 +492,9 @@ func TestReplaceShortMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The same recipient, dialled as a national number.
+	// Only the originator and the replace type are checked: a message to another recipient replaces it too.
 	replacement := replaceType(testMessage(2, false, []byte{0x02}, now.Add(time.Minute)))
-	replacement.Recipient = Address{Digits: "5551230002", TypeOfNumber: 2, NumberingPlan: 1}
+	replacement.Recipient, replacement.MSISDN = Address{Digits: "15551239999", TypeOfNumber: 1, NumberingPlan: 1}, "15551239999"
 
 	replacementID, err := d.CreateMessage(ctx, replacement)
 	if err != nil || replacementID == id {
@@ -514,10 +514,6 @@ func TestReplaceShortMessage(t *testing.T) {
 	tests := map[string]func(NewMessage) NewMessage{
 		"another replace type": func(m NewMessage) NewMessage {
 			m.ProtocolIdentifier = 0x42
-			return m
-		},
-		"another recipient": func(m NewMessage) NewMessage {
-			m.Recipient.Digits, m.MSISDN = "15551239999", "15551239999"
 			return m
 		},
 		"another originator": func(m NewMessage) NewMessage {
@@ -580,7 +576,7 @@ func TestReplacedMessageStatusReport(t *testing.T) {
 			t.Fatalf("ReportReplaced got %+v", seen)
 		}
 
-		if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 1 {
+		if reports, err := listStatusReports(ctx, d, id); err != nil || len(reports) != 1 {
 			t.Fatalf("reports = %+v, %v; want one", reports, err)
 		}
 	})
@@ -600,7 +596,7 @@ func TestReplacedMessageStatusReport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if reports, err := d.ListStatusReports(ctx, id); err != nil || len(reports) != 0 {
+		if reports, err := listStatusReports(ctx, d, id); err != nil || len(reports) != 0 {
 			t.Fatalf("reports = %+v, %v; want none", reports, err)
 		}
 	})
@@ -654,7 +650,7 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("NextDue = %+v, %v, %v; want message %d", m, ok, err, first)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute), false, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -689,7 +685,7 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base, base, false, nil); !errors.Is(err, ErrNotFound) {
+	if err := d.ScheduleRetry(ctx, first, base, base, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ScheduleRetry on a delivered message = %v, want ErrNotFound", err)
 	}
 
@@ -750,12 +746,12 @@ func TestHoldAndAlertRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base, false, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base, false); err != nil {
 		t.Fatal(err)
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -795,7 +791,7 @@ func TestAlertMSISDN(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, id, base.Add(time.Hour), base, true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, id, base.Add(time.Hour), base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -843,7 +839,7 @@ func TestNewMessageJoinsRecipientHold(t *testing.T) {
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -886,7 +882,7 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -899,11 +895,11 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatalf("message after a plain retry next attempt = %v, %v; a retry is not a hold", m.NextAttemptAt, err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(2*time.Hour), base.Add(time.Minute), true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(2*time.Hour), base.Add(time.Minute), true); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(90*time.Minute), base.Add(time.Minute), true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(90*time.Minute), base.Add(time.Minute), true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -947,7 +943,7 @@ func TestCountPending(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now, false, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -988,7 +984,7 @@ func TestScheduleRetryHoldsOnlyWhenAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -996,7 +992,7 @@ func TestScheduleRetryHoldsOnlyWhenAsked(t *testing.T) {
 		t.Fatalf("other message after a retry without hold = %v, %v; want it still due", m.NextAttemptAt, err)
 	}
 
-	if err := d.ScheduleRetry(ctx, second, base.Add(time.Minute), base, true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, second, base.Add(time.Minute), base, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1034,7 +1030,7 @@ func TestMessagesAreDueNoLaterThanTheyExpire(t *testing.T) {
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true, nil); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
 		t.Fatal(err)
 	}
 

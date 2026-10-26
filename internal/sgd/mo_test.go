@@ -294,6 +294,7 @@ func TestMOForwardSubmitRejections(t *testing.T) {
 		"alphanumeric destination":  {"01" + "00" + "04d0" + "c1e1" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"empty destination":         {"01" + "00" + "0091" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"network-specific number":   {"01" + "00" + "04b1" + "2143" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
+		"21-digit destination":      {"01" + "00" + "1591" + "21436587092143658709f1" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"sms-command":               {"02" + "00" + "00" + "00" + "00" + "0281" + "21" + "00", tpdu.FailureCommandUnsupported},
 		"reserved message type":     {"03" + "00", tpdu.FailureTPDUNotSupported},
 		"reserved validity format":  {"09" + "00" + "0281" + "21" + "00" + "00" + "04000000000000" + "00", tpdu.FailureValidityPeriodNotSupported},

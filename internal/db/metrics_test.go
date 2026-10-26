@@ -180,8 +180,7 @@ func startsObserved(fn *ast.FuncDecl) bool {
 	return ok && sel.Sel.Name == "observe"
 }
 
-// messageCounts returns the counts of messages completed, by type and status, and of status reports created, by class,
-// that are not zero.
+// messageCounts returns the counts of messages completed, by type and status, that are not zero.
 func messageCounts(t *testing.T, d *DB) map[string]float64 {
 	t.Helper()
 
@@ -192,12 +191,6 @@ func messageCounts(t *testing.T, d *DB) map[string]float64 {
 			if v := testutil.ToFloat64(d.metrics.completed.WithLabelValues(string(kind), string(status))); v != 0 {
 				counts[string(kind)+"/"+string(status)] = v
 			}
-		}
-	}
-
-	for _, class := range reportClasses {
-		if v := testutil.ToFloat64(d.metrics.reports.WithLabelValues(class.String())); v != 0 {
-			counts["report/"+class.String()] = v
 		}
 	}
 
@@ -218,19 +211,14 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A message retried twice has one interim report.
+	// A message retried, then failed.
 	retried, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, now))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for range 2 {
-		interim := testReport(now)
-		interim.Status = 0x22
-
-		if err := d.ScheduleRetry(ctx, retried, now, now, false, interim); err != nil {
-			t.Fatal(err)
-		}
+	if err := d.ScheduleRetry(ctx, retried, now, now, false); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := d.CompleteMessage(ctx, retried, StatusFailed, now, &NewStatusReport{
@@ -258,7 +246,7 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 	}
 
 	// A report delivered.
-	reports, err := d.ListStatusReports(ctx, delivered)
+	reports, err := listStatusReports(ctx, d, delivered)
 	if err != nil || len(reports) != 1 {
 		t.Fatalf("reports = %+v, %v", reports, err)
 	}
@@ -272,9 +260,6 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		"message/failed":          1,
 		"message/replaced":        1,
 		"status_report/delivered": 1,
-		"report/completed":        2,
-		"report/still_trying":     1,
-		"report/gave_up":          1,
 	}
 
 	if got := messageCounts(t, d); !reflect.DeepEqual(got, want) {
@@ -295,10 +280,6 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 	}
 
 	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now)); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
-	}
-
-	if err := d.ScheduleRetry(ctx, id, now, now, false, testReport(now)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 

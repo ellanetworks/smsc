@@ -36,7 +36,6 @@ type fakeStore struct {
 	alertMSISDNs map[string]string
 	recipients   []string
 	reports      map[int64]*db.NewStatusReport
-	interims     map[int64][]*db.NewStatusReport
 }
 
 type attempt struct {
@@ -55,7 +54,6 @@ func newFakeStore(messages ...db.Message) *fakeStore {
 		messages:     map[int64]*db.Message{},
 		alertMSISDNs: map[string]string{},
 		reports:      map[int64]*db.NewStatusReport{},
-		interims:     map[int64][]*db.NewStatusReport{},
 	}
 
 	for _, m := range messages {
@@ -127,17 +125,13 @@ func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.Messa
 	return nil
 }
 
-func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool, interim *db.NewStatusReport) error {
+func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	m := s.messages[id]
 	m.NextAttemptAt = at
 	m.Retries++
-
-	if interim != nil {
-		s.interims[id] = append(s.interims[id], interim)
-	}
 
 	if !holdRecipient {
 		return nil
@@ -564,7 +558,7 @@ func TestDeliverOutcomes(t *testing.T) {
 		"illegal user fails":                  {answer: experimental(tgpp.ResultErrorIllegalUser), wantStatus: db.StatusFailed},
 		"illegal equipment fails":             {answer: experimental(tgpp.ResultErrorIllegalEquipment), wantStatus: db.StatusFailed},
 		"equipment protocol error is retried": {answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
-		"not SM equipped fails":               {answer: smDeliveryFailure(sgd.CauseEquipmentNotSMEquipped), wantStatus: db.StatusFailed},
+		"not SM equipped is retried":          {answer: smDeliveryFailure(sgd.CauseEquipmentNotSMEquipped), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
 	}
 
 	for name, tt := range tests {
@@ -599,7 +593,8 @@ func TestDeliverRoutingOutcomes(t *testing.T) {
 		want db.MessageStatus
 	}{
 		"unknown user":     {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorUserUnknown)}, db.StatusFailed},
-		"barred":           {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorServiceBarred)}, db.StatusFailed},
+		"barred":           {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorServiceBarred)}, db.StatusPending},
+		"no SMS in VPLMN":  {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorFacilityNotSupported)}, db.StatusPending},
 		"not subscribed":   {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorServiceNotSubscribed)}, db.StatusFailed},
 		"absent user":      {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser)}, db.StatusPending},
 		"HSS unreachable":  {diameter.ErrNotConnected, db.StatusPending},
