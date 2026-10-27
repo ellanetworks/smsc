@@ -1,0 +1,9 @@
+# Ella SMSC without Multus: Diameter listens on the pod's eth0 and is reached
+# through the SCTP Service ella-smsc-diameter.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ella
+resources:
+  - ../base
+  - smsc-configmap.yaml
+  - smsc-diameter-service.yaml

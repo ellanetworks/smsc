@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ella-smsc
+spec:
+  replicas: 1
+  serviceName: ella-smsc
+  selector:
+    matchLabels:
+      app: ella-smsc
+  template:
+    metadata:
+      labels:
+        app: ella-smsc
+    spec:
+      # The SMSC waits up to 35 s for in-flight deliveries when stopped.
+      terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: smsc
+        image: ghcr.io/ellanetworks/ella-smsc:latest
+        command: ["smsc"]
+        args: ["--config", "/config/smsc.yaml"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        ports:
+        - name: http
+          containerPort: 5010
+        - name: diameter
+          containerPort: 3868
+          protocol: SCTP
+        readinessProbe:
+          httpGet:
+            path: /api/v1/status
+            port: http
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /api/v1/status
+            port: http
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 500m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+        volumeMounts:
+        - name: config-volume
+          mountPath: /config
+          readOnly: true
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: config-volume
+        configMap:
+          name: smsc-config
+      - name: tmp
+        emptyDir: {}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi

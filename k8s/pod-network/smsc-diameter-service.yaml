@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ella-smsc-diameter
+  labels:
+    app: ella-smsc
+spec:
+  selector:
+    app: ella-smsc
+  type: NodePort
+  ports:
+  - name: diameter
+    protocol: SCTP
+    port: 3868
+    targetPort: diameter

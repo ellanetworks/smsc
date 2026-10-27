@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ella
+resources:
+  - base
+  - smsc-configmap.yaml
+  - smsc-diameter-nad.yaml
+patches:
+  - patch: |
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: ella-smsc
+      spec:
+        template:
+          metadata:
+            annotations:
+              k8s.v1.cni.cncf.io/networks: |
+                [
+                  {"name": "smsc-diameter", "interface": "diameter"}
+                ]
