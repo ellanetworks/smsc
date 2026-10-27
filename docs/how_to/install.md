@@ -125,7 +125,7 @@ Choose one of the installation methods below.
     Download the Ella SMSC manifests:
 
     ```shell
-    git clone --depth 1 --branch v0.0.1 https://github.com/ellanetworks/smsc.git
+    git clone --depth 1 https://github.com/ellanetworks/smsc.git
     ```
 
     Edit `smsc/k8s/smsc-diameter-nad.yaml` to set `master` to the host interface that connects to your core, and set the Diameter address. Use the same address for `diameter.address` in `smsc/k8s/smsc-configmap.yaml`.
