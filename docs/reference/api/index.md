@@ -28,8 +28,6 @@ These paths take no token: `GET /api/v1/status`, `GET /api/v1/metrics`, `GET /ap
 | Network Manager | `3`       | Read Only, plus sending messages and updating operator and delivery settings. |
 | Submitter       | `4`       | Sending messages, and reading the messages it sent. |
 
-Every role reads its own user, changes its own password, and manages its own API tokens. Only Admin manages users.
-
 An API token has the role of its user, but cannot create API tokens, change a password, or manage users.
 
 ## Responses

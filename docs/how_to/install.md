@@ -141,7 +141,4 @@ Choose one of the installation methods below.
 
 Ella SMSC's UI and API are at `http://<host-ip>:5010`. Open the UI and create the first user.
 
-!!! warning
-    Until the first user exists, anyone who can reach port 5010 can create it, as Admin.
-
 See the [configuration reference](../reference/config_file.md) for all options.

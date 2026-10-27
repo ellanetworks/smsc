@@ -6,7 +6,7 @@ description: RESTful API reference for initializing Ella SMSC.
 
 ## Initialize Ella SMSC
 
-This path creates the first user, an Admin, and logs it in, as [log in](auth.md#log-in) does. It takes no token, and fails once a user exists.
+This path creates the first user, an Admin, and logs it in.
 
 | Method | Path           |
 | ------ | -------------- |

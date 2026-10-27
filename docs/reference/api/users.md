@@ -4,8 +4,6 @@ description: RESTful API reference for managing users and API tokens in Ella SMS
 
 # Users
 
-A user logs in to the UI and the API, and holds API tokens. Its [role](index.md#roles) sets what it may do.
-
 Paths under `/api/v1/users/me` act on the user of the token. The others require Admin, and an access token: an API token gets `403`.
 
 ## Get My User
@@ -128,7 +126,7 @@ This path changes the role of a user, and ends its sessions. An Admin cannot cha
 
 ## Update a User's Password
 
-This path ends the user's sessions. Its API tokens keep working. An Admin changes its own password with [update my password](#update-my-password).
+This path ends the user's sessions. An Admin cannot update its own password here.
 
 | Method | Path                               |
 | ------ | ---------------------------------- |
@@ -142,7 +140,7 @@ This path ends the user's sessions. Its API tokens keep working. An Admin change
 
 ## Delete a User
 
-This path deletes the user with its sessions and API tokens. Its messages stay, without `submitted_by`. An Admin cannot delete itself.
+This path deletes the user with its sessions and API tokens. An Admin cannot delete itself.
 
 | Method | Path                      |
 | ------ | ------------------------- |
@@ -150,7 +148,7 @@ This path deletes the user with its sessions and API tokens. Its messages stay, 
 
 ## Create an API Token
 
-This path returns the token, the only time it is shown. A user has at most 12 API tokens. Creating one requires an access token.
+This path returns the token, the only time it is shown. At most 12 per user. Requires an access token.
 
 | Method | Path                                    |
 | ------ | --------------------------------------- |

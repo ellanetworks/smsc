@@ -28,7 +28,7 @@ sudo snap start --enable ella-smsc.smscd
 
 Open your browser at `http://<host-ip>:5010`. The **Initialize Ella SMSC** page opens.
 
-Enter an email and a password of at least 8 characters, and click **Create**. You are logged in as Admin.
+Enter an email and a password of at least 8 characters, and click **Create**.
 
 The **Cores** page shows no connected cores yet.
 

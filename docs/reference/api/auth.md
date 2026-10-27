@@ -6,7 +6,7 @@ description: RESTful API reference for logging in to Ella SMSC.
 
 ## Log In
 
-This path returns an access token, and sets the session cookie, `smsc_session`, or `__Host-smsc_session` over TLS. The session lasts 30 days. A user has at most 10 sessions; a new one ends the oldest.
+This path returns an access token, and sets the session cookie, `smsc_session`, or `__Host-smsc_session` over TLS. The session lasts 30 days, and a user has at most 10.
 
 | Method | Path                 |
 | ------ | -------------------- |
