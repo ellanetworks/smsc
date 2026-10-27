@@ -357,6 +357,7 @@ func BenchmarkAPISubmit(b *testing.B) {
 		}
 
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+s.token)
 
 		resp, err := client.Do(req)
 		if err != nil {

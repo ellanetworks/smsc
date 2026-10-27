@@ -5,11 +5,22 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrAlreadyExists = errors.New("already exists")
+)
+
+// isUnique reports whether err is the violation of a UNIQUE constraint.
+func isUnique(err error) bool {
+	var e sqlite3.Error
+
+	return errors.As(err, &e) && e.ExtendedCode == sqlite3.ErrConstraintUnique
+}
 
 type DB struct {
 	conn *sql.DB
@@ -19,7 +30,37 @@ type DB struct {
 }
 
 var migrations = []string{
-	`CREATE TABLE messages (
+	`CREATE TABLE users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+		role_id INTEGER NOT NULL CHECK (role_id IN (1, 2, 3, 4)),
+		password_hash TEXT NOT NULL
+	);
+	CREATE TABLE sessions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+		token_hash BLOB NOT NULL UNIQUE,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL
+	);
+	CREATE INDEX sessions_user_id ON sessions (user_id, created_at);
+	CREATE INDEX sessions_expires_at ON sessions (expires_at);
+	CREATE TABLE api_tokens (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		token_id TEXT NOT NULL UNIQUE,
+		name TEXT NOT NULL,
+		token_hash BLOB NOT NULL,
+		user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER,
+		last_used_at INTEGER,
+		UNIQUE (user_id, name)
+	);
+	CREATE TABLE jwt_secret (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		secret BLOB NOT NULL CHECK (length(secret) >= 32)
+	);
+	CREATE TABLE messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		kind TEXT NOT NULL CHECK (kind IN ('message', 'status_report')),
 		report_for INTEGER REFERENCES messages (id) ON DELETE CASCADE,
@@ -32,6 +73,7 @@ var migrations = []string{
 		recipient_npi INTEGER NOT NULL,
 		msisdn TEXT NOT NULL,
 		origin TEXT NOT NULL CHECK (origin IN ('mobile', 'api')),
+		submitted_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
 		message_reference INTEGER NOT NULL,
 		protocol_identifier INTEGER NOT NULL,
 		tpdu BLOB NOT NULL,
@@ -45,12 +87,14 @@ var migrations = []string{
 		updated_at INTEGER NOT NULL,
 		CHECK (kind = 'message' AND report_for IS NULL AND report_status IS NULL
 			OR kind = 'status_report' AND report_for IS NOT NULL AND report_status IS NOT NULL),
-		CHECK (kind = 'message' OR status != 'replaced')
+		CHECK (kind = 'message' OR status != 'replaced'),
+		CHECK (origin = 'api' OR submitted_by IS NULL)
 	);
 	CREATE INDEX messages_due ON messages (status, next_attempt_at);
 	CREATE INDEX messages_report_for ON messages (report_for);
 	CREATE INDEX messages_originator ON messages (originator, originator_ton, originator_npi, id);
 	CREATE INDEX messages_msisdn ON messages (msisdn, status, next_attempt_at);
+	CREATE INDEX messages_submitted_by ON messages (submitted_by, id);
 	CREATE TABLE delivery_attempts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
@@ -103,6 +147,10 @@ var migrations = []string{
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {
+	if err := restrict(path); err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
 	conn, err := sql.Open("sqlite3", "file:"+path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_stmt_cache_size=64")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -160,4 +208,20 @@ func (d *DB) migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// restrict creates the database file if absent, readable and writable by its owner only, and makes an existing one so:
+// it holds the password hashes and the key that signs the access tokens. SQLite gives its journal files the
+// permissions of the database file.
+func restrict(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	return os.Chmod(path, 0o600)
 }

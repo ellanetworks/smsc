@@ -87,7 +87,8 @@ func (d *DB) observe(err *error) func() {
 
 // failed reports whether err is a failure of the database rather than an answer to the call.
 func failed(err error) bool {
-	return err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrDuplicate)
+	return err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrDuplicate) &&
+		!errors.Is(err, ErrAlreadyExists)
 }
 
 // Collectors are the metrics of the database: its calls, its size on disk, and what the messages it stores become. A

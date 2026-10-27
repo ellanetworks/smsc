@@ -3,19 +3,14 @@ package api_test
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/intake"
-	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -28,35 +23,25 @@ func (failingStore) CreateMessages(context.Context, []db.NewMessage) ([]int64, e
 	return nil, errors.New("disk full")
 }
 
-func newMetricsAPI(t *testing.T, failStore bool) http.Handler {
+// newMetricsAPI returns an API with metrics, and the access token of its admin.
+func newMetricsAPI(t *testing.T, failStore bool) (http.Handler, string) {
 	t.Helper()
 
-	database, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "smsc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	database := openStore(t)
+	cfg := testConfig(t, database)
 
-	t.Cleanup(func() { _ = database.Close() })
-
-	var store api.Store = database
 	if failStore {
-		store = failingStore{database}
+		cfg.Store = failingStore{database}
 	}
 
-	received := intake.New()
+	cfg.Received = intake.New()
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(received.Collectors()...)
+	registry.MustRegister(cfg.Received.Collectors()...)
+	cfg.Metrics = registry
 
-	return api.NewHandler(api.Config{
-		Store:    store,
-		Diameter: fakeDiameter{},
-		Settings: settings.NewLive(database, testSettings(t, database)),
-		Notify:   func() {},
-		Received: received,
-		Metrics:  registry,
-		Now:      func() time.Time { return testNow },
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
+	h := api.NewHandler(cfg)
+
+	return h, initialize(t, h)
 }
 
 func scrape(t *testing.T, h http.Handler) string {
@@ -72,14 +57,10 @@ func scrape(t *testing.T, h http.Handler) string {
 	return rec.Body.String()
 }
 
-func post(t *testing.T, h http.Handler, body string) int {
+func post(t *testing.T, h http.Handler, token, body string) int {
 	t.Helper()
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/messages",
-		strings.NewReader(body)))
-
-	return rec.Code
+	return serve(h, request(http.MethodPost, "/api/v1/messages", body, token)).Code
 }
 
 func wantSeries(t *testing.T, body string, series ...string) {
@@ -93,15 +74,15 @@ func wantSeries(t *testing.T, body string, series ...string) {
 }
 
 func TestMetricsCountMessagesPerPart(t *testing.T) {
-	h := newMetricsAPI(t, false)
+	h, token := newMetricsAPI(t, false)
 
 	// A long text is stored as two parts, each counted, and an invalid request is not a message.
 	long := strings.Repeat("日本語", 30)
-	if code := post(t, h, `{"from": "+15550001111", "to": "+15551230002", "text": "`+long+`"}`); code != http.StatusCreated {
+	if code := post(t, h, token, `{"from": "+15550001111", "to": "+15551230002", "text": "`+long+`"}`); code != http.StatusCreated {
 		t.Fatalf("POST long text: %d", code)
 	}
 
-	if code := post(t, h, `{"from": "+15550001111", "to": "+15551230002"}`); code != http.StatusBadRequest {
+	if code := post(t, h, token, `{"from": "+15550001111", "to": "+15551230002"}`); code != http.StatusBadRequest {
 		t.Fatalf("POST without text: %d", code)
 	}
 
@@ -112,9 +93,9 @@ func TestMetricsCountMessagesPerPart(t *testing.T) {
 }
 
 func TestMetricsCountStoreFailures(t *testing.T) {
-	h := newMetricsAPI(t, true)
+	h, token := newMetricsAPI(t, true)
 
-	if code := post(t, h, `{"from": "+15550001111", "to": "+15551230002", "text": "hi"}`); code != http.StatusInternalServerError {
+	if code := post(t, h, token, `{"from": "+15550001111", "to": "+15551230002", "text": "hi"}`); code != http.StatusInternalServerError {
 		t.Fatalf("POST: %d", code)
 	}
 

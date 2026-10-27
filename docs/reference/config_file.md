@@ -17,6 +17,9 @@ The operator and delivery settings are not in this file: they are in the databas
 - `api` (object): The HTTP API and UI.
     - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
     - `port` (int, optional): The TCP port to listen on. Default `5010`.
+    - `tls` (object, optional): Serve over HTTPS. Default: plain HTTP.
+        - `cert` (string): The path to the PEM certificate chain, the server's certificate first.
+        - `key` (string): The path to the PEM private key.
 - `diameter` (object): Diameter, to the HSS, MMEs, SMSFs and IP-SM-GWs.
     - `name` (string): The network interface to listen on, on all its addresses, advertised to peers. Either `name` or `address` must be set.
     - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`. Either `name` or `address` must be set.

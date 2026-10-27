@@ -23,6 +23,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var testNow = time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
@@ -44,6 +45,85 @@ type testAPI struct {
 	handler  http.Handler
 	store    *db.DB
 	notified atomic.Int32
+	// token is the access token of the admin, which do sends.
+	token string
+	// now is the time of the API's clock.
+	now time.Time
+}
+
+const (
+	testAdmin    = "admin@example.com"
+	testPassword = "correct horse"
+)
+
+var testJWTSecret = []byte("0123456789abcdef0123456789abcdef")
+
+// testConfig is the configuration of an API on a store, with authentication at the cheapest bcrypt cost.
+func testConfig(t *testing.T, store *db.DB) api.Config {
+	t.Helper()
+
+	return api.Config{
+		Store:      store,
+		Diameter:   fakeDiameter{},
+		Settings:   settings.NewLive(store, testSettings(t, store)),
+		Notify:     func() {},
+		Auth:       store,
+		JWTSecret:  testJWTSecret,
+		BcryptCost: bcrypt.MinCost,
+		Now:        func() time.Time { return testNow },
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func openStore(t *testing.T) *db.DB {
+	t.Helper()
+
+	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "smsc.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = store.Close() })
+
+	return store
+}
+
+// initialize creates the first user, an admin, and returns its access token.
+func initialize(t *testing.T, h http.Handler) string {
+	t.Helper()
+
+	rec := serve(h, request(http.MethodPost, "/api/v1/init",
+		`{"email": "`+testAdmin+`", "password": "`+testPassword+`"}`, ""))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/init = %d %s", rec.Code, rec.Body)
+	}
+
+	var resp struct {
+		Result api.LoginResponse `json:"result"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	return resp.Result.Token
+}
+
+// request is a request with a bearer token, unless token is empty.
+func request(method, path, body, token string) *http.Request {
+	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	return req
+}
+
+func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	return rec
 }
 
 func testSettings(t *testing.T, store *db.DB) settings.Settings {
@@ -62,32 +142,41 @@ func testSettings(t *testing.T, store *db.DB) settings.Settings {
 func newTestAPI(t *testing.T, d api.Diameter) *testAPI {
 	t.Helper()
 
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "smsc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(func() { _ = store.Close() })
-
-	a := &testAPI{store: store}
-	a.handler = api.NewHandler(api.Config{
-		Store:    store,
-		Diameter: d,
-		Settings: settings.NewLive(store, testSettings(t, store)),
-		Notify:   func() { a.notified.Add(1) },
-		Now:      func() time.Time { return testNow },
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
+	a := newUninitializedAPI(t, d)
+	a.token = initialize(t, a.handler)
 
 	return a
 }
 
+// newUninitializedAPI returns an API without users, whose clock is a.now.
+func newUninitializedAPI(t *testing.T, d api.Diameter) *testAPI {
+	t.Helper()
+
+	store := openStore(t)
+	a := &testAPI{store: store, now: testNow}
+
+	cfg := testConfig(t, store)
+	cfg.Diameter = d
+	cfg.Notify = func() { a.notified.Add(1) }
+	cfg.Now = func() time.Time { return a.now }
+
+	a.handler = api.NewHandler(cfg)
+
+	return a
+}
+
+// do sends a request as the admin, and returns its status, and its result or error.
 func (a *testAPI) do(t *testing.T, method, path, body string) (int, json.RawMessage, string) {
 	t.Helper()
 
-	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
-	rec := httptest.NewRecorder()
-	a.handler.ServeHTTP(rec, req)
+	return a.doAs(t, a.token, method, path, body)
+}
+
+// doAs sends a request with a bearer token, or none when token is empty.
+func (a *testAPI) doAs(t *testing.T, token, method, path, body string) (int, json.RawMessage, string) {
+	t.Helper()
+
+	rec := serve(a.handler, request(method, path, body, token))
 
 	var resp struct {
 		Result json.RawMessage `json:"result"`
@@ -154,6 +243,7 @@ func TestCreateMessage(t *testing.T) {
 		ExpiresAt:     "2026-09-30T10:00:00.000Z",
 		NextAttemptAt: "2026-09-29T10:00:00.000Z",
 		StatusReport:  api.StatusReports{Reports: []api.StatusReport{}},
+		SubmittedBy:   testAdmin,
 	}}
 
 	if !reflect.DeepEqual(got, want) {

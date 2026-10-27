@@ -52,29 +52,102 @@ type Config struct {
 	Received *intake.Received
 	// Metrics are the metrics GET /api/v1/metrics serves.
 	Metrics prometheus.Gatherer
-	Now     func() time.Time
-	Logger  *slog.Logger
+	// Auth stores the users, their sessions and their API tokens.
+	Auth AuthStore
+	// JWTSecret signs the access tokens.
+	JWTSecret []byte
+	// SecureCookie marks the session cookie Secure, and turns on HSTS, for an API served over TLS.
+	SecureCookie bool
+	// BcryptCost is the cost of the password hashes: bcrypt.DefaultCost when zero.
+	BcryptCost int
+	Now        func() time.Time
+	Logger     *slog.Logger
+}
+
+// route is a route of the API, and the permission that it needs: public for none.
+type route struct {
+	pattern string
+	perm    Permission
+	handler http.Handler
+}
+
+func routes(cfg Config, a *auth) []route {
+	rs := []route{
+		{"GET /api/v1/status", public, GetStatus(cfg)},
+		{"GET /api/v1/metrics", public, GetMetrics(cfg)},
+		{"GET /api/v1/openapi.yaml", public, OpenAPISpec()},
+		{"POST /api/v1/init", public, Initialize(a)},
+		{"POST /api/v1/auth/login", public, Login(a)},
+		{"POST /api/v1/auth/refresh", public, Refresh(a)},
+		{"POST /api/v1/auth/logout", public, Logout(a)},
+
+		{"POST /api/v1/messages", PermCreateMessage, CreateMessage(cfg)},
+		{"GET /api/v1/messages", PermReadMessage, ListMessages(cfg)},
+		{"GET /api/v1/messages/{id}", PermReadMessage, GetMessage(cfg)},
+		{"GET /api/v1/messages/{id}/attempts", PermReadMessage, ListMessageAttempts(cfg)},
+		{"GET /api/v1/diameter", PermReadDiameter, GetDiameterStatus(cfg)},
+		{"GET /api/v1/operator", PermReadOperator, GetOperator(cfg)},
+		{"PUT /api/v1/operator", PermUpdateOperator, UpdateOperator(cfg)},
+		{"GET /api/v1/delivery", PermReadDelivery, GetDelivery(cfg)},
+		{"PUT /api/v1/delivery", PermUpdateDelivery, UpdateDelivery(cfg)},
+
+		// The routes that create credentials or manage users need a login rather than an API token, so that a leaked
+		// API token cannot make itself others that outlive its revocation, or take an account.
+		{"GET /api/v1/users/me", PermSelf, GetMyUser(a)},
+		{"PUT /api/v1/users/me/password", PermSelf, a.needsLogin(UpdateMyPassword(a))},
+		{"GET /api/v1/users/me/api-tokens", PermSelf, ListAPITokens(a, myself(cfg))},
+		{"POST /api/v1/users/me/api-tokens", PermSelf, a.needsLogin(CreateAPIToken(a, myself(cfg)))},
+		{"DELETE /api/v1/users/me/api-tokens/{id}", PermSelf, DeleteAPIToken(a, myself(cfg))},
+
+		{"GET /api/v1/users", PermManageUsers, a.needsLogin(ListUsers(a))},
+		{"POST /api/v1/users", PermManageUsers, a.needsLogin(CreateUser(a))},
+		{"GET /api/v1/users/{email}", PermManageUsers, a.needsLogin(GetUser(a))},
+		{"PUT /api/v1/users/{email}", PermManageUsers, a.needsLogin(UpdateUser(a))},
+		{"DELETE /api/v1/users/{email}", PermManageUsers, a.needsLogin(DeleteUser(a))},
+		{"PUT /api/v1/users/{email}/password", PermManageUsers, a.needsLogin(UpdateUserPassword(a))},
+		{"GET /api/v1/users/{email}/api-tokens", PermManageUsers, a.needsLogin(ListAPITokens(a, userOfPath(cfg)))},
+		{"POST /api/v1/users/{email}/api-tokens", PermManageUsers, a.needsLogin(CreateAPIToken(a, userOfPath(cfg)))},
+		{"DELETE /api/v1/users/{email}/api-tokens/{id}", PermManageUsers, a.needsLogin(DeleteAPIToken(a, userOfPath(cfg)))},
+	}
+
+	// The UI is static files: all its data comes from the API, which authenticates it.
+	if cfg.Frontend != nil {
+		rs = append(rs, route{"GET /", public, Frontend(cfg.Frontend)})
+	}
+
+	return rs
 }
 
 func NewHandler(cfg Config) http.Handler {
+	a := newAuth(cfg)
 	mux := http.NewServeMux()
 
-	mux.Handle("POST /api/v1/messages", CreateMessage(cfg))
-	mux.Handle("GET /api/v1/messages", ListMessages(cfg))
-	mux.Handle("GET /api/v1/messages/{id}", GetMessage(cfg))
-	mux.Handle("GET /api/v1/messages/{id}/attempts", ListMessageAttempts(cfg))
-	mux.Handle("GET /api/v1/diameter", GetDiameterStatus(cfg))
-	mux.Handle("GET /api/v1/operator", GetOperator(cfg))
-	mux.Handle("PUT /api/v1/operator", UpdateOperator(cfg))
-	mux.Handle("GET /api/v1/delivery", GetDelivery(cfg))
-	mux.Handle("PUT /api/v1/delivery", UpdateDelivery(cfg))
-	mux.Handle("GET /api/v1/status", GetStatus(cfg))
-	mux.Handle("GET /api/v1/metrics", GetMetrics(cfg))
-	mux.Handle("GET /api/v1/openapi.yaml", OpenAPISpec())
+	for _, rt := range routes(cfg, a) {
+		h := rt.handler
+		if rt.perm != public {
+			h = a.authenticate(a.authorize(rt.perm, h))
+		}
 
-	if cfg.Frontend != nil {
-		mux.Handle("GET /", Frontend(cfg.Frontend))
+		mux.Handle(rt.pattern, h)
 	}
 
-	return mux
+	// The session cookie authenticates the refresh and the logout, so a page of another origin must not be able to
+	// send them. CrossOriginProtection rejects the unsafe requests that a browser tells are cross-origin, and lets
+	// through those of other clients, which send none of the headers it checks.
+	return securityHeaders(cfg, http.NewCrossOriginProtection().Handler(mux))
+}
+
+func securityHeaders(cfg Config, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+
+		if cfg.SecureCookie {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }

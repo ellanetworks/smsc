@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -55,6 +56,40 @@ func TestOpenIsIdempotent(t *testing.T) {
 
 		if err := d.Close(); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// TestDatabaseIsPrivate checks that only its owner can read the database, which holds the password hashes and the key
+// that signs the access tokens, and its journal.
+func TestDatabaseIsPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "smsc.db")
+
+	// An existing database that others can read is made private.
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = d.Close() })
+
+	if _, err := d.CountUsers(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"smsc.db", "smsc.db-wal", "smsc.db-shm"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s mode = %o, want 600", name, mode)
 		}
 	}
 }
@@ -1141,5 +1176,59 @@ func TestReplacedMessageTakesANewTimeStamp(t *testing.T) {
 
 	if m, err := d.GetMessage(ctx, replacementID); err != nil || !m.TimeStamp.Equal(base.Add(time.Second)) {
 		t.Fatalf("time stamp = %v, %v; want one the recipient has not seen", m.TimeStamp, err)
+	}
+}
+
+func TestMessagesSubmittedBy(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+
+	ota := createTestUser(t, d, "ota@example.com", RoleSubmitter)
+	other := createTestUser(t, d, "other@example.com", RoleSubmitter)
+
+	fromAPI := func(user int64) NewMessage {
+		m := testMessage(1, false, []byte{0x01}, now)
+		m.Origin, m.SubmittedBy = OriginAPI, user
+
+		return m
+	}
+
+	ids, err := d.CreateMessages(ctx, []NewMessage{
+		fromAPI(ota), testMessage(2, false, []byte{0x01}, now), fromAPI(other), fromAPI(ota), fromAPI(0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m, err := d.GetMessage(ctx, ids[0]); err != nil || m.SubmittedBy != ota {
+		t.Fatalf("GetMessage: SubmittedBy %d, %v, want %d", m.SubmittedBy, err, ota)
+	}
+
+	if m, err := d.GetMessage(ctx, ids[1]); err != nil || m.SubmittedBy != 0 {
+		t.Fatalf("GetMessage of a message from an MS: SubmittedBy %d, %v, want 0", m.SubmittedBy, err)
+	}
+
+	messages, total, err := d.ListMessages(ctx, MessageFilter{SubmittedBy: ota}, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := []int64{}
+	for _, m := range messages {
+		got = append(got, m.ID)
+	}
+
+	if want := []int64{ids[3], ids[0]}; !reflect.DeepEqual(got, want) || total != 2 {
+		t.Fatalf("ListMessages by submitter = %v (total %d), want %v (total 2)", got, total, want)
+	}
+
+	for name, statement := range map[string]string{
+		"message from an MS with a submitter": `UPDATE messages SET submitted_by = 1 WHERE origin = 'mobile'`,
+		"unknown submitter":                   `UPDATE messages SET submitted_by = 42 WHERE origin = 'api'`,
+	} {
+		if _, err := d.conn.ExecContext(ctx, statement); err == nil {
+			t.Errorf("%s: no constraint failed", name)
+		}
 	}
 }

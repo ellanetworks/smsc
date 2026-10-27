@@ -16,7 +16,7 @@ func TestGetStatus(t *testing.T) {
 		t.Fatalf("code = %d", code)
 	}
 
-	if got, want := decode[api.Status](t, result), (api.Status{Version: version.Get().Version, Revision: version.Get().Revision}); got != want {
+	if got, want := decode[api.Status](t, result), (api.Status{Version: version.Get().Version, Revision: version.Get().Revision, Initialized: true}); got != want {
 		t.Fatalf("status = %+v, want %+v", got, want)
 	}
 }

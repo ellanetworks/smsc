@@ -5,10 +5,12 @@ go 1.26.5
 require (
 	github.com/ellanetworks/core/diameter v0.0.0-20261017193558-9ed6ed0b4726
 	github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/common v0.72.1
+	golang.org/x/crypto v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

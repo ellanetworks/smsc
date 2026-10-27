@@ -42,6 +42,8 @@ var (
 	diameterPort = flag.Int("diameter-port", 3868, "the SCTP port of the SMSC's Diameter")
 	apiPort      = flag.Int("api-port", 5010, "the TCP port of the SMSC's API")
 	localAddr    = flag.String("local", "", "the address of this host, the core's")
+	email        = flag.String("email", "admin@example.com", "the admin of the SMSC, which the test creates if it has none")
+	password     = flag.String("password", "loadtest password", "the password of -email")
 
 	subs  = flag.Int("subs", 10000, "the subscribers, each sending and receiving")
 	rates = flag.String("rates", "50,100,200", "the short messages per second to submit, each for -step")
@@ -71,10 +73,12 @@ func TestLoad(t *testing.T) {
 	smsc := netip.MustParseAddr(*smscAddr)
 	api := fmt.Sprintf("http://%s:%d/api/v1", smsc, *apiPort)
 
-	call(t, http.MethodPut, api+"/operator", map[string]any{
+	token := logIn(t, api)
+
+	call(t, token, http.MethodPut, api+"/operator", map[string]any{
 		"mcc": "001", "mnc": "01", "service_centre_address": "+" + scAddress, "numbering": map[string]any{"country_code": "1"},
 	})
-	call(t, http.MethodPut, api+"/delivery", map[string]any{"default_validity_seconds": 3600, "retry_intervals_seconds": []int{60}})
+	call(t, token, http.MethodPut, api+"/delivery", map[string]any{"default_validity_seconds": 3600, "retry_intervals_seconds": []int{60}})
 
 	c := newCore(t, netip.MustParseAddr(*localAddr), smsc)
 
@@ -385,7 +389,61 @@ func smsSubmit(to string, id int64) []byte {
 	return append(out, text...)
 }
 
-func call(t *testing.T, method, url string, body any) {
+// logIn creates the admin of the SMSC if it has no user yet, logs it in, and returns its access token.
+func logIn(t *testing.T, api string) string {
+	t.Helper()
+
+	credentials := map[string]string{"email": *email, "password": *password}
+
+	if code := post(t, api+"/init", credentials, nil); code != http.StatusCreated && code != http.StatusForbidden {
+		t.Fatalf("POST %s/init: %d", api, code)
+	}
+
+	var resp struct {
+		Result struct {
+			Token string `json:"token"`
+		} `json:"result"`
+	}
+
+	if code := post(t, api+"/auth/login", credentials, &resp); code != http.StatusOK {
+		t.Fatalf("POST %s/auth/login: %d", api, code)
+	}
+
+	return resp.Result.Token
+}
+
+func post(t *testing.T, url string, body, out any) int {
+	t.Helper()
+
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	if out != nil && res.StatusCode/100 == 2 {
+		if err := json.NewDecoder(res.Body).Decode(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return res.StatusCode
+}
+
+func call(t *testing.T, token, method, url string, body any) {
 	t.Helper()
 
 	b, err := json.Marshal(body)
@@ -399,6 +457,7 @@ func call(t *testing.T, method, url string, body any) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {

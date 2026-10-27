@@ -51,12 +51,14 @@ type Message struct {
 	ID   int64
 	Kind MessageKind
 	// ReportFor is the message that a status report is on, and ReportStatus its TP-Status. Both are zero for a message.
-	ReportFor          int64
-	ReportStatus       uint8
-	Originator         Address
-	Recipient          Address
-	MSISDN             string
-	Origin             MessageOrigin
+	ReportFor    int64
+	ReportStatus uint8
+	Originator   Address
+	Recipient    Address
+	MSISDN       string
+	Origin       MessageOrigin
+	// SubmittedBy is the user that submitted a message over the API, or zero.
+	SubmittedBy        int64
 	MessageReference   uint8
 	ProtocolIdentifier uint8
 	TPDU               []byte
@@ -72,10 +74,12 @@ type Message struct {
 }
 
 type NewMessage struct {
-	Originator         Address
-	Recipient          Address
-	MSISDN             string
-	Origin             MessageOrigin
+	Originator Address
+	Recipient  Address
+	MSISDN     string
+	Origin     MessageOrigin
+	// SubmittedBy is the user that submits a message over the API, or zero.
+	SubmittedBy        int64
 	MessageReference   uint8
 	ProtocolIdentifier uint8
 	RejectDuplicates   bool
@@ -230,12 +234,12 @@ func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO messages (kind, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi,
-		msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp,
-		expires_at, next_attempt_at, retries, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		msisdn, origin, submitted_by, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at,
+		time_stamp, expires_at, next_attempt_at, retries, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.Origin,
-		m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, timeStamp,
+		sql.Null[int64]{V: m.SubmittedBy, Valid: m.SubmittedBy != 0}, m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, timeStamp,
 		expiresAt, next, at)
 	if err != nil {
 		return 0, err
@@ -359,7 +363,7 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 }
 
 const messageColumns = `id, kind, report_for, report_status, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi, msisdn,
-	origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp, expires_at,
+	origin, submitted_by, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp, expires_at,
 	next_attempt_at, retries, updated_at`
 
 type rowScanner interface {
@@ -371,18 +375,19 @@ func scanMessage(row rowScanner) (Message, error) {
 		m                                                           Message
 		reportFor                                                   sql.Null[int64]
 		reportStatus                                                sql.Null[uint8]
+		submittedBy                                                 sql.Null[int64]
 		submittedAt, timeStamp, expiresAt, nextAttemptAt, updatedAt int64
 	)
 
 	err := row.Scan(&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber, &m.Originator.NumberingPlan,
-		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN, &m.Origin,
+		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN, &m.Origin, &submittedBy,
 		&m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status, &m.SingleShot,
 		&submittedAt, &timeStamp, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt)
 	if err != nil {
 		return Message{}, err
 	}
 
-	m.ReportFor, m.ReportStatus = reportFor.V, reportStatus.V
+	m.ReportFor, m.ReportStatus, m.SubmittedBy = reportFor.V, reportStatus.V, submittedBy.V
 	m.SubmittedAt = time.Unix(0, submittedAt).UTC()
 	m.TimeStamp = time.Unix(0, timeStamp).UTC()
 	m.ExpiresAt = time.Unix(0, expiresAt).UTC()
@@ -411,6 +416,8 @@ type MessageFilter struct {
 	MSISDN     string
 	Originator string
 	Status     MessageStatus
+	// SubmittedBy, when not zero, keeps only the messages that user submitted.
+	SubmittedBy int64
 }
 
 func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) (_ []Message, _ int, err error) {
@@ -429,6 +436,10 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 
 	if f.Status != "" {
 		where, args = append(where, "status = ?"), append(args, f.Status)
+	}
+
+	if f.SubmittedBy != 0 {
+		where, args = append(where, "submitted_by = ?"), append(args, f.SubmittedBy)
 	}
 
 	clause := " WHERE " + strings.Join(where, " AND ")

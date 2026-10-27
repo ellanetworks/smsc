@@ -88,8 +88,33 @@ SMSC_ADDR=""
 DIAMETER_PORT=3868
 API_PORT=5010
 
-# The JSON result of an API call.
-api() { curl -fsS --max-time 10 "http://${SMSC_ADDR}:${API_PORT}/api/v1$1" "${@:2}"; }
+# The admin that the smoke test creates, and the API token with which it calls
+# the API, set by log_in.
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD="smoke test password"
+TOKEN=""
+
+# The JSON result of an API call, with the API token once there is one.
+api() {
+  local auth=()
+  [ -z "${TOKEN}" ] || auth=(-H "Authorization: Bearer ${TOKEN}")
+  curl -fsS --max-time 10 "${auth[@]}" "http://${SMSC_ADDR}:${API_PORT}/api/v1$1" "${@:2}"
+}
+
+# Creates the admin if the SMSC has no user yet, logs it in, and creates the
+# API token that api sends from then on. Unlike an access token, it outlives
+# the smoke test.
+log_in() {
+  local credentials jwt
+  credentials="$(jq -n --arg email "${ADMIN_EMAIL}" --arg password "${ADMIN_PASSWORD}" '{email: $email, password: $password}')"
+  TOKEN=""
+  api /init -X POST -H 'Content-Type: application/json' -d "${credentials}" >/dev/null 2>&1 || true
+  jwt="$(api /auth/login -X POST -H 'Content-Type: application/json' -d "${credentials}" | jq -er .result.token)" \
+    || fail "cannot log in as ${ADMIN_EMAIL}"
+  TOKEN="${jwt}"
+  TOKEN="$(api /users/me/api-tokens -X POST -H 'Content-Type: application/json' -d '{"name": "smoke test"}' \
+    | jq -er .result.token)" || fail "cannot create an API token"
+}
 
 node_port() { k get service "$1" -o jsonpath="{.spec.ports[?(@.name==\"$2\")].nodePort}"; }
 
@@ -191,12 +216,14 @@ if [ -n "${PREVIOUS_IMAGE}" ]; then
 
   step "Upgrade to ${IMAGE}"
   deploy "${IMAGE}" restart
+  log_in
   api /messages | jq -e '.result.items | any(.text == "stored before the upgrade")' >/dev/null \
     || fail "the message stored before the upgrade is gone"
   endstep
 else
   step "Deploy ${IMAGE}"
   deploy "${IMAGE}"
+  log_in
   endstep
 fi
 
@@ -230,7 +257,8 @@ endstep
 step "Exchange short messages over Diameter at ${SMSC_ADDR}:${DIAMETER_PORT}"
 (cd "${ROOT}" && go test -c -o "${WORK}/loadtest.test" ./internal/loadtest)
 "${WORK}/loadtest.test" -test.run TestLoad -test.v -load -smsc "${SMSC_ADDR}" -local "${LOCAL_IP}" \
-  -diameter-port "${DIAMETER_PORT}" -api-port "${API_PORT}" -subs 100 -rates 20 -step 10s -drain 30s
+  -diameter-port "${DIAMETER_PORT}" -api-port "${API_PORT}" -email "${ADMIN_EMAIL}" -password "${ADMIN_PASSWORD}" \
+  -subs 100 -rates 20 -step 10s -drain 30s
 # The load client reports, but does not check, the deliveries. The message
 # stored before the upgrade is to a phone no core serves, so it stays pending.
 for status in pending failed expired; do

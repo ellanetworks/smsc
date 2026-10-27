@@ -34,6 +34,14 @@ type DB struct {
 type API struct {
 	Address netip.Addr `yaml:"address"`
 	Port    int        `yaml:"port"`
+	// TLS, when set, serves the API and UI over HTTPS.
+	TLS *TLS `yaml:"tls"`
+}
+
+// TLS is a PEM certificate chain, and its private key.
+type TLS struct {
+	Cert string `yaml:"cert"`
+	Key  string `yaml:"key"`
 }
 
 // Diameter listens on Address, or on the addresses of the interface Name.
@@ -88,6 +96,18 @@ func (c Config) validate() error {
 		return errors.New("diameter.address must be a specific address, not 0.0.0.0 or ::, since it is advertised to peers")
 	case c.Diameter.Port < 1 || c.Diameter.Port > 65535:
 		return fmt.Errorf("diameter.port %d is out of range", c.Diameter.Port)
+	}
+
+	if tls := c.API.TLS; tls != nil {
+		if tls.Cert == "" || tls.Key == "" {
+			return errors.New("api.tls.cert and api.tls.key must both be set")
+		}
+
+		for name, path := range map[string]string{"api.tls.cert": tls.Cert, "api.tls.key": tls.Key} {
+			if _, err := os.Stat(path); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+		}
 	}
 
 	return nil

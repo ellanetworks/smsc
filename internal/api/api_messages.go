@@ -47,6 +47,8 @@ type Message struct {
 	ExpiresAt     string         `json:"expires_at"`
 	NextAttemptAt string         `json:"next_attempt_at,omitempty"`
 	StatusReport  StatusReports  `json:"status_report"`
+	// SubmittedBy is the email of the user that submitted a message over the API.
+	SubmittedBy string `json:"submitted_by,omitempty"`
 }
 
 // StatusReports are whether the originator of a message asked for status reports, and the reports that the SC returned
@@ -152,6 +154,7 @@ func CreateMessage(cfg Config) http.Handler {
 			return
 		}
 
+		caller, _ := PrincipalFrom(r.Context())
 		recipient := db.Address{Digits: to, TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN}
 		now := cfg.Now()
 		validity := cfg.Settings.Get().Delivery.DefaultValidity
@@ -180,6 +183,7 @@ func CreateMessage(cfg Config) http.Handler {
 				Recipient:   recipient,
 				MSISDN:      to,
 				Origin:      db.OriginAPI,
+				SubmittedBy: caller.UserID,
 				TPDU:        b,
 				SubmittedAt: now,
 				ExpiresAt:   now.Add(validity),
@@ -264,6 +268,23 @@ func ListMessageAttempts(cfg Config) http.Handler {
 	})
 }
 
+// ownSubmissions returns the user whose submissions are the only messages the caller may read, or zero when it may read
+// all of them.
+func ownSubmissions(ctx context.Context) int64 {
+	if p, _ := PrincipalFrom(ctx); p.Role == db.RoleSubmitter {
+		return p.UserID
+	}
+
+	return 0
+}
+
+// visible is whether the caller may read a message. A Submitter may read only those it submitted; to it, the others
+// do not exist.
+func visible(ctx context.Context, m db.Message) bool {
+	only := ownSubmissions(ctx)
+	return only == 0 || m.SubmittedBy == only
+}
+
 // lookupMessage returns the short message of the request. A status report is not one: it is under the message it is
 // on.
 func lookupMessage(w http.ResponseWriter, r *http.Request, cfg Config) (db.Message, bool) {
@@ -274,7 +295,7 @@ func lookupMessage(w http.ResponseWriter, r *http.Request, cfg Config) (db.Messa
 	}
 
 	m, err := cfg.Store.GetMessage(r.Context(), id)
-	if errors.Is(err, db.ErrNotFound) || err == nil && m.Kind != db.KindMessage {
+	if errors.Is(err, db.ErrNotFound) || err == nil && (m.Kind != db.KindMessage || !visible(r.Context(), m)) {
 		writeError(w, http.StatusNotFound, "Message not found", err, cfg.Logger)
 		return db.Message{}, false
 	}
@@ -332,7 +353,7 @@ func ListMessages(cfg Config) http.Handler {
 
 		q := r.URL.Query()
 
-		var filter db.MessageFilter
+		filter := db.MessageFilter{SubmittedBy: ownSubmissions(r.Context())}
 
 		if to := q.Get("to"); to != "" {
 			if filter.MSISDN, ok = e164Digits(to); !ok {
@@ -389,9 +410,27 @@ func messagesOf(ctx context.Context, cfg Config, messages []db.Message) ([]Messa
 		return nil, err
 	}
 
+	emails := map[int64]string{}
+
 	out := make([]Message, 0, len(messages))
 	for _, m := range messages {
-		out = append(out, messageOf(m, reports[m.ID]))
+		msg := messageOf(m, reports[m.ID])
+
+		if id := m.SubmittedBy; id != 0 {
+			email, ok := emails[id]
+			if !ok {
+				u, err := cfg.Auth.GetUserByID(ctx, id)
+				if err != nil && !errors.Is(err, db.ErrNotFound) {
+					return nil, err
+				}
+
+				email, emails[id] = u.Email, u.Email
+			}
+
+			msg.SubmittedBy = email
+		}
+
+		out = append(out, msg)
 	}
 
 	return out, nil

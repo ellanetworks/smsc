@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,6 +35,8 @@ type Server struct {
 	Logger *slog.Logger
 
 	attemptTimeout time.Duration
+	// bcryptCost is the cost of the password hashes: bcrypt's default when zero.
+	bcryptCost int
 
 	database      *db.DB
 	nodes         *nodeManager
@@ -60,12 +63,23 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
+	tlsConfig, err := apiTLS(cfg.API.TLS)
+	if err != nil {
+		return err
+	}
+
 	database, err := db.Open(ctx, cfg.DB.Path)
 	if err != nil {
 		return err
 	}
 
 	initial, err := database.GetSettings(ctx)
+	if err != nil {
+		_ = database.Close()
+		return err
+	}
+
+	jwtSecret, err := database.JWTSecret(ctx)
 	if err != nil {
 		_ = database.Close()
 		return err
@@ -139,24 +153,34 @@ func (s *Server) Start(ctx context.Context) error {
 	s.apiListener = apiLn
 	s.apiServer = &http.Server{
 		Handler: api.NewHandler(api.Config{
-			Store:    database,
-			Diameter: diameterStatus{nodes: nodes, hss: hss},
-			Frontend: ui.FS(),
-			Settings: live,
-			Notify:   deliverer.Notify,
-			Received: m.received,
-			Metrics:  m.registry,
-			Now:      time.Now,
-			Logger:   s.Logger,
+			Store:      database,
+			Diameter:   diameterStatus{nodes: nodes, hss: hss},
+			Frontend:   ui.FS(),
+			Settings:   live,
+			Notify:     deliverer.Notify,
+			Received:   m.received,
+			Metrics:    m.registry,
+			Auth:       database,
+			JWTSecret:  jwtSecret,
+			BcryptCost: s.bcryptCost,
+			// The cookie is Secure, and HSTS on, only over TLS: a browser would not send a Secure cookie over HTTP.
+			SecureCookie: tlsConfig != nil,
+			Now:          time.Now,
+			Logger:       s.Logger,
 		}),
 		ErrorLog:          slog.NewLogLogger(s.Logger.Handler(), slog.LevelWarn),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       time.Minute,
 		WriteTimeout:      time.Minute,
 		IdleTimeout:       2 * time.Minute,
+		TLSConfig:         tlsConfig,
 	}
 
-	go func() { _ = s.apiServer.Serve(apiLn) }()
+	if tlsConfig != nil {
+		go func() { _ = s.apiServer.ServeTLS(apiLn, "", "") }()
+	} else {
+		go func() { _ = s.apiServer.Serve(apiLn) }()
+	}
 
 	base := context.WithoutCancel(ctx)
 
@@ -180,7 +204,7 @@ func (s *Server) Start(ctx context.Context) error {
 	v := version.Get()
 
 	s.Logger.Info("smsc started", "version", v.Version, "revision", v.Revision, "db", cfg.DB.Path,
-		"diameter", nodes.Addr().String(), "api", apiLn.Addr().String())
+		"diameter", nodes.Addr().String(), "api", apiLn.Addr().String(), "tls", tlsConfig != nil)
 
 	return nil
 }
@@ -323,3 +347,18 @@ func (h hostSender) PeerRealm(host string) (string, bool) {
 }
 
 func (h hostSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
+
+// apiTLS returns the TLS configuration of the API, or nil for none. Go's defaults choose the cipher suites and key
+// exchanges, which keeps the post-quantum hybrid key exchange that a list of curves would turn off.
+func apiTLS(c *config.TLS) (*tls.Config, error) {
+	if c == nil {
+		return nil, nil //nolint:nilnil // No TLS is not an error.
+	}
+
+	cert, err := tls.LoadX509KeyPair(c.Cert, c.Key)
+	if err != nil {
+		return nil, fmt.Errorf("load the API certificate: %w", err)
+	}
+
+	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, nil
+}

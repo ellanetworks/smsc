@@ -12,9 +12,12 @@ servers:
       host:
         default: localhost:5010
 
-security: []
+security:
+  - BearerAuth: []
 
 tags:
+  - name: Auth
+  - name: Users
   - name: Messages
   - name: Operator
   - name: Diameter
@@ -36,6 +39,10 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateMessageParams"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "201":
           description: Created
           content:
@@ -70,6 +77,10 @@ paths:
           schema:
             $ref: "#/components/schemas/MessageStatus"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: OK
           content:
@@ -93,6 +104,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/MessageID"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: OK
           content:
@@ -120,6 +135,10 @@ paths:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PerPage"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: OK
           content:
@@ -143,6 +162,10 @@ paths:
       operationId: getDiameterStatus
       summary: Get Diameter status
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           description: OK
           content:
@@ -160,6 +183,10 @@ paths:
       operationId: getOperator
       summary: Get operator settings
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           $ref: "#/components/responses/OperatorSettings"
     put:
@@ -173,6 +200,10 @@ paths:
             schema:
               $ref: "#/components/schemas/OperatorSettings"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           $ref: "#/components/responses/OperatorSettings"
         "400":
@@ -186,6 +217,10 @@ paths:
       operationId: getDelivery
       summary: Get delivery settings
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           $ref: "#/components/responses/DeliverySettings"
     put:
@@ -199,6 +234,10 @@ paths:
             schema:
               $ref: "#/components/schemas/DeliverySettings"
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "200":
           $ref: "#/components/responses/DeliverySettings"
         "400":
@@ -210,6 +249,7 @@ paths:
     get:
       tags: [Status]
       operationId: getStatus
+      security: []
       summary: Get status
       responses:
         "200":
@@ -227,6 +267,7 @@ paths:
     get:
       tags: [Metrics]
       operationId: getMetrics
+      security: []
       summary: Get the metrics of the SMSC in the Prometheus formats
       responses:
         "200":
@@ -240,6 +281,7 @@ paths:
     get:
       tags: [Specification]
       operationId: getOpenAPISpec
+      security: []
       summary: Get OpenAPI specification
       responses:
         "200":
@@ -249,8 +291,441 @@ paths:
               schema:
                 type: string
 
+  /api/v1/init:
+    post:
+      tags: [Auth]
+      operationId: initialize
+      security: []
+      summary: Create the first user
+      description: >-
+        Creates the first user, an admin, and logs it in. Until it is called, anyone who can reach the API can call it.
+        It fails once a user exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitializeParams"
+      responses:
+        "201":
+          $ref: "#/components/responses/Login"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      security: []
+      summary: Log in
+      description: >-
+        Returns an access token, valid for 15 minutes, and sets the session cookie with which
+        POST /api/v1/auth/refresh issues new ones. At most 20 attempts per minute per client address (IPv6 /64), and
+        100 wrong passwords per hour per account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginParams"
+      responses:
+        "200":
+          $ref: "#/components/responses/Login"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refresh
+      security:
+        - SessionCookie: []
+      summary: Refresh the access token
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/RefreshResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      security: []
+      summary: Log out
+      description: Ends the session of the cookie, if any, and clears the cookie.
+      responses:
+        "204":
+          description: Logged out
+
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      operationId: getMyUser
+      summary: Get my user
+      responses:
+        "200":
+          $ref: "#/components/responses/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/users/me/password:
+    put:
+      tags: [Users]
+      operationId: updateMyPassword
+      summary: Change my password
+      description: >-
+        Ends the other sessions of the user. A wrong current password counts as a failed login of the account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMyPasswordParams"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/me/api-tokens:
+    get:
+      tags: [Users]
+      operationId: listMyAPITokens
+      summary: List my API tokens
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/APITokens"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Users]
+      operationId: createMyAPIToken
+      summary: Create an API token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPITokenParams"
+      responses:
+        "201":
+          $ref: "#/components/responses/CreatedAPIToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/me/api-tokens/{id}:
+    delete:
+      tags: [Users]
+      operationId: deleteMyAPIToken
+      summary: Delete an API token
+      parameters:
+        - $ref: "#/components/parameters/APITokenID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/ListUsersResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserParams"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/{email}:
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: Get user
+      parameters:
+        - $ref: "#/components/parameters/Email"
+      responses:
+        "200":
+          $ref: "#/components/responses/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Users]
+      operationId: updateUser
+      summary: Change the role of a user
+      description: Ends the sessions of the user. An admin cannot change its own role.
+      parameters:
+        - $ref: "#/components/parameters/Email"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserParams"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      summary: Delete user
+      description: Deletes the user with its sessions and API tokens. An admin cannot delete itself.
+      parameters:
+        - $ref: "#/components/parameters/Email"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/{email}/password:
+    put:
+      tags: [Users]
+      operationId: updateUserPassword
+      summary: Set the password of a user
+      description: Ends the sessions of the user.
+      parameters:
+        - $ref: "#/components/parameters/Email"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePasswordParams"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/{email}/api-tokens:
+    get:
+      tags: [Users]
+      operationId: listUserAPITokens
+      summary: List the API tokens of a user
+      parameters:
+        - $ref: "#/components/parameters/Email"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/APITokens"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Users]
+      operationId: createUserAPIToken
+      summary: Create an API token for a user
+      parameters:
+        - $ref: "#/components/parameters/Email"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPITokenParams"
+      responses:
+        "201":
+          $ref: "#/components/responses/CreatedAPIToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/{email}/api-tokens/{id}:
+    delete:
+      tags: [Users]
+      operationId: deleteUserAPIToken
+      summary: Delete an API token of a user
+      parameters:
+        - $ref: "#/components/parameters/Email"
+        - $ref: "#/components/parameters/APITokenID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        An access token from POST /api/v1/auth/login, or an API token, which starts with ellasmsc_. An access token
+        ends with its session. An API token cannot create API tokens, change a password, or manage users: those
+        operations answer 403 to it.
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: smsc_session
+      description: >-
+        The session that a login or the initialization starts, for POST /api/v1/auth/refresh. Over TLS, the cookie is
+        __Host-smsc_session.
+
   parameters:
+    Email:
+      name: email
+      in: path
+      required: true
+      schema:
+        type: string
+        format: email
+    APITokenID:
+      name: id
+      in: path
+      required: true
+      description: The ID of the token, the part of it between ellasmsc_ and the next underscore.
+      schema:
+        type: string
     MessageID:
       name: id
       in: path
@@ -307,6 +782,92 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Unauthorized
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Too Many Requests
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Login:
+      description: Logged in. The response sets the smsc_session cookie.
+      headers:
+        Set-Cookie:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/LoginResponse"
+    Success:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/SuccessResponse"
+    User:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/User"
+    APITokens:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/ListAPITokensResponse"
+    CreatedAPIToken:
+      description: Created. The response is the only time the token is shown.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/CreateAPITokenResponse"
     InternalError:
       description: Internal Server Error
       content:
@@ -321,6 +882,186 @@ components:
       properties:
         error:
           type: string
+
+    LoginParams:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    InitializeParams:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          $ref: "#/components/schemas/Password"
+
+    LoginResponse:
+      type: object
+      required: [message, token]
+      properties:
+        message:
+          type: string
+        token:
+          type: string
+          description: The access token, valid for 15 minutes.
+
+    RefreshResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    SuccessResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    Password:
+      type: string
+      description: 8 to 72 bytes.
+      minLength: 8
+      maxLength: 72
+
+    RoleID:
+      type: integer
+      enum: [1, 2, 3, 4]
+      description: >-
+        1 Admin: everything. 2 Read Only: reads messages, Diameter and settings. 3 Network Manager: also submits
+        messages and changes settings. 4 Submitter: submits messages and reads only those it submitted.
+
+    User:
+      type: object
+      required: [email, role_id]
+      properties:
+        email:
+          type: string
+          format: email
+        role_id:
+          $ref: "#/components/schemas/RoleID"
+
+    ListUsersResponse:
+      type: object
+      required: [items, page, per_page, total_count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total_count:
+          type: integer
+
+    CreateUserParams:
+      type: object
+      required: [email, password, role_id]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          $ref: "#/components/schemas/Password"
+        role_id:
+          $ref: "#/components/schemas/RoleID"
+
+    UpdateUserParams:
+      type: object
+      required: [role_id]
+      additionalProperties: false
+      properties:
+        role_id:
+          $ref: "#/components/schemas/RoleID"
+
+    UpdatePasswordParams:
+      type: object
+      required: [password]
+      additionalProperties: false
+      properties:
+        password:
+          $ref: "#/components/schemas/Password"
+
+    UpdateMyPasswordParams:
+      type: object
+      required: [current_password, password]
+      additionalProperties: false
+      properties:
+        current_password:
+          type: string
+        password:
+          $ref: "#/components/schemas/Password"
+
+    APIToken:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Absent for a token that does not expire.
+        last_used_at:
+          type: string
+          format: date-time
+          description: Absent for a token never used. Updated at most once a minute.
+
+    ListAPITokensResponse:
+      type: object
+      required: [items, page, per_page, total_count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIToken"
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total_count:
+          type: integer
+
+    CreateAPITokenParams:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 50
+        expires_at:
+          type: string
+          format: date-time
+          description: When the token expires. Without it, the token does not expire.
+
+    CreateAPITokenResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The token, ellasmsc_ followed by its ID, an underscore and its secret.
 
     E164:
       type: string
@@ -486,6 +1227,12 @@ components:
           format: date-time
         status_report:
           $ref: "#/components/schemas/StatusReports"
+        submitted_by:
+          type: string
+          format: email
+          description: >-
+            The user that submitted a message over the API. A user with the Submitter role reads only the messages
+            it submitted.
 
     Attempt:
       type: object
@@ -558,8 +1305,11 @@ components:
 
     Status:
       type: object
-      required: [version, revision]
+      required: [version, revision, initialized]
       properties:
+        initialized:
+          type: boolean
+          description: Whether the first user exists. Until it does, POST /api/v1/init creates it.
         version:
           type: string
           example: v0.0.1

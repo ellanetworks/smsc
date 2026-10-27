@@ -33,6 +33,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/numbering"
 	"github.com/ellanetworks/smsc/internal/server"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -599,6 +600,11 @@ func eventually(t testing.TB, what string, cond func() bool) {
 type smsc struct {
 	server *server.Server
 	store  *db.DB
+	// token is the access token of the admin, which api sends.
+	token string
+	// client calls the API at url: over TLS, it trusts the API's certificate.
+	client *http.Client
+	url    string
 }
 
 type smscConfig struct {
@@ -645,6 +651,7 @@ func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 
 	srv := &server.Server{Config: cfg.Config, Logger: discardLogger()}
 	srv.SetAttemptTimeout(cfg.AttemptTimeout)
+	srv.SetBcryptCost(bcrypt.MinCost)
 
 	if err := srv.Start(context.Background()); err != nil {
 		_ = store.Close()
@@ -652,9 +659,28 @@ func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 		t.Fatalf("Start: %v", err)
 	}
 
-	s := &smsc{server: srv, store: store}
+	s := &smsc{server: srv, store: store, client: http.DefaultClient, url: "http://" + srv.APIAddr().String()}
+
+	if c := cfg.API.TLS; c != nil {
+		s.client, s.url = trustingClient(t, c.Cert), "https://"+srv.APIAddr().String()
+	}
 
 	t.Cleanup(func() { s.stop() })
+
+	// An SMSC restarted on the same database already has its admin, who logs in.
+	var admin api.LoginResponse
+	if code := s.api(t, http.MethodPost, "/api/v1/init",
+		api.InitializeParams{Email: "admin@example.com", Password: "correct horse"}, &admin); code == http.StatusForbidden {
+		code = s.api(t, http.MethodPost, "/api/v1/auth/login",
+			api.LoginParams{Email: "admin@example.com", Password: "correct horse"}, &admin)
+		if code != http.StatusOK {
+			t.Fatalf("POST /api/v1/auth/login = %d", code)
+		}
+	} else if code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/init = %d", code)
+	}
+
+	s.token = admin.Token
 
 	return s
 }
@@ -1105,7 +1131,15 @@ func TestSettingsUpdateAppliesWithoutRestart(t *testing.T) {
 	}
 }
 
+// api sends a request as the admin, and decodes its result into out.
 func (s *smsc) api(t testing.TB, method, path string, body any, out any) int {
+	t.Helper()
+
+	return s.apiAs(t, s.token, method, path, body, out)
+}
+
+// apiAs sends a request with a bearer token, or none when token is empty.
+func (s *smsc) apiAs(t testing.TB, token, method, path string, body any, out any) int {
 	t.Helper()
 
 	var reader io.Reader
@@ -1119,12 +1153,16 @@ func (s *smsc) api(t testing.TB, method, path string, body any, out any) int {
 		reader = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), method, "http://"+s.server.APIAddr().String()+path, reader)
+	req, err := http.NewRequestWithContext(context.Background(), method, s.url+path, reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
@@ -1214,6 +1252,55 @@ func TestAPIMessageIsDelivered(t *testing.T) {
 
 	got := core.deliveredTo(bob.imsi)
 	if len(got) != 1 || !bytes.Contains(got[0].tpdu, semiOctets(t, "15550001111")) {
+		t.Fatalf("delivered = %+v", got)
+	}
+}
+
+// TestAPITokenMessageIsDelivered is the integration of an external platform: the admin creates it a Submitter and an
+// API token, with which it submits a message that is delivered, and which it alone can follow.
+func TestAPITokenMessageIsDelivered(t *testing.T) {
+	core := newFakeCore(t, bob)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	core.connect(s)
+
+	if code := s.api(t, http.MethodPost, "/api/v1/users", api.CreateUserParams{
+		Email:    "ota@example.com",
+		Password: "correct horse", RoleID: db.RoleSubmitter,
+	}, nil); code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/users = %d", code)
+	}
+
+	var created api.CreateAPITokenResponse
+	if code := s.api(t, http.MethodPost, "/api/v1/users/ota@example.com/api-tokens",
+		api.CreateAPITokenParams{Name: "ota platform"}, &created); code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/users/ota@example.com/api-tokens = %d", code)
+	}
+
+	if code := s.apiAs(t, "", http.MethodPost, "/api/v1/messages",
+		api.CreateMessageParams{From: "+15550001111", To: "+" + bob.msisdn, Text: "no token"}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("POST /api/v1/messages without a token = %d, want %d", code, http.StatusUnauthorized)
+	}
+
+	var sent api.CreateMessageResponse
+	if code := s.apiAs(t, created.Token, http.MethodPost, "/api/v1/messages",
+		api.CreateMessageParams{From: "+15550001111", To: "+" + bob.msisdn, Text: "hello from the platform"}, &sent); code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/messages with the API token = %d", code)
+	}
+
+	id := sent.Items[0].ID
+	s.waitForAPIStatus(t, id, "delivered")
+
+	var m api.Message
+	if code := s.apiAs(t, created.Token, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil, &m); code != http.StatusOK ||
+		m.Status != "delivered" || m.SubmittedBy != "ota@example.com" {
+		t.Fatalf("GET the message with the API token = %d %+v", code, m)
+	}
+
+	if code := s.apiAs(t, created.Token, http.MethodGet, "/api/v1/operator", nil, nil); code != http.StatusForbidden {
+		t.Fatalf("GET /api/v1/operator with the API token = %d, want %d", code, http.StatusForbidden)
+	}
+
+	if got := core.deliveredTo(bob.imsi); len(got) != 1 {
 		t.Fatalf("delivered = %+v", got)
 	}
 }
