@@ -48,6 +48,7 @@ export interface Message {
   expires_at: string;
   next_attempt_at?: string;
   status_report: StatusReports;
+  submitted_by?: string;
 }
 
 export type AttemptStep = "routing" | "delivery";

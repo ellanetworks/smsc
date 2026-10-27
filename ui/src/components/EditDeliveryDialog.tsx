@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TextField } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
+import { useSnackbar } from "@/contexts/SnackbarContext";
 import { type DeliverySettings, updateDelivery } from "@/queries/delivery";
 import { formatDuration, parseDuration } from "@/utils/durations";
 
@@ -21,6 +22,7 @@ export default function EditDeliveryDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { showSnackbar } = useSnackbar();
   const [validity, setValidity] = useState(
     formatDuration(delivery.default_validity_seconds),
   );
@@ -32,6 +34,7 @@ export default function EditDeliveryDialog({
     mutationFn: updateDelivery,
     onSuccess: (updated) => {
       queryClient.setQueryData(["delivery"], updated);
+      showSnackbar("Delivery settings updated successfully.", "success");
       onClose();
     },
   });

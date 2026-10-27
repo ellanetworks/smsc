@@ -97,21 +97,19 @@ function AttemptCard({ attempt, index }: { attempt: Attempt; index: number }) {
 function Attempts({ message }: { message: Message }) {
   const pending = message.status === "pending";
 
-  const { data, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useInfiniteQuery({
-      queryKey: ["attempts", message.id],
-      queryFn: ({ pageParam }) =>
-        listMessageAttempts(message.id, {
-          page: pageParam,
-          perPage: ATTEMPTS_PER_PAGE,
-        }),
-      initialPageParam: 1,
-      getNextPageParam: (last) =>
-        last.page * last.per_page < last.total_count
-          ? last.page + 1
-          : undefined,
-      refetchInterval: pending ? DETAIL_REFRESH_MS : false,
-    });
+  const query = useInfiniteQuery({
+    queryKey: ["attempts", message.id],
+    queryFn: ({ pageParam }) =>
+      listMessageAttempts(message.id, {
+        page: pageParam,
+        perPage: ATTEMPTS_PER_PAGE,
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.page * last.per_page < last.total_count ? last.page + 1 : undefined,
+    refetchInterval: pending ? DETAIL_REFRESH_MS : false,
+  });
+  const { data, error, fetchNextPage, hasNextPage, isFetchingNextPage } = query;
 
   const attempts = data?.pages.flatMap((p) => p.items) ?? [];
   const total = data?.pages[0]?.total_count;
@@ -126,11 +124,7 @@ function Attempts({ message }: { message: Message }) {
       >
         Delivery attempts{total !== undefined ? ` (${total})` : ""}
       </Typography>
-      <QueryAlert
-        error={error}
-        hasData={data !== undefined}
-        subject="delivery attempts"
-      />
+      <QueryAlert query={query} subject="delivery attempts" />
       {!data && !error && <Skeleton variant="rounded" height={120} />}
       {data && attempts.length === 0 && (
         <Typography color="text.secondary">
@@ -230,13 +224,14 @@ function MessageDetail({
   initial: Message;
   onClose: () => void;
 }) {
-  const { data, error } = useQuery({
+  const query = useQuery({
     queryKey: ["message", initial.id],
     queryFn: () => getMessage(initial.id),
     placeholderData: initial,
     refetchInterval: (q) =>
       inProgress(q.state.data ?? initial) ? DETAIL_REFRESH_MS : false,
   });
+  const { data } = query;
 
   const message = data ?? initial;
 
@@ -280,7 +275,7 @@ function MessageDetail({
           </Box>
         </IconButton>
       </Stack>
-      <QueryAlert error={error} hasData subject="message" />
+      <QueryAlert query={query} subject="message" />
       <Fields rows={rows} />
       <Paper
         variant="outlined"

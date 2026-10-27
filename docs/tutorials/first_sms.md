@@ -24,9 +24,15 @@ sudo snap install ella-smsc
 sudo snap start --enable ella-smsc.smscd
 ```
 
-Open your browser at `http://<host-ip>:5010`. The **Cores** page shows no connected cores yet.
+## 2. Initialize Ella SMSC
 
-## 2. Connect Ella Core
+Open your browser at `http://<host-ip>:5010`. The **Initialize Ella SMSC** page opens.
+
+Enter an email and a password of at least 8 characters, and click **Create**. You are logged in as Admin.
+
+The **Cores** page shows no connected cores yet.
+
+## 3. Connect Ella Core
 
 In the Ella Core UI, go to **Operator** and scroll to the **SMS** section.
 
@@ -40,7 +46,7 @@ Click **Add**. The service center shows **Connected**.
 
 In the Ella SMSC UI, go to **Cores**. Ella Core shows **open**, with **HSS** set to **yes**.
 
-## 3. Give the subscribers an MSISDN
+## 4. Give the subscribers an MSISDN
 
 In the Ella Core UI, for each of the two subscribers:
 
@@ -48,11 +54,11 @@ In the Ella Core UI, for each of the two subscribers:
 - In **Provisioning**, click the edit icon next to **MSISDN**.
 - Enter `+15551230001` for the first subscriber and `+15551230002` for the second, and click **Update**.
 
-## 4. Set the SMSC number on the SIM cards
+## 5. Set the SMSC number on the SIM cards
 
 On each SIM card, set the SMSC number to `+15550000000`.
 
-## 5. Send an SMS
+## 6. Send an SMS
 
 From the first phone, send `hello` to `+15551230002`. The second phone receives it.
 
@@ -63,4 +69,4 @@ You have added SMS to your 5G network.
 ## Next steps
 
 - [Integrate with Ella IMS](../how_to/integrate_with_ella_ims.md) to deliver SMS over IP.
-- Send messages from an application with the [Messages API](../reference/api/messages.md).
+- [Send messages from an application](../how_to/send_messages_from_an_application.md).

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch, withQuery } from "@/queries/utils";
+import {
+  ApiError,
+  apiFetch,
+  setAccessToken,
+  setAccessTokenRenewer,
+  withQuery,
+} from "@/queries/utils";
 
 const stubFetch = (status: number, body: string, statusText = "") => {
   const fetchMock = vi.fn(
@@ -11,6 +17,8 @@ const stubFetch = (status: number, body: string, statusText = "") => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setAccessToken(null);
+  setAccessTokenRenewer(null);
 });
 
 describe("apiFetch", () => {
@@ -99,5 +107,98 @@ describe("withQuery", () => {
     expect(withQuery("/api/v1/messages", { to: "+15551230002" })).toBe(
       "/api/v1/messages?to=%2B15551230002",
     );
+  });
+});
+
+describe("apiFetch authentication", () => {
+  it("sends the access token once there is one", async () => {
+    const fetchMock = stubFetch(200, JSON.stringify({ result: {} }));
+
+    await apiFetch("/api/v1/status");
+    setAccessToken("token");
+    await apiFetch("/api/v1/messages");
+
+    expect(fetchMock.mock.calls[0]).toEqual([
+      "/api/v1/status",
+      { method: "GET" },
+    ]);
+    expect(fetchMock.mock.calls[1]).toEqual([
+      "/api/v1/messages",
+      { method: "GET", headers: { Authorization: "Bearer token" } },
+    ]);
+  });
+
+  it("renews a refused access token, and retries the request once", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Invalid token" }), {
+          status: 401,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ result: { id: 1 } }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    setAccessToken("expired");
+    setAccessTokenRenewer(async () => {
+      setAccessToken("renewed");
+      return true;
+    });
+
+    await expect(apiFetch("/api/v1/messages/1")).resolves.toEqual({ id: 1 });
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      headers: { Authorization: "Bearer renewed" },
+    });
+  });
+
+  it("fails when the access token cannot be renewed", async () => {
+    stubFetch(401, JSON.stringify({ error: "Invalid token" }));
+    const renew = vi.fn(async () => false);
+    setAccessTokenRenewer(renew);
+    setAccessToken("expired");
+
+    await expect(apiFetch("/api/v1/messages")).rejects.toMatchObject({
+      kind: "auth",
+      status: 401,
+    });
+    expect(renew).toHaveBeenCalledOnce();
+  });
+
+  it("does not renew anything on a failed login", async () => {
+    stubFetch(
+      401,
+      JSON.stringify({ error: "The email or password is incorrect." }),
+    );
+    const renew = vi.fn(async () => true);
+    setAccessTokenRenewer(renew);
+    setAccessToken("token");
+
+    await expect(
+      apiFetch("/api/v1/auth/login", { method: "POST", anonymous: true }),
+    ).rejects.toMatchObject({
+      kind: "http",
+      message: "The email or password is incorrect.",
+    });
+    expect(renew).not.toHaveBeenCalled();
+  });
+
+  it("reports a forbidden request", async () => {
+    stubFetch(403, JSON.stringify({ error: "Forbidden" }));
+    setAccessToken("token");
+
+    await expect(apiFetch("/api/v1/users")).rejects.toMatchObject({
+      kind: "forbidden",
+      status: 403,
+    });
+  });
+
+  it("resolves a response without content", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 204 })),
+    );
+
+    await expect(apiFetch("/api/v1/auth/logout")).resolves.toBeUndefined();
   });
 });

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TextField } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
+import { useSnackbar } from "@/contexts/SnackbarContext";
 import { type OperatorSettings, updateOperator } from "@/queries/operator";
 
 export default function EditOperatorIdDialog({
@@ -12,6 +13,7 @@ export default function EditOperatorIdDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { showSnackbar } = useSnackbar();
   const [mcc, setMcc] = useState(operator.mcc);
   const [mnc, setMnc] = useState(operator.mnc);
 
@@ -20,6 +22,7 @@ export default function EditOperatorIdDialog({
     onSuccess: (updated) => {
       queryClient.setQueryData(["operator"], updated);
       void queryClient.invalidateQueries({ queryKey: ["diameter"] });
+      showSnackbar("Operator ID updated successfully.", "success");
       onClose();
     },
   });

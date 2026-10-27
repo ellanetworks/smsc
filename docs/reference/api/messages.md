@@ -69,7 +69,7 @@ A message from the API never asks for status reports, and is kept for the defaul
 
 ## List Messages
 
-This path returns the list of messages, most recent first.
+This path returns the list of messages, most recent first. For a Submitter, only the messages it sent.
 
 | Method | Path               |
 | ------ | ------------------ |
@@ -114,6 +114,7 @@ This path returns the list of messages, most recent first.
 | `status_report.reports[].updated_at`     | string | Time of the last change. |
 | `status_report.reports[].expires_at`     | string | End of the report's validity period. |
 | `status_report.reports[].next_attempt_at` | string | Time of the next delivery attempt of the report. Present while `pending`. |
+| `submitted_by`                  | string  | Email of the user that sent the message over the API. Absent for a message from a phone. |
 
 ### Sample Response
 
@@ -152,7 +153,7 @@ This path returns the list of messages, most recent first.
 
 ## Get a Message
 
-This path returns a specific message.
+This path returns a specific message. For a Submitter, a message it did not send is not found.
 
 | Method | Path                    |
 | ------ | ----------------------- |
@@ -204,7 +205,7 @@ This path returns a specific message.
 
 ## List Delivery Attempts
 
-This path returns the routing and delivery attempts of a message, oldest first.
+This path returns the routing and delivery attempts of a message, oldest first. For a Submitter, a message it did not send is not found.
 
 | Method | Path                             |
 | ------ | -------------------------------- |

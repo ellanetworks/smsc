@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TextField } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
+import { useSnackbar } from "@/contexts/SnackbarContext";
 import { type OperatorSettings, updateOperator } from "@/queries/operator";
 
 export default function EditNumberingDialog({
@@ -12,12 +13,14 @@ export default function EditNumberingDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { showSnackbar } = useSnackbar();
   const [numbering, setNumbering] = useState(operator.numbering);
 
   const mutation = useMutation({
     mutationFn: updateOperator,
     onSuccess: (updated) => {
       queryClient.setQueryData(["operator"], updated);
+      showSnackbar("Numbering plan updated successfully.", "success");
       onClose();
     },
   });

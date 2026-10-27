@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import Operator from "@/pages/Operator";
 import type { OperatorSettings } from "@/queries/operator";
+import { authFor } from "@/contexts/AuthContext";
+import { RoleID } from "@/queries/users";
 import { json, renderWithClient, stubApi } from "@/test/render";
 
 const operator: OperatorSettings = {
@@ -61,6 +63,17 @@ describe("Operator", () => {
       "+15550000000",
       "Country Code1National PrefixN/AInternational PrefixN/A",
     ]);
+  });
+
+  it("lets a Read Only user read, but not edit", async () => {
+    serve(() => json(500, {}));
+
+    renderWithClient(<Operator />, authFor("ro@example.com", RoleID.ReadOnly));
+    await screen.findByText("+15550000000");
+
+    expect(
+      screen.queryByRole("button", { name: /^Edit/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("explains each setting on hover", async () => {

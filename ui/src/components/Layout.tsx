@@ -11,29 +11,36 @@ import {
   ListItemIcon,
   ListItemText,
   ListSubheader,
+  Menu,
+  MenuItem,
   Toolbar,
   Typography,
   useMediaQuery,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import {
+  AccountCircle as AccountCircleIcon,
   BugReport as BugReportIcon,
   Feed as FeedIcon,
   Hub as HubIcon,
   Info as InfoIcon,
+  Logout as LogoutIcon,
   Menu as MenuIcon,
   OpenInNew as OpenInNewIcon,
+  AdminPanelSettings as AdminPanelSettingsIcon,
+  Person as PersonIcon,
   Sms as SmsIcon,
 } from "@mui/icons-material";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import DeploymentIdentity from "@/components/DeploymentIdentity";
 import Footer from "@/components/Footer";
 import Logo from "@/components/Logo";
+import { useAuth, type Permission } from "@/contexts/AuthContext";
 import { MAX_WIDTH, PAGE_PADDING_X } from "@/utils/layout";
 
 const drawerWidth = 250;
 
-const DOCS_URL = "https://docs.ellanetworks.com";
+const DOCS_URL = "https://docs.ellanetworks.com/smsc/";
 
 const NEW_ISSUE_URL = "https://github.com/ellanetworks/smsc/issues/new/choose";
 
@@ -60,18 +67,50 @@ const drawerSelectedSx = {
   },
 };
 
-const navItems = [
+interface NavItem {
+  to: string;
+  label: string;
+  icon: ReactNode;
+  permission: Permission;
+}
+
+// Each page shows to the roles with the permission it needs to load.
+const navItems: NavItem[] = [
   {
     to: "/operator",
     label: "Operator",
     icon: <FeedIcon color="primary" />,
+    permission: "operator:read",
   },
-  { to: "/cores", label: "Cores", icon: <HubIcon color="primary" /> },
-  { to: "/messages", label: "Messages", icon: <SmsIcon color="primary" /> },
+  {
+    to: "/cores",
+    label: "Cores",
+    icon: <HubIcon color="primary" />,
+    permission: "diameter:read",
+  },
+  {
+    to: "/messages",
+    label: "Messages",
+    icon: <SmsIcon color="primary" />,
+    permission: "message:read",
+  },
+];
+
+// systemItems are the settings of the platform itself, under their own heading.
+const systemItems: NavItem[] = [
+  {
+    to: "/users",
+    label: "Users",
+    icon: <AdminPanelSettingsIcon color="primary" />,
+    permission: "user:admin",
+  },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const auth = useAuth();
+  const [accountEl, setAccountEl] = useState<HTMLElement | null>(null);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("lg"));
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -145,9 +184,60 @@ export default function Layout({ children }: { children: ReactNode }) {
             Ella SMSC
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
-          <Box sx={{ minWidth: 0 }}>
+          <Box sx={{ mr: 2, minWidth: 0 }}>
             <DeploymentIdentity />
           </Box>
+          <IconButton
+            size="large"
+            edge="end"
+            color="inherit"
+            aria-label="Account menu"
+            aria-haspopup="menu"
+            aria-expanded={accountEl !== null}
+            aria-controls={accountEl !== null ? "account-menu" : undefined}
+            onClick={(e) => setAccountEl(e.currentTarget)}
+          >
+            <AccountCircleIcon />
+          </IconButton>
+          <Menu
+            id="account-menu"
+            anchorEl={accountEl}
+            open={accountEl !== null}
+            onClose={() => setAccountEl(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+          >
+            <ListSubheader
+              disableSticky
+              role="presentation"
+              sx={{ lineHeight: 2.5 }}
+            >
+              {auth.email}
+            </ListSubheader>
+            <MenuItem
+              onClick={() => {
+                setAccountEl(null);
+                navigate("/profile");
+              }}
+            >
+              <ListItemIcon>
+                <PersonIcon fontSize="small" color="primary" />
+              </ListItemIcon>
+              <ListItemText primary="Profile" />
+            </MenuItem>
+            <Divider />
+            <MenuItem
+              onClick={() => {
+                setAccountEl(null);
+                void auth.logout();
+              }}
+            >
+              <ListItemIcon>
+                <LogoutIcon fontSize="small" color="primary" />
+              </ListItemIcon>
+              <ListItemText primary="Log Out" />
+            </MenuItem>
+          </Menu>
         </Toolbar>
       </AppBar>
 
@@ -172,24 +262,35 @@ export default function Layout({ children }: { children: ReactNode }) {
           sx={{ flexGrow: 1, overflow: "auto" }}
         >
           <List>
-            {navItems.map(({ to, label, icon }) => {
-              const current = pathname.startsWith(to);
-              return (
-                <ListItem key={to} disablePadding>
-                  <ListItemButton
-                    component={Link}
-                    to={to}
-                    selected={current}
-                    aria-current={current ? "page" : undefined}
-                    onClick={handleNavClick}
-                    sx={drawerSelectedSx}
-                  >
-                    <ListItemIcon>{icon}</ListItemIcon>
-                    <ListItemText primary={label} />
-                  </ListItemButton>
-                </ListItem>
-              );
-            })}
+            {navItems
+              .filter(({ permission }) => auth.can(permission))
+              .map((item) => (
+                <NavLink
+                  key={item.to}
+                  item={item}
+                  pathname={pathname}
+                  onClick={handleNavClick}
+                />
+              ))}
+            {systemItems.some(({ permission }) => auth.can(permission)) && (
+              <>
+                <ListSubheader
+                  sx={{ borderTop: 1, borderColor: "divider", mt: 1, pt: 1 }}
+                >
+                  System
+                </ListSubheader>
+                {systemItems
+                  .filter(({ permission }) => auth.can(permission))
+                  .map((item) => (
+                    <NavLink
+                      key={item.to}
+                      item={item}
+                      pathname={pathname}
+                      onClick={handleNavClick}
+                    />
+                  ))}
+              </>
+            )}
           </List>
         </Box>
 
@@ -268,5 +369,33 @@ export default function Layout({ children }: { children: ReactNode }) {
         <Footer />
       </Box>
     </Box>
+  );
+}
+
+function NavLink({
+  item: { to, label, icon },
+  pathname,
+  onClick,
+}: {
+  item: NavItem;
+  pathname: string;
+  onClick: () => void;
+}) {
+  const current = pathname.startsWith(to);
+
+  return (
+    <ListItem disablePadding>
+      <ListItemButton
+        component={Link}
+        to={to}
+        selected={current}
+        aria-current={current ? "page" : undefined}
+        onClick={onClick}
+        sx={drawerSelectedSx}
+      >
+        <ListItemIcon>{icon}</ListItemIcon>
+        <ListItemText primary={label} />
+      </ListItemButton>
+    </ListItem>
   );
 }

@@ -1,13 +1,9 @@
 import { useState } from "react";
 import {
-  Alert,
   Box,
   Button,
-  Card,
-  CardContent,
   IconButton,
   MenuItem,
-  Snackbar,
   Stack,
   TextField,
   Tooltip,
@@ -32,7 +28,11 @@ import {
   type Message,
   type MessageStatus,
 } from "@/queries/messages";
+import { useAuth } from "@/contexts/AuthContext";
+import { useSnackbar } from "@/contexts/SnackbarContext";
 import { getDelivery } from "@/queries/delivery";
+import { RoleID } from "@/queries/users";
+import { GRID_SX } from "@/utils/layout";
 import { formatTimestamp } from "@/utils/dates";
 import { formatDuration } from "@/utils/durations";
 import { isE164 } from "@/utils/e164";
@@ -103,6 +103,12 @@ const columns: GridColDef<Message>[] = [
     width: 110,
     valueGetter: (_value, row) => encodingLabels[row.encoding],
   },
+  {
+    field: "submitted_by",
+    headerName: "Submitted by",
+    width: 200,
+    valueGetter: (_value, row) => row.submitted_by ?? "",
+  },
 ];
 
 const hiddenByDefault = {
@@ -112,6 +118,8 @@ const hiddenByDefault = {
 };
 
 export default function Messages() {
+  const auth = useAuth();
+  const { showSnackbar } = useSnackbar();
   const [to, setTo] = useState("");
   const [from, setFrom] = useState("");
   const [status, setStatus] = useState<MessageStatus | "">("");
@@ -121,10 +129,12 @@ export default function Messages() {
   });
   const [selected, setSelected] = useState<Message | null>(null);
   const [editingDelivery, setEditingDelivery] = useState(false);
-  const delivery = useQuery({ queryKey: ["delivery"], queryFn: getDelivery });
+  const delivery = useQuery({
+    queryKey: ["delivery"],
+    queryFn: getDelivery,
+    enabled: auth.can("delivery:read"),
+  });
   const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState<Message[]>([]);
-  const [sentOpen, setSentOpen] = useState(false);
 
   const toInvalid = to !== "" && !isE164(to);
   const fromInvalid = from !== "" && !isE164(from);
@@ -143,7 +153,7 @@ export default function Messages() {
     status: status || undefined,
   };
 
-  const { data, error, isFetching } = useQuery({
+  const messages = useQuery({
     queryKey: ["messages", filters, pagination],
     queryFn: () =>
       listMessages({
@@ -154,6 +164,7 @@ export default function Messages() {
     placeholderData: (prev) => prev,
     refetchInterval: MESSAGES_REFRESH_MS,
   });
+  const { data, isFetching } = messages;
 
   const resetPage = () => setPagination((p) => ({ ...p, page: 0 }));
 
@@ -163,98 +174,100 @@ export default function Messages() {
         id="messages-title"
         title="Messages"
         action={
-          <Button variant="contained" onClick={() => setSending(true)}>
-            Send
-          </Button>
+          auth.can("message:create") && (
+            <Button
+              variant="contained"
+              color="success"
+              onClick={() => setSending(true)}
+            >
+              Send
+            </Button>
+          )
         }
       />
-      <Card variant="outlined">
-        <CardContent>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={2}
-            sx={{ mb: 2 }}
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
+        <TextField
+          label="To"
+          size="small"
+          value={to}
+          onChange={(e) => {
+            setTo(e.target.value.trim());
+            resetPage();
+          }}
+          error={toInvalid}
+          helperText={toInvalid ? E164_HINT : undefined}
+          placeholder="+15551230002"
+        />
+        <TextField
+          label="From"
+          size="small"
+          value={from}
+          onChange={(e) => {
+            setFrom(e.target.value.trim());
+            resetPage();
+          }}
+          error={fromInvalid}
+          helperText={fromInvalid ? E164_HINT : undefined}
+          placeholder="+15551230001"
+        />
+        <TextField
+          select
+          label="Status"
+          size="small"
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value as MessageStatus | "");
+            resetPage();
+          }}
+          sx={{ minWidth: 160 }}
+        >
+          <MenuItem value="">All</MenuItem>
+          {STATUSES.map((s) => (
+            <MenuItem key={s} value={s}>
+              {s}
+            </MenuItem>
+          ))}
+        </TextField>
+        {auth.can("delivery:read") && (
+          <Box
+            data-testid="delivery-settings"
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              ml: { sm: "auto" },
+            }}
           >
-            <TextField
-              label="To"
-              size="small"
-              value={to}
-              onChange={(e) => {
-                setTo(e.target.value.trim());
-                resetPage();
-              }}
-              error={toInvalid}
-              helperText={toInvalid ? E164_HINT : undefined}
-              placeholder="+15551230002"
-            />
-            <TextField
-              label="From"
-              size="small"
-              value={from}
-              onChange={(e) => {
-                setFrom(e.target.value.trim());
-                resetPage();
-              }}
-              error={fromInvalid}
-              helperText={fromInvalid ? E164_HINT : undefined}
-              placeholder="+15551230001"
-            />
-            <TextField
-              select
-              label="Status"
-              size="small"
-              value={status}
-              onChange={(e) => {
-                setStatus(e.target.value as MessageStatus | "");
-                resetPage();
-              }}
-              sx={{ minWidth: 160 }}
-            >
-              <MenuItem value="">All</MenuItem>
-              {STATUSES.map((s) => (
-                <MenuItem key={s} value={s}>
-                  {s}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Box
-              data-testid="delivery-settings"
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                ml: { sm: "auto" },
-              }}
-            >
-              <Typography variant="body2" color="textSecondary">
-                <Tooltip
-                  title="How long a message without its own validity period is kept for delivery."
-                  arrow
-                >
-                  <span>Validity</span>
-                </Tooltip>
-                :{" "}
-                <strong>
-                  {delivery.data
-                    ? formatDuration(delivery.data.default_validity_seconds)
-                    : "…"}
-                </strong>
-                {" · "}
-                <Tooltip
-                  title="Wait before each new delivery attempt. The last one repeats."
-                  arrow
-                >
-                  <span>Retries</span>
-                </Tooltip>
-                :{" "}
-                <strong>
-                  {delivery.data
-                    ? delivery.data.retry_intervals_seconds
-                        .map(formatDuration)
-                        .join(", ") || "none"
-                    : "…"}
-                </strong>
-              </Typography>
+            <Typography variant="body2" color="textSecondary">
+              <Tooltip
+                title="How long a message without its own validity period is kept for delivery."
+                arrow
+              >
+                <span>Validity</span>
+              </Tooltip>
+              :{" "}
+              <strong>
+                {delivery.data
+                  ? formatDuration(delivery.data.default_validity_seconds)
+                  : "…"}
+              </strong>
+              {" · "}
+              <Tooltip
+                title="Wait before each new delivery attempt. The last one repeats."
+                arrow
+              >
+                <span>Retries</span>
+              </Tooltip>
+              :{" "}
+              <strong>
+                {delivery.data
+                  ? delivery.data.retry_intervals_seconds
+                      .map(formatDuration)
+                      .join(", ") || "none"
+                  : "…"}
+              </strong>
+            </Typography>
+            {auth.can("delivery:update") && (
               <IconButton
                 aria-label="Edit delivery"
                 size="small"
@@ -263,40 +276,42 @@ export default function Messages() {
               >
                 <EditIcon fontSize="small" color="primary" />
               </IconButton>
-            </Box>
-          </Stack>
-          <QueryAlert
-            error={error}
-            hasData={data !== undefined}
-            subject="messages"
-          />
-          <DataGrid<Message>
-            aria-label="Messages"
-            rows={data?.items ?? []}
-            columns={columns}
-            rowCount={data?.total_count ?? 0}
-            loading={data === undefined && isFetching}
-            paginationMode="server"
-            paginationModel={pagination}
-            onPaginationModelChange={setPagination}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
-            initialState={{
-              columns: { columnVisibilityModel: hiddenByDefault },
-            }}
-            onRowClick={({ row }) => setSelected(row)}
-            onCellKeyDown={({ row }, event) => {
-              if (event.key === "Enter") setSelected(row);
-            }}
-            disableColumnSorting
-            disableColumnFilter
-            disableRowSelectionOnClick
-            disableVirtualization
-            autoHeight
-            localeText={{ noRowsLabel: "No messages." }}
-            sx={{ "& .MuiDataGrid-row": { cursor: "pointer" } }}
-          />
-        </CardContent>
-      </Card>
+            )}
+          </Box>
+        )}
+      </Stack>
+      <QueryAlert query={messages} subject="messages" />
+      <DataGrid<Message>
+        aria-label="Messages"
+        rows={data?.items ?? []}
+        columns={columns}
+        rowCount={data?.total_count ?? 0}
+        loading={data === undefined && isFetching}
+        paginationMode="server"
+        paginationModel={pagination}
+        onPaginationModelChange={setPagination}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
+        initialState={{
+          columns: {
+            columnVisibilityModel: {
+              ...hiddenByDefault,
+              // A Submitter sees only its own messages.
+              submitted_by: auth.roleId !== RoleID.Submitter,
+            },
+          },
+        }}
+        onRowClick={({ row }) => setSelected(row)}
+        onCellKeyDown={({ row }, event) => {
+          if (event.key === "Enter") setSelected(row);
+        }}
+        disableColumnSorting
+        disableColumnFilter
+        disableRowSelectionOnClick
+        disableVirtualization
+        autoHeight
+        localeText={{ noRowsLabel: "No messages." }}
+        sx={{ ...GRID_SX, "& .MuiDataGrid-row": { cursor: "pointer" } }}
+      />
       <MessageDrawer message={selected} onClose={() => setSelected(null)} />
       {editingDelivery && delivery.data && (
         <EditDeliveryDialog
@@ -309,38 +324,15 @@ export default function Messages() {
         onClose={() => setSending(false)}
         onSent={(parts) => {
           setSending(false);
-          setSent(parts);
-          setSentOpen(true);
+          showSnackbar(
+            parts.length > 1
+              ? `Message queued as ${parts.length} parts.`
+              : "Message queued.",
+            "success",
+            { label: "View", onClick: () => setSelected(parts[0] ?? null) },
+          );
         }}
       />
-      <Snackbar
-        open={sentOpen}
-        autoHideDuration={8000}
-        onClose={(_event, reason) => {
-          if (reason !== "clickaway") setSentOpen(false);
-        }}
-      >
-        <Alert
-          severity="success"
-          variant="filled"
-          action={
-            <Button
-              color="inherit"
-              size="small"
-              onClick={() => {
-                setSelected(sent[0] ?? null);
-                setSentOpen(false);
-              }}
-            >
-              View
-            </Button>
-          }
-        >
-          {sent.length > 1
-            ? `Message queued as ${sent.length} parts.`
-            : "Message queued."}
-        </Alert>
-      </Snackbar>
     </Box>
   );
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import Cores from "@/pages/Cores";
 import { json, renderWithClient, stubApi } from "@/test/render";
 
@@ -142,8 +142,32 @@ describe("Cores", () => {
 
     renderWithClient(<Cores />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load Diameter status: Failed to load",
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Failed to load Diameter status");
+    expect(alert).toHaveTextContent("Failed to load");
+    expect(
+      within(alert).getByRole("button", { name: "Retry" }),
+    ).toBeInTheDocument();
+  });
+
+  it("retries a failed load, and shows its details", async () => {
+    let calls = 0;
+    serve(() => {
+      calls++;
+      return json(500, { error: "Failed to load" });
+    });
+
+    renderWithClient(<Cores />);
+
+    const alert = await screen.findByRole("alert");
+    fireEvent.click(
+      within(alert).getByRole("button", { name: "Show details" }),
     );
+    expect(alert).toHaveTextContent("HTTP 500");
+    expect(alert).toHaveTextContent("GET /api/v1/diameter");
+
+    const before = calls;
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(calls).toBe(before + 1));
   });
 });

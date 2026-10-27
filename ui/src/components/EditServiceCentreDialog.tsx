@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TextField } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
+import { useSnackbar } from "@/contexts/SnackbarContext";
 import { type OperatorSettings, updateOperator } from "@/queries/operator";
 import { isE164 } from "@/utils/e164";
 
@@ -13,12 +14,14 @@ export default function EditServiceCentreDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { showSnackbar } = useSnackbar();
   const [address, setAddress] = useState(operator.service_centre_address);
 
   const mutation = useMutation({
     mutationFn: updateOperator,
     onSuccess: (updated) => {
       queryClient.setQueryData(["operator"], updated);
+      showSnackbar("Service centre address updated successfully.", "success");
       onClose();
     },
   });

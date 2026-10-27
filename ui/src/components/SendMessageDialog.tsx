@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from "react";
 import {
-  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -10,6 +9,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import DialogError from "@/components/DialogError";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createMessage, type Message } from "@/queries/messages";
 import { isE164 } from "@/utils/e164";
@@ -99,13 +99,12 @@ export default function SendMessageDialog({
       slotProps={{ paper: { component: "form", onSubmit: submit } }}
     >
       <DialogTitle>Send</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
-          {mutation.error && (
-            <Alert severity="error">
-              Could not send the message: {mutation.error.message}
-            </Alert>
-          )}
+      <DialogContent dividers>
+        <Stack spacing={2}>
+          <DialogError
+            error={mutation.error}
+            prefix="Could not send the message"
+          />
           <TextField
             label="From"
             value={from}
@@ -142,6 +141,7 @@ export default function SendMessageDialog({
         <Button
           type="submit"
           variant="contained"
+          color="success"
           disabled={!valid || mutation.isPending}
         >
           {mutation.isPending ? "Sending…" : "Send"}

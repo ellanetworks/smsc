@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { authFor } from "@/contexts/AuthContext";
 import Messages from "@/pages/Messages";
+import { RoleID } from "@/queries/users";
 import { json, renderWithClient, stubApi } from "@/test/render";
 import { attempt, message, page } from "@/test/fixtures";
 
@@ -46,6 +48,7 @@ describe("Messages", () => {
         status: "pending",
         concatenation: { reference: 3, part: 2, total: 3 },
         next_attempt_at: "2026-09-30T12:05:00.000Z",
+        submitted_by: "ota@example.com",
       }),
       message({ id: 8, text: undefined, encoding: "binary" }),
     ]);
@@ -60,6 +63,7 @@ describe("Messages", () => {
       "part two",
       "2 of 3",
       "pending",
+      "ota@example.com",
     ]);
     expect(rowCells("(binary)")).toContain("—");
     for (const name of ["ID", "Next attempt", "Encoding"]) {
@@ -212,9 +216,12 @@ describe("Messages", () => {
 
     renderWithClient(<Messages />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load messages: Failed to list messages",
-    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Failed to load messages");
+    expect(alert).toHaveTextContent("Failed to list messages");
+    expect(
+      within(alert).getByRole("button", { name: "Retry" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -282,5 +289,44 @@ describe("Messages delivery settings", () => {
     expect(bodies).toEqual([
       { default_validity_seconds: 172800, retry_intervals_seconds: [] },
     ]);
+  });
+});
+
+describe("Messages by role", () => {
+  it("lets a Read Only user read, but not send or edit", async () => {
+    serveMessages();
+
+    renderWithClient(<Messages />, authFor("ro@example.com", RoleID.ReadOnly));
+
+    await screen.findByText("hello");
+    expect(
+      screen.queryByRole("button", { name: "Send" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("delivery-settings")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit delivery" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a Submitter its messages, without delivery settings or submitters", async () => {
+    serveMessages();
+
+    renderWithClient(
+      <Messages />,
+      authFor("ota@example.com", RoleID.Submitter),
+    );
+
+    await screen.findByText("hello");
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+    expect(screen.queryByTestId("delivery-settings")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: "Submitted by" }),
+    ).not.toBeInTheDocument();
+    const paths = vi
+      .mocked(fetch)
+      .mock.calls.map(
+        ([input]) => new URL(String(input), "http://smsc.test").pathname,
+      );
+    expect(paths).not.toContain("/api/v1/delivery");
   });
 });

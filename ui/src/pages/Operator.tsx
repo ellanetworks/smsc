@@ -7,18 +7,22 @@ import EditServiceCentreDialog from "@/components/EditServiceCentreDialog";
 import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import SettingsTable, { SubFields } from "@/components/SettingsTable";
+import { useAuth } from "@/contexts/AuthContext";
 import { getOperator } from "@/queries/operator";
 
 const orNA = (value: string) => value || "N/A";
 
 export default function Operator() {
+  const auth = useAuth();
+  const editable = auth.can("operator:update");
   const [editing, setEditing] = useState<"id" | "address" | "numbering" | null>(
     null,
   );
-  const { data, error, isPending } = useQuery({
+  const operator = useQuery({
     queryKey: ["operator"],
     queryFn: getOperator,
   });
+  const { data, isPending } = operator;
 
   return (
     <Box component="section" aria-labelledby="operator-title">
@@ -27,11 +31,7 @@ export default function Operator() {
         title="Operator"
         description="Your network's identity, SMSC number and numbering plan."
       />
-      <QueryAlert
-        error={error}
-        hasData={data !== undefined}
-        subject="operator settings"
-      />
+      <QueryAlert query={operator} subject="operator settings" />
       <SettingsTable
         label="Operator settings"
         loading={isPending}
@@ -40,13 +40,13 @@ export default function Operator() {
             label: "Operator ID (MCC/MNC)",
             help: "Mobile Country Code and Mobile Network Code of your network. They set this SMSC's Diameter host and realm.",
             value: data && `${data.mcc} / ${data.mnc}`,
-            onEdit: () => setEditing("id"),
+            onEdit: editable ? () => setEditing("id") : undefined,
           },
           {
             label: "Service Centre Address",
             help: "The SMSC number, in international format. Phones need the same number on their SIM cards.",
             value: data?.service_centre_address,
-            onEdit: () => setEditing("address"),
+            onEdit: editable ? () => setEditing("address") : undefined,
           },
           {
             label: "Numbering",
@@ -63,7 +63,7 @@ export default function Operator() {
                 ]}
               />
             ),
-            onEdit: () => setEditing("numbering"),
+            onEdit: editable ? () => setEditing("numbering") : undefined,
           },
         ]}
       />

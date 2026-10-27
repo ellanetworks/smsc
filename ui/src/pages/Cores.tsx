@@ -1,5 +1,6 @@
 import { Box, Chip, type ChipProps, Skeleton, Typography } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { GRID_SX } from "@/utils/layout";
 import { useQuery } from "@tanstack/react-query";
 import {
   type DiameterPeer,
@@ -32,21 +33,6 @@ const applicationLabels: Record<string, string> = {
 };
 
 const applicationLabel = (name: string) => applicationLabels[name] ?? name;
-
-const gridSx = {
-  width: "100%",
-  border: 1,
-  borderColor: "divider",
-  bgcolor: "background.paper",
-  "& .MuiDataGrid-cell": {
-    borderBottom: "1px solid",
-    borderColor: "divider",
-  },
-  "& .MuiDataGrid-columnHeaders": {
-    borderBottom: "1px solid",
-    borderColor: "divider",
-  },
-};
 
 const hssPeers = (status: DiameterStatus): string[] =>
   status.routes.find((route) => route.application === "s6c")?.peers ?? [];
@@ -110,11 +96,12 @@ const columns: GridColDef<CoreRow>[] = [
 ];
 
 export default function Cores() {
-  const { data, error, isPending } = useQuery({
+  const diameter = useQuery({
     queryKey: ["diameter"],
     queryFn: getDiameterStatus,
     refetchInterval: DIAMETER_REFRESH_MS,
   });
+  const { data, isPending } = diameter;
   const hss = data ? hssPeers(data) : [];
 
   return (
@@ -124,11 +111,7 @@ export default function Cores() {
         title="Cores"
         description="Diameter connections between this SMSC and Ella Core."
       />
-      <QueryAlert
-        error={error}
-        hasData={data !== undefined}
-        subject="Diameter status"
-      />
+      <QueryAlert query={diameter} subject="Diameter status" />
       <SettingsTable
         label="Diameter settings"
         loading={data === undefined}
@@ -171,7 +154,7 @@ export default function Cores() {
           hideFooter
           localeText={{ noRowsLabel: "No cores." }}
           autoHeight
-          sx={gridSx}
+          sx={GRID_SX}
         />
       )}
     </Box>
