@@ -36,7 +36,7 @@ In the Ella SMSC UI, go to the **Operator** page:
 - Click the edit icon next to **Service Centre Address**, enter `+15550000000`, and click **Update**.
 - Click the edit icon next to **Numbering**, enter your country code and prefixes, and click **Update**.
 
-Go to the **Cores** page and note the **Host**, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`.
+Go to the **Diameter** page and note the **Host**, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`.
 
 ## 3. Add Ella SMSC to Ella Core
 
@@ -61,6 +61,6 @@ On each SIM card, set the SMSC number to `+15550000000`.
 
 ## 6. Verify
 
-In the Ella SMSC UI, go to **Cores**. Ella Core shows **open**, with **HSS** set to **yes**.
+In the Ella SMSC UI, go to **Diameter**. Ella Core shows **open**, with **HSS** set to **yes**.
 
 Send an SMS between two phones. On the **Messages** page, it shows **delivered**.

@@ -80,7 +80,7 @@ afterEach(() => {
 describe("App", () => {
   it("renders the top bar, the navigation and the footer", async () => {
     serve();
-    renderAt("/cores");
+    renderAt("/diameter");
 
     expect(
       await screen.findByRole("img", { name: "Ella SMSC Logo" }),
@@ -95,7 +95,7 @@ describe("App", () => {
         .map((link) => [link.textContent, link.getAttribute("href")]),
     ).toEqual([
       ["Operator", "/operator"],
-      ["Cores", "/cores"],
+      ["Diameter", "/diameter"],
       ["Messages", "/messages"],
       ["Users", "/users"],
     ]);
@@ -118,23 +118,23 @@ describe("App", () => {
     expect(bug).toHaveAttribute("target", "_blank");
   });
 
-  it("opens the Cores page by default", async () => {
+  it("opens the Diameter page by default", async () => {
     serve();
     renderAt("/");
 
     expect(
-      await screen.findByRole("heading", { level: 1, name: "Cores" }),
+      await screen.findByRole("heading", { level: 1, name: "Diameter" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Cores" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Diameter" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(document.title).toBe("Cores · Ella SMSC");
+    expect(document.title).toBe("Diameter · Ella SMSC");
   });
 
   it("navigates between pages", async () => {
     serve();
-    renderAt("/cores");
+    renderAt("/diameter");
 
     fireEvent.click(await screen.findByRole("link", { name: "Operator" }));
     expect(
@@ -163,7 +163,7 @@ describe("App", () => {
 
   it("shows a Submitter only the Messages page", async () => {
     serve(RoleID.Submitter);
-    renderAt("/cores");
+    renderAt("/diameter");
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "Messages" }),
@@ -178,7 +178,7 @@ describe("App", () => {
 
   it("logs out from the account menu", async () => {
     serve();
-    renderAt("/cores");
+    renderAt("/diameter");
 
     fireEvent.click(
       await screen.findByRole("button", { name: "Account menu" }),
@@ -198,7 +198,7 @@ describe("App", () => {
 
   it("does not refresh the session on navigation", async () => {
     serve();
-    renderAt("/cores");
+    renderAt("/diameter");
 
     fireEvent.click(await screen.findByRole("link", { name: "Operator" }));
     await screen.findByRole("heading", { level: 1, name: "Operator" });
@@ -216,5 +216,14 @@ describe("App", () => {
     await screen.findByRole("heading", { level: 1, name: /^Users/ });
 
     expect(refreshes()).toBe(started);
+  });
+
+  it("redirects the former Cores page", async () => {
+    serve();
+    renderAt("/cores");
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Diameter" }),
+    ).toBeInTheDocument();
   });
 });

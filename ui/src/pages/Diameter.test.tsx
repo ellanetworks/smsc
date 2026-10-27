@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import Cores from "@/pages/Cores";
+import Diameter from "@/pages/Diameter";
 import { json, renderWithClient, stubApi } from "@/test/render";
 
 const status = {
@@ -52,16 +52,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Cores", () => {
-  it("shows this SMSC, the HSS settings and the connected cores", async () => {
+describe("Diameter", () => {
+  it("shows this SMSC, the HSS settings and its peers", async () => {
     serve(() => json(200, { result: status }));
 
-    renderWithClient(<Cores />);
+    renderWithClient(<Diameter />);
 
     expect(
       await screen.findByRole("heading", {
         level: 2,
-        name: "Connected Cores (2)",
+        name: "Peers (2)",
       }),
     ).toBeInTheDocument();
     await waitFor(() =>
@@ -71,7 +71,7 @@ describe("Cores", () => {
       ]),
     );
     expect(
-      within(screen.getByRole("grid", { name: "Cores" }))
+      within(screen.getByRole("grid", { name: "Peers" }))
         .getAllByRole("columnheader")
         .map((h) => h.textContent),
     ).toEqual([
@@ -103,7 +103,7 @@ describe("Cores", () => {
     ]);
   });
 
-  it("shows an empty table without cores", async () => {
+  it("shows an empty table without peers", async () => {
     serve(() =>
       json(200, {
         result: {
@@ -114,18 +114,18 @@ describe("Cores", () => {
       }),
     );
 
-    renderWithClient(<Cores />);
+    renderWithClient(<Diameter />);
 
-    expect(await screen.findByText("No cores.")).toBeInTheDocument();
+    expect(await screen.findByText("No peers.")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { level: 2, name: "Connected Cores (0)" }),
+      screen.getByRole("heading", { level: 2, name: "Peers (0)" }),
     ).toBeInTheDocument();
   });
 
   it("keeps the last status and warns when a refresh fails", async () => {
     serve(() => json(200, { result: status }));
 
-    const { client } = renderWithClient(<Cores />);
+    const { client } = renderWithClient(<Diameter />);
     await screen.findByText("10.0.0.5");
 
     serve(() => json(503, { error: "Service Unavailable" }));
@@ -140,7 +140,7 @@ describe("Cores", () => {
   it("reports a failure to load", async () => {
     serve(() => json(500, { error: "Failed to load" }));
 
-    renderWithClient(<Cores />);
+    renderWithClient(<Diameter />);
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Failed to load Diameter status");
@@ -157,7 +157,7 @@ describe("Cores", () => {
       return json(500, { error: "Failed to load" });
     });
 
-    renderWithClient(<Cores />);
+    renderWithClient(<Diameter />);
 
     const alert = await screen.findByRole("alert");
     fireEvent.click(

@@ -31,7 +31,7 @@ In the Ella SMSC UI, go to the **Operator** page:
 - Click the edit icon next to **Service Centre Address**, enter `+15550000000`, and click **Update**.
 - Click the edit icon next to **Numbering**, enter your country code and prefixes, and click **Update**.
 
-The **Cores** page shows Ella SMSC's **Host** and **Realm**, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org` and `epc.mnc001.mcc001.3gppnetwork.org`.
+The **Diameter** page shows Ella SMSC's **Host** and **Realm**, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org` and `epc.mnc001.mcc001.3gppnetwork.org`.
 
 ## 3. Add Ella SMSC to the core
 
@@ -51,7 +51,7 @@ In the HSS, give each subscriber that sends or receives SMS an MSISDN. On each S
 
 ## 5. Verify
 
-In the Ella SMSC UI, go to **Cores**:
+In the Ella SMSC UI, go to **Diameter**:
 
 - The HSS shows **open**, with **HSS** set to **yes**. If it shows **no**, its realm differs from Ella SMSC's, or it does not support S6c.
 - Each MME or SMSF shows **open**, with **SGd** in **Applications**.

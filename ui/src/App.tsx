@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { AuthProvider, useAuth, type Permission } from "@/contexts/AuthContext";
-import Cores from "@/pages/Cores";
+import Diameter from "@/pages/Diameter";
 import Initialize from "@/pages/Initialize";
 import Login from "@/pages/Login";
 import Messages from "@/pages/Messages";
@@ -33,7 +33,7 @@ export default function App() {
 const pages: { path: string; element: ReactElement; permission: Permission }[] =
   [
     { path: "/operator", element: <Operator />, permission: "operator:read" },
-    { path: "/cores", element: <Cores />, permission: "diameter:read" },
+    { path: "/diameter", element: <Diameter />, permission: "diameter:read" },
     { path: "/messages", element: <Messages />, permission: "message:read" },
     { path: "/users", element: <Users />, permission: "user:admin" },
     {
@@ -47,7 +47,7 @@ const pages: { path: string; element: ReactElement; permission: Permission }[] =
 function Pages() {
   const auth = useAuth();
   const home = auth.can("diameter:read")
-    ? "/cores"
+    ? "/diameter"
     : auth.can("message:read")
       ? "/messages"
       : "/profile";
@@ -60,6 +60,7 @@ function Pages() {
           <Route key={path} path={path} element={element} />
         ))}
       <Route path="/profile" element={<Profile />} />
+      <Route path="/cores" element={<Navigate to="/diameter" replace />} />
       <Route path="*" element={<Navigate to={home} replace />} />
     </Routes>
   );

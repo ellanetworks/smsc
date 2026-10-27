@@ -37,9 +37,9 @@ const applicationLabel = (name: string) => applicationLabels[name] ?? name;
 const hssPeers = (status: DiameterStatus): string[] =>
   status.routes.find((route) => route.application === "s6c")?.peers ?? [];
 
-type CoreRow = DiameterPeer & { hss: boolean };
+type PeerRow = DiameterPeer & { hss: boolean };
 
-const columns: GridColDef<CoreRow>[] = [
+const columns: GridColDef<PeerRow>[] = [
   {
     field: "host",
     headerName: "Host",
@@ -95,7 +95,7 @@ const columns: GridColDef<CoreRow>[] = [
   },
 ];
 
-export default function Cores() {
+export default function Diameter() {
   const diameter = useQuery({
     queryKey: ["diameter"],
     queryFn: getDiameterStatus,
@@ -105,11 +105,11 @@ export default function Cores() {
   const hss = data ? hssPeers(data) : [];
 
   return (
-    <Box component="section" aria-labelledby="cores-title">
+    <Box component="section" aria-labelledby="diameter-title">
       <PageHeader
-        id="cores-title"
-        title="Cores"
-        description="Diameter connections between this SMSC and Ella Core."
+        id="diameter-title"
+        title="Diameter"
+        description="This SMSC's Diameter identity, and its peers."
       />
       <QueryAlert query={diameter} subject="Diameter status" />
       <SettingsTable
@@ -123,23 +123,23 @@ export default function Cores() {
           },
           {
             label: "Realm",
-            help: "Your network's Diameter realm, shared by this SMSC and its cores. Set by the Operator ID (MCC/MNC).",
+            help: "Your network's Diameter realm, shared by this SMSC and its peers. Set by the Operator ID (MCC/MNC).",
             value: data && <DomainName name={data.realm} />,
           },
         ]}
       />
       <Typography
-        id="cores-table-title"
+        id="peers-title"
         variant="h6"
         component="h2"
         sx={{ mt: 4, mb: 2 }}
       >
-        {data ? `Connected Cores (${data.peers.length})` : "Connected Cores"}
+        {data ? `Peers (${data.peers.length})` : "Peers"}
       </Typography>
       {isPending && <Skeleton variant="rounded" height={160} />}
       {data && (
-        <DataGrid<CoreRow>
-          aria-label="Cores"
+        <DataGrid<PeerRow>
+          aria-label="Peers"
           rows={data.peers.map((peer) => ({
             ...peer,
             hss: hss.includes(peer.host),
@@ -152,7 +152,7 @@ export default function Cores() {
           disableRowSelectionOnClick
           disableVirtualization
           hideFooter
-          localeText={{ noRowsLabel: "No cores." }}
+          localeText={{ noRowsLabel: "No peers." }}
           autoHeight
           sx={GRID_SX}
         />

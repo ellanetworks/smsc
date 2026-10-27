@@ -83,8 +83,8 @@ const navItems: NavItem[] = [
     permission: "operator:read",
   },
   {
-    to: "/cores",
-    label: "Cores",
+    to: "/diameter",
+    label: "Diameter",
     icon: <HubIcon color="primary" />,
     permission: "diameter:read",
   },
