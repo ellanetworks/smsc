@@ -1,0 +1,105 @@
+site_name: Ella SMSC Documentation
+site_description: An SMS Service Center for private 4G and 5G networks - easy to operate, reliable, and secure.
+site_url: https://docs.ellanetworks.com/smsc/
+docs_dir: docs
+theme:
+  name: material
+  logo: images/logo-mark.svg
+  favicon: images/favicon.svg
+  palette:
+    primary: custom
+  font:
+    text: Source Code Pro
+  features:
+    - navigation.sections
+    - navigation.footer
+    - navigation.indexes
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+  custom_dir: docs/overrides
+extra_css:
+  - stylesheets/extra.css
+repo_url: https://github.com/ellanetworks/smsc
+repo_name: ellanetworks/smsc
+copyright: Copyright &copy; 2026 Ella Networks
+extra:
+  generator: false
+  social:
+  - icon: fontawesome/solid/globe
+    link: https://www.ellanetworks.com
+    name: Ella Networks website
+  - icon: fontawesome/brands/youtube
+    link: https://www.youtube.com/@ellanetworks
+    name: Ella Networks on YouTube
+  - icon: fontawesome/brands/linkedin
+    link: https://www.linkedin.com/company/ellanetworks
+    name: Ella Networks on LinkedIn
+  - icon: fontawesome/brands/github
+    link: https://www.github.com/ellanetworks/smsc
+    name: Ella Networks on GitHub
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.blocks.caption
+  - tables
+  - toc:
+      permalink: true
+nav:
+  - Home: index.md
+  - Tutorials:
+    - tutorials/index.md
+    - Send Your First SMS: tutorials/first_sms.md
+  - How-to Guides:
+    - how_to/index.md
+    - Install: how_to/install.md
+    - Integrate with Ella Core: how_to/integrate_with_ella_core.md
+    - Integrate with Ella IMS: how_to/integrate_with_ella_ims.md
+    - Integrate with a Third-Party Core: how_to/integrate_with_third_party_core.md
+  - Reference:
+    - reference/index.md
+    - API:
+      - reference/api/index.md
+      - Messages: reference/api/messages.md
+      - Diameter: reference/api/diameter.md
+      - Operator: reference/api/operator.md
+      - Delivery: reference/api/delivery.md
+      - Status: reference/api/status.md
+      - Metrics: reference/api/metrics.md
+    - Configuration File: reference/config_file.md
+    - Metrics: reference/metrics.md
+    - Connectivity: reference/connectivity.md
+    - Performance: reference/performance.md
+    - 3GPP Compliance: reference/3gpp_compliance.md
+  - Explanation:
+    - explanation/index.md
+    - Architecture: explanation/architecture.md
+plugins:
+  - search
+  - glightbox
+  - social:
+      cards_layout_options:
+        background_color: "#26374a"
+  - llmstxt:
+      markdown_description: An SMS Service Center for private 4G and 5G networks - easy to operate, reliable, and secure.
+      full_output: llms-full.txt
+      sections:
+        Home:
+          - index.md
+        Tutorials:
+          - tutorials/*.md
+        How-to Guides:
+          - how_to/*.md
+        Reference:
+          - reference/*.md
+          - reference/api/*.md
+        Explanation:
+          - explanation/*.md

@@ -103,7 +103,7 @@ var migrations = []string{
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {
-	conn, err := sql.Open("sqlite3", "file:"+path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000")
+	conn, err := sql.Open("sqlite3", "file:"+path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_stmt_cache_size=64")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

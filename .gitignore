@@ -11,3 +11,5 @@ ui/dist/*
 ui/npm-debug.log*
 ui/*.tsbuildinfo
 ui/.env*.local
+.cache
+site
