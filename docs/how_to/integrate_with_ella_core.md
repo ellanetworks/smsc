@@ -42,7 +42,7 @@ Go to the **Cores** page and note the **Host**, e.g. `smsc.node.epc.mnc001.mcc00
 
 In the Ella Core UI, go to **Operator** and scroll to the **SMS** section:
 
-- Click the edit icon next to **SMS Number**, enter `+15550001111`, and click **Update**.
+- Check that **SMS Number** is set, e.g. `+15550001111`, Ella Core's default.
 - Click **Add Service Center**, enter:
     - **Address**: `10.3.0.7`
     - **Numbers**: `+15550000000`

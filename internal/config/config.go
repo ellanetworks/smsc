@@ -36,7 +36,9 @@ type API struct {
 	Port    int        `yaml:"port"`
 }
 
+// Diameter listens on Address, or on the addresses of the interface Name.
 type Diameter struct {
+	Name    string     `yaml:"name"`
 	Address netip.Addr `yaml:"address"`
 	Port    int        `yaml:"port"`
 }
@@ -78,8 +80,10 @@ func (c Config) validate() error {
 		return errors.New("api.address is required")
 	case c.API.Port < 1 || c.API.Port > 65535:
 		return fmt.Errorf("api.port %d is out of range", c.API.Port)
-	case !c.Diameter.Address.IsValid():
-		return errors.New("diameter.address is required")
+	case c.Diameter.Name != "" && c.Diameter.Address.IsValid():
+		return errors.New("diameter.name and diameter.address cannot both be set")
+	case c.Diameter.Name == "" && !c.Diameter.Address.IsValid():
+		return errors.New("diameter.name or diameter.address is required")
 	case c.Diameter.Address.IsUnspecified():
 		return errors.New("diameter.address must be a specific address, not 0.0.0.0 or ::, since it is advertised to peers")
 	case c.Diameter.Port < 1 || c.Diameter.Port > 65535:

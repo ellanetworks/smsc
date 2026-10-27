@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -894,6 +895,38 @@ func TestServerStartTwice(t *testing.T) {
 
 	if err := s.server.Start(context.Background()); !errors.Is(err, server.ErrAlreadyStarted) {
 		t.Fatalf("second Start = %v, want ErrAlreadyStarted", err)
+	}
+}
+
+func TestDiameterListensOnTheInterfaceAddresses(t *testing.T) {
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
+	cfg.Diameter = config.Diameter{Name: "lo"}
+
+	core := newFakeCore(t, alice, bob)
+	s := startSMSC(t, cfg)
+
+	addr, ok := s.server.Addr().(*sctp.SCTPAddr)
+	if !ok || !slices.ContainsFunc(addr.IPAddrs, func(a net.IPAddr) bool { return a.IP.Equal(loopback.AsSlice()) }) {
+		t.Fatalf("Diameter listens on %v, want the addresses of lo", s.server.Addr())
+	}
+
+	core.connect(s)
+
+	if rc := core.submit(alice, bob, "hello over lo"); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	s.waitForStatus(t, 1, db.StatusDelivered)
+}
+
+func TestServerStartRejectsAnUnknownDiameterInterface(t *testing.T) {
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
+	cfg.Diameter = config.Diameter{Name: "absent0"}
+
+	srv := &server.Server{Config: cfg.Config, Logger: discardLogger()}
+	if err := srv.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "diameter.name absent0") {
+		srv.Shutdown(context.Background())
+		t.Fatalf("Start = %v, want an error about diameter.name", err)
 	}
 }
 

@@ -30,8 +30,6 @@ Open your browser at `http://<host-ip>:5010`. The **Cores** page shows no connec
 
 In the Ella Core UI, go to **Operator** and scroll to the **SMS** section.
 
-Click the edit icon next to **SMS Number**, enter `+15550001111`, and click **Update**.
-
 Click **Add Service Center** and set:
 
 - **Address**: `127.0.0.1`
@@ -59,6 +57,8 @@ On each SIM card, set the SMSC number to `+15550000000`.
 From the first phone, send `hello` to `+15551230002`. The second phone receives it.
 
 In the Ella SMSC UI, go to **Messages**. The message shows **delivered**. Click it to see its routing and delivery attempts.
+
+You have added SMS to your 5G network.
 
 ## Next steps
 

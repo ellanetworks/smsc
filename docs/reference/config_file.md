@@ -18,7 +18,8 @@ The operator and delivery settings are not in this file: they are in the databas
     - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
     - `port` (int, optional): The TCP port to listen on. Default `5010`.
 - `diameter` (object): Diameter, to the HSS, MMEs, SMSFs and IP-SM-GWs.
-    - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`.
+    - `name` (string): The network interface to listen on, on all its addresses, advertised to peers. Either `name` or `address` must be set.
+    - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`. Either `name` or `address` must be set.
     - `port` (int, optional): The SCTP port to listen on. Default `3868`.
 
 ## Example
@@ -36,8 +37,4 @@ diameter:
   port: 3868
 ```
 
-The snap's configuration file is `/var/snap/ella-smsc/common/smsc.yaml`. After changing it, restart Ella SMSC:
-
-```shell
-sudo snap restart ella-smsc.smscd
-```
+With the snap, the configuration file is `/var/snap/ella-smsc/common/smsc.yaml`.

@@ -55,6 +55,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 	cfg := s.Config
 
+	addresses, err := listenAddresses(cfg.Diameter)
+	if err != nil {
+		return err
+	}
+
 	database, err := db.Open(ctx, cfg.DB.Path)
 	if err != nil {
 		return err
@@ -72,11 +77,11 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := diameter.NewMux()
 
 	nodes := &nodeManager{
-		address: cfg.Diameter.Address,
-		port:    cfg.Diameter.Port,
-		mux:     mux,
-		metrics: m.peers,
-		logger:  s.Logger,
+		addresses: addresses,
+		port:      cfg.Diameter.Port,
+		mux:       mux,
+		metrics:   m.peers,
+		logger:    s.Logger,
 	}
 
 	hss := hssSender{nodes: nodes, settings: live}

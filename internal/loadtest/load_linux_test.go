@@ -38,8 +38,10 @@ import (
 var (
 	load = flag.Bool("load", false, "load the SMSC at -smsc")
 
-	smscAddr  = flag.String("smsc", "", "the address of the SMSC: its Diameter on port 3868, its API on port 5010")
-	localAddr = flag.String("local", "", "the address of this host, the core's")
+	smscAddr     = flag.String("smsc", "", "the address of the SMSC, for Diameter and the API")
+	diameterPort = flag.Int("diameter-port", 3868, "the SCTP port of the SMSC's Diameter")
+	apiPort      = flag.Int("api-port", 5010, "the TCP port of the SMSC's API")
+	localAddr    = flag.String("local", "", "the address of this host, the core's")
 
 	subs  = flag.Int("subs", 10000, "the subscribers, each sending and receiving")
 	rates = flag.String("rates", "50,100,200", "the short messages per second to submit, each for -step")
@@ -54,9 +56,6 @@ const (
 	scAddress = "15550000000"
 	mmeNumber = "15550000010"
 
-	diameterPort = 3868
-	apiPort      = 5010
-
 	// TS 29.338 §7.3.
 	avpServingNode uint32 = 2401
 	avpMMEName     uint32 = 2402
@@ -70,7 +69,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	smsc := netip.MustParseAddr(*smscAddr)
-	api := fmt.Sprintf("http://%s:%d/api/v1", smsc, apiPort)
+	api := fmt.Sprintf("http://%s:%d/api/v1", smsc, *apiPort)
 
 	call(t, http.MethodPut, api+"/operator", map[string]any{
 		"mcc": "001", "mnc": "01", "service_centre_address": "+" + scAddress, "numbering": map[string]any{"country_code": "1"},
@@ -123,7 +122,7 @@ func newCore(t *testing.T, local, smsc netip.Addr) *core {
 
 	if err := node.SetPeers([]diameter.Peer{{
 		ID: "smsc", Addresses: []netip.Addr{smsc}, Transports: []diameter.Transport{diameter.TransportSCTP},
-		Dial: &diameter.Dial{Port: diameterPort},
+		Dial: &diameter.Dial{Port: uint16(*diameterPort)},
 		Applications: []diameter.Application{
 			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID}, {ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
 		},

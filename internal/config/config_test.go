@@ -54,6 +54,17 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadDiameterName(t *testing.T) {
+	cfg, err := Load(writeConfig(t, strings.Replace(validConfig, "  address: 192.0.2.10\n", "  name: eth0\n", 1)))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if want := (Diameter{Name: "eth0", Port: 3869}); cfg.Diameter != want {
+		t.Fatalf("diameter = %+v, want %+v", cfg.Diameter, want)
+	}
+}
+
 func TestLoadDefaultsDiameterPort(t *testing.T) {
 	cfg, err := Load(writeConfig(t, strings.Replace(validConfig, "  port: 3869\n", "", 1)))
 	if err != nil {
@@ -67,18 +78,19 @@ func TestLoadDefaultsDiameterPort(t *testing.T) {
 
 func TestLoadRejectsInvalidConfig(t *testing.T) {
 	tests := map[string][2]string{
-		"missing db.path":          {"  path: /var/lib/smsc/smsc.db\n", ""},
-		"missing diameter address": {"  address: 192.0.2.10\n", ""},
-		"invalid diameter address": {"192.0.2.10", "not-an-ip"},
-		"unspecified ipv4 address": {"192.0.2.10", "0.0.0.0"},
-		"unspecified ipv6 address": {"192.0.2.10", "'::'"},
-		"port out of range":        {"port: 3869", "port: 70000"},
-		"unknown field":            {"db:\n", "unknown: true\ndb:\n"},
-		"retired settings field":   {"db:\n", "service_centre:\n  address: \"15550000000\"\ndb:\n"},
-		"unknown log level":        {"level: debug", "level: trace"},
-		"missing api address":      {"  address: 127.0.0.1\n", ""},
-		"api port out of range":    {"port: 8080", "port: 70000"},
-		"invalid api address":      {"  address: 127.0.0.1\n", "  address: localhost\n"},
+		"missing db.path":           {"  path: /var/lib/smsc/smsc.db\n", ""},
+		"missing diameter address":  {"  address: 192.0.2.10\n", ""},
+		"diameter name and address": {"  address: 192.0.2.10\n", "  name: eth0\n  address: 192.0.2.10\n"},
+		"invalid diameter address":  {"192.0.2.10", "not-an-ip"},
+		"unspecified ipv4 address":  {"192.0.2.10", "0.0.0.0"},
+		"unspecified ipv6 address":  {"192.0.2.10", "'::'"},
+		"port out of range":         {"port: 3869", "port: 70000"},
+		"unknown field":             {"db:\n", "unknown: true\ndb:\n"},
+		"retired settings field":    {"db:\n", "service_centre:\n  address: \"15550000000\"\ndb:\n"},
+		"unknown log level":         {"level: debug", "level: trace"},
+		"missing api address":       {"  address: 127.0.0.1\n", ""},
+		"api port out of range":     {"port: 8080", "port: 70000"},
+		"invalid api address":       {"  address: 127.0.0.1\n", "  address: localhost\n"},
 	}
 
 	for name, edit := range tests {

@@ -15,6 +15,7 @@ import (
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/core/sctp"
+	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/settings"
 )
 
@@ -26,9 +27,9 @@ var applications = []diameter.Application{
 // nodeManager owns the Diameter node. The node's identity comes from the
 // operator settings, so a change of MCC/MNC replaces the node and its listener.
 type nodeManager struct {
-	address netip.Addr
-	port    int
-	mux     *diameter.Mux
+	addresses []netip.Addr
+	port      int
+	mux       *diameter.Mux
 	// metrics count and time the requests to the peers. They outlive the node.
 	metrics *peerMetrics
 	logger  *slog.Logger
@@ -139,7 +140,7 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator) err
 		Identity: diameter.Identity{
 			OriginHost:      operator.Host(),
 			OriginRealm:     operator.Realm(),
-			HostIPAddresses: []netip.Addr{m.address},
+			HostIPAddresses: m.addresses,
 			ProductName:     "smsc",
 		},
 		Handler:                 m.mux,
@@ -151,9 +152,14 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator) err
 		return err
 	}
 
+	laddr := &sctp.SCTPAddr{Port: m.port}
+	for _, a := range m.addresses {
+		laddr.IPAddrs = append(laddr.IPAddrs, net.IPAddr{IP: a.AsSlice()})
+	}
+
 	var lc sctp.ListenConfig
 
-	ln, err := lc.Listen(ctx, &sctp.SCTPAddr{IPAddrs: []net.IPAddr{{IP: m.address.AsSlice()}}, Port: m.port})
+	ln, err := lc.Listen(ctx, laddr)
 	if err != nil {
 		_ = node.Shutdown(ctx)
 		return fmt.Errorf("listen for Diameter: %w", err)
@@ -205,4 +211,42 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 		case <-changed:
 		}
 	}
+}
+
+// listenAddresses are the addresses Diameter listens on and advertises: the
+// configured address, or the addresses of the configured interface, such as a
+// pod's eth0, whose address is not known in advance.
+func listenAddresses(cfg config.Diameter) ([]netip.Addr, error) {
+	if cfg.Name == "" {
+		return []netip.Addr{cfg.Address}, nil
+	}
+
+	iface, err := net.InterfaceByName(cfg.Name)
+	if err != nil {
+		return nil, fmt.Errorf("diameter.name %s: %w", cfg.Name, err)
+	}
+
+	ifaddrs, err := iface.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("diameter.name %s: %w", cfg.Name, err)
+	}
+
+	var addrs []netip.Addr
+
+	for _, ifaddr := range ifaddrs {
+		prefix, err := netip.ParsePrefix(ifaddr.String())
+		if err != nil {
+			continue
+		}
+
+		if a := prefix.Addr().Unmap(); !a.IsUnspecified() && !a.IsMulticast() && !a.IsLinkLocalUnicast() {
+			addrs = append(addrs, a)
+		}
+	}
+
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("diameter.name %s: the interface has no usable address", cfg.Name)
+	}
+
+	return addrs, nil
 }
