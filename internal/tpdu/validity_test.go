@@ -107,4 +107,14 @@ func TestProtocolIdentifierHelpers(t *testing.T) {
 			t.Errorf("RequestsTelematicInterworking(0x%02x) = true", pid)
 		}
 	}
+
+	if !IsDeviceTrigger(0x48) {
+		t.Error("IsDeviceTrigger(0x48) = false")
+	}
+
+	for _, pid := range []byte{0x00, 0x41, 0x47, 0x49, 0x7f} {
+		if IsDeviceTrigger(pid) {
+			t.Errorf("IsDeviceTrigger(0x%02x) = true", pid)
+		}
+	}
 }

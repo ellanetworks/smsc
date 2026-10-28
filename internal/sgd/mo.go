@@ -103,6 +103,10 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		return h.submitRejected(req, tpdu.FailureTelematicInterworkingNotSupported, receivedAt)
 	}
 
+	if tpdu.IsDeviceTrigger(submit.ProtocolIdentifier) {
+		return h.submitRejected(req, tpdu.FailureUnspecifiedTPPID, receivedAt)
+	}
+
 	expiresAt, hasValidity, err := submit.Expiry(receivedAt)
 	if err != nil {
 		return h.submitRejected(req, tpdu.FailureValidityPeriodNotSupported, receivedAt)

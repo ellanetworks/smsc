@@ -45,6 +45,7 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter i
 
 - **SMS-COMMAND.** Refused with the TP-Failure-Cause `command_unsupported`.
 - **Telematic interworking.** Refused with the TP-Failure-Cause `telematic_interworking_not_supported`.
+- **Device triggering from phones.** Refused with the TP-Failure-Cause `unspecified_tp_pid_error`.
 - **SMS-MI-Correlation-ID.** A short message that carries one is refused with DIAMETER_ERROR_FACILITY_NOT_SUPPORTED.
 - **Diameter over TCP.**
 - **MAP over SS7.**

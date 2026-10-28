@@ -301,6 +301,7 @@ func TestMOForwardSubmitRejections(t *testing.T) {
 		"truncated":                 {"01" + "00" + "0b91" + "5155", tpdu.FailureUnspecified},
 		"user data too long":        {"01" + "00" + "0281" + "21" + "00" + "04" + "8d" + strings.Repeat("00", 141), tpdu.FailureUnspecified},
 		"telematic interworking":    {"01" + "00" + "0281" + "21" + "22" + "00" + "00", tpdu.FailureTelematicInterworkingNotSupported},
+		"device trigger":            {"01" + "00" + "0281" + "21" + "48" + "00" + "00", tpdu.FailureUnspecifiedTPPID},
 		"invalid absolute validity": {"19" + "00" + "0281" + "21" + "00" + "00" + "62313150403000" + "00", tpdu.FailureValidityPeriodNotSupported},
 	}
 

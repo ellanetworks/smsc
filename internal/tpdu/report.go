@@ -7,6 +7,7 @@ import (
 
 const (
 	FailureTelematicInterworkingNotSupported byte = 0x80
+	FailureUnspecifiedTPPID                  byte = 0x8f
 	FailureCommandUnsupported                byte = 0xa1
 	FailureTPDUNotSupported                  byte = 0xb0
 	FailureSCSystemFailure                   byte = 0xc2
