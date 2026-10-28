@@ -115,6 +115,12 @@ func UpdatePeer(a *auth) http.Handler {
 
 		principal, _ := PrincipalFrom(r.Context())
 		a.audit(r, "update_diameter_peer", principal.Email, fmt.Sprintf("Diameter peer %d updated", id))
+
+		// The peer as stored, as GET returns it.
+		if stored, ok := findPeer(cfg, id); ok {
+			p = stored
+		}
+
 		writeResponse(w, peerResponse(cfg, p), http.StatusOK, cfg.Logger)
 	})
 }
@@ -154,13 +160,20 @@ func lookupPeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 		return settings.Peer{}, false
 	}
 
+	p, ok := findPeer(cfg, id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Peer not found", nil, cfg.Logger)
+	}
+
+	return p, ok
+}
+
+func findPeer(cfg Config, id int64) (settings.Peer, bool) {
 	for _, p := range cfg.Settings.Get().Peers {
 		if p.ID == id {
 			return p, true
 		}
 	}
-
-	writeError(w, http.StatusNotFound, "Peer not found", nil, cfg.Logger)
 
 	return settings.Peer{}, false
 }
@@ -189,7 +202,7 @@ func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 			return settings.Peer{}, false
 		}
 
-		p.Addresses = append(p.Addresses, a)
+		p.Addresses = append(p.Addresses, a.Unmap())
 	}
 
 	for _, rt := range params.Routes {

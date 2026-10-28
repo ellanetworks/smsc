@@ -53,7 +53,9 @@ type fakeAgent struct {
 	requests []agentRequest
 	// answer, when it returns an answer, answers a request instead of the backend.
 	answer func(req *diameter.Message) *diameter.Message
-	closed bool
+	// applications are those the agent advertises; Relay when empty.
+	applications []uint32
+	closed       bool
 }
 
 type agentConn struct {
@@ -181,8 +183,19 @@ func (a *fakeAgent) handle(c *agentConn, req *diameter.Message) {
 			diameter.Address(diameter.AVPHostIPAddress, diameter.AVPFlagMandatory, 0, loopback),
 			diameter.Unsigned32(diameter.AVPVendorID, diameter.AVPFlagMandatory, 0, 0),
 			diameter.UTF8String(diameter.AVPProductName, 0, 0, "fake-agent"),
-			diameter.Unsigned32(diameter.AVPAuthApplicationID, diameter.AVPFlagMandatory, 0, diameter.RelayApplicationID),
 		)
+
+		a.mu.Lock()
+		apps := a.applications
+		a.mu.Unlock()
+
+		if len(apps) == 0 {
+			apps = []uint32{diameter.RelayApplicationID}
+		}
+
+		for _, app := range apps {
+			ans.AVPs = append(ans.AVPs, diameter.Unsigned32(diameter.AVPAuthApplicationID, diameter.AVPFlagMandatory, 0, app))
+		}
 	case diameter.CommandDeviceWatchdog, diameter.CommandDisconnectPeer:
 		ans = diameter.NewAnswer(req, a.identity(), diameter.ResultSuccess)
 	default:
@@ -224,6 +237,13 @@ func (c *agentConn) write(m *diameter.Message) error {
 	_, err = c.c.WriteMsg(b, &sctp.SndRcvInfo{PPID: sctp.PPIDWireOrder(diameter.PPID)})
 
 	return err
+}
+
+// advertise makes the agent advertise applications in place of Relay.
+func (a *fakeAgent) advertise(applications ...uint32) {
+	a.mu.Lock()
+	a.applications = applications
+	a.mu.Unlock()
 }
 
 func (a *fakeAgent) setAnswer(f func(req *diameter.Message) *diameter.Message) {
@@ -791,5 +811,44 @@ func TestConfiguredHSSWithoutAnS6cRouteIsLogged(t *testing.T) {
 
 	if n := strings.Count(logs.String(), warning); n != 1 {
 		t.Fatalf("%d warnings, want 1: %s", n, logs.String())
+	}
+}
+
+func TestPeerWithoutS6cIsNotAnHSS(t *testing.T) {
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	dra := newFakeAgent(t, "dra1.dra.example", "dra.example", newFakeCore(t, alice, bob))
+	dra.advertise(sgd.ApplicationID)
+	s.addPeer(t, dra.peerParams(api.PeerRoute{Realm: realm, Application: "s6c"}))
+
+	var status api.DiameterStatus
+	s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status)
+
+	if r := status.Routes[0]; r.Application != "s6c" || len(r.Peers) != 0 {
+		t.Fatalf("HSS route = %+v", r)
+	}
+
+	if got := values(parseFamilies(t, scrape(t, s)))["ellasmsc_hss_peers"]; got != 0 {
+		t.Fatalf("ellasmsc_hss_peers = %v", got)
+	}
+}
+
+// The HSS names an IP-SM-GW without its realm (TS 29.338 clause 5.3.3.6). One that is not connected is in the home
+// realm, reached through the agent of its route.
+func TestMessageIsDeliveredToAnIPSMGWViaAnAgent(t *testing.T) {
+	hss, s := newSMSC(t, alice, bob)
+	ipSMGW := newNamedFakeCore(t, "ipsmgw."+realm, alice, bob)
+	dra := newFakeAgent(t, "dra1.dra.example", "dra.example", ipSMGW)
+	s.addPeer(t, dra.peerParams(sgdRoute(realm, 0)))
+
+	hss.mu.Lock()
+	hss.ipSMGW = ipSMGW.host
+	hss.mu.Unlock()
+
+	sent := s.send(t, "+"+alice.msisdn, "+"+bob.msisdn, "hello over IMS")
+	s.waitForAPIStatus(t, sent[0].ID, "delivered")
+
+	got := dra.received(sgd.CommandMTForwardShortMessage)
+	if len(got) != 1 || got[0].destinationHost != ipSMGW.host || got[0].destinationRealm != realm {
+		t.Fatalf("TFRs via the DRA = %+v", got)
 	}
 }

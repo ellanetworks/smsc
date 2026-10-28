@@ -71,12 +71,13 @@ func (p Peer) Validate() error {
 		return errors.New("addresses must list at least one address")
 	}
 
+	// An IPv4-mapped IPv6 address is the IPv4 address, which is how the peer is stored and dialled.
 	for i, a := range p.Addresses {
-		if !a.IsValid() || a.IsUnspecified() || a.IsMulticast() {
+		if a = a.Unmap(); !a.IsValid() || a.IsUnspecified() || a.IsMulticast() {
 			return fmt.Errorf("address %v must be a unicast IP address", a)
 		}
 
-		if slices.Contains(p.Addresses[:i], a) {
+		if slices.ContainsFunc(p.Addresses[:i], func(o netip.Addr) bool { return o.Unmap() == a }) {
 			return fmt.Errorf("address %v is listed twice", a)
 		}
 	}

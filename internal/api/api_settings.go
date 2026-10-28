@@ -146,6 +146,11 @@ func updateHandler[P any](cfg Config, subject string, apply func(context.Context
 				return
 			}
 
+			if errors.Is(err, settings.ErrConflict) {
+				writeError(w, http.StatusConflict, err.Error(), nil, cfg.Logger)
+				return
+			}
+
 			writeError(w, http.StatusInternalServerError, "Failed to update "+subject, err, cfg.Logger)
 
 			return

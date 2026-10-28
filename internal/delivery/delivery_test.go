@@ -636,6 +636,7 @@ func TestDeliverViaIPSMGW(t *testing.T) {
 	}{
 		"realm from the HSS":  {"ims.example.org", nil, "ims.example.org"},
 		"realm from the peer": {"", map[string]string{"ipsmgw.example.org": "peer.example.org"}, "peer.example.org"},
+		"realm of the SMSC":   {"", nil, "example.org"},
 	}
 
 	for name, tt := range tests {
@@ -671,22 +672,6 @@ func TestDeliverViaIPSMGW(t *testing.T) {
 				t.Fatalf("node type = %s", a.NodeType)
 			}
 		})
-	}
-}
-
-func TestDeliverViaIPSMGWWithoutRealmOrPeer(t *testing.T) {
-	store := newFakeStore(pendingMessage(t))
-	sender := &fakeSender{}
-
-	process(t, newDeliverer(store, &fakeRouter{routing: ipSMGWRouting("")}, sender))
-
-	if len(sender.requests) != 0 || store.messages[1].Status != db.StatusPending {
-		t.Fatalf("status %s after %d requests", store.messages[1].Status, len(sender.requests))
-	}
-
-	want := []attempt{{db.StepDelivery, "ipsmgw.example.org", "unreachable"}}
-	if got := store.recorded(db.StepDelivery); !reflect.DeepEqual(got, want) {
-		t.Fatalf("attempts = %+v, want %+v", got, want)
 	}
 }
 

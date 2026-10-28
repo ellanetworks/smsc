@@ -353,17 +353,25 @@ func setDestinationRealm(req *diameter.Message, realm string) {
 func (h hssSender) realm() string { return h.settings.Get().Operator.Realm() }
 
 func (h hssSender) hosts() []string {
+	node := h.nodes.Node()
+
+	return h.hostsOf(node.Routes(), servingPeers(node))
+}
+
+// hostsOf returns the hosts of the routes' peers that serve S6c in the
+// operator's realm.
+func (h hssSender) hostsOf(routes []diameter.RouteStatus, serving func(diameter.RoutePeerStatus, uint32) bool) []string {
 	var hosts []string
 
 	realm := h.realm()
 
-	for _, r := range h.nodes.Node().Routes() {
+	for _, r := range routes {
 		if r.Application != s6c.ApplicationID || !strings.EqualFold(r.Realm, realm) {
 			continue
 		}
 
 		for _, p := range r.Peers {
-			if p.State == diameter.PeerOpen {
+			if serving(p, r.Application) {
 				hosts = append(hosts, p.Host)
 			}
 		}
@@ -372,6 +380,31 @@ func (h hssSender) hosts() []string {
 	slices.Sort(hosts)
 
 	return hosts
+}
+
+// servingPeers returns whether a peer of a route can take its requests: it is
+// open, and negotiated the application, as the node checks before it sends.
+func servingPeers(node *diameter.Node) func(diameter.RoutePeerStatus, uint32) bool {
+	apps := make(map[string][]diameter.Application)
+
+	for _, p := range node.Peers() {
+		if p.ID != "" {
+			apps[p.ID] = p.Applications
+		}
+	}
+
+	return func(p diameter.RoutePeerStatus, app uint32) bool {
+		if p.State != diameter.PeerOpen {
+			return false
+		}
+
+		// An accepted peer is a route of an application only when it supports it.
+		if p.Implicit {
+			return true
+		}
+
+		return slices.ContainsFunc(apps[p.ID], func(a diameter.Application) bool { return a.ID == app })
+	}
 }
 
 type diameterStatus struct {
@@ -389,12 +422,14 @@ func (d diameterStatus) Peer(id string) (diameter.PeerStatus, bool) { return d.n
 // the default routes last. The route to the HSS takes the configured peers of
 // its realm, and the connected HSSs.
 func (d diameterStatus) Routes() []api.Route {
+	node := d.nodes.Node()
+	table, serving := node.Routes(), servingPeers(node)
 	realm := d.hss.realm()
-	routes := []api.Route{{Realm: realm, ApplicationID: s6c.ApplicationID, Peers: d.hss.hosts()}}
+	routes := []api.Route{{Realm: realm, ApplicationID: s6c.ApplicationID, Peers: d.hss.hostsOf(table, serving)}}
 
 	var defaults []api.Route
 
-	for _, r := range d.nodes.Node().Routes() {
+	for _, r := range table {
 		if r.Application == s6c.ApplicationID && strings.EqualFold(r.Realm, realm) {
 			continue
 		}
@@ -409,7 +444,7 @@ func (d diameterStatus) Routes() []api.Route {
 
 			configured = true
 
-			if p.State == diameter.PeerOpen {
+			if serving(p, r.Application) {
 				route.Peers = append(route.Peers, p.Host)
 			}
 		}

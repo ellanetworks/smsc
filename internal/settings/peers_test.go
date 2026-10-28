@@ -27,10 +27,14 @@ func validPeer() Peer {
 
 func TestPeerValidate(t *testing.T) {
 	tests := map[string]func(*Peer){
-		"invalid host":         func(p *Peer) { p.Host = "dea1..example.net" },
-		"no address":           func(p *Peer) { p.Addresses = nil },
-		"invalid address":      func(p *Peer) { p.Addresses = []netip.Addr{{}} },
-		"unspecified address":  func(p *Peer) { p.Addresses = []netip.Addr{netip.IPv4Unspecified()} },
+		"invalid host":        func(p *Peer) { p.Host = "dea1..example.net" },
+		"no address":          func(p *Peer) { p.Addresses = nil },
+		"invalid address":     func(p *Peer) { p.Addresses = []netip.Addr{{}} },
+		"unspecified address": func(p *Peer) { p.Addresses = []netip.Addr{netip.IPv4Unspecified()} },
+		"mapped unspecified":  func(p *Peer) { p.Addresses = []netip.Addr{netip.MustParseAddr("::ffff:0.0.0.0")} },
+		"mapped address twice": func(p *Peer) {
+			p.Addresses = []netip.Addr{netip.MustParseAddr("::ffff:192.0.2.10"), netip.MustParseAddr("192.0.2.10")}
+		},
 		"multicast address":    func(p *Peer) { p.Addresses = []netip.Addr{netip.MustParseAddr("224.0.0.1")} },
 		"address twice":        func(p *Peer) { p.Addresses = append(p.Addresses, p.Addresses[0]) },
 		"zero port":            func(p *Peer) { p.Port = 0 },
@@ -217,5 +221,29 @@ func TestPeerID(t *testing.T) {
 		if _, ok := PeerID(nodeID); ok {
 			t.Errorf("PeerID(%q) is a peer", nodeID)
 		}
+	}
+}
+
+func TestOperatorCannotTakeAPeersHost(t *testing.T) {
+	store := &fakeStore{}
+	live := NewLive(store, validSettings())
+	ctx := context.Background()
+
+	next := validOperator()
+	next.MNC = "02"
+
+	p := validPeer()
+	p.Host = next.Host()
+
+	if _, err := live.CreatePeer(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := live.UpdateOperator(ctx, next); !errors.Is(err, ErrConflict) {
+		t.Fatalf("UpdateOperator to a peer's host = %v", err)
+	}
+
+	if got := live.Get().Operator; got != validOperator() {
+		t.Fatalf("Operator = %+v", got)
 	}
 }

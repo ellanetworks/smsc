@@ -234,16 +234,28 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 }
 
 // setPeers gives the node its configured peers. The node keeps the connections
-// of the peers that are unchanged, and only replaces their routes.
+// of the peers that are unchanged, and only replaces their routes. The settings
+// validate the peers as the node does, so it fails only on a bug; the node then
+// keeps the peers it had, and the next change of settings tries again.
 func (m *nodeManager) setPeers(node *diameter.Node, peers []settings.Peer) {
-	if err := node.SetPeers(toDiameterPeers(peers)); err != nil {
-		m.logger.Error("failed to apply the Diameter peers", slog.Any("error", err))
-		return
-	}
-
+	// The peers are known before the node reports their state.
 	m.mu.Lock()
 	m.peers = peers
+
+	for id := range m.open {
+		if !slices.ContainsFunc(peers, func(p settings.Peer) bool { return p.NodeID() == id }) {
+			delete(m.open, id)
+		}
+	}
 	m.mu.Unlock()
+
+	if err := node.SetPeers(toDiameterPeers(peers)); err != nil {
+		m.logger.Error("failed to apply the Diameter peers", slog.Any("error", err))
+
+		m.mu.Lock()
+		m.peers = nil
+		m.mu.Unlock()
+	}
 }
 
 func (m *nodeManager) configuredPeers() []settings.Peer {
@@ -301,6 +313,14 @@ func (m *nodeManager) peerStateChanged(operator settings.Operator, status diamet
 
 	m.mu.Lock()
 
+	// A peer that is no longer configured may still report its closing.
+	i := slices.IndexFunc(m.peers, func(p settings.Peer) bool { return p.NodeID() == status.ID })
+	if i < 0 {
+		m.mu.Unlock()
+		return
+	}
+
+	cfg := m.peers[i]
 	wasOpen := m.open[status.ID]
 	isOpen := status.State == diameter.PeerOpen
 
@@ -309,13 +329,6 @@ func (m *nodeManager) peerStateChanged(operator settings.Operator, status diamet
 	}
 
 	m.open[status.ID] = isOpen
-
-	i := slices.IndexFunc(m.peers, func(p settings.Peer) bool { return p.NodeID() == status.ID })
-
-	var cfg settings.Peer
-	if i >= 0 {
-		cfg = m.peers[i]
-	}
 	m.mu.Unlock()
 
 	attrs := []any{slog.String("peer", status.ID), slog.String("host", status.Host), slog.String("realm", status.Realm)}
@@ -325,7 +338,7 @@ func (m *nodeManager) peerStateChanged(operator settings.Operator, status diamet
 		m.logger.Info("Diameter peer open", attrs...)
 
 		realm := operator.Realm()
-		if strings.EqualFold(status.Realm, realm) && advertises(status, s6c.ApplicationID) && !routesS6c(cfg, realm) {
+		if strings.EqualFold(status.Realm, realm) && supports(status, s6c.ApplicationID) && !routesS6c(cfg, realm) {
 			m.logger.Warn("Diameter peer in the operator's realm advertises S6c, but has no s6c route to it: "+
 				"the SMSC sends it no routing requests", attrs...)
 		}
@@ -334,10 +347,10 @@ func (m *nodeManager) peerStateChanged(operator settings.Operator, status diamet
 	}
 }
 
-func advertises(status diameter.PeerStatus, app uint32) bool {
-	return slices.ContainsFunc(status.Applications, func(a diameter.Application) bool {
-		return a.ID == app || a.ID == diameter.RelayApplicationID
-	})
+// supports reports whether a peer negotiated an application: its applications
+// are those common to both ends, a Relay advertisement standing for all of ours.
+func supports(status diameter.PeerStatus, app uint32) bool {
+	return slices.ContainsFunc(status.Applications, func(a diameter.Application) bool { return a.ID == app })
 }
 
 func routesS6c(p settings.Peer, realm string) bool {

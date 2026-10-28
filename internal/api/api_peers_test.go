@@ -146,18 +146,20 @@ func TestPeerValidation(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
 	tests := map[string]string{
-		"not JSON":          `{`,
-		"unknown field":     `{"addresses": ["192.0.2.10"], "transport": "tcp"}`,
-		"no address":        `{"addresses": []}`,
-		"hostname address":  `{"addresses": ["dea1.ipx.example.net"]}`,
-		"zoned address":     `{"addresses": ["fe80::1%eth0"]}`,
-		"invalid host":      `{"host": "dea1 ipx", "addresses": ["192.0.2.10"]}`,
-		"port":              `{"addresses": ["192.0.2.10"], "port": 70000}`,
-		"application":       `{"addresses": ["192.0.2.10"], "routes": [{"realm": "example.net", "application": "s6a"}]}`,
-		"no realm":          `{"addresses": ["192.0.2.10"], "routes": [{"application": "sgd"}]}`,
-		"default and realm": `{"addresses": ["192.0.2.10"], "routes": [{"default": true, "realm": "example.net", "application": "sgd"}]}`,
-		"default s6c":       `{"addresses": ["192.0.2.10"], "routes": [{"default": true, "application": "s6c"}]}`,
-		"negative priority": `{"addresses": ["192.0.2.10"], "routes": [{"realm": "example.net", "application": "sgd", "priority": -1}]}`,
+		"not JSON":           `{`,
+		"unknown field":      `{"addresses": ["192.0.2.10"], "transport": "tcp"}`,
+		"no address":         `{"addresses": []}`,
+		"hostname address":   `{"addresses": ["dea1.ipx.example.net"]}`,
+		"zoned address":      `{"addresses": ["fe80::1%eth0"]}`,
+		"mapped unspecified": `{"addresses": ["::ffff:0.0.0.0"]}`,
+		"mapped twice":       `{"addresses": ["::ffff:192.0.2.10", "192.0.2.10"]}`,
+		"invalid host":       `{"host": "dea1 ipx", "addresses": ["192.0.2.10"]}`,
+		"port":               `{"addresses": ["192.0.2.10"], "port": 70000}`,
+		"application":        `{"addresses": ["192.0.2.10"], "routes": [{"realm": "example.net", "application": "s6a"}]}`,
+		"no realm":           `{"addresses": ["192.0.2.10"], "routes": [{"application": "sgd"}]}`,
+		"default and realm":  `{"addresses": ["192.0.2.10"], "routes": [{"default": true, "realm": "example.net", "application": "sgd"}]}`,
+		"default s6c":        `{"addresses": ["192.0.2.10"], "routes": [{"default": true, "application": "s6c"}]}`,
+		"negative priority":  `{"addresses": ["192.0.2.10"], "routes": [{"realm": "example.net", "application": "sgd", "priority": -1}]}`,
 	}
 
 	for name, body := range tests {
@@ -207,5 +209,36 @@ func TestPeerChangesAreAudited(t *testing.T) {
 		if !strings.Contains(a.logs.String(), `"action":"`+action+`"`) {
 			t.Errorf("no audit event %s in %s", action, a.logs.String())
 		}
+	}
+}
+
+func TestPeerAddressesAreStoredUnmapped(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	body := `{"addresses": ["::ffff:192.0.2.10"]}`
+
+	_, created, _ := a.do(t, http.MethodPost, "/api/v1/diameter/peers", body)
+	_, updated, _ := a.do(t, http.MethodPut, "/api/v1/diameter/peers/1", body)
+	_, got, _ := a.do(t, http.MethodGet, "/api/v1/diameter/peers/1", "")
+
+	for name, result := range map[string]json.RawMessage{"POST": created, "PUT": updated, "GET": got} {
+		if p := decodePeer(t, result); !reflect.DeepEqual(p.Addresses, []string{"192.0.2.10"}) {
+			t.Errorf("%s addresses = %v", name, p.Addresses)
+		}
+	}
+}
+
+func TestOperatorChangeToAPeersHostConflicts(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	peer := `{"host": "smsc.node.epc.mnc002.mcc001.3gppnetwork.org", "addresses": ["192.0.2.10"]}`
+	if code, _, _ := a.do(t, http.MethodPost, "/api/v1/diameter/peers", peer); code != http.StatusCreated {
+		t.Fatalf("POST peer = %d", code)
+	}
+
+	operator := `{"mcc": "001", "mnc": "02", "service_centre_address": "+15550000000",
+		"numbering": {"country_code": "1", "national_prefix": "1", "international_prefix": "011"}}`
+	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/operator", operator); code != http.StatusConflict {
+		t.Fatalf("PUT operator = %d", code)
 	}
 }

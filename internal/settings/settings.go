@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -149,12 +150,27 @@ func (l *Live) Get() Settings {
 	return *l.current.Load()
 }
 
+// UpdateOperator changes the operator, unless its new Diameter host is a configured peer's.
 func (l *Live) UpdateOperator(ctx context.Context, o Operator) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
 
-	return l.update(func() error { return l.store.UpdateOperator(ctx, o) }, func(s *Settings) { s.Operator = o })
+	return l.change(func(s *Settings) error {
+		for _, p := range s.Peers {
+			if strings.EqualFold(p.Host, o.Host()) {
+				return fmt.Errorf("%w: host %s is peer %d's", ErrConflict, o.Host(), p.ID)
+			}
+		}
+
+		if err := l.store.UpdateOperator(ctx, o); err != nil {
+			return fmt.Errorf("save settings: %w", err)
+		}
+
+		s.Operator = o
+
+		return nil
+	})
 }
 
 func (l *Live) UpdateDelivery(ctx context.Context, d Delivery) error {

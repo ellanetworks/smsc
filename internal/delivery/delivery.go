@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -914,13 +913,14 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 		return forwardResult{outcome: permanent, status: tpdu.StatusRemoteProcedureError}, err
 	}
 
-	// The HSS may give an IP-SM-GW without its realm (TS 29.338 clause 5.3.3.6), which is then the realm of the
-	// peer.
+	// The HSS gives an IP-SM-GW without its realm (TS 29.338 clause 5.3.3.6). That is the realm of the IP-SM-GW
+	// when it is connected, and else the SMSC's own: the IP-SM-GW is an application server of the home IMS (TS
+	// 23.204), reached through the route to the home realm.
 	realm := t.realm
 	if realm == "" {
 		var ok bool
 		if realm, ok = d.Sender.PeerRealm(t.name); !ok {
-			return forwardResult{outcome: temporary, status: statusCongestion}, fmt.Errorf("%w %s", diameter.ErrUnknownPeer, t.name)
+			realm = d.Identity().OriginRealm
 		}
 	}
 
