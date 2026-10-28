@@ -44,7 +44,7 @@ const paletteFor = (tokens: Tokens) => ({
 });
 
 const theme = createTheme({
-  cssVariables: { colorSchemeSelector: "media" },
+  cssVariables: { colorSchemeSelector: "class" },
   colorSchemes: {
     light: { palette: { mode: "light", ...paletteFor(light) } },
     dark: { palette: { mode: "dark", ...paletteFor(dark) } },
@@ -91,5 +91,11 @@ const theme = createTheme({
     },
   },
 });
+
+export const THEME_PROVIDER_PROPS = {
+  noSsr: true,
+  forceThemeRerender: true,
+  disableTransitionOnChange: true,
+} as const;
 
 export default theme;

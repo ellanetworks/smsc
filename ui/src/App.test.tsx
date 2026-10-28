@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "@/App";
 import { RoleID } from "@/queries/users";
@@ -226,4 +226,38 @@ describe("App", () => {
       await screen.findByRole("heading", { level: 1, name: "Diameter" }),
     ).toBeInTheDocument();
   });
+
+  it("offers System, Light and Dark themes, with System checked", async () => {
+    serve();
+    renderAt("/diameter");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Account menu" }),
+    );
+
+    expect(theme("System")).toHaveAttribute("aria-checked", "true");
+    expect(theme("Light")).toHaveAttribute("aria-checked", "false");
+    expect(theme("Dark")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("closes the menu and checks the theme chosen", async () => {
+    serve();
+    renderAt("/diameter");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Account menu" }),
+    );
+    fireEvent.click(theme("Dark"));
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    expect(theme("Dark")).toHaveAttribute("aria-checked", "true");
+    expect(theme("System")).toHaveAttribute("aria-checked", "false");
+    expect(document.documentElement).toHaveClass("dark");
+  });
 });
+
+const theme = (label: string) =>
+  screen.getByRole("menuitemradio", { name: `${label} theme` });

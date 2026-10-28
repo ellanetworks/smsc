@@ -17,13 +17,17 @@ import {
   Typography,
   useMediaQuery,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { useColorScheme, useTheme } from "@mui/material/styles";
 import {
   AccountCircle as AccountCircleIcon,
+  Brightness6 as ThemeIcon,
   BugReport as BugReportIcon,
+  Check as CheckIcon,
+  DarkMode as DarkModeIcon,
   Feed as FeedIcon,
   Hub as HubIcon,
   Info as InfoIcon,
+  LightMode as LightModeIcon,
   Logout as LogoutIcon,
   Menu as MenuIcon,
   OpenInNew as OpenInNewIcon,
@@ -66,6 +70,12 @@ const drawerSelectedSx = {
     textDecorationThickness: "2px",
   },
 };
+
+const THEME_MODES = [
+  { value: "system", label: "System", Icon: ThemeIcon },
+  { value: "light", label: "Light", Icon: LightModeIcon },
+  { value: "dark", label: "Dark", Icon: DarkModeIcon },
+] as const;
 
 interface NavItem {
   to: string;
@@ -114,6 +124,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("lg"));
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { mode, setMode } = useColorScheme();
 
   const isFirstRender = useRef(true);
   useEffect(() => {
@@ -225,6 +236,35 @@ export default function Layout({ children }: { children: ReactNode }) {
               </ListItemIcon>
               <ListItemText primary="Profile" />
             </MenuItem>
+            <Divider />
+            <ListSubheader disableSticky role="presentation">
+              Theme
+            </ListSubheader>
+            {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role */}
+            <li role="group" aria-label="Theme">
+              {THEME_MODES.map(({ value, label, Icon }) => (
+                <MenuItem
+                  key={value}
+                  component="div"
+                  role="menuitemradio"
+                  aria-label={`${label} theme`}
+                  aria-checked={mode === value}
+                  selected={mode === value}
+                  onClick={() => {
+                    setMode(value);
+                    setAccountEl(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <Icon fontSize="small" color="primary" />
+                  </ListItemIcon>
+                  <ListItemText primary={label} />
+                  {mode === value && (
+                    <CheckIcon fontSize="small" sx={{ ml: 2 }} />
+                  )}
+                </MenuItem>
+              ))}
+            </li>
             <Divider />
             <MenuItem
               onClick={() => {

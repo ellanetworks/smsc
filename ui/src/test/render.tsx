@@ -1,13 +1,15 @@
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
+import { ThemeProvider } from "@mui/material/styles";
 import { AuthContext, authFor, type Auth } from "@/contexts/AuthContext";
 import { SnackbarProvider } from "@/contexts/SnackbarContext";
 import { RoleID } from "@/queries/users";
+import theme, { THEME_PROVIDER_PROPS } from "@/utils/theme";
 
 export const adminAuth = authFor("admin@example.com", RoleID.Admin);
 
-// renderWithClient renders ui logged in, as an admin unless auth says otherwise.
+// renderWithClient renders ui logged in, as an admin unless auth says otherwise. The theme mode is not stored.
 export const renderWithClient = (ui: ReactElement, auth: Auth = adminAuth) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -16,11 +18,17 @@ export const renderWithClient = (ui: ReactElement, auth: Auth = adminAuth) => {
   return {
     client,
     ...render(
-      <QueryClientProvider client={client}>
-        <SnackbarProvider>
-          <AuthContext.Provider value={auth}>{ui}</AuthContext.Provider>
-        </SnackbarProvider>
-      </QueryClientProvider>,
+      <ThemeProvider
+        theme={theme}
+        {...THEME_PROVIDER_PROPS}
+        storageManager={null}
+      >
+        <QueryClientProvider client={client}>
+          <SnackbarProvider>
+            <AuthContext.Provider value={auth}>{ui}</AuthContext.Provider>
+          </SnackbarProvider>
+        </QueryClientProvider>
+      </ThemeProvider>,
     ),
   };
 };
