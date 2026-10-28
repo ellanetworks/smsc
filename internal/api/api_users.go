@@ -112,7 +112,7 @@ func UpdateMyPassword(a *auth) http.Handler {
 
 		// Not 401, which tells the UI that its session is over.
 		if !ok {
-			a.failures.allow(account)
+			a.failures.Allow(account)
 			writeError(w, http.StatusBadRequest, "Current password is incorrect", nil, cfg.Logger)
 
 			return
@@ -287,6 +287,9 @@ func UpdateUser(a *auth) http.Handler {
 			return
 		}
 
+		// The user's ESMEs bind again, under the checks of the new role.
+		cfg.SMPP.CloseUser(u.ID)
+
 		a.audit(r, "update_user", p.Email, fmt.Sprintf("Role of %s set to %d", u.Email, params.RoleID))
 		writeResponse(w, SuccessResponse{Message: "User updated successfully"}, http.StatusOK, cfg.Logger)
 	})
@@ -347,6 +350,9 @@ func DeleteUser(a *auth) http.Handler {
 			writeError(w, http.StatusInternalServerError, "Failed to delete user", err, cfg.Logger)
 			return
 		}
+
+		// Deleting the user deleted its ESMEs.
+		cfg.SMPP.CloseUser(u.ID)
 
 		a.audit(r, "delete_user", p.Email, "User "+u.Email+" deleted")
 		writeResponse(w, SuccessResponse{Message: "User deleted successfully"}, http.StatusOK, cfg.Logger)

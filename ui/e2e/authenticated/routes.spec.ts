@@ -4,6 +4,7 @@ import { assertNoA11yViolations } from "../a11y";
 const ROUTES = [
   { label: "Operator", route: "/operator", heading: "Operator" },
   { label: "Diameter", route: "/diameter", heading: "Diameter" },
+  { label: "SMPP", route: "/smpp", heading: /^SMPP/ },
   { label: "Messages", route: "/messages", heading: "Messages" },
   { label: "Users", route: "/users", heading: /^Users/ },
   { label: "Profile", route: "/profile", heading: "Profile" },

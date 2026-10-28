@@ -12,3 +12,13 @@ api:
 diameter:
   address: 127.0.0.1
   port: 3868
+# Optional: the SMPP 3.4 listener for ESMEs, such as OTA platforms. Without it,
+# Ella SMSC does not listen for SMPP. ESME accounts are managed over the API.
+# smpp:
+#   address: 0.0.0.0
+#   port: 2775
+#   # Optional: TLS from the first octet. Without it, plain TCP, for a private
+#   # link or a lab only.
+#   tls:
+#     cert: /path/to/smpp.pem
+#     key: /path/to/smpp.key

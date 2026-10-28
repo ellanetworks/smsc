@@ -38,6 +38,8 @@ spec:
         - name: diameter
           containerPort: 3868
           protocol: SCTP
+        - name: smpp
+          containerPort: 2775
         startupProbe:
           httpGet:
             path: /api/v1/readyz

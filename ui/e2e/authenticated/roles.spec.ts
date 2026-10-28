@@ -3,8 +3,8 @@ import { ROLES } from "../roles";
 
 // The navigation of each role is the pages it may load (ui/src/contexts/AuthContext.tsx).
 const NAVIGATION = {
-  "Read Only": ["Operator", "Diameter", "Messages"],
-  "Network Manager": ["Operator", "Diameter", "Messages"],
+  "Read Only": ["Operator", "Diameter", "SMPP", "Messages"],
+  "Network Manager": ["Operator", "Diameter", "SMPP", "Messages"],
   Submitter: ["Messages"],
 } as const;
 

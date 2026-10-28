@@ -4,7 +4,7 @@ description: RESTful API reference for submitting and viewing short messages in 
 
 # Messages
 
-A message is a short message the SMSC received, from a phone or from the API, with its delivery status and the status reports the SMSC returned to the phone that sent it. A text longer than one short message is split into parts, one message each.
+A message is a short message the SMSC received, from a phone, from the API, or from an ESME over [SMPP](../smpp.md), with its delivery status and the status reports the SMSC returned to the phone that sent it. A text longer than one short message is split into parts, one message each.
 
 Responses carry no content. [Get the content of a message](#get-the-content-of-a-message) returns it, and logs an audit event.
 
@@ -114,7 +114,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | Field                           | Type    | Description |
 | ------------------------------- | ------- | ----------- |
 | `id`                            | int     | Message identifier. |
-| `from`                          | string  | Sender: the MSISDN of the phone, an E.164 number with `+`, or the `from` of the API request. |
+| `from`                          | string  | Sender: the MSISDN of the phone, an E.164 number with `+`, the `from` of the API request, or the `source_addr` of the `submit_sm`, with `+` when international. |
 | `to`                            | string  | Recipient, an E.164 number with `+`. |
 | `encoding`                      | string  | `gsm7`, `ucs2` or `binary`. |
 | `concatenation`                 | object  | Present for a part of a longer message. |
@@ -137,7 +137,8 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | `status_report.reports[].updated_at`     | string | Time of the last change. |
 | `status_report.reports[].expires_at`     | string | End of the report's validity period. |
 | `status_report.reports[].next_attempt_at` | string | Time of the next delivery attempt of the report. Present while `pending`. |
-| `submitted_by`                  | string  | Email of the user that sent the message over the API. Absent for a message from a phone. |
+| `submitted_by`                  | string  | Email of the user that sent the message over the API, or of the user of the ESME that sent it over SMPP. Absent for a message from a phone. |
+| `system_id`                     | string  | `system_id` of the [ESME](esmes.md) that sent the message over SMPP. Absent for other messages, and once the ESME is deleted. |
 
 ### Sample Response
 

@@ -34,6 +34,8 @@ type MessageOrigin string
 const (
 	OriginMobile MessageOrigin = "mobile"
 	OriginAPI    MessageOrigin = "api"
+	// OriginSMPP is a message that an ESME submitted over SMPP (SMPP 3.4 section 4.4).
+	OriginSMPP MessageOrigin = "smpp"
 )
 
 var (
@@ -59,7 +61,7 @@ type Message struct {
 	Recipient    Address
 	MSISDN       string
 	Origin       MessageOrigin
-	// SubmittedBy is the user that submitted a message over the API, or zero.
+	// SubmittedBy is the user that submitted a message over the API or SMPP, or zero.
 	SubmittedBy        int64
 	MessageReference   uint8
 	ProtocolIdentifier uint8
@@ -80,7 +82,7 @@ type NewMessage struct {
 	Recipient  Address
 	MSISDN     string
 	Origin     MessageOrigin
-	// SubmittedBy is the user that submits a message over the API, or zero.
+	// SubmittedBy is the user that submits a message over the API or SMPP, or zero.
 	SubmittedBy        int64
 	MessageReference   uint8
 	ProtocolIdentifier uint8
@@ -94,7 +96,32 @@ type NewMessage struct {
 	// send. The report is stored with the replacement. It runs in the transaction that stores them, so it must not use
 	// the database.
 	ReportReplaced func(replaced Message) (*NewStatusReport, error)
+	// SMPP is what the SMSC tells the ESME that submitted the message, stored with it. It is nil for a message from
+	// another origin.
+	SMPP *NewSMPPMessage
 }
+
+// NewSMPPMessage is what the SMSC tells the ESME that submitted a message about it: a delivery receipt, and the
+// (U)SIM's answer (SMPP 3.4 section 2.11).
+type NewSMPPMessage struct {
+	ESMEID int64
+	// Receipt is registered_delivery bits 1-0 (SMPP 3.4 section 5.2.17): ReceiptNone, ReceiptFinal or ReceiptFailure.
+	Receipt uint8
+	// SIMAnswer is whether to forward the TP-User-Data of the recipient's SMS-DELIVER-REPORT.
+	SIMAnswer bool
+	// DataCoding is the submit_sm's data_coding, which a SIM answer in 8-bit data echoes.
+	DataCoding uint8
+	// UserMessageReference is the submit_sm's user_message_reference, echoed in the notifications (SMPP 3.4 Table
+	// 4-18), or nil.
+	UserMessageReference *uint16
+}
+
+// The values of registered_delivery bits 1-0 (SMPP 3.4 section 5.2.17).
+const (
+	ReceiptNone    uint8 = 0
+	ReceiptFinal   uint8 = 1
+	ReceiptFailure uint8 = 2
+)
 
 // NewStatusReport is an SMS-STATUS-REPORT on a message from an MS, to that MS.
 type NewStatusReport struct {
@@ -169,6 +196,19 @@ func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]c
 	id, err := insertMessage(ctx, tx, m)
 	if err != nil {
 		return 0, fmt.Errorf("create message: %w", err)
+	}
+
+	if r := m.SMPP; r != nil {
+		var reference sql.Null[uint16]
+		if r.UserMessageReference != nil {
+			reference = sql.Null[uint16]{V: *r.UserMessageReference, Valid: true}
+		}
+
+		if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_messages (message_id, esme_id, receipt, sim_answer, data_coding,
+			user_message_reference) VALUES (?, ?, ?, ?, ?, ?)`, id, r.ESMEID, r.Receipt, r.SIMAnswer, r.DataCoding,
+			reference); err != nil {
+			return 0, fmt.Errorf("create message: %w", err)
+		}
 	}
 
 	return id, nil
@@ -316,6 +356,12 @@ func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]
 
 	replaced.Status = StatusReplaced
 	*completed = append(*completed, completion{KindMessage, StatusReplaced})
+
+	// TP-Status "Short message replaced by the SC" (TS 23.040 clause 9.2.3.15).
+	const statusReplaced = 0x02
+	if err := queueNotifications(ctx, tx, replaced.ID, StatusReplaced, statusReplaced, m.SubmittedAt.UTC().UnixNano()); err != nil {
+		return err
+	}
 
 	if m.ReportReplaced == nil {
 		return nil
@@ -747,7 +793,13 @@ func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now
 // CompleteMessage sets the final status of a pending message, and stores the status report on it, if any, in the same
 // transaction, so that the report is neither lost nor stored twice. It returns ErrNotPending, and leaves the message as
 // is, when the message already has a final status, as a message that a later one replaced during its delivery does.
-func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus, at time.Time, report *NewStatusReport) (err error) {
+//
+// For a message from an ESME, it queues in the same transaction the notifications that the ESME asked for: the SIM
+// answer, then the delivery receipt, with tpStatus, the TP-Status of the outcome (TS 23.040 clause 9.2.3.15), as the
+// receipt's error code.
+func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus, at time.Time, report *NewStatusReport,
+	tpStatus uint8,
+) (err error) {
 	defer d.observe(&err)()
 
 	switch status {
@@ -791,6 +843,10 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 		}
 	}
 
+	if err := queueNotifications(ctx, tx, id, status, tpStatus, at.UTC().UnixNano()); err != nil {
+		return fmt.Errorf("complete message: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("complete message: %w", err)
 	}
@@ -803,11 +859,13 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 const purgeableMessages = `SELECT m.id FROM messages m
 	WHERE m.kind = 'message' AND m.status != 'pending' AND m.updated_at < ?1
 	AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.report_for = m.id AND (r.status = 'pending' OR r.updated_at >= ?1))
+	AND NOT EXISTS (SELECT 1 FROM smpp_notifications n WHERE n.message_id = m.id AND n.result IS NULL AND n.expires_at >= ?1)
 	ORDER BY m.updated_at LIMIT ?2`
 
 // PurgeMessages deletes up to limit short messages that reached their final status before cutoff, with their delivery
 // attempts and status reports, and returns how many messages it deleted. It keeps a message with a status report that
-// is pending or that reached its final status after cutoff, so that a report always goes with its message.
+// is pending or that reached its final status after cutoff, so that a report always goes with its message, and a
+// message with an SMPP notification still to send that expires after cutoff.
 func (d *DB) PurgeMessages(ctx context.Context, cutoff time.Time, limit int) (_ int, err error) {
 	defer d.observe(&err)()
 

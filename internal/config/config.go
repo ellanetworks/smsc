@@ -15,6 +15,8 @@ import (
 const (
 	defaultDiameterPort = 3868
 	defaultAPIPort      = 5010
+	// defaultSMPPPort is the port IANA registers as "smpp"; SMPP 3.4 names none.
+	defaultSMPPPort = 2775
 )
 
 type Config struct {
@@ -22,6 +24,8 @@ type Config struct {
 	DB       DB       `yaml:"db"`
 	API      API      `yaml:"api"`
 	Diameter Diameter `yaml:"diameter"`
+	// SMPP, when set, runs the SMPP 3.4 listener for ESMEs.
+	SMPP *SMPP `yaml:"smpp"`
 }
 
 type Logging struct {
@@ -46,6 +50,15 @@ type API struct {
 type TLS struct {
 	Cert string `yaml:"cert"`
 	Key  string `yaml:"key"`
+}
+
+// SMPP is the listener of the SMPP 3.4 interface to ESMEs.
+type SMPP struct {
+	Address netip.Addr `yaml:"address"`
+	Port    int        `yaml:"port"`
+	// TLS, when set, wraps each connection in TLS from its first octet. SMPP 3.4 runs over TCP/IP or X.25 (section
+	// 2.4): TLS is a convention outside it.
+	TLS *TLS `yaml:"tls"`
 }
 
 // Diameter listens on Address, or on the addresses of the interface Name.
@@ -77,6 +90,10 @@ func Load(path string) (Config, error) {
 		cfg.API.Port = defaultAPIPort
 	}
 
+	if cfg.SMPP != nil && cfg.SMPP.Port == 0 {
+		cfg.SMPP.Port = defaultSMPPPort
+	}
+
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -104,15 +121,41 @@ func (c Config) validate() error {
 		return fmt.Errorf("diameter.port %d is out of range", c.Diameter.Port)
 	}
 
-	if tls := c.API.TLS; tls != nil {
-		if tls.Cert == "" || tls.Key == "" {
-			return errors.New("api.tls.cert and api.tls.key must both be set")
+	if err := c.API.TLS.validate("api"); err != nil {
+		return err
+	}
+
+	if s := c.SMPP; s != nil {
+		switch {
+		case !s.Address.IsValid():
+			return errors.New("smpp.address is required")
+		case s.Port < 1 || s.Port > 65535:
+			return fmt.Errorf("smpp.port %d is out of range", s.Port)
+		case s.Port == c.API.Port && (s.Address == c.API.Address || s.Address.IsUnspecified() || c.API.Address.IsUnspecified()):
+			return fmt.Errorf("smpp.port %d is the API's", s.Port)
 		}
 
-		for name, path := range map[string]string{"api.tls.cert": tls.Cert, "api.tls.key": tls.Key} {
-			if _, err := os.Stat(path); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
+		if err := s.TLS.validate("smpp"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validate checks the TLS of the block named prefix, if any: both files set and present.
+func (t *TLS) validate(prefix string) error {
+	if t == nil {
+		return nil
+	}
+
+	if t.Cert == "" || t.Key == "" {
+		return fmt.Errorf("%s.tls.cert and %s.tls.key must both be set", prefix, prefix)
+	}
+
+	for name, path := range map[string]string{prefix + ".tls.cert": t.Cert, prefix + ".tls.key": t.Key} {
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
 

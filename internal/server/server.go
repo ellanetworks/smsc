@@ -22,9 +22,12 @@ import (
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
+	"github.com/ellanetworks/smsc/internal/esme"
 	smscs6c "github.com/ellanetworks/smsc/internal/s6c"
 	"github.com/ellanetworks/smsc/internal/settings"
 	smscsgd "github.com/ellanetworks/smsc/internal/sgd"
+	"github.com/ellanetworks/smsc/internal/submission"
+	"github.com/ellanetworks/smsc/smpp"
 	"github.com/ellanetworks/smsc/ui"
 	"github.com/ellanetworks/smsc/version"
 )
@@ -54,7 +57,21 @@ type Server struct {
 	deliveryDone  chan struct{}
 	stopPurging   context.CancelFunc
 	purgeDone     chan struct{}
+	// smppServer is the SMPP listener, nil when the configuration has none, and smppDone ends with its dispatcher.
+	smppServer   *smpp.Server
+	smppListener net.Listener
+	stopSMPP     context.CancelFunc
+	smppDone     chan struct{}
 }
+
+// smppShutdownTimeout bounds how long Shutdown waits for the ESMEs to answer unbind (SMPP 3.4 section 4.2).
+const smppShutdownTimeout = 5 * time.Second
+
+// smppInboundWindow is the most submit_sm outstanding on a session; one more is answered ESME_RTHROTTLED.
+const smppInboundWindow = 64
+
+// smppSystemID identifies the SMSC in bind responses (SMPP 3.4 section 5.2.1).
+const smppSystemID = "EllaSMSC"
 
 func (s *Server) Start(ctx context.Context) error {
 	if s.nodes != nil {
@@ -72,9 +89,17 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
-	tlsConfig, err := apiTLS(cfg.API.TLS)
+	tlsConfig, err := apiTLS(cfg.API.TLS, "API")
 	if err != nil {
 		return err
+	}
+
+	var smppTLS *tls.Config
+
+	if cfg.SMPP != nil {
+		if smppTLS, err = apiTLS(cfg.SMPP.TLS, "SMPP"); err != nil {
+			return err
+		}
 	}
 
 	database, err := db.Open(ctx, cfg.DB.Path)
@@ -127,6 +152,20 @@ func (s *Server) Start(ctx context.Context) error {
 		Logger:         s.Logger,
 	}
 
+	submitter := &submission.Submitter{Store: database, Settings: live.Get, Received: m.received, Now: time.Now}
+	esmes := &esme.Service{
+		Store:      database,
+		Submitter:  submitter,
+		Settings:   live.Get,
+		Notify:     deliverer.Notify,
+		Received:   m.received,
+		Metrics:    m.smpp,
+		BcryptCost: s.bcryptCost,
+		Now:        time.Now,
+		Logger:     s.Logger,
+	}
+	deliverer.Completed = esmes.NotificationsQueued
+
 	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &smscsgd.Handler{
 		Identity: nodes.Identity,
 		Settings: live.Get,
@@ -166,7 +205,10 @@ func (s *Server) Start(ctx context.Context) error {
 			Diameter:   diameterStatus{nodes: nodes, hss: hss},
 			Frontend:   ui.FS(),
 			Settings:   live,
+			Submitter:  submitter,
 			Notify:     deliverer.Notify,
+			ESMEs:      database,
+			SMPP:       smppSessions{esmes},
 			Ready:      func(ctx context.Context) error { return s.ready(ctx, database) },
 			Received:   m.received,
 			Metrics:    m.registry,
@@ -193,6 +235,18 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	base := context.WithoutCancel(ctx)
+
+	if cfg.SMPP != nil {
+		if err := s.startSMPP(ctx, base, esmes, smppTLS); err != nil {
+			_ = s.apiServer.Close()
+
+			nodes.shutdown(ctx)
+
+			_ = database.Close()
+
+			return err
+		}
+	}
 
 	followCtx, stopFollowing := context.WithCancel(base)
 	go nodes.follow(followCtx, live)
@@ -234,10 +288,68 @@ func (s *Server) Start(ctx context.Context) error {
 
 	v := version.Get()
 
+	smppAddr := ""
+	if s.smppListener != nil {
+		smppAddr = s.smppListener.Addr().String()
+	}
+
 	s.Logger.Info("smsc started", "version", v.Version, "revision", v.Revision, "db", cfg.DB.Path,
-		"diameter", nodes.Addr().String(), "api", apiLn.Addr().String(), "tls", tlsConfig != nil)
+		"diameter", nodes.Addr().String(), "api", apiLn.Addr().String(), "tls", tlsConfig != nil, "smpp", smppAddr,
+		"smpp_tls", smppTLS != nil)
 
 	return nil
+}
+
+// startSMPP starts the SMPP listener and its dispatcher of notifications.
+func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsConfig *tls.Config) error {
+	srv, err := smpp.NewServer(smpp.ServerConfig{
+		SystemID:      smppSystemID,
+		TLS:           tlsConfig,
+		Authenticate:  esmes.Authenticate,
+		Handler:       esmes,
+		OnBound:       esmes.OnBound,
+		OnClosed:      esmes.OnClosed,
+		OnDecodeError: esmes.OnDecodeError,
+		// Up to 64 submit_sm per session at once: SMPP 3.4 leaves the window to the SMSC and suggests 10 (sections
+		// 2.5.2 and 2.6.2, notes). The database serializes the writes, so the window only overlaps parsing and I/O.
+		Session: smpp.SessionConfig{InboundWindow: smppInboundWindow, OutboundWindow: esme.DefaultWindow},
+		Logger:  s.Logger,
+	})
+	if err != nil {
+		return err
+	}
+
+	esmes.Accounts = srv
+
+	var lc net.ListenConfig
+
+	ln, err := lc.Listen(ctx, "tcp", netip.AddrPortFrom(s.Config.SMPP.Address, uint16(s.Config.SMPP.Port)).String())
+	if err != nil {
+		return fmt.Errorf("listen for SMPP: %w", err)
+	}
+
+	go func() { _ = srv.Serve(ln) }()
+
+	dispatchCtx, stop := context.WithCancel(base)
+	done := make(chan struct{})
+
+	go func() {
+		esmes.Run(dispatchCtx)
+		close(done)
+	}()
+
+	s.smppServer, s.smppListener, s.stopSMPP, s.smppDone = srv, ln, stop, done
+
+	return nil
+}
+
+// SMPPAddr is the address of the SMPP listener, or nil when there is none.
+func (s *Server) SMPPAddr() net.Addr {
+	if s.smppListener == nil {
+		return nil
+	}
+
+	return s.smppListener.Addr()
 }
 
 func (s *Server) APIAddr() net.Addr {
@@ -275,6 +387,23 @@ func (s *Server) Shutdown(ctx context.Context) {
 	}
 
 	s.stopFollowing()
+
+	// The SMPP listener stops first: the ESMEs are told to unbind, and the notifications they have not acknowledged
+	// stay in the database for when they bind again.
+	if s.smppServer != nil {
+		smppCtx, cancel := context.WithTimeout(ctx, smppShutdownTimeout)
+		if err := s.smppServer.Shutdown(smppCtx); err != nil {
+			s.Logger.Warn("SMPP sessions closed without unbind", slog.Any("error", err))
+		}
+
+		cancel()
+		s.stopSMPP()
+
+		select {
+		case <-s.smppDone:
+		case <-ctx.Done():
+		}
+	}
 
 	if err := s.apiServer.Shutdown(ctx); err != nil {
 		s.Logger.Warn("failed to stop the API cleanly", slog.Any("error", err))
@@ -463,6 +592,23 @@ func (d diameterStatus) Routes() []api.Route {
 
 func (h hssSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
 
+// smppSessions is the SMPP listener as the API sees it.
+type smppSessions struct{ esmes *esme.Service }
+
+func (s smppSessions) CloseESME(id int64) { s.esmes.CloseESME(id) }
+
+func (s smppSessions) CloseUser(id int64) { s.esmes.CloseUser(id) }
+
+func (s smppSessions) Sessions(id int64) []api.SMPPSession {
+	var out []api.SMPPSession
+
+	for _, sess := range s.esmes.Sessions(id) {
+		out = append(out, api.SMPPSession{BindType: string(sess.BindType), Remote: sess.Remote.String(), BoundAt: sess.BoundAt})
+	}
+
+	return out
+}
+
 type hostSender struct{ nodes *nodeManager }
 
 func (h hostSender) Do(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
@@ -481,16 +627,16 @@ func (h hostSender) PeerRealm(host string) (string, bool) {
 
 func (h hostSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
 
-// apiTLS returns the TLS configuration of the API, or nil for none. Go's defaults choose the cipher suites and key
+// apiTLS returns the TLS configuration of the API or of the SMPP listener, or nil for none. Go's defaults choose the cipher suites and key
 // exchanges, which keeps the post-quantum hybrid key exchange that a list of curves would turn off.
-func apiTLS(c *config.TLS) (*tls.Config, error) {
+func apiTLS(c *config.TLS, what string) (*tls.Config, error) {
 	if c == nil {
 		return nil, nil //nolint:nilnil // No TLS is not an error.
 	}
 
 	cert, err := tls.LoadX509KeyPair(c.Cert, c.Key)
 	if err != nil {
-		return nil, fmt.Errorf("load the API certificate: %w", err)
+		return nil, fmt.Errorf("load the %s certificate: %w", what, err)
 	}
 
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, nil

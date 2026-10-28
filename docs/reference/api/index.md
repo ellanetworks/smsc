@@ -24,11 +24,13 @@ These paths take no token: `GET /api/v1/livez`, `GET /api/v1/readyz`, `GET /api/
 | Role            | `role_id` | Allows |
 | --------------- | --------- | ------ |
 | Admin           | `1`       | Everything. |
-| Read Only       | `2`       | Reading messages without their content, Diameter, operator, delivery and retention settings. |
+| Read Only       | `2`       | Reading messages without their content, Diameter, operator, delivery and retention settings, and ESMEs. |
 | Network Manager | `3`       | Read Only, plus reading message content, sending messages, updating operator, delivery and retention settings, and managing Diameter peers. |
 | Submitter       | `4`       | Sending messages, and reading the messages it sent, their content included. |
 
-An API token has the role of its user, but cannot create API tokens, change a password, or manage users.
+An API token has the role of its user, but cannot create API tokens, change a password, or manage users or [ESMEs](esmes.md).
+
+Only an Admin manages ESMEs. An [ESME](esmes.md) binds over SMPP with the role of its user.
 
 ## Responses
 

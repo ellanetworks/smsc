@@ -6,5 +6,6 @@ This section provides detailed reference material for Ella SMSC, from configurat
 - [Configuration File](config_file.md)
 - [Observability](observability.md)
 - [Connectivity](connectivity.md)
+- [SMPP](smpp.md)
 - [Performance](performance.md)
 - [3GPP Compliance](3gpp_compliance.md)

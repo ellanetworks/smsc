@@ -178,3 +178,51 @@ func TestLoadAPIDrainDelay(t *testing.T) {
 		t.Fatalf("API.DrainDelay = %s", cfg.API.DrainDelay)
 	}
 }
+
+func TestLoadSMPP(t *testing.T) {
+	dir := t.TempDir()
+	cert, key := filepath.Join(dir, "smpp.pem"), filepath.Join(dir, "smpp.key")
+
+	for _, p := range []string{cert, key} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg, err := Load(writeConfig(t, validConfig))
+	if err != nil || cfg.SMPP != nil {
+		t.Fatalf("Load without smpp = %+v, %v; want no listener", cfg.SMPP, err)
+	}
+
+	cfg, err = Load(writeConfig(t, validConfig+"smpp:\n  address: 0.0.0.0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := (SMPP{Address: netip.MustParseAddr("0.0.0.0"), Port: 2775}); *cfg.SMPP != want {
+		t.Fatalf("smpp = %+v, want %+v", *cfg.SMPP, want)
+	}
+
+	cfg, err = Load(writeConfig(t, validConfig+"smpp:\n  address: \"::\"\n  port: 3550\n  tls:\n    cert: "+cert+
+		"\n    key: "+key+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := (TLS{Cert: cert, Key: key}); cfg.SMPP.Port != 3550 || *cfg.SMPP.TLS != want {
+		t.Fatalf("smpp = %+v, tls %+v", *cfg.SMPP, cfg.SMPP.TLS)
+	}
+
+	for name, block := range map[string]string{
+		"no address":   "smpp:\n  port: 2775\n",
+		"port":         "smpp:\n  address: 0.0.0.0\n  port: 70000\n",
+		"API port":     "smpp:\n  address: 0.0.0.0\n  port: 8080\n",
+		"cert only":    "smpp:\n  address: 0.0.0.0\n  tls:\n    cert: " + cert + "\n",
+		"missing file": "smpp:\n  address: 0.0.0.0\n  tls:\n    cert: " + cert + "\n    key: " + filepath.Join(dir, "none") + "\n",
+		"unknown key":  "smpp:\n  address: 0.0.0.0\n  window: 10\n",
+	} {
+		if _, err := Load(writeConfig(t, validConfig+block)); err == nil {
+			t.Errorf("%s: Load succeeded", name)
+		}
+	}
+}

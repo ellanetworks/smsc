@@ -70,7 +70,7 @@ func TestMessageStatusReports(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := a.store.CompleteMessage(ctx, m.ID, db.StatusDelivered, delivered, report); err != nil {
+	if err := a.store.CompleteMessage(ctx, m.ID, db.StatusDelivered, delivered, report, 0); err != nil {
 		t.Fatal(err)
 	}
 

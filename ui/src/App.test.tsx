@@ -57,6 +57,7 @@ const serve = (role: RoleID | null = RoleID.Admin) => {
           json(200, {
             result: { version: "v0.0.1", revision: "", initialized: true },
           }),
+        "/api/v1/esmes": () => json(200, { result: { items: [] } }),
         "/api/v1/messages": () =>
           json(200, {
             result: { items: [], page: 1, per_page: 25, total_count: 0 },
@@ -96,6 +97,7 @@ describe("App", () => {
     ).toEqual([
       ["Operator", "/operator"],
       ["Diameter", "/diameter"],
+      ["SMPP", "/smpp"],
       ["Messages", "/messages"],
       ["Users", "/users"],
     ]);
@@ -152,6 +154,34 @@ describe("App", () => {
     );
   });
 
+  it("opens the SMPP page", async () => {
+    serve();
+    renderAt("/diameter");
+
+    fireEvent.click(await screen.findByRole("link", { name: "SMPP" }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "SMPP (0)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "SMPP" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("shows a Read Only user the SMPP page", async () => {
+    serve(RoleID.ReadOnly);
+    renderAt("/smpp");
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "SMPP (0)" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Main" }))
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["Operator", "Diameter", "SMPP", "Messages"]);
+  });
+
   it("goes to the login page without a session", async () => {
     serve(null);
     renderAt("/messages");
@@ -163,7 +193,7 @@ describe("App", () => {
 
   it("shows a Submitter only the Messages page", async () => {
     serve(RoleID.Submitter);
-    renderAt("/diameter");
+    renderAt("/smpp");
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "Messages" }),

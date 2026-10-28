@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
+	"github.com/ellanetworks/smsc/internal/esme"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/version"
 	"github.com/prometheus/client_golang/prometheus"
@@ -23,10 +25,11 @@ type metrics struct {
 	received *intake.Received
 	delivery *delivery.Metrics
 	peers    *peerMetrics
+	smpp     *esme.Metrics
 }
 
 // newMetrics registers the metrics of the Go runtime, the process, the build, the database, the messages and the
-// requests to the peers. watchHSS adds the count of the HSSs.
+// requests to the peers, and those of the SMPP listener. watchHSS adds the count of the HSSs.
 func newMetrics(database *db.DB) *metrics {
 	m := &metrics{
 		registry: prometheus.NewRegistry(),
@@ -34,6 +37,7 @@ func newMetrics(database *db.DB) *metrics {
 		delivery: delivery.NewMetrics(),
 		peers:    newPeerMetrics(),
 	}
+	m.smpp = esme.NewMetrics(database, slog.Default())
 
 	// The build's labels are those of Prometheus's own build_info, with the SMSC's version and, when the build sets
 	// it, its revision.
@@ -54,6 +58,7 @@ func newMetrics(database *db.DB) *metrics {
 	m.registry.MustRegister(m.received.Collectors()...)
 	m.registry.MustRegister(m.delivery.Collectors()...)
 	m.registry.MustRegister(m.peers.collectors()...)
+	m.registry.MustRegister(m.smpp.Collectors()...)
 
 	return m
 }

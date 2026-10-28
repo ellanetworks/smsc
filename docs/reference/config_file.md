@@ -25,6 +25,12 @@ The operator and delivery settings are not in this file: they are in the databas
     - `name` (string): The network interface to listen on, on all its addresses, advertised to peers. Either `name` or `address` must be set.
     - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`. Either `name` or `address` must be set.
     - `port` (int, optional): The SCTP port to listen on. Default `3868`.
+- `smpp` (object, optional): The [SMPP 3.4](smpp.md) listener for ESMEs, such as OTA platforms. Without it, Ella SMSC does not listen for SMPP. The ESME accounts are in the database, managed with the [API](api/esmes.md).
+    - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
+    - `port` (int, optional): The TCP port to listen on. Default `2775`. Not the API's port.
+    - `tls` (object, optional): Wrap each connection in TLS, 1.2 or later, from its first octet. SMPP 3.4 has no TLS: this is a common convention, which the ESME must support. Default: plain TCP, for a private link or a lab only.
+        - `cert` (string): The path to the PEM certificate chain, the server's certificate first.
+        - `key` (string): The path to the PEM private key.
 
 ## Example
 
@@ -39,6 +45,12 @@ api:
 diameter:
   address: 127.0.0.1
   port: 3868
+smpp:
+  address: 0.0.0.0
+  port: 2775
+  tls:
+    cert: /etc/smsc/smpp.pem
+    key: /etc/smsc/smpp.key
 ```
 
 With the snap, the configuration file is `/var/snap/ella-smsc/common/smsc.yaml`.

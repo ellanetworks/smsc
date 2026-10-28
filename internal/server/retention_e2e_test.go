@@ -73,7 +73,7 @@ func TestRetentionDoesNotStallDelivery(t *testing.T) {
 	}
 
 	for _, id := range ids {
-		if err := store.CompleteMessage(context.Background(), id, db.StatusDelivered, finished, nil); err != nil {
+		if err := store.CompleteMessage(context.Background(), id, db.StatusDelivered, finished, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 	}

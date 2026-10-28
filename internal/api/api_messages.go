@@ -7,16 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/intake"
-	"github.com/ellanetworks/smsc/internal/statusreport"
+	"github.com/ellanetworks/smsc/internal/submission"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -24,10 +21,6 @@ const (
 	defaultPerPage = 25
 	maxPerPage     = 100
 	maxE164Digits  = 15
-	// maxOriginatorName is the most characters of an alphanumeric originator (TS 23.040 clause 9.1.2.5).
-	maxOriginatorName = 11
-	// maxBinaryOctets is the most octets of 8-bit TP-UD (TS 23.038 clause 4).
-	maxBinaryOctets = 140
 	// attemptOutcomeSuccess is the outcome of a delivery attempt that the serving node acknowledged.
 	attemptOutcomeSuccess = "success"
 )
@@ -126,8 +119,10 @@ type Message struct {
 	ExpiresAt     string         `json:"expires_at"`
 	NextAttemptAt string         `json:"next_attempt_at,omitempty"`
 	StatusReport  StatusReports  `json:"status_report"`
-	// SubmittedBy is the email of the user that submitted a message over the API.
+	// SubmittedBy is the email of the user that submitted a message over the API or SMPP.
 	SubmittedBy string `json:"submitted_by,omitempty"`
+	// SystemID is the system_id of the ESME that submitted a message over SMPP, while the ESME exists.
+	SystemID string `json:"system_id,omitempty"`
 }
 
 // StatusReports are whether the originator of a message asked for status reports, and the reports that the SC returned
@@ -193,10 +188,6 @@ type ListAttemptsResponse struct {
 }
 
 func CreateMessage(cfg Config) http.Handler {
-	var reference atomic.Uint32
-
-	reference.Store(rand.Uint32())
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var params CreateMessageParams
 
@@ -230,94 +221,40 @@ func CreateMessage(cfg Config) http.Handler {
 			return
 		}
 
-		destination := tpdu.Address{TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN, Digits: to}
+		caller, _ := PrincipalFrom(r.Context())
 
-		var submits []tpdu.Submit
+		req := submission.Request{
+			Originator:  originator,
+			Recipient:   db.Address{Digits: to, TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN},
+			MSISDN:      to,
+			Origin:      db.OriginAPI,
+			SubmittedBy: caller.UserID,
+		}
 
 		if params.Binary != nil {
-			submit, msg := binarySubmit(*params.Binary)
+			data, msg := binaryUserData(*params.Binary)
 			if msg != "" {
 				writeError(w, http.StatusBadRequest, msg, nil, cfg.Logger)
 				return
 			}
 
-			submit.Destination = destination
-			submits = []tpdu.Submit{submit}
+			req.Data = &data
 		} else {
-			parts, _, err := tpdu.EncodeText(params.Text, uint8(reference.Add(1)))
-			if errors.Is(err, tpdu.ErrTextTooLong) {
-				writeError(w, http.StatusBadRequest, "text is too long", err, cfg.Logger)
-				return
-			}
-
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to encode text", err, cfg.Logger)
-				return
-			}
-
-			for _, p := range parts {
-				submits = append(submits, tpdu.Submit{
-					Destination:      destination,
-					UserDataHeader:   p.UserDataHeader,
-					DataCodingScheme: p.DataCodingScheme,
-					UserDataLength:   p.UserDataLength,
-					UserData:         p.UserData,
-				})
-			}
+			req.Text = &params.Text
 		}
 
-		caller, _ := PrincipalFrom(r.Context())
-		recipient := db.Address{Digits: to, TypeOfNumber: destination.TypeOfNumber, NumberingPlan: destination.NumberingPlan}
-		now := cfg.Now()
-		current := cfg.Settings.Get()
-
-		validity := current.Delivery.DefaultValidity
 		if params.ValiditySeconds != nil {
-			validity = time.Duration(*params.ValiditySeconds) * time.Second
+			req.ExpiresAt = cfg.Now().Add(time.Duration(*params.ValiditySeconds) * time.Second)
 		}
 
-		messages := make([]db.NewMessage, 0, len(submits))
-
-		for _, submit := range submits {
-			b, err := submit.Encode()
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to encode short message", err, cfg.Logger)
-				return
-			}
-
-			m := db.NewMessage{
-				Originator:         originator,
-				Recipient:          recipient,
-				MSISDN:             to,
-				Origin:             db.OriginAPI,
-				SubmittedBy:        caller.UserID,
-				ProtocolIdentifier: submit.ProtocolIdentifier,
-				TPDU:               b,
-				SubmittedAt:        now,
-				ExpiresAt:          now.Add(validity),
-			}
-
-			// The SC replaces a message from any source as it does one from an MS (TS 23.040 clause 9.2.3.9). A
-			// replaced message from an MS still gets the status report it asked for.
-			if tpdu.IsReplaceType(submit.ProtocolIdentifier) {
-				m.Replace = true
-				m.ReportReplaced = func(replaced db.Message) (*db.NewStatusReport, error) {
-					return statusreport.For(replaced, tpdu.StatusReplaced, now, current)
-				}
-			}
-
-			messages = append(messages, m)
-		}
-
-		ids, err := cfg.Store.CreateMessages(r.Context(), messages)
+		ids, err := cfg.Submitter.Submit(r.Context(), req)
 		if err != nil {
-			cfg.Received.Add(intake.OriginAPI, intake.Error, len(messages))
-			writeError(w, http.StatusInternalServerError, "Failed to store message", err, cfg.Logger)
+			status, msg := submitError(err)
+			writeError(w, status, msg, err, cfg.Logger)
 
 			return
 		}
 
-		cfg.Received.Add(intake.OriginAPI, intake.Accepted, len(ids))
 		cfg.Notify()
 
 		stored := make([]db.Message, 0, len(ids))
@@ -342,16 +279,16 @@ func CreateMessage(cfg Config) http.Handler {
 	})
 }
 
-// binarySubmit returns the SMS-SUBMIT, without its destination, of a binary message, or the reason that its parameters
-// are invalid. The TP-UDL counts octets, so the TP-DCS must not code the GSM 7 bit default alphabet (TS 23.040 clause
-// 9.2.3.16).
-func binarySubmit(p BinaryParams) (tpdu.Submit, string) {
+// binaryUserData returns the user data of a binary message, or the reason that its parameters are invalid. The API
+// takes octets, so the TP-DCS must not code the GSM 7 bit default alphabet, whose TP-UDL counts septets (TS 23.040
+// clause 9.2.3.16), nor UCS2, which reads back as text. The other rules are the submission's.
+func binaryUserData(p BinaryParams) (submission.UserData, string) {
 	if p.DataCodingScheme == nil {
-		return tpdu.Submit{}, "binary.data_coding_scheme is required"
+		return submission.UserData{}, "binary.data_coding_scheme is required"
 	}
 
 	if p.UserData == nil {
-		return tpdu.Submit{}, "binary.user_data is required"
+		return submission.UserData{}, "binary.user_data is required"
 	}
 
 	var pid uint8
@@ -361,46 +298,40 @@ func binarySubmit(p BinaryParams) (tpdu.Submit, string) {
 
 	dcs := *p.DataCodingScheme
 
-	// The API takes octets: the TP-UDL of GSM 7 bit default alphabet counts septets (TS 23.040 clause 9.2.3.16), and
-	// UCS2 user data reads back as text.
 	if tpdu.IsSeptetCoded(dcs) || tpdu.IsUCS2(dcs) {
-		return tpdu.Submit{}, "binary.data_coding_scheme must not code GSM 7-bit or UCS2; send text instead"
+		return submission.UserData{}, "binary.data_coding_scheme must not code GSM 7-bit or UCS2; send text instead"
 	}
 
-	// The SC has no function to convert a message for a telematic device (TS 23.040 clause 9.2.3.9).
-	if tpdu.RequestsTelematicInterworking(pid) {
-		return tpdu.Submit{}, "binary.protocol_identifier requests telematic interworking, which is not supported"
+	var header []byte
+	if p.UserDataHeader != nil {
+		header = []byte(p.UserDataHeader)
 	}
 
-	// An ME handles a (U)SIM data download or ANSI-136 R-DATA message that is not class 2 as a normal message
-	// (TS 23.040 clause 9.2.3.9), which would show the user what was meant for the (U)SIM.
-	if class, ok := tpdu.MessageClass(dcs); (pid == tpdu.ProtocolUSIMDataDownload || pid == tpdu.ProtocolANSI136RData) &&
-		(!ok || class != 2) {
-		return tpdu.Submit{}, "binary.data_coding_scheme must be message class 2 for this protocol_identifier"
-	}
+	return submission.UserData{PID: pid, DCS: dcs, Header: header, Octets: p.UserData}, ""
+}
 
-	if p.UserDataHeader != nil && !tpdu.ValidUserDataHeader(p.UserDataHeader) {
-		return tpdu.Submit{}, "binary.user_data_header is malformed"
+// submitError returns the status and the message of an error of the submission.
+func submitError(err error) (int, string) {
+	switch {
+	case errors.Is(err, submission.ErrTelematicInterworking):
+		return http.StatusBadRequest, "binary.protocol_identifier requests telematic interworking, which is not supported"
+	case errors.Is(err, submission.ErrNotClass2):
+		return http.StatusBadRequest, "binary.data_coding_scheme must be message class 2 for this protocol_identifier"
+	case errors.Is(err, submission.ErrUserDataHeader):
+		return http.StatusBadRequest, "binary.user_data_header is malformed"
+	case errors.Is(err, submission.ErrNoApplicationPort):
+		return http.StatusBadRequest, "binary.user_data_header must have an application port for this protocol_identifier"
+	case errors.Is(err, submission.ErrUserDataTooLong):
+		return http.StatusBadRequest, "binary user data exceeds 140 octets"
+	case errors.Is(err, submission.ErrTextTooLong):
+		return http.StatusBadRequest, "text is too long"
+	case errors.Is(err, submission.ErrEncodeText):
+		return http.StatusInternalServerError, "Failed to encode text"
+	case errors.Is(err, submission.ErrStore):
+		return http.StatusInternalServerError, "Failed to store message"
+	default:
+		return http.StatusInternalServerError, "Failed to encode short message"
 	}
-
-	// The application port addressing information element names the application that a device trigger is for
-	// (TS 23.040 clause 9.2.3.9).
-	if tpdu.IsDeviceTrigger(pid) && !tpdu.HasApplicationPort(p.UserDataHeader) {
-		return tpdu.Submit{}, "binary.user_data_header must have an application port for this protocol_identifier"
-	}
-
-	ud := append(append([]byte{}, p.UserDataHeader...), p.UserData...)
-	if len(ud) > maxBinaryOctets {
-		return tpdu.Submit{}, "binary user data exceeds 140 octets"
-	}
-
-	return tpdu.Submit{
-		UserDataHeader:     p.UserDataHeader != nil,
-		ProtocolIdentifier: pid,
-		DataCodingScheme:   dcs,
-		UserDataLength:     uint8(len(ud)),
-		UserData:           ud,
-	}, ""
 }
 
 func GetMessage(cfg Config) http.Handler {
@@ -689,11 +620,17 @@ func messagesOf(ctx context.Context, cfg Config, messages []db.Message) ([]Messa
 		return nil, err
 	}
 
+	systemIDs, err := cfg.Store.SystemIDsFor(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
 	emails := map[int64]string{}
 
 	out := make([]Message, 0, len(messages))
 	for _, m := range messages {
 		msg := messageOf(m, reports[m.ID])
+		msg.SystemID = systemIDs[m.ID]
 
 		if id := m.SubmittedBy; id != 0 {
 			email, ok := emails[id]
@@ -824,7 +761,7 @@ func originatorOf(w http.ResponseWriter, from string, cfg Config) (db.Address, b
 		return db.Address{Digits: digits, TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN}, true
 	}
 
-	if !isOriginatorName(from) {
+	if !submission.IsOriginatorName(from) {
 		writeError(w, http.StatusBadRequest,
 			"from must be an E.164 number such as +15551230001, or a name of 1 to 11 letters and digits, with single spaces between words", nil, cfg.Logger)
 
@@ -832,30 +769,6 @@ func originatorOf(w http.ResponseWriter, from string, cfg Config) (db.Address, b
 	}
 
 	return db.Address{Digits: from, TypeOfNumber: tpdu.TypeOfNumberAlphanumeric}, true
-}
-
-// isOriginatorName reports whether s is 1 to 11 ASCII letters and digits, with single spaces between words, not all
-// digits. An all-digit value is a number, not a name.
-func isOriginatorName(s string) bool {
-	if s == "" || len(s) > maxOriginatorName || s[0] == ' ' || s[len(s)-1] == ' ' || strings.Contains(s, "  ") {
-		return false
-	}
-
-	digits := true
-
-	for i := range len(s) {
-		c := s[i]
-
-		switch {
-		case c >= '0' && c <= '9':
-		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c == ' ':
-			digits = false
-		default:
-			return false
-		}
-	}
-
-	return !digits
 }
 
 func e164Digits(s string) (string, bool) {

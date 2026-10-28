@@ -208,7 +208,7 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, delivered, StatusDelivered, now, testReport(now)); err != nil {
+	if err := d.CompleteMessage(ctx, delivered, StatusDelivered, now, testReport(now), 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -224,7 +224,7 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 
 	if err := d.CompleteMessage(ctx, retried, StatusFailed, now, &NewStatusReport{
 		Originator: testServiceCentre, Status: 0x62, TPDU: []byte{0x06}, CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,7 +252,7 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatalf("reports = %+v, %v", reports, err)
 	}
 
-	if err := d.CompleteMessage(ctx, reports[0].ID, StatusDelivered, now, nil); err != nil {
+	if err := d.CompleteMessage(ctx, reports[0].ID, StatusDelivered, now, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -268,7 +268,7 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 	}
 
 	// Neither a message no longer pending, nor a transaction rolled back, counts.
-	if err := d.CompleteMessage(ctx, replaced, StatusDelivered, now, nil); !errors.Is(err, ErrNotPending) {
+	if err := d.CompleteMessage(ctx, replaced, StatusDelivered, now, nil, 0); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("err = %v, want ErrNotPending", err)
 	}
 
@@ -280,7 +280,7 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now)); !errors.Is(err, ErrNotFound) {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now), 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 

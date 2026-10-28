@@ -106,6 +106,36 @@ describe("MessageDrawer", () => {
     });
   });
 
+  it("shows the SMPP system ID of a message submitted over SMPP", async () => {
+    const m = message({ submitted_by: "ota@example.com", system_id: "ota1" });
+    serve(m, [[]]);
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    const drawer = screen.getByRole("complementary", { name: "Message 1" });
+    expect(fields(drawer)).toMatchObject({
+      "Submitted by": "ota@example.com",
+      "SMPP system ID": "ota1",
+    });
+    await within(drawer).findByRole("heading", {
+      name: /^Delivery attempts/,
+    });
+  });
+
+  it("shows no SMPP system ID for a message not submitted over SMPP", async () => {
+    const m = message({ submitted_by: "api@example.com" });
+    serve(m, [[]]);
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    const drawer = screen.getByRole("complementary", { name: "Message 1" });
+    expect(fields(drawer)).toMatchObject({ "Submitted by": "api@example.com" });
+    expect(fields(drawer)).not.toHaveProperty("SMPP system ID");
+    await within(drawer).findByRole("heading", {
+      name: /^Delivery attempts/,
+    });
+  });
+
   it("loads more attempts on request", async () => {
     const m = message();
     const first = Array.from({ length: 100 }, (_, i) => attempt({ id: i + 1 }));

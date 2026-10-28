@@ -110,7 +110,9 @@ type fakeCore struct {
 	answerMT                 func(imsi string) *diameter.Message
 	routings                 []routingRequest
 	delivered                []mtMessage
-	reports                  []deliveryReport
+	// forwarded are the SMS-DELIVERs of every MT Forward Short Message, whatever the answer.
+	forwarded []mtMessage
+	reports   []deliveryReport
 }
 
 func skipIfNoSCTP(t testing.TB) {
@@ -312,6 +314,7 @@ func (c *fakeCore) forwardShortMessage(req *diameter.Message) *diameter.Message 
 
 	c.mu.Lock()
 	answerMT := c.answerMT
+	c.forwarded = append(c.forwarded, mtMessage{imsi: imsi, tpdu: smRPUI.Data})
 	c.mu.Unlock()
 
 	if answerMT != nil {
@@ -395,6 +398,21 @@ func (c *fakeCore) deliveredTo(imsi string) []mtMessage {
 	var out []mtMessage
 
 	for _, m := range c.delivered {
+		if m.imsi == imsi {
+			out = append(out, m)
+		}
+	}
+
+	return out
+}
+
+func (c *fakeCore) forwardedTo(imsi string) []mtMessage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var out []mtMessage
+
+	for _, m := range c.forwarded {
 		if m.imsi == imsi {
 			out = append(out, m)
 		}

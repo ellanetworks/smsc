@@ -83,14 +83,14 @@ func Login(a *auth) http.Handler {
 		}
 
 		if !ok || err != nil {
-			a.failures.allow(account)
+			a.failures.Allow(account)
 			a.audit(r, "auth_login", params.Email, "User failed to log in")
 			writeError(w, http.StatusUnauthorized, "The email or password is incorrect. Try again.", nil, cfg.Logger)
 
 			return
 		}
 
-		a.failures.reset(account)
+		a.failures.Reset(account)
 
 		if err := cfg.Auth.DeleteExpiredSessions(r.Context(), cfg.Now()); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to log in", err, cfg.Logger)
@@ -110,7 +110,7 @@ func Login(a *auth) http.Handler {
 // allowLogin counts an attempt to log in or to initialize from the client of a request, and writes 429 when there have
 // been too many.
 func (a *auth) allowLogin(w http.ResponseWriter, r *http.Request) bool {
-	if a.logins.allow(clientKey(r)) {
+	if a.logins.Allow(clientKey(r)) {
 		return true
 	}
 
@@ -122,7 +122,7 @@ func (a *auth) allowLogin(w http.ResponseWriter, r *http.Request) bool {
 
 // allowAccount writes 429 when an account has had too many wrong passwords, from whatever clients.
 func (a *auth) allowAccount(w http.ResponseWriter, account string) bool {
-	if !a.failures.exceeded(account) {
+	if !a.failures.Exceeded(account) {
 		return true
 	}
 

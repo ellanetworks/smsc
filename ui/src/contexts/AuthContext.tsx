@@ -25,6 +25,8 @@ export type Permission =
   | "message:content"
   | "diameter:read"
   | "diameter:update"
+  | "esme:read"
+  | "esme:update"
   | "operator:read"
   | "operator:update"
   | "delivery:read"
@@ -40,6 +42,8 @@ const permissions: Record<RoleID, Permission[]> = {
     "message:content",
     "diameter:read",
     "diameter:update",
+    "esme:read",
+    "esme:update",
     "operator:read",
     "operator:update",
     "delivery:read",
@@ -51,6 +55,7 @@ const permissions: Record<RoleID, Permission[]> = {
   [RoleID.ReadOnly]: [
     "message:read",
     "diameter:read",
+    "esme:read",
     "operator:read",
     "delivery:read",
     "retention:read",
@@ -61,6 +66,7 @@ const permissions: Record<RoleID, Permission[]> = {
     "message:content",
     "diameter:read",
     "diameter:update",
+    "esme:read",
     "operator:read",
     "operator:update",
     "delivery:read",

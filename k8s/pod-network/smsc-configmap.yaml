@@ -12,6 +12,15 @@ data:
       address: 0.0.0.0
       port: 5010
       drain_delay: 5s
+    # Optional: the SMPP 3.4 listener for ESMEs, reached on the pod network
+    # through the ella-smsc Service. TLS needs a Secret mounted at /tls. Without
+    # tls, plain TCP, for a private link or a lab only.
+    # smpp:
+    #   address: 0.0.0.0
+    #   port: 2775
+    #   tls:
+    #     cert: /tls/tls.crt
+    #     key: /tls/tls.key
     diameter:
       name: eth0
       port: 3868

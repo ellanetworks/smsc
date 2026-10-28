@@ -362,9 +362,13 @@ function MessageDetail({
   const rows: [string, ReactNode][] = [
     ["From", message.from],
     ["To", message.to],
+  ];
+  if (message.submitted_by) rows.push(["Submitted by", message.submitted_by]);
+  if (message.system_id) rows.push(["SMPP system ID", message.system_id]);
+  rows.push(
     ["Encoding", encodingLabels[message.encoding]],
     ["Part", partLabel(message)],
-  ];
+  );
   if (message.concatenation) {
     rows.push(["Reference", message.concatenation.reference]);
   }

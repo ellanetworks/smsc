@@ -18,6 +18,20 @@ Applications, such as an OTA platform, use an API token rather than a password. 
 
 Give each application its own Submitter user: it can send messages, and read only the messages it sent.
 
+## ESMEs
+
+An ESME, such as an OTA platform, binds to the [SMPP listener](../reference/smpp.md) with a `system_id` and a password. SMPP 3.4 limits that password to 8 characters, so Ella SMSC adds other checks:
+
+- Each ESME acts as a user, whose role decides whether it may submit or receive. Give each ESME a dedicated Submitter user.
+- An ESME binds only from the networks in its allow-list. An empty list allows no address.
+- Passwords are stored as bcrypt hashes. A password the SMSC generates has 8 random letters and digits.
+- Binds are limited from each address, and wrong passwords for each ESME. Every refused bind gets the same answer, so a client cannot tell which check failed.
+- Only an Admin, logged in rather than with an API token, creates, changes or deletes ESMEs.
+
+SMPP 3.4 has no encryption: the password and the messages cross the network in clear. TLS, with `smpp.tls`, is a common convention outside SMPP 3.4, which the ESME must support. Use plain TCP only over a private link, such as an IPsec VPN, or in a lab.
+
+The allow-list checks the address of the TCP connection. Terminate TLS in Ella SMSC itself, not in a proxy or load balancer, which would hide the ESME's address. On Kubernetes, the Service keeps it with `externalTrafficPolicy: Local`.
+
 ## Message content
 
 Messages carry personal content. Reading it is a permission of its own: a Read Only user sees that messages were sent and delivered, but not what they say. Every read of the content is recorded in an [audit event](../reference/observability.md#audit-events), with who read it and from where.

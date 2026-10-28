@@ -4,7 +4,7 @@ description: How Ella SMSC is built and where it sits in a 4G or 5G network.
 
 # Architecture
 
-A Short Message Service Centre (SMSC) stores the short messages phones send, and forwards them to their recipients. Ella SMSC is a single process, with one SQLite database, one UI and one API.
+A Short Message Service Centre (SMSC) stores the short messages phones send, and forwards them to their recipients. Ella SMSC is a single process, with one SQLite database, one UI, one API and, when configured, an SMPP listener.
 
 ## Where Ella SMSC sits
 
@@ -30,7 +30,7 @@ When an agent fails with a short message in flight, Ella SMSC sends it through t
 
 A phone's message reaches Ella SMSC when the SMSC number on its SIM card is Ella SMSC's service centre address. The MME, SMSF or IP-SM-GW gives the phone's MSISDN, which is the sender. Ella SMSC converts the recipient to an international number with the operator's numbering plan, stores the message, and acknowledges it.
 
-Applications send messages to phones with the [Messages API](../reference/api/messages.md).
+Applications send messages to phones with the [Messages API](../reference/api/messages.md), or over [SMPP](#esmes-over-smpp).
 
 ## Delivering
 
@@ -52,6 +52,22 @@ A message ends:
 ## Status reports
 
 When a phone asks for status reports, Ella SMSC returns one to it when the message ends. It delivers the report as it does a message.
+
+## ESMEs over SMPP
+
+Platforms built for SMSCs, such as OTA platforms, connect as External Short Message Entities (ESMEs), over SMPP 3.4:
+
+```
+OTA platform (ESME) ──SMPP over TCP or TLS, 2775──▶ SMPP listener ──▶ submission ──▶ database ──▶ delivery ──▶ HSS, MME, SMSF
+        ▲                                                                                       │
+        └──────────────── deliver_sm: receipts, SIM answers ◀── notifications ◀─────────────────┘
+```
+
+- **The SMPP listener** accepts the ESMEs' connections, checks each bind against the ESME accounts, and keeps the sessions. An ESME account acts as a user: the messages it submits are that user's, and the user's role decides what it may do.
+- **Submission.** Each `submit_sm` becomes one short message, through the same path as the [Messages API](../reference/api/messages.md), so the same parameters give the same message. Ella SMSC answers once the message is stored, then delivers it as any other.
+- **Notifications.** When a message from an ESME ends, Ella SMSC queues, in the same database transaction, the delivery receipt and the SIM's answer that the ESME asked for. It sends them as `deliver_sm` to a receiving session of that ESME, the answer first, and keeps them until the ESME acknowledges them, binds again, or they expire. They survive a restart.
+
+See the [SMPP reference](../reference/smpp.md).
 
 ## Binary messages
 

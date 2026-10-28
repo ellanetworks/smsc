@@ -78,7 +78,7 @@ type statusFailingStore struct {
 	*fakeStore
 }
 
-func (s statusFailingStore) CompleteMessage(context.Context, int64, db.MessageStatus, time.Time, *db.NewStatusReport) error {
+func (s statusFailingStore) CompleteMessage(context.Context, int64, db.MessageStatus, time.Time, *db.NewStatusReport, uint8) error {
 	return errors.New("disk I/O error")
 }
 

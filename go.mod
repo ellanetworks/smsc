@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/ellanetworks/core/diameter v0.0.0-20261028142934-a0bd68b1ecf8
 	github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f
+	github.com/ellanetworks/smsc/smpp v0.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/linxGnu/gosmpp v0.3.1
 	github.com/mattn/go-sqlite3 v1.14.52
@@ -20,8 +21,12 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/orcaman/concurrent-map/v2 v2.0.1 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
+	golang.org/x/exp v0.0.0-20240604190554-fc45aab8b7f8 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/ellanetworks/smsc/smpp => ./smpp

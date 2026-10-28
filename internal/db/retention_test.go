@@ -259,7 +259,7 @@ func create(t *testing.T, d *DB, at time.Time) int64 {
 func completed(status MessageStatus, at time.Time) func(t *testing.T, d *DB) (int64, int64) {
 	return func(t *testing.T, d *DB) (int64, int64) {
 		id := create(t, d, at.Add(-time.Hour))
-		if err := d.CompleteMessage(context.Background(), id, status, at, nil); err != nil {
+		if err := d.CompleteMessage(context.Background(), id, status, at, nil, 0); err != nil {
 			t.Fatalf("CompleteMessage: %v", err)
 		}
 
@@ -274,7 +274,7 @@ func reported(delivered, reportDone time.Time) func(t *testing.T, d *DB) (int64,
 		ctx := context.Background()
 		id := create(t, d, delivered.Add(-time.Hour))
 
-		if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, testReport(delivered)); err != nil {
+		if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, testReport(delivered), 0); err != nil {
 			t.Fatalf("CompleteMessage: %v", err)
 		}
 
@@ -284,7 +284,7 @@ func reported(delivered, reportDone time.Time) func(t *testing.T, d *DB) (int64,
 		}
 
 		if !reportDone.IsZero() {
-			if err := d.CompleteMessage(ctx, reports[0].ID, StatusDelivered, reportDone, nil); err != nil {
+			if err := d.CompleteMessage(ctx, reports[0].ID, StatusDelivered, reportDone, nil, 0); err != nil {
 				t.Fatalf("CompleteMessage of the report: %v", err)
 			}
 		}

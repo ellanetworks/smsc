@@ -121,7 +121,7 @@ func TestMessageLifecycle(t *testing.T) {
 	}
 
 	delivered := submitted.Add(time.Second)
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, nil); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, nil, 0); err != nil {
 		t.Fatalf("CompleteMessage: %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestGetMessageNotFound(t *testing.T) {
 }
 
 func TestCompleteMessageNotFound(t *testing.T) {
-	err := openTestDB(t).CompleteMessage(context.Background(), 42, StatusFailed, time.Now(), nil)
+	err := openTestDB(t).CompleteMessage(context.Background(), 42, StatusFailed, time.Now(), nil, 0)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -158,7 +158,7 @@ func TestCompleteMessageRejectsOtherStatuses(t *testing.T) {
 	}
 
 	for _, status := range []MessageStatus{StatusPending, StatusReplaced, "lost"} {
-		if err := d.CompleteMessage(ctx, id, status, time.Now(), nil); err == nil {
+		if err := d.CompleteMessage(ctx, id, status, time.Now(), nil, 0); err == nil {
 			t.Fatalf("expected an error for status %q", status)
 		}
 	}
@@ -174,11 +174,11 @@ func TestCompleteMessageOnlyCompletesPendingMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusFailed, now, nil); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusFailed, now, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	err = d.CompleteMessage(ctx, id, StatusDelivered, now.Add(time.Second), testReport(now))
+	err = d.CompleteMessage(ctx, id, StatusDelivered, now.Add(time.Second), testReport(now), 0)
 	if !errors.Is(err, ErrNotPending) {
 		t.Fatalf("err = %v, want ErrNotPending", err)
 	}
@@ -380,7 +380,7 @@ func TestListMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, ids[3], StatusDelivered, now, nil); err != nil {
+	if err := d.CompleteMessage(ctx, ids[3], StatusDelivered, now, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -464,7 +464,7 @@ func TestRejectDuplicates(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil); err != nil {
+		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -584,7 +584,7 @@ func TestReplaceShortMessage(t *testing.T) {
 		})
 	}
 
-	if err := d.CompleteMessage(ctx, replacementID, StatusDelivered, now, nil); err != nil {
+	if err := d.CompleteMessage(ctx, replacementID, StatusDelivered, now, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -727,11 +727,11 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("NextDueFor = %+v, %v, %v; want message %d", next, ok, err, second)
 	}
 
-	if err := d.CompleteMessage(ctx, second, StatusExpired, base, nil); err != nil {
+	if err := d.CompleteMessage(ctx, second, StatusExpired, base, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, first, StatusDelivered, base, nil); err != nil {
+	if err := d.CompleteMessage(ctx, first, StatusDelivered, base, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -989,7 +989,7 @@ func TestCountPending(t *testing.T) {
 	}
 
 	// One is delivered, with a status report that is due, one waits for a retry, and one is due.
-	if err := d.CompleteMessage(ctx, 1, StatusDelivered, now, testReport(now)); err != nil {
+	if err := d.CompleteMessage(ctx, 1, StatusDelivered, now, testReport(now), 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1008,7 +1008,7 @@ func TestCountPending(t *testing.T) {
 		t.Fatalf("CountPending a minute later = %+v, %v, want %+v", got, err, want)
 	}
 
-	if err := d.CompleteMessage(ctx, 4, StatusDelivered, now, nil); err != nil {
+	if err := d.CompleteMessage(ctx, 4, StatusDelivered, now, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 

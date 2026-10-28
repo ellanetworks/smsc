@@ -8,8 +8,17 @@ spec:
   selector:
     app: ella-smsc
   type: NodePort
+  # Keeps the client address, which the API's rate limits and each ESME's
+  # allowed networks are checked against: Cluster may SNAT it to a node's.
+  externalTrafficPolicy: Local
   ports:
   - name: http
     protocol: TCP
     port: 5010
     targetPort: 5010
+  # SMPP, on the pod network in both variants. The listener runs only with an
+  # smpp block in the ConfigMap. TLS, if any, is terminated in the pod.
+  - name: smpp
+    protocol: TCP
+    port: 2775
+    targetPort: smpp

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/ratelimit"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -102,26 +103,34 @@ const (
 	PermManageUsers Permission = "user:admin"
 	// PermReadProfiles is reading the runtime profiles of the SMSC.
 	PermReadProfiles Permission = "pprof:read"
+	PermReadESME     Permission = "esme:read"
+	// PermUpdateESME is managing the ESME accounts, each a credential that acts as its user over SMPP. Only an Admin
+	// may, as only an Admin may make credentials for another user.
+	PermUpdateESME Permission = "esme:update"
 )
 
 var permissions = map[db.Role][]Permission{
 	db.RoleAdmin: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
-		PermReadProfiles, PermUpdateDiameter,
+		PermReadProfiles, PermUpdateDiameter, PermReadESME, PermUpdateESME,
 	},
 	// Read Only sees messages but not their content.
-	db.RoleReadOnly: {PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf},
+	db.RoleReadOnly: {
+		PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf, PermReadESME,
+	},
 	db.RoleNetworkManager: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermUpdateDiameter,
+		PermReadESME,
 	},
 	// A Submitter reads only the messages it submitted, which the message routes enforce.
 	// A Submitter reads only its own submissions, their content included.
 	db.RoleSubmitter: {PermCreateMessage, PermReadMessage, PermReadMessageContent, PermSelf},
 }
 
-func allowed(role db.Role, perm Permission) bool {
+// Allowed reports whether a role allows a permission. The SMPP listener checks the role of an ESME's user with it.
+func Allowed(role db.Role, perm Permission) bool {
 	for _, p := range permissions[role] {
 		if p == perm {
 			return true
@@ -160,8 +169,8 @@ type auth struct {
 	// whether or not its email exists.
 	dummyHash []byte
 	// logins limits the logins and initializations per client, and failures the wrong passwords per account.
-	logins   *rateLimiter
-	failures *rateLimiter
+	logins   *ratelimit.Limiter
+	failures *ratelimit.Limiter
 	// bcrypt bounds the concurrent bcrypt computations, which take tens of milliseconds of CPU each, so that a flood of
 	// logins cannot take every CPU.
 	bcrypt chan struct{}
@@ -185,8 +194,8 @@ func newAuth(cfg Config) *auth {
 	return &auth{
 		cfg:       cfg,
 		dummyHash: dummy,
-		logins:    newRateLimiter(LoginRateLimit, LoginRateWindow, cfg.Now),
-		failures:  newRateLimiter(AccountFailureLimit, AccountFailureWindow, cfg.Now),
+		logins:    ratelimit.New(LoginRateLimit, LoginRateWindow, cfg.Now),
+		failures:  ratelimit.New(AccountFailureLimit, AccountFailureWindow, cfg.Now),
 		bcrypt:    make(chan struct{}, runtime.GOMAXPROCS(0)),
 		touched:   map[int64]time.Time{},
 	}
@@ -398,7 +407,7 @@ func (a *auth) checkAccessToken(ctx context.Context, token string) (int64, error
 // authorize passes on the requests whose principal's role allows perm.
 func (a *auth) authorize(perm Permission, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p, ok := PrincipalFrom(r.Context()); !ok || !allowed(p.Role, perm) {
+		if p, ok := PrincipalFrom(r.Context()); !ok || !Allowed(p.Role, perm) {
 			writeError(w, http.StatusForbidden, "Forbidden", nil, a.cfg.Logger)
 			return
 		}

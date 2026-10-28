@@ -36,6 +36,7 @@ type fakeStore struct {
 	alertMSISDNs map[string]string
 	recipients   []string
 	reports      map[int64]*db.NewStatusReport
+	tpStatuses   map[int64]uint8
 }
 
 type attempt struct {
@@ -108,7 +109,9 @@ func (s *fakeStore) NextWakeup(context.Context, []string) (time.Time, bool, erro
 	return time.Time{}, false, nil
 }
 
-func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.MessageStatus, _ time.Time, report *db.NewStatusReport) error {
+func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.MessageStatus, _ time.Time, report *db.NewStatusReport,
+	tpStatus uint8,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -117,6 +120,12 @@ func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.Messa
 	}
 
 	s.messages[id].Status = status
+
+	if s.tpStatuses == nil {
+		s.tpStatuses = map[int64]uint8{}
+	}
+
+	s.tpStatuses[id] = tpStatus
 
 	if report != nil {
 		s.reports[id] = report
@@ -1723,5 +1732,63 @@ func TestSessionFallsBackToTheOtherServingNodes(t *testing.T) {
 	if !slices.Equal(sender.peers, []string{"mme.example.org", "mme.example.org", "sgsn.example.org"}) ||
 		store.messages[2].Status != db.StatusDelivered {
 		t.Fatalf("TFRs to %v, second message %s", sender.peers, store.messages[2].Status)
+	}
+}
+
+// TestCompletedIsCalledOncePerCompletion checks that the SMPP dispatcher is woken once per final status, and that the
+// TP-Status of the outcome is stored with it, for the receipt (spec_smpp.md §7.1).
+func TestCompletedIsCalledOncePerCompletion(t *testing.T) {
+	tests := map[string]struct {
+		answer   *diameter.Message
+		status   db.MessageStatus
+		tpStatus uint8
+		calls    int
+	}{
+		"delivered": {answer: success(), status: db.StatusDelivered, tpStatus: uint8(tpdu.StatusReceived), calls: 1},
+		// The (U)SIM answered RP-ERROR with TP-FCS 0xD5: failed on the first attempt.
+		"usim data download error": {
+			answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x00, tpdu.FailureUSIMDataDownloadError, 0x00),
+			status: db.StatusFailed, tpStatus: uint8(tpdu.StatusConnectionRejected), calls: 1,
+		},
+		"retried": {answer: experimental(tgpp.ResultErrorAbsentUser), status: db.StatusPending},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore(pendingMessage(t))
+			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": tt.answer}}
+			d := newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender)
+
+			calls := 0
+			d.Completed = func() { calls++ }
+
+			process(t, d)
+
+			if got := store.messages[1].Status; got != tt.status {
+				t.Fatalf("status = %s, want %s", got, tt.status)
+			}
+
+			if calls != tt.calls {
+				t.Fatalf("Completed called %d times, want %d", calls, tt.calls)
+			}
+
+			if got, ok := store.tpStatuses[1]; tt.calls > 0 && (!ok || got != tt.tpStatus) {
+				t.Fatalf("TP-Status = %#x, want %#x", got, tt.tpStatus)
+			}
+
+			// One delivery attempt, whose report is the last, and so the SIM answer.
+			deliveries := 0
+
+			for _, a := range store.attempts {
+				if a.Step == db.StepDelivery {
+					deliveries++
+				}
+			}
+
+			if last := store.attempts[len(store.attempts)-1]; tt.status == db.StatusFailed &&
+				(deliveries != 1 || last.Step != db.StepDelivery || len(last.DeliverReport) == 0) {
+				t.Fatalf("%d delivery attempts, the last %+v; want one, with the RP-ERROR report", deliveries, last)
+			}
+		})
 	}
 }

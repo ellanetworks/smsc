@@ -81,6 +81,7 @@ func testConfig(t *testing.T, store *db.DB) api.Config {
 		Settings:   settings.NewLive(store, testSettings(t, store)),
 		Notify:     func() {},
 		Auth:       store,
+		ESMEs:      store,
 		JWTSecret:  testJWTSecret,
 		BcryptCost: bcrypt.MinCost,
 		Now:        func() time.Time { return testNow },
@@ -489,7 +490,7 @@ func TestGetMessageContentRefusals(t *testing.T) {
 	if err := a.store.CompleteMessage(ctx, m, db.StatusDelivered, testNow, &db.NewStatusReport{
 		Originator: db.Address{Digits: "15550000000", TypeOfNumber: 1, NumberingPlan: 1}, TPDU: []byte{0x06},
 		CreatedAt: testNow, ExpiresAt: testNow.Add(time.Hour),
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -679,7 +680,7 @@ func TestListMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := a.store.CompleteMessage(context.Background(), 3, db.StatusDelivered, testNow, nil); err != nil {
+	if err := a.store.CompleteMessage(context.Background(), 3, db.StatusDelivered, testNow, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 

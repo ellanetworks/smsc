@@ -21,6 +21,7 @@ tags:
   - name: Messages
   - name: Operator
   - name: Diameter
+  - name: SMPP
   - name: Delivery
   - name: Status
   - name: Metrics
@@ -367,6 +368,130 @@ paths:
           $ref: "#/components/responses/Success"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/esmes:
+    get:
+      tags: [SMPP]
+      operationId: listESMEs
+      summary: List ESMEs
+      description: The accounts that External Short Message Entities bind to the SMPP listener with, and their sessions.
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ESME"
+    post:
+      tags: [SMPP]
+      operationId: createESME
+      summary: Create ESME
+      description: >-
+        The ESME acts as its user: the messages it submits are the user's, and the user's role decides which binds
+        it may make. Without a password, the SMSC generates one of 8 characters, which only this response returns.
+        Needs a login, not an API token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateESMEParams"
+      responses:
+        "201":
+          $ref: "#/components/responses/ESME"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/esmes/{system_id}:
+    get:
+      tags: [SMPP]
+      operationId: getESME
+      summary: Get ESME
+      parameters:
+        - $ref: "#/components/parameters/SystemID"
+      responses:
+        "200":
+          $ref: "#/components/responses/ESME"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [SMPP]
+      operationId: updateESME
+      summary: Update ESME
+      description: >-
+        Closes the ESME's sessions, which bind again under the new settings. Without a password, the password stays.
+        Needs a login, not an API token.
+      parameters:
+        - $ref: "#/components/parameters/SystemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateESMEParams"
+      responses:
+        "200":
+          $ref: "#/components/responses/ESME"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [SMPP]
+      operationId: deleteESME
+      summary: Delete ESME
+      description: >-
+        Closes the ESME's sessions, and drops the receipts and SIM answers not yet sent to it. Its messages stay, as
+        its user's. Needs a login, not an API token.
+      parameters:
+        - $ref: "#/components/parameters/SystemID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1161,6 +1286,15 @@ components:
       description: The ID of the token, the part of it between ellasmsc_ and the next underscore.
       schema:
         type: string
+    SystemID:
+      name: system_id
+      in: path
+      required: true
+      description: The system_id of the ESME, URL-encoded.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 15
     PeerID:
       name: id
       in: path
@@ -1267,6 +1401,120 @@ components:
           default: 0
           description: The peers of a route are tried lowest priority first. Peers of equal priority share the requests.
 
+    ESME:
+      type: object
+      required:
+        [system_id, user, allowed_networks, max_sessions, forward_sim_answers, default_alphabet, created_at, sessions]
+      properties:
+        system_id:
+          type: string
+          minLength: 1
+          maxLength: 15
+        user:
+          type: string
+          format: email
+          description: The user the ESME acts as.
+        allowed_networks:
+          type: array
+          description: The networks that the ESME may bind from. None allows no address.
+          items:
+            type: string
+            example: 10.1.0.0/24
+        max_sessions:
+          type: integer
+          minimum: 1
+          maximum: 16
+        forward_sim_answers:
+          type: boolean
+          description: >-
+            Whether to forward the SIM's answer to a (U)SIM data download message (TP-PID 0x7F) as a deliver_sm even
+            when registered_delivery does not ask for an SME Manual/User Acknowledgement.
+        default_alphabet:
+          type: string
+          enum: [gsm7, latin1]
+          description: What the ESME means by data_coding 0x00, which SMPP 3.4 leaves to the SMSC.
+        created_at:
+          type: string
+          format: date-time
+        sessions:
+          type: array
+          items:
+            type: object
+            required: [bind_type, remote_address, bound_at]
+            properties:
+              bind_type:
+                type: string
+                enum: [transmitter, receiver, transceiver]
+              remote_address:
+                type: string
+              bound_at:
+                type: string
+                format: date-time
+        password:
+          type: string
+          description: The generated password, in the response that creates the ESME only.
+
+    CreateESMEParams:
+      type: object
+      additionalProperties: false
+      required: [system_id, user]
+      properties:
+        system_id:
+          type: string
+          minLength: 1
+          maxLength: 15
+          description: Printable ASCII.
+        user:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+          maxLength: 8
+          description: Printable ASCII. Absent, the SMSC generates one.
+        allowed_networks:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        max_sessions:
+          type: integer
+          minimum: 1
+          maximum: 16
+          default: 4
+        forward_sim_answers:
+          type: boolean
+          default: false
+        default_alphabet:
+          type: string
+          enum: [gsm7, latin1]
+          default: gsm7
+
+    UpdateESMEParams:
+      type: object
+      additionalProperties: false
+      required: [allowed_networks, max_sessions, forward_sim_answers, default_alphabet]
+      properties:
+        password:
+          type: string
+          minLength: 1
+          maxLength: 8
+          description: Printable ASCII. Absent, the password stays.
+        allowed_networks:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        max_sessions:
+          type: integer
+          minimum: 1
+          maximum: 16
+        forward_sim_answers:
+          type: boolean
+        default_alphabet:
+          type: string
+          enum: [gsm7, latin1]
+
     Peer:
       type: object
       required: [id, host, addresses, port, routes]
@@ -1339,6 +1587,16 @@ components:
             properties:
               result:
                 $ref: "#/components/schemas/RetentionSettings"
+    ESME:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/ESME"
     Peer:
       description: OK
       content:
@@ -1880,8 +2138,11 @@ components:
           type: string
           format: email
           description: >-
-            The user that submitted a message over the API. A user with the Submitter role reads only the messages
-            it submitted.
+            The user that submitted a message over the API or SMPP. A user with the Submitter role reads only the
+            messages it submitted.
+        system_id:
+          type: string
+          description: The ESME that submitted a message over SMPP, while it exists.
 
     MessageContent:
       type: object

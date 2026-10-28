@@ -1,6 +1,6 @@
 // Package intake counts the short messages the SMSC receives. Each entry point counts the messages it receives
-// itself: the SGd handler those that phones send, and the API those that it submits, so that no message is counted
-// twice.
+// itself: the SGd handler those that phones send, the API and the SMPP listener those that they submit, so that no
+// message is counted twice.
 package intake
 
 import "github.com/prometheus/client_golang/prometheus"
@@ -9,6 +9,9 @@ import "github.com/prometheus/client_golang/prometheus"
 const (
 	OriginMobile = "mobile"
 	OriginAPI    = "api"
+	// OriginSMPP is a submit_sm from an ESME (SMPP 3.4 section 4.4), which makes exactly one TPDU, so that it is
+	// counted whether it is accepted, rejected or failed.
+	OriginSMPP = "smpp"
 )
 
 // The results of receiving a message: stored for delivery, refused, or not stored because the SMSC failed.
@@ -27,13 +30,20 @@ func New() *Received {
 	r := &Received{
 		messages: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ellasmsc_messages_received_total",
-			Help: "Short messages received, one per TPDU, by origin (mobile, api) and result (accepted, rejected, error).",
+			Help: "Short messages received, one per TPDU, by origin (mobile, api, smpp) and result (accepted, rejected, error).",
 		}, []string{"origin", "result"}),
 	}
 
 	// The API refuses an invalid request before it is split into messages, so it has no rejected messages.
 	for _, series := range [][2]string{
-		{OriginMobile, Accepted}, {OriginMobile, Rejected}, {OriginMobile, Error}, {OriginAPI, Accepted}, {OriginAPI, Error},
+		{OriginMobile, Accepted},
+		{OriginMobile, Rejected},
+		{OriginMobile, Error},
+		{OriginAPI, Accepted},
+		{OriginAPI, Error},
+		{OriginSMPP, Accepted},
+		{OriginSMPP, Rejected},
+		{OriginSMPP, Error},
 	} {
 		r.messages.WithLabelValues(series[0], series[1])
 	}

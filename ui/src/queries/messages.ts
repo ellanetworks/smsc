@@ -48,6 +48,8 @@ export interface Message {
   next_attempt_at?: string;
   status_report: StatusReports;
   submitted_by?: string;
+  // system_id is the ESME that submitted the message over SMPP.
+  system_id?: string;
 }
 
 // Octets are in hexadecimal, two digits each.

@@ -112,7 +112,7 @@ At most 50 users.
 
 ## Update a User
 
-This path changes the role of a user, and ends its sessions. An Admin cannot change its own role.
+This path changes the role of a user, and ends its sessions and the SMPP sessions of its [ESMEs](esmes.md). An Admin cannot change its own role.
 
 | Method | Path                      |
 | ------ | ------------------------- |
@@ -140,7 +140,7 @@ This path ends the user's sessions. An Admin cannot update its own password here
 
 ## Delete a User
 
-This path deletes the user with its sessions and API tokens. An Admin cannot delete itself.
+This path deletes the user with its sessions, API tokens and [ESMEs](esmes.md). An Admin cannot delete itself.
 
 | Method | Path                      |
 | ------ | ------------------------- |

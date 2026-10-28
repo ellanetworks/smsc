@@ -30,7 +30,8 @@ const mwdStatusFlags = s6c.MWDStatusMNRF | s6c.MWDStatusMCEF | s6c.MWDStatusMNRG
 type Store interface {
 	NextDue(ctx context.Context, now time.Time, busy []string) (db.Message, bool, error)
 	NextWakeup(ctx context.Context, busy []string) (time.Time, bool, error)
-	CompleteMessage(ctx context.Context, id int64, status db.MessageStatus, at time.Time, report *db.NewStatusReport) error
+	CompleteMessage(ctx context.Context, id int64, status db.MessageStatus, at time.Time, report *db.NewStatusReport,
+		tpStatus uint8) error
 	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) error
 	AlertRecipient(ctx context.Context, msisdn string, now time.Time) ([]string, error)
 	SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error
@@ -61,6 +62,9 @@ type Deliverer struct {
 	Metrics        *Metrics
 	Now            func() time.Time
 	Logger         *slog.Logger
+	// Completed, when set, is called after each message gets its final status, which may have queued SMPP
+	// notifications on it.
+	Completed func()
 
 	wakeOnce sync.Once
 	wake     chan struct{}
@@ -377,7 +381,7 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 			slog.Any("error", err))
 	}
 
-	err = d.Store.CompleteMessage(ctx, m.ID, status, at, report)
+	err = d.Store.CompleteMessage(ctx, m.ID, status, at, report, uint8(reported))
 	if errors.Is(err, db.ErrNotPending) {
 		d.Logger.Debug("short message replaced during its delivery", slog.Int64("message_id", m.ID),
 			slog.String("status", string(status)))
@@ -391,6 +395,10 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 
 	if status == db.StatusDelivered {
 		d.Metrics.delivered(m, at)
+	}
+
+	if d.Completed != nil {
+		d.Completed()
 	}
 
 	return nil

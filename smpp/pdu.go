@@ -1,6 +1,14 @@
-// Package smpp is an SMPP 3.4 codec: the PDU header (§3.2), the PDUs an SMSC exchanges with an ESME in the
-// transmitter, receiver and transceiver sessions (§4), their optional parameters (§3.2.4, §5.3) and the time format
-// (§7.1.1). Section numbers refer to the SMPP Protocol Specification v3.4, Issue 1.2.
+// Package smpp is the SMPP 3.4 protocol layer of Ella SMSC and its clients. Section numbers refer to the SMPP
+// Protocol Specification v3.4, Issue 1.2.
+//
+//   - The codec: the PDU header (§3.2), the PDUs an SMSC exchanges with an ESME in the transmitter, receiver and
+//     transceiver sessions (§4), their optional parameters (§3.2.4, §5.3) and the time format (§7.1.1).
+//   - Session, the engine that both sides share over a net.Conn: framing, sequence numbers (§5.1.4), responses
+//     matched in any order, windows, the timers of §2.9 and §7.2, enquire_link, generic_nack (§3.3, §4.3), the
+//     states of §2.2 with the requests that each allows (Table 2-1), and unbind.
+//   - Server, the SMSC side: a listener, the bind through an Authenticate callback, and a registry of the bound
+//     sessions by account.
+//   - Client, the ESME side: one session bound and bound again with a backoff, and its state.
 package smpp
 
 import (

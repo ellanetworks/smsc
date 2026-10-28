@@ -12,6 +12,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"github.com/ellanetworks/smsc/internal/submission"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -22,7 +23,40 @@ type Store interface {
 	ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) ([]db.DeliveryAttempt, int, error)
 	ListDeliverReports(ctx context.Context, messageID int64) ([]db.DeliveryAttempt, error)
 	StatusReportsFor(ctx context.Context, messageIDs []int64) (map[int64][]db.Message, error)
+	SystemIDsFor(ctx context.Context, messageIDs []int64) (map[int64]string, error)
 }
+
+// ESMEStore stores the ESME accounts.
+type ESMEStore interface {
+	CountESMEs(ctx context.Context) (int, error)
+	CreateESME(ctx context.Context, e db.ESME) (int64, error)
+	UpdateESME(ctx context.Context, e db.ESME) error
+	DeleteESME(ctx context.Context, id int64) error
+	GetESMEBySystemID(ctx context.Context, systemID string) (db.ESME, error)
+	ListESMEs(ctx context.Context) ([]db.ESME, error)
+}
+
+// SMPP is the SMPP listener: the sessions of the ESMEs, which a change to an ESME or its user closes, so that it binds
+// again under the checks of the change.
+type SMPP interface {
+	CloseESME(esmeID int64)
+	CloseUser(userID int64)
+	Sessions(esmeID int64) []SMPPSession
+}
+
+// SMPPSession is a bound SMPP session.
+type SMPPSession struct {
+	BindType string
+	Remote   string
+	BoundAt  time.Time
+}
+
+// noSMPP is the SMPP of an SMSC without an SMPP listener.
+type noSMPP struct{}
+
+func (noSMPP) CloseESME(int64)              {}
+func (noSMPP) CloseUser(int64)              {}
+func (noSMPP) Sessions(int64) []SMPPSession { return nil }
 
 type Diameter interface {
 	Identity() diameter.Identity
@@ -56,8 +90,10 @@ type Config struct {
 	Diameter Diameter
 	Frontend fs.FS
 	Settings Settings
-	Notify   func()
-	// Received counts the messages the API submits.
+	// Submitter stores the messages the API submits, and counts them.
+	Submitter *submission.Submitter
+	Notify    func()
+	// Received counts the messages the API submits. It is the Submitter's when that is nil.
 	Received *intake.Received
 	// Ready reports why the SMSC cannot serve requests, or nil when it can. GET /api/v1/readyz answers 503 when
 	// it fails. Nil is always ready.
@@ -66,6 +102,9 @@ type Config struct {
 	Metrics prometheus.Gatherer
 	// Auth stores the users, their sessions and their API tokens.
 	Auth AuthStore
+	// ESMEs stores the ESME accounts, and SMPP is the listener they bind to, or nil for none.
+	ESMEs ESMEStore
+	SMPP  SMPP
 	// JWTSecret signs the access tokens.
 	JWTSecret []byte
 	// SecureCookie marks the session cookie Secure, and turns on HSTS, for an API served over TLS.
@@ -108,6 +147,12 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/diameter/peers/{id}", PermReadDiameter, GetPeer(cfg)},
 		{"PUT /api/v1/diameter/peers/{id}", PermUpdateDiameter, UpdatePeer(a)},
 		{"DELETE /api/v1/diameter/peers/{id}", PermUpdateDiameter, DeletePeer(a)},
+		// An ESME is a credential that acts as its user, so changing one needs a login, as an API token does.
+		{"GET /api/v1/esmes", PermReadESME, ListESMEs(cfg)},
+		{"POST /api/v1/esmes", PermUpdateESME, a.needsLogin(CreateESME(a))},
+		{"GET /api/v1/esmes/{system_id}", PermReadESME, GetESME(cfg)},
+		{"PUT /api/v1/esmes/{system_id}", PermUpdateESME, a.needsLogin(UpdateESME(a))},
+		{"DELETE /api/v1/esmes/{system_id}", PermUpdateESME, a.needsLogin(DeleteESME(a))},
 		{"GET /api/v1/operator", PermReadOperator, GetOperator(cfg)},
 		{"PUT /api/v1/operator", PermUpdateOperator, UpdateOperator(cfg)},
 		{"GET /api/v1/delivery", PermReadDelivery, GetDelivery(cfg)},
@@ -153,6 +198,19 @@ func routes(cfg Config, a *auth) []route {
 }
 
 func NewHandler(cfg Config) http.Handler {
+	if cfg.SMPP == nil {
+		cfg.SMPP = noSMPP{}
+	}
+
+	if cfg.Submitter == nil {
+		cfg.Submitter = &submission.Submitter{
+			Store:    cfg.Store,
+			Settings: cfg.Settings.Get,
+			Received: cfg.Received,
+			Now:      cfg.Now,
+		}
+	}
+
 	a := newAuth(cfg)
 	mux := http.NewServeMux()
 

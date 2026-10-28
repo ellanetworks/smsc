@@ -10,7 +10,8 @@ description: Reference of the network interfaces and ports of Ella SMSC.
 | Diameter: S6c | HSS | SCTP | `diameter.address`, or the addresses of `diameter.name` | `diameter.port` (`3868`) |
 | Diameter: SGd | MME, SMSF, IP-SM-GW | SCTP | `diameter.address`, or the addresses of `diameter.name` | `diameter.port` (`3868`) |
 | Diameter: S6c and SGd, outbound | [Configured peers](api/diameter.md#create-a-peer): DEA, DRA | SCTP | The peer's `addresses` | The peer's `port` (`3868`) |
+| [SMPP 3.4](smpp.md) | ESMEs, such as OTA platforms | TCP, or TLS with `smpp.tls` | `smpp.address` | `smpp.port` (`2775`) |
 
-Defaults are in parentheses.
+Defaults are in parentheses. SMPP listens only when the configuration file has an `smpp` block.
 
 Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the configured peers, and reconnects after 1 to 30 seconds.

@@ -27,6 +27,7 @@ import {
   Feed as FeedIcon,
   Hub as HubIcon,
   Info as InfoIcon,
+  Lan as LanIcon,
   LightMode as LightModeIcon,
   Logout as LogoutIcon,
   Menu as MenuIcon,
@@ -97,6 +98,12 @@ const navItems: NavItem[] = [
     label: "Diameter",
     icon: <HubIcon color="primary" />,
     permission: "diameter:read",
+  },
+  {
+    to: "/smpp",
+    label: "SMPP",
+    icon: <LanIcon color="primary" />,
+    permission: "esme:read",
   },
   {
     to: "/messages",

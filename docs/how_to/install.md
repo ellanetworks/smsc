@@ -139,6 +139,10 @@ Choose one of the installation methods below.
 
     Ella SMSC's UI and API are on the `ella-smsc` NodePort Service.
 
+    To enable SMPP, uncomment the `smpp` block in `smsc/k8s/smsc-configmap.yaml`, or `smsc/k8s/pod-network/smsc-configmap.yaml`. SMPP is on the pod network, port `2775` of the `ella-smsc` Service, in both variants. The Service has `externalTrafficPolicy: Local`, so the SMSC sees the ESMEs' own addresses, which their allowed networks are checked against. Terminate TLS in the SMSC pod, with `smpp.tls` and a Secret mounted in the pod: a load balancer, sidecar or ingress that terminates TLS hides the client address.
+
 Ella SMSC's UI and API are at `http://<host-ip>:5010`. Open the UI and create the first user.
+
+With an [`smpp` block](../reference/config_file.md) in the configuration file, Ella SMSC listens for SMPP 3.4 ESMEs, such as OTA platforms, on port `2775`. See [SMPP](../reference/smpp.md).
 
 See the [configuration reference](../reference/config_file.md) for all options.

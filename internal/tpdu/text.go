@@ -330,3 +330,49 @@ func decodeUCS2(b []byte) string {
 
 	return string(utf16.Decode(units))
 }
+
+// PackSeptets packs GSM 7 bit default alphabet septets, one per octet, after a user data header with its length octet,
+// or none, with the fill bits that align the first septet on a septet boundary (TS 23.040 clause 9.2.3.24). It returns
+// the TP-UDL, which counts the header's septets and the septets (TS 23.040 clause 9.2.3.16), and the TP-UD.
+func PackSeptets(header, septets []byte) (uint8, []byte) {
+	p := gsm7Part(header, septets)
+
+	return p.UserDataLength, p.UserData
+}
+
+// HeaderSeptets is how many septets a user data header with its length octet takes, fill bits included, in TP-UD
+// coded in the GSM 7 bit default alphabet (TS 23.040 clause 9.2.3.24).
+func HeaderSeptets(header []byte) int {
+	return (len(header)*8 + 6) / 7
+}
+
+// GSM7Septets returns the septets of text in the GSM 7 bit default alphabet, one per octet, with an escape septet
+// before each character of the extension table (TS 23.038 clause 6.2.1.1), or false when a character has none.
+func GSM7Septets(text string) ([]byte, bool) {
+	chars, ok := gsm7Septets(text)
+	if !ok {
+		return nil, false
+	}
+
+	return flatten(chars), true
+}
+
+// UnpackSeptets returns the septets of TP-UD coded in the GSM 7 bit default alphabet, one per octet, after a user data
+// header of headerOctets octets and its fill bits (TS 23.040 clause 9.2.3.24). udl is the TP-UDL, in septets.
+func UnpackSeptets(ud []byte, headerOctets, udl int) []byte {
+	headerSeptets := (headerOctets*8 + 6) / 7
+	out := make([]byte, 0, max(udl-headerSeptets, 0))
+
+	for i := headerSeptets; i < udl && i*7/8 < len(ud); i++ {
+		out = append(out, septetAt(ud, i))
+	}
+
+	return out
+}
+
+// SeptetsText returns the text of GSM 7 bit default alphabet septets, one per octet (TS 23.038 clause 6.2.1).
+func SeptetsText(septets []byte) string {
+	_, packed := PackSeptets(nil, septets)
+
+	return decodeGSM7(packed, 0, len(septets))
+}
