@@ -73,7 +73,7 @@ func TestRoutesMatchSpec(t *testing.T) {
 			continue
 		}
 
-		op, ok := ops[pattern]
+		op, ok := ops[strings.TrimSuffix(pattern, "{$}")]
 		if !ok {
 			t.Errorf("spec is missing %s", pattern)
 			continue
@@ -85,7 +85,10 @@ func TestRoutesMatchSpec(t *testing.T) {
 	}
 
 	for pattern := range ops {
-		if _, ok := routes[pattern]; !ok {
+		_, ok := routes[pattern]
+		_, exact := routes[pattern+"{$}"]
+
+		if !ok && !exact {
 			t.Errorf("spec documents %s, which is not a route", pattern)
 		}
 	}
@@ -95,7 +98,7 @@ func TestRoutesMatchSpec(t *testing.T) {
 func TestProtectedRoutesRequireToken(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	paths := strings.NewReplacer("{id}", "1", "{email}", testAdmin)
+	paths := strings.NewReplacer("{id}", "1", "{email}", testAdmin, "{$}", "")
 
 	for pattern, public := range api.Routes() {
 		if public {
@@ -196,6 +199,16 @@ func TestRoles(t *testing.T) {
 		"GET /api/v1/users/nobody@example.com/api-tokens":      admin,
 		"POST /api/v1/users/nobody@example.com/api-tokens":     admin,
 		"DELETE /api/v1/users/nobody@example.com/api-tokens/x": admin,
+		"GET /api/v1/pprof/":                                   admin,
+		"GET /api/v1/pprof/allocs":                             admin,
+		"GET /api/v1/pprof/goroutine":                          admin,
+		"GET /api/v1/pprof/heap":                               admin,
+		"GET /api/v1/pprof/threadcreate":                       admin,
+		"GET /api/v1/pprof/cmdline":                            admin,
+		"GET /api/v1/pprof/profile?seconds=1":                  admin,
+		"GET /api/v1/pprof/symbol":                             admin,
+		"POST /api/v1/pprof/symbol":                            admin,
+		"GET /api/v1/pprof/trace?seconds=0.01":                 admin,
 	}
 
 	protected := 0

@@ -1,8 +1,10 @@
 ---
-description: Reference of the metrics and logs of Ella SMSC.
+description: Reference for observability features in Ella SMSC.
 ---
 
 # Observability
+
+Ella Core supports three observability pillars: Metrics, Logs, and Profiles.
 
 ## Metrics
 
@@ -24,6 +26,10 @@ Ella SMSC exposes Prometheus metrics at [`GET /api/v1/metrics`](api/metrics.md).
 | `ellasmsc_database_storage_bytes` | Gauge | Size of the database on disk, by file: `main`, `wal`. |
 | `go_*` | Gauge, Counter, Summary | Go runtime: goroutines, heap, garbage-collection pauses. |
 | `process_*` | Gauge, Counter | Process: memory, CPU, open file descriptors, start time. |
+
+## Profiles
+
+Ella SMSC exposes the [net/http/pprof](https://pkg.go.dev/net/http/pprof) API at [`/api/v1/pprof/`](api/pprof.md).
 
 ## Logs
 
@@ -47,17 +53,3 @@ Audit events are logs at level `info` with `msg` set to `audit event`.
 | `actor` | Email of the user who did it. Empty when unknown. |
 | `ip` | Address the request came from. |
 | `details` | What was done, in words. |
-
-| Action | Logged when |
-| --- | --- |
-| `initialize` | The first user is created. |
-| `auth_login` | A user logs in, or fails to. |
-| `auth_logout` | A user logs out. |
-| `user_authentication` | A request with an invalid or expired token is refused. |
-| `create_user` | A user is created. |
-| `update_user` | A user's role is changed. |
-| `update_user_password` | A user's password is changed. |
-| `delete_user` | A user is deleted. |
-| `create_api_token` | An API token is created. |
-| `delete_api_token` | An API token is deleted. |
-| `read_message_content` | The content of a message is read. |

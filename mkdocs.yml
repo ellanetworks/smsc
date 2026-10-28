@@ -81,6 +81,7 @@ nav:
       - Retention: reference/api/retention.md
       - Status: reference/api/status.md
       - Metrics: reference/api/metrics.md
+      - Pprof: reference/api/pprof.md
     - Configuration File: reference/config_file.md
     - Observability: reference/observability.md
     - Connectivity: reference/connectivity.md

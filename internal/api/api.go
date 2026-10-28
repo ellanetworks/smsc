@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	"github.com/ellanetworks/core/diameter"
@@ -118,6 +119,18 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/users/{email}/api-tokens", PermManageUsers, a.needsLogin(ListAPITokens(a, userOfPath(cfg)))},
 		{"POST /api/v1/users/{email}/api-tokens", PermManageUsers, a.needsLogin(CreateAPIToken(a, userOfPath(cfg)))},
 		{"DELETE /api/v1/users/{email}/api-tokens/{id}", PermManageUsers, a.needsLogin(DeleteAPIToken(a, userOfPath(cfg)))},
+
+		// The profiles take an API token, so that a profiler can scrape them.
+		{"GET /api/v1/pprof/{$}", PermReadProfiles, http.HandlerFunc(pprof.Index)},
+		{"GET /api/v1/pprof/allocs", PermReadProfiles, pprof.Handler("allocs")},
+		{"GET /api/v1/pprof/goroutine", PermReadProfiles, pprof.Handler("goroutine")},
+		{"GET /api/v1/pprof/heap", PermReadProfiles, pprof.Handler("heap")},
+		{"GET /api/v1/pprof/threadcreate", PermReadProfiles, pprof.Handler("threadcreate")},
+		{"GET /api/v1/pprof/cmdline", PermReadProfiles, http.HandlerFunc(pprof.Cmdline)},
+		{"GET /api/v1/pprof/profile", PermReadProfiles, http.HandlerFunc(pprof.Profile)},
+		{"GET /api/v1/pprof/symbol", PermReadProfiles, http.HandlerFunc(pprof.Symbol)},
+		{"POST /api/v1/pprof/symbol", PermReadProfiles, http.HandlerFunc(pprof.Symbol)},
+		{"GET /api/v1/pprof/trace", PermReadProfiles, http.HandlerFunc(pprof.Trace)},
 	}
 
 	// The UI is static files: all its data comes from the API, which authenticates it.

@@ -98,12 +98,15 @@ const (
 	PermSelf Permission = "user:self"
 	// PermManageUsers is managing every user and their API tokens.
 	PermManageUsers Permission = "user:admin"
+	// PermReadProfiles is reading the runtime profiles of the SMSC.
+	PermReadProfiles Permission = "pprof:read"
 )
 
 var permissions = map[db.Role][]Permission{
 	db.RoleAdmin: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
+		PermReadProfiles,
 	},
 	// Read Only sees messages but not their content.
 	db.RoleReadOnly: {PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf},
