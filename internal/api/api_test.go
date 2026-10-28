@@ -714,7 +714,7 @@ func TestListMessagesRejectsInvalidFilters(t *testing.T) {
 
 	for _, query := range []string{
 		"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=15551230002", "?from=abc", "?status=lost",
-		"?start=yesterday", "?end=2026-09-29", "?start=2026-09-29T11:00:00Z&end=2026-09-29T10:00:00Z",
+		"?start=yesterday", "?end=2026-09-29", "?end=9999-12-31T00:00:00Z", "?start=1000-01-01T00:00:00Z", "?start=2026-09-29T11:00:00Z&end=2026-09-29T10:00:00Z",
 	} {
 		if code, _, errMsg := a.do(t, http.MethodGet, "/api/v1/messages"+query, ""); code != http.StatusBadRequest || errMsg == "" {
 			t.Fatalf("%s: code = %d, error = %q", query, code, errMsg)

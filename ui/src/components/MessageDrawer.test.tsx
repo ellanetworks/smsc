@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { authFor } from "@/contexts/AuthContext";
@@ -265,6 +266,30 @@ describe("MessageDrawer", () => {
     expect(
       within(screen.getByRole("complementary")).getByText("replaced"),
     ).toBeInTheDocument();
+  });
+
+  it("takes focus when it opens, and gives it back when it closes", () => {
+    const m = message();
+    serve(m, [[]]);
+    function Harness() {
+      const [open, setOpen] = useState<Message | null>(null);
+      return (
+        <>
+          <button onClick={() => setOpen(m)}>Open</button>
+          <MessageDrawer message={open} onClose={() => setOpen(null)} />
+        </>
+      );
+    }
+
+    renderWithClient(<Harness />);
+    const opener = screen.getByRole("button", { name: "Open" });
+    opener.focus();
+    fireEvent.click(opener);
+
+    expect(screen.getByRole("complementary")).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(opener).toHaveFocus();
   });
 
   it("closes on Escape", () => {

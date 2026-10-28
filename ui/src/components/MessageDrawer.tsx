@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Box,
   Button,
@@ -381,7 +381,20 @@ export default function MessageDrawer({
   onClose,
 }: MessageDrawerProps) {
   const open = message !== null;
+  const panelRef = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(PANEL_DEFAULT_WIDTH);
+
+  // Opening the panel moves focus into it, and closing it gives focus back, to the row that opened it.
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement;
+    panelRef.current?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected) {
+        previous.focus();
+      }
+    };
+  }, [open]);
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
@@ -418,6 +431,8 @@ export default function MessageDrawer({
   return (
     <Box
       component="aside"
+      ref={panelRef}
+      tabIndex={-1}
       aria-labelledby={open ? "message-drawer-title" : undefined}
       aria-hidden={!open}
       inert={!open}
@@ -434,6 +449,7 @@ export default function MessageDrawer({
         boxShadow: open ? 8 : "none",
         display: "flex",
         flexDirection: "row",
+        outline: "none",
       }}
     >
       <Box

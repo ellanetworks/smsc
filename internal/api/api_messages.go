@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -556,7 +557,12 @@ func timeParam(w http.ResponseWriter, value, name string, cfg Config) (time.Time
 		return time.Time{}, true
 	}
 
+	// The database stores times as Unix nanoseconds, which cover the years 1678 to 2262.
 	t, err := time.Parse(time.RFC3339Nano, value)
+	if err == nil && (t.Before(time.Unix(0, math.MinInt64)) || t.After(time.Unix(0, math.MaxInt64))) {
+		err = errors.New("out of range")
+	}
+
 	if err != nil {
 		writeError(w, http.StatusBadRequest, name+" must be an RFC 3339 time such as 2026-10-01T12:00:00Z", nil, cfg.Logger)
 		return time.Time{}, false

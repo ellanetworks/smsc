@@ -269,14 +269,14 @@ func (s *Server) Shutdown(ctx context.Context) {
 	s.stopPurging()
 
 	select {
-	case <-s.purgeDone:
-	case <-ctx.Done():
-	}
-
-	select {
 	case <-s.deliveryDone:
 	case <-ctx.Done():
 		s.Logger.Warn("shutting down with short message deliveries still in flight")
+	}
+
+	select {
+	case <-s.purgeDone:
+	case <-ctx.Done():
 	}
 
 	s.nodes.shutdown(ctx)
