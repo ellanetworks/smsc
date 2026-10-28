@@ -6,6 +6,8 @@ description: RESTful API reference for submitting and viewing short messages in 
 
 A message is a short message the SMSC received, from a phone or from the API, with its delivery status and the status reports the SMSC returned to the phone that sent it. A text longer than one short message is split into parts, one message each.
 
+Responses carry no content. [Get the content of a message](#get-the-content-of-a-message) returns it, and logs an audit event.
+
 ## Create a Message
 
 This path submits a text message to a phone. It returns one message per part.
@@ -50,7 +52,6 @@ A message from the API never asks for status reports, and is kept for the defaul
                 "id": 1,
                 "from": "+15550001000",
                 "to": "+15551230002",
-                "text": "Your code is 1234",
                 "encoding": "gsm7",
                 "status": "pending",
                 "created_at": "2026-10-27T18:44:19.436Z",
@@ -82,6 +83,8 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | `to`       | query | str  |         | E.164 with `+` | Recipient. |
 | `from`     | query | str  |         | E.164 with `+` | Sender. |
 | `status`   | query | str  |         | `pending`, `delivered`, `failed`, `expired`, `replaced` | Status. |
+| `start`    | query | str  |         | RFC 3339 time | Created at or after. |
+| `end`      | query | str  |         | RFC 3339 time, not before `start` | Created before. |
 | `page`     | query | int  | `1`     | `>= 1`  | 1-based page index. |
 | `per_page` | query | int  | `25`    | `1…100` | Number of items per page. |
 
@@ -92,7 +95,6 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | `id`                            | int     | Message identifier. |
 | `from`                          | string  | Sender, an E.164 number with `+`: the MSISDN of the phone, or the `from` of the API request. |
 | `to`                            | string  | Recipient, an E.164 number with `+`. |
-| `text`                          | string  | Text of the part. Absent for a binary message. |
 | `encoding`                      | string  | `gsm7`, `ucs2` or `binary`. |
 | `concatenation`                 | object  | Present for a part of a longer message. |
 | `concatenation.reference`       | int     | Reference shared by the parts of the message. |
@@ -126,7 +128,6 @@ This path returns the list of messages, most recent first. For a Submitter, only
                 "id": 4,
                 "from": "+15550001000",
                 "to": "+15551230001",
-                "text": "an carry, so the SMSC splits it into parts that the phone joins back together. ",
                 "encoding": "gsm7",
                 "concatenation": {
                     "reference": 74,
@@ -179,7 +180,6 @@ This path returns a specific message. For a Submitter, a message it did not send
         "id": 1,
         "from": "+15551230001",
         "to": "+15551230002",
-        "text": "hello",
         "encoding": "gsm7",
         "status": "delivered",
         "created_at": "2026-10-27T18:46:07.350Z",
@@ -199,6 +199,42 @@ This path returns a specific message. For a Submitter, a message it did not send
                 }
             ]
         }
+    }
+}
+```
+
+## Get the Content of a Message
+
+This path returns the content of a message, and logs an audit event `read_message_content` with the email of the caller. For a Submitter, a message it did not send is not found. A Read Only user cannot read content.
+
+| Method | Path                            |
+| ------ | ------------------------------- |
+| GET    | `/api/v1/messages/{id}/content` |
+
+### Path Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| `id` | int  | Message identifier. |
+
+### Response Fields
+
+| Field  | Type   | Description |
+| ------ | ------ | ----------- |
+| `text` | string | Text of the part. Absent for a binary message. |
+
+### Response Codes
+
+| Code  | Description |
+| ----- | ----------- |
+| `404` | No message has this identifier. |
+
+### Sample Response
+
+```json
+{
+    "result": {
+        "text": "Your code is 1234"
     }
 }
 ```

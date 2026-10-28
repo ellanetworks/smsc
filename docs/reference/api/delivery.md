@@ -4,7 +4,7 @@ description: RESTful API reference for managing the delivery settings of Ella SM
 
 # Delivery
 
-The delivery settings set how long the SMSC keeps a message for delivery, and when it retries a failed delivery.
+The delivery settings set how long the SMSC attempts delivery of a message, and when it retries a failed delivery. The [retention](retention.md) sets how long it keeps a message afterwards.
 
 ## Get the Delivery Settings
 
@@ -18,7 +18,7 @@ This path returns the delivery settings.
 
 | Field                      | Type  | Description |
 | -------------------------- | ----- | ----------- |
-| `default_validity_seconds` | int   | How long a message without its own validity period is kept for delivery, in seconds. Status reports are kept as long. |
+| `default_validity_seconds` | int   | How long delivery of a message without its own validity period is attempted, in seconds. The same applies to status reports. |
 | `retry_intervals_seconds`  | array | Wait before each retry, in seconds. The last interval repeats. Empty: a failed delivery is not retried. |
 
 ### Sample Response

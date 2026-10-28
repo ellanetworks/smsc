@@ -37,6 +37,10 @@ type Server struct {
 	attemptTimeout time.Duration
 	// bcryptCost is the cost of the password hashes: bcrypt's default when zero.
 	bcryptCost int
+	// purgeNow and purgeInterval are the clock and the period of the message retention: time.Now and purgeInterval
+	// when zero.
+	purgeNow      func() time.Time
+	purgeInterval time.Duration
 
 	database      *db.DB
 	nodes         *nodeManager
@@ -45,6 +49,8 @@ type Server struct {
 	apiListener   net.Listener
 	stopDelivery  context.CancelFunc
 	deliveryDone  chan struct{}
+	stopPurging   context.CancelFunc
+	purgeDone     chan struct{}
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -195,11 +201,32 @@ func (s *Server) Start(ctx context.Context) error {
 		close(deliveryDone)
 	}()
 
+	purgeCtx, stopPurging := context.WithCancel(base)
+	purgeDone := make(chan struct{})
+	p := &purger{
+		store:    database,
+		settings: live.Get,
+		interval: cmp.Or(s.purgeInterval, purgeInterval),
+		now:      s.purgeNow,
+		logger:   s.Logger,
+	}
+
+	if p.now == nil {
+		p.now = time.Now
+	}
+
+	go func() {
+		p.run(purgeCtx)
+		close(purgeDone)
+	}()
+
 	s.database = database
 	s.nodes = nodes
 	s.stopFollowing = stopFollowing
 	s.stopDelivery = stopDelivery
 	s.deliveryDone = deliveryDone
+	s.stopPurging = stopPurging
+	s.purgeDone = purgeDone
 
 	v := version.Get()
 
@@ -239,6 +266,12 @@ func (s *Server) Shutdown(ctx context.Context) {
 	}
 
 	s.stopDelivery()
+	s.stopPurging()
+
+	select {
+	case <-s.purgeDone:
+	case <-ctx.Done():
+	}
 
 	select {
 	case <-s.deliveryDone:

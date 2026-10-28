@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -17,10 +17,18 @@ import {
 } from "@mui/x-data-grid";
 import { useQuery } from "@tanstack/react-query";
 import EditDeliveryDialog from "@/components/EditDeliveryDialog";
+import EditRetentionDialog from "@/components/EditRetentionDialog";
 import MessageDrawer from "@/components/MessageDrawer";
 import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import SendMessageDialog from "@/components/SendMessageDialog";
+import TimeRangePicker, {
+  AUDIT_RANGES,
+  EMPTY_TIME_RANGE,
+  timeRangeFilter,
+  timeRangeParams,
+  type TimeRangeValue,
+} from "@/components/TimeRangePicker";
 import { MessageStatusChip } from "@/components/chips";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
@@ -31,12 +39,13 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useSnackbar } from "@/contexts/SnackbarContext";
 import { getDelivery } from "@/queries/delivery";
+import { getRetention } from "@/queries/retention";
 import { RoleID } from "@/queries/users";
 import { GRID_SX } from "@/utils/layout";
 import { formatTimestamp } from "@/utils/dates";
 import { formatDuration } from "@/utils/durations";
 import { isE164 } from "@/utils/e164";
-import { encodingLabels, messageText, partLabel } from "@/utils/labels";
+import { encodingLabels, partLabel } from "@/utils/labels";
 
 export const MESSAGES_REFRESH_MS = 5000;
 
@@ -65,14 +74,7 @@ const columns: GridColDef<Message>[] = [
     valueFormatter: formatOptionalTimestamp,
   },
   { field: "from", headerName: "From", width: 160 },
-  { field: "to", headerName: "To", width: 160 },
-  {
-    field: "text",
-    headerName: "Text",
-    flex: 1,
-    minWidth: 200,
-    valueGetter: (_value, row) => messageText(row),
-  },
+  { field: "to", headerName: "To", flex: 1, minWidth: 160 },
   {
     field: "part",
     headerName: "Part",
@@ -128,6 +130,7 @@ export default function Messages() {
     pageSize: PAGE_SIZE_OPTIONS[0],
   });
   const [selected, setSelected] = useState<Message | null>(null);
+  const closeDrawer = useCallback(() => setSelected(null), []);
   const [editingDelivery, setEditingDelivery] = useState(false);
   const delivery = useQuery({
     queryKey: ["delivery"],
@@ -135,6 +138,14 @@ export default function Messages() {
     enabled: auth.can("delivery:read"),
   });
   const [sending, setSending] = useState(false);
+  const retention = useQuery({
+    queryKey: ["retention"],
+    queryFn: getRetention,
+    enabled: auth.can("retention:read"),
+  });
+  const [editingRetention, setEditingRetention] = useState(false);
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
+  const timeFilter = useMemo(() => timeRangeFilter(timeRange), [timeRange]);
 
   const toInvalid = to !== "" && !isE164(to);
   const fromInvalid = from !== "" && !isE164(from);
@@ -153,11 +164,13 @@ export default function Messages() {
     status: status || undefined,
   };
 
+  // A relative range resolves on each request, so that the refresh keeps "Last 1 hour" moving.
   const messages = useQuery({
-    queryKey: ["messages", filters, pagination],
+    queryKey: ["messages", filters, timeFilter, pagination],
     queryFn: () =>
       listMessages({
         ...filters,
+        ...timeRangeParams(timeFilter, { ranges: AUDIT_RANGES }),
         page: pagination.page + 1,
         perPage: pagination.pageSize,
       }),
@@ -185,7 +198,20 @@ export default function Messages() {
           )
         }
       />
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={2}
+        useFlexGap
+        sx={{ mb: 2, flexWrap: "wrap" }}
+      >
+        <TimeRangePicker
+          value={timeRange}
+          onChange={(next) => {
+            setTimeRange(next);
+            resetPage();
+          }}
+          ranges={AUDIT_RANGES}
+        />
         <TextField
           label="To"
           size="small"
@@ -228,54 +254,87 @@ export default function Messages() {
             </MenuItem>
           ))}
         </TextField>
-        {auth.can("delivery:read") && (
+        {(auth.can("delivery:read") || auth.can("retention:read")) && (
           <Box
             data-testid="delivery-settings"
             sx={{
               display: "flex",
               alignItems: "center",
+              flexWrap: "wrap",
               gap: 1,
               ml: { sm: "auto" },
             }}
           >
-            <Typography variant="body2" color="textSecondary">
-              <Tooltip
-                title="How long a message without its own validity period is kept for delivery."
-                arrow
-              >
-                <span>Validity</span>
-              </Tooltip>
-              :{" "}
-              <strong>
-                {delivery.data
-                  ? formatDuration(delivery.data.default_validity_seconds)
-                  : "…"}
-              </strong>
-              {" · "}
-              <Tooltip
-                title="Wait before each new delivery attempt. The last one repeats."
-                arrow
-              >
-                <span>Retries</span>
-              </Tooltip>
-              :{" "}
-              <strong>
-                {delivery.data
-                  ? delivery.data.retry_intervals_seconds
-                      .map(formatDuration)
-                      .join(", ") || "none"
-                  : "…"}
-              </strong>
-            </Typography>
-            {auth.can("delivery:update") && (
-              <IconButton
-                aria-label="Edit delivery"
-                size="small"
-                onClick={() => setEditingDelivery(true)}
-                disabled={!delivery.data}
-              >
-                <EditIcon fontSize="small" color="primary" />
-              </IconButton>
+            {auth.can("delivery:read") && (
+              <>
+                <Typography variant="body2" color="textSecondary">
+                  <Tooltip
+                    title="How long delivery of a message without its own validity period is attempted."
+                    arrow
+                  >
+                    <span>Validity</span>
+                  </Tooltip>
+                  :{" "}
+                  <strong>
+                    {delivery.data
+                      ? formatDuration(delivery.data.default_validity_seconds)
+                      : "…"}
+                  </strong>
+                  {" · "}
+                  <Tooltip
+                    title="Wait before each new delivery attempt. The last one repeats."
+                    arrow
+                  >
+                    <span>Retries</span>
+                  </Tooltip>
+                  :{" "}
+                  <strong>
+                    {delivery.data
+                      ? delivery.data.retry_intervals_seconds
+                          .map(formatDuration)
+                          .join(", ") || "none"
+                      : "…"}
+                  </strong>
+                </Typography>
+                {auth.can("delivery:update") && (
+                  <IconButton
+                    aria-label="Edit delivery"
+                    size="small"
+                    onClick={() => setEditingDelivery(true)}
+                    disabled={!delivery.data}
+                  >
+                    <EditIcon fontSize="small" color="primary" />
+                  </IconButton>
+                )}
+              </>
+            )}
+            {auth.can("retention:read") && (
+              <>
+                <Typography variant="body2" color="textSecondary">
+                  <Tooltip
+                    title="How long finished messages are kept before they are deleted."
+                    arrow
+                  >
+                    <span>Retention</span>
+                  </Tooltip>
+                  :{" "}
+                  <strong>
+                    {retention.data
+                      ? `${retention.data.days} ${retention.data.days === 1 ? "day" : "days"}`
+                      : "…"}
+                  </strong>
+                </Typography>
+                {auth.can("retention:update") && (
+                  <IconButton
+                    aria-label="Edit retention"
+                    size="small"
+                    onClick={() => setEditingRetention(true)}
+                    disabled={!retention.data}
+                  >
+                    <EditIcon fontSize="small" color="primary" />
+                  </IconButton>
+                )}
+              </>
             )}
           </Box>
         )}
@@ -307,16 +366,34 @@ export default function Messages() {
         disableColumnSorting
         disableColumnFilter
         disableRowSelectionOnClick
+        rowSelectionModel={{
+          type: "include",
+          ids: new Set(selected ? [selected.id] : []),
+        }}
         disableVirtualization
         autoHeight
         localeText={{ noRowsLabel: "No messages." }}
-        sx={{ ...GRID_SX, "& .MuiDataGrid-row": { cursor: "pointer" } }}
+        sx={{
+          ...GRID_SX,
+          "& .MuiDataGrid-row": { cursor: "pointer" },
+          "& .MuiDataGrid-row.Mui-selected": {
+            backgroundColor: (t) => t.palette.action.selected,
+            "&:hover": { backgroundColor: (t) => t.palette.action.selected },
+            "& .MuiDataGrid-cell": { fontWeight: 500 },
+          },
+        }}
       />
-      <MessageDrawer message={selected} onClose={() => setSelected(null)} />
+      <MessageDrawer message={selected} onClose={closeDrawer} />
       {editingDelivery && delivery.data && (
         <EditDeliveryDialog
           delivery={delivery.data}
           onClose={() => setEditingDelivery(false)}
+        />
+      )}
+      {editingRetention && retention.data && (
+        <EditRetentionDialog
+          retention={retention.data}
+          onClose={() => setEditingRetention(false)}
         />
       )}
       <SendMessageDialog

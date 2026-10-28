@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,6 +50,8 @@ type testAPI struct {
 	token string
 	// now is the time of the API's clock.
 	now time.Time
+	// logs are the API's logs, as JSON lines.
+	logs bytes.Buffer
 }
 
 const (
@@ -159,6 +162,7 @@ func newUninitializedAPI(t *testing.T, d api.Diameter) *testAPI {
 	cfg.Diameter = d
 	cfg.Notify = func() { a.notified.Add(1) }
 	cfg.Now = func() time.Time { return a.now }
+	cfg.Logger = slog.New(slog.NewJSONHandler(&a.logs, nil))
 
 	a.handler = api.NewHandler(cfg)
 
@@ -222,10 +226,6 @@ func (a *testAPI) create(t *testing.T, from, to, text string) []api.Message {
 	return decode[api.CreateMessageResponse](t, result).Items
 }
 
-func str(s string) *string {
-	return &s
-}
-
 func TestCreateMessage(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
@@ -235,7 +235,6 @@ func TestCreateMessage(t *testing.T) {
 		ID:            1,
 		From:          "+15550001111",
 		To:            "+15551230002",
-		Text:          str("hello"),
 		Encoding:      "gsm7",
 		Status:        "pending",
 		CreatedAt:     "2026-09-29T10:00:00.000Z",
@@ -283,7 +282,7 @@ func TestCreateConcatenatedMessage(t *testing.T) {
 			t.Fatalf("part %d = %+v, concatenation %+v", i+1, m, c)
 		}
 
-		joined.WriteString(*m.Text)
+		joined.WriteString(*a.content(t, a.token, m.ID).Text)
 	}
 
 	if joined.String() != text {
@@ -339,8 +338,153 @@ func TestGetMessage(t *testing.T) {
 		t.Fatalf("status = %d", status)
 	}
 
-	if got := decode[api.Message](t, result); got.ID != id || *got.Text != "hello" {
+	if got := decode[api.Message](t, result); got.ID != id || got.Encoding != "gsm7" {
 		t.Fatalf("message = %+v", got)
+	}
+
+	if strings.Contains(string(result), "hello") {
+		t.Fatalf("GET /api/v1/messages/1 carries the content: %s", result)
+	}
+}
+
+// content returns the content of a message, read with token.
+func (a *testAPI) content(t *testing.T, token string, id int64) api.MessageContent {
+	t.Helper()
+
+	code, result, errMsg := a.doAs(t, token, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/content", id), "")
+	if code != http.StatusOK {
+		t.Fatalf("GET content of %d = %d %q", id, code, errMsg)
+	}
+
+	return decode[api.MessageContent](t, result)
+}
+
+// auditEvents returns the details of the audit events with action that the API logged, oldest first.
+func (a *testAPI) auditEvents(t *testing.T, action string) []string {
+	t.Helper()
+
+	var details []string
+
+	for line := range strings.Lines(a.logs.String()) {
+		var e struct{ Msg, Action, Actor, Details string }
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+
+		if e.Msg == "audit event" && e.Action == action {
+			details = append(details, e.Actor+": "+e.Details)
+		}
+	}
+
+	return details
+}
+
+func TestGetMessageContent(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	ctx := context.Background()
+
+	id := a.create(t, "+15550001111", "+15551230002", "hello")[0].ID
+
+	binary, err := a.store.CreateMessage(ctx, db.NewMessage{
+		Originator: db.Address{Digits: "15550001111", TypeOfNumber: 1, NumberingPlan: 1},
+		Recipient:  db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1},
+		MSISDN:     "15551230002", Origin: db.OriginMobile,
+		// TP-DCS 0x04: 8-bit data.
+		TPDU:        []byte{0x01, 0x00, 0x0b, 0x91, 0x51, 0x55, 0x21, 0x03, 0x00, 0xf2, 0x00, 0x04, 0x02, 0xca, 0xfe},
+		SubmittedAt: testNow, ExpiresAt: testNow.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := a.content(t, a.token, id); got.Text == nil || *got.Text != "hello" {
+		t.Fatalf("content = %+v", got)
+	}
+
+	if got := a.content(t, a.token, binary); got.Text != nil {
+		t.Fatalf("content of a binary message = %+v", got)
+	}
+
+	want := []string{
+		fmt.Sprintf("%s: Content of message %d read", testAdmin, id),
+		fmt.Sprintf("%s: Content of message %d read", testAdmin, binary),
+	}
+	if got := a.auditEvents(t, "read_message_content"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("audit events = %q, want %q", got, want)
+	}
+}
+
+func TestGetMessageContentRefusals(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	ctx := context.Background()
+
+	submitter := a.userLogin(t, "ota@example.com", db.RoleSubmitter)
+	readOnly := a.userLogin(t, "ro@example.com", db.RoleReadOnly)
+
+	admins := a.create(t, "+15550001111", "+15551230002", "hello")[0].ID
+
+	code, result, errMsg := a.doAs(t, submitter, http.MethodPost, "/api/v1/messages",
+		`{"from": "+15550001111", "to": "+15551230002", "text": "mine"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create as a Submitter = %d %q", code, errMsg)
+	}
+
+	own := decode[api.CreateMessageResponse](t, result).Items[0].ID
+
+	m, err := a.store.CreateMessage(ctx, db.NewMessage{
+		Originator: db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1},
+		Recipient:  db.Address{Digits: "15550001111", TypeOfNumber: 1, NumberingPlan: 1},
+		MSISDN:     "15550001111", Origin: db.OriginMobile,
+		TPDU:        []byte{0x21, 0x00, 0x0b, 0x91, 0x51, 0x55, 0x00, 0x10, 0x11, 0xf1, 0x00, 0x00, 0x01, 0x31},
+		SubmittedAt: testNow, ExpiresAt: testNow.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.store.CompleteMessage(ctx, m, db.StatusDelivered, testNow, &db.NewStatusReport{
+		Originator: db.Address{Digits: "15550000000", TypeOfNumber: 1, NumberingPlan: 1}, TPDU: []byte{0x06},
+		CreatedAt: testNow, ExpiresAt: testNow.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reports, err := a.store.StatusReportsFor(ctx, []int64{m})
+	if err != nil || len(reports[m]) != 1 {
+		t.Fatalf("reports = %+v, %v", reports, err)
+	}
+
+	tests := []struct {
+		name, token string
+		id          int64
+		want        int
+	}{
+		{"Read Only", readOnly, admins, http.StatusForbidden},
+		{"Submitter on another user's message", submitter, admins, http.StatusNotFound},
+		{"a status report", a.token, reports[m][0].ID, http.StatusNotFound},
+		{"an unknown message", a.token, 999, http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if code, _, _ := a.doAs(t, tt.token, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/content", tt.id),
+				""); code != tt.want {
+				t.Fatalf("code = %d, want %d", code, tt.want)
+			}
+		})
+	}
+
+	if got := a.auditEvents(t, "read_message_content"); len(got) != 0 {
+		t.Fatalf("refused requests logged audit events %q", got)
+	}
+
+	if got := a.content(t, submitter, own); got.Text == nil || *got.Text != "mine" {
+		t.Fatalf("content of its own message = %+v", got)
+	}
+
+	if got := a.auditEvents(t, "read_message_content"); !reflect.DeepEqual(got,
+		[]string{fmt.Sprintf("ota@example.com: Content of message %d read", own)}) {
+		t.Fatalf("audit events = %q", got)
 	}
 }
 
@@ -517,10 +661,61 @@ func TestListMessages(t *testing.T) {
 	}
 }
 
+func TestListMessagesByTime(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	for i := range 3 {
+		at := testNow.Add(time.Duration(i) * time.Hour)
+		if _, err := a.store.CreateMessage(context.Background(), db.NewMessage{
+			Originator: db.Address{Digits: "15550001111", TypeOfNumber: 1, NumberingPlan: 1},
+			Recipient:  db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1},
+			MSISDN:     "15551230002", Origin: db.OriginAPI,
+			TPDU:        []byte{0x01, 0x00, 0x0b, 0x91, 0x51, 0x55, 0x21, 0x03, 0x00, 0xf2, 0x00, 0x00, 0x02, 0xe8, 0x34},
+			SubmittedAt: at, ExpiresAt: at.Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := map[string]struct {
+		query string
+		ids   []int64
+	}{
+		"start":               {"?start=2026-09-29T11:00:00Z", []int64{3, 2}},
+		"end":                 {"?end=2026-09-29T11:00:00Z", []int64{1}},
+		"both":                {"?start=2026-09-29T10:00:00Z&end=2026-09-29T12:00:00Z", []int64{2, 1}},
+		"another time zone":   {"?start=2026-09-29T13:00:00%2B02:00", []int64{3, 2}},
+		"fractional seconds":  {"?start=2026-09-29T10:00:00.001Z", []int64{3, 2}},
+		"equal start and end": {"?start=2026-09-29T11:00:00Z&end=2026-09-29T11:00:00Z", []int64{}},
+		"with another filter": {"?start=2026-09-29T11:00:00Z&status=pending&to=%2B15551230002", []int64{3, 2}},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			code, result, errMsg := a.do(t, http.MethodGet, "/api/v1/messages"+tc.query, "")
+			if code != http.StatusOK {
+				t.Fatalf("code = %d %q", code, errMsg)
+			}
+
+			ids := []int64{}
+			for _, m := range decode[api.ListMessagesResponse](t, result).Items {
+				ids = append(ids, m.ID)
+			}
+
+			if !reflect.DeepEqual(ids, tc.ids) {
+				t.Fatalf("ids = %v, want %v", ids, tc.ids)
+			}
+		})
+	}
+}
+
 func TestListMessagesRejectsInvalidFilters(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	for _, query := range []string{"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=15551230002", "?from=abc", "?status=lost"} {
+	for _, query := range []string{
+		"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=15551230002", "?from=abc", "?status=lost",
+		"?start=yesterday", "?end=2026-09-29", "?start=2026-09-29T11:00:00Z&end=2026-09-29T10:00:00Z",
+	} {
 		if code, _, errMsg := a.do(t, http.MethodGet, "/api/v1/messages"+query, ""); code != http.StatusBadRequest || errMsg == "" {
 			t.Fatalf("%s: code = %d, error = %q", query, code, errMsg)
 		}

@@ -39,7 +39,6 @@ export interface Message {
   id: number;
   from: string;
   to: string;
-  text?: string;
   encoding: MessageEncoding;
   concatenation?: Concatenation;
   status: MessageStatus;
@@ -49,6 +48,12 @@ export interface Message {
   next_attempt_at?: string;
   status_report: StatusReports;
   submitted_by?: string;
+}
+
+// MessageContent is the content of a message, which the other responses leave out. Reading it is audited.
+export interface MessageContent {
+  // text is absent for a binary message.
+  text?: string;
 }
 
 export type AttemptStep = "routing" | "delivery";
@@ -90,6 +95,9 @@ export interface ListMessagesParams extends PageParams {
   to?: string;
   from?: string;
   status?: MessageStatus;
+  // start and end bound when the messages were created: start included, end excluded.
+  start?: string;
+  end?: string;
 }
 
 export const createMessage = async (
@@ -112,11 +120,16 @@ export const listMessages = (
       to: params.to,
       from: params.from,
       status: params.status,
+      start: params.start,
+      end: params.end,
     }),
   );
 
 export const getMessage = (id: number): Promise<Message> =>
   apiFetch<Message>(`/api/v1/messages/${id}`);
+
+export const getMessageContent = (id: number): Promise<MessageContent> =>
+  apiFetch<MessageContent>(`/api/v1/messages/${id}/content`);
 
 export const listMessageAttempts = (
   id: number,

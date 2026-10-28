@@ -28,28 +28,32 @@ func (f *fakeStore) UpdateOperator(_ context.Context, o Operator) error { return
 
 func (f *fakeStore) UpdateDelivery(_ context.Context, d Delivery) error { return f.save(d) }
 
+func (f *fakeStore) UpdateRetention(_ context.Context, r Retention) error { return f.save(r) }
+
 func validOperator() Operator {
 	return Operator{MCC: "001", MNC: "01", ServiceCentreAddress: "15550000000", Numbering: numbering.Plan{CountryCode: "1"}}
 }
 
 func validSettings() Settings {
 	return Settings{
-		Operator: validOperator(),
-		Delivery: Delivery{DefaultValidity: time.Hour, RetryIntervals: []time.Duration{time.Minute}},
+		Operator:  validOperator(),
+		Delivery:  Delivery{DefaultValidity: time.Hour, RetryIntervals: []time.Duration{time.Minute}},
+		Retention: Retention{Messages: MinRetention},
 	}
 }
 
 func TestValidate(t *testing.T) {
 	tests := map[string]func(*Settings){
-		"zero validity":        func(s *Settings) { s.Delivery.DefaultValidity = 0 },
-		"zero retry interval":  func(s *Settings) { s.Delivery.RetryIntervals = []time.Duration{0} },
-		"short mcc":            func(s *Settings) { s.Operator.MCC = "01" },
-		"non-digit mcc":        func(s *Settings) { s.Operator.MCC = "0a1" },
-		"short mnc":            func(s *Settings) { s.Operator.MNC = "1" },
-		"long mnc":             func(s *Settings) { s.Operator.MNC = "0001" },
-		"missing country code": func(s *Settings) { s.Operator.Numbering.CountryCode = "" },
-		"country code with 0":  func(s *Settings) { s.Operator.Numbering.CountryCode = "01" },
-		"long prefix":          func(s *Settings) { s.Operator.Numbering.InternationalPrefix = "00000" },
+		"zero validity":         func(s *Settings) { s.Delivery.DefaultValidity = 0 },
+		"zero retry interval":   func(s *Settings) { s.Delivery.RetryIntervals = []time.Duration{0} },
+		"retention under a day": func(s *Settings) { s.Retention.Messages = MinRetention - time.Nanosecond },
+		"short mcc":             func(s *Settings) { s.Operator.MCC = "01" },
+		"non-digit mcc":         func(s *Settings) { s.Operator.MCC = "0a1" },
+		"short mnc":             func(s *Settings) { s.Operator.MNC = "1" },
+		"long mnc":              func(s *Settings) { s.Operator.MNC = "0001" },
+		"missing country code":  func(s *Settings) { s.Operator.Numbering.CountryCode = "" },
+		"country code with 0":   func(s *Settings) { s.Operator.Numbering.CountryCode = "01" },
+		"long prefix":           func(s *Settings) { s.Operator.Numbering.InternationalPrefix = "00000" },
 		"same prefixes": func(s *Settings) {
 			s.Operator.Numbering.NationalPrefix, s.Operator.Numbering.InternationalPrefix = "0", "0"
 		},
@@ -125,6 +129,27 @@ func TestLiveUpdatesOneArea(t *testing.T) {
 	got = live.Get()
 	if got.Operator != operator || got.Delivery.DefaultValidity != 2*time.Hour || got.Delivery.RetryIntervals[0] != time.Minute {
 		t.Fatalf("Get after two updates = %+v", got)
+	}
+
+	changed = live.Changed()
+
+	if err := live.UpdateRetention(context.Background(), Retention{Messages: 7 * 24 * time.Hour}); err != nil {
+		t.Fatalf("UpdateRetention: %v", err)
+	}
+
+	got = live.Get()
+	if got.Retention.Messages != 7*24*time.Hour || got.Operator != operator || got.Delivery.DefaultValidity != 2*time.Hour {
+		t.Fatalf("Get after three updates = %+v", got)
+	}
+
+	select {
+	case <-changed:
+	default:
+		t.Fatal("Changed was not signalled")
+	}
+
+	if err := live.UpdateRetention(context.Background(), Retention{Messages: time.Hour}); err == nil {
+		t.Fatal("expected a validation error")
 	}
 }
 

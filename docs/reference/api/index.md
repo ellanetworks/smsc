@@ -24,9 +24,9 @@ These paths take no token: `GET /api/v1/status`, `GET /api/v1/metrics`, `GET /ap
 | Role            | `role_id` | Allows |
 | --------------- | --------- | ------ |
 | Admin           | `1`       | Everything. |
-| Read Only       | `2`       | Reading messages, Diameter, operator and delivery settings. |
-| Network Manager | `3`       | Read Only, plus sending messages and updating operator and delivery settings. |
-| Submitter       | `4`       | Sending messages, and reading the messages it sent. |
+| Read Only       | `2`       | Reading messages without their content, Diameter, operator, delivery and retention settings. |
+| Network Manager | `3`       | Read Only, plus reading message content, sending messages, and updating operator, delivery and retention settings. |
+| Submitter       | `4`       | Sending messages, and reading the messages it sent, their content included. |
 
 An API token has the role of its user, but cannot create API tokens, change a password, or manage users.
 

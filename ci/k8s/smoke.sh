@@ -210,14 +210,14 @@ if [ -n "${PREVIOUS_IMAGE}" ]; then
   deploy "${PREVIOUS_IMAGE}"
   api /status
   echo
-  api /messages -X POST -H 'Content-Type: application/json' \
-    -d '{"from": "+15550001000", "to": "+15551230002", "text": "stored before the upgrade"}' >/dev/null
+  BEFORE_UPGRADE="$(api /messages -X POST -H 'Content-Type: application/json' \
+    -d '{"from": "+15550001000", "to": "+15551230002", "text": "stored before the upgrade"}' | jq -e '.result.items[0].id')"
   endstep
 
   step "Upgrade to ${IMAGE}"
   deploy "${IMAGE}" restart
   log_in
-  api /messages | jq -e '.result.items | any(.text == "stored before the upgrade")' >/dev/null \
+  api "/messages/${BEFORE_UPGRADE}/content" | jq -e '.result.text == "stored before the upgrade"' >/dev/null \
     || fail "the message stored before the upgrade is gone"
   endstep
 else
@@ -263,7 +263,7 @@ step "Exchange short messages over Diameter at ${SMSC_ADDR}:${DIAMETER_PORT}"
 # stored before the upgrade is to a phone no core serves, so it stays pending.
 for status in pending failed expired; do
   left="$(api "/messages?status=${status}&per_page=100" \
-    | jq '[.result.items[] | select(.text != "stored before the upgrade")] | length')"
+    | jq --argjson before "${BEFORE_UPGRADE:-0}" '[.result.items[] | select(.id != $before)] | length')"
   [ "${left}" = 0 ] || fail "${left} short messages are ${status} after the load"
 done
 last="$(api '/messages?status=delivered&per_page=1' | jq -e '.result.items[0].id')" \

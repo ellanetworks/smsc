@@ -76,6 +76,7 @@ nav:
       - Diameter: reference/api/diameter.md
       - Operator: reference/api/operator.md
       - Delivery: reference/api/delivery.md
+      - Retention: reference/api/retention.md
       - Status: reference/api/status.md
       - Metrics: reference/api/metrics.md
     - Configuration File: reference/config_file.md

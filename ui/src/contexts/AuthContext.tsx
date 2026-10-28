@@ -22,22 +22,28 @@ import { decodeAccessToken } from "@/utils/jwt";
 export type Permission =
   | "message:create"
   | "message:read"
+  | "message:content"
   | "diameter:read"
   | "operator:read"
   | "operator:update"
   | "delivery:read"
   | "delivery:update"
+  | "retention:read"
+  | "retention:update"
   | "user:admin";
 
 const permissions: Record<RoleID, Permission[]> = {
   [RoleID.Admin]: [
     "message:create",
     "message:read",
+    "message:content",
     "diameter:read",
     "operator:read",
     "operator:update",
     "delivery:read",
     "delivery:update",
+    "retention:read",
+    "retention:update",
     "user:admin",
   ],
   [RoleID.ReadOnly]: [
@@ -45,17 +51,22 @@ const permissions: Record<RoleID, Permission[]> = {
     "diameter:read",
     "operator:read",
     "delivery:read",
+    "retention:read",
   ],
   [RoleID.NetworkManager]: [
     "message:create",
     "message:read",
+    "message:content",
     "diameter:read",
     "operator:read",
     "operator:update",
     "delivery:read",
     "delivery:update",
+    "retention:read",
+    "retention:update",
   ],
-  [RoleID.Submitter]: ["message:create", "message:read"],
+  // A Submitter sees only its own messages, their content included.
+  [RoleID.Submitter]: ["message:create", "message:read", "message:content"],
 };
 
 export interface Auth {

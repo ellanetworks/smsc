@@ -38,8 +38,6 @@ export const diagnosticsLabels: Record<keyof AbsentUserDiagnostics, string> = {
 export const partLabel = (m: Message): string =>
   m.concatenation ? `${m.concatenation.part} of ${m.concatenation.total}` : "—";
 
-export const messageText = (m: Message): string => m.text ?? "(binary)";
-
 const hex = (n: number): string => `0x${n.toString(16).padStart(2, "0")}`;
 
 // tpStatusLabel names a TP-Status (TS 23.040 clause 9.2.3.15) with its value, such as "no response (0x22)".

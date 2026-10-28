@@ -418,6 +418,8 @@ type MessageFilter struct {
 	Status     MessageStatus
 	// SubmittedBy, when not zero, keeps only the messages that user submitted.
 	SubmittedBy int64
+	// Start and End, when not zero, keep only the messages submitted at or after Start, and before End.
+	Start, End time.Time
 }
 
 func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) (_ []Message, _ int, err error) {
@@ -440,6 +442,14 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 
 	if f.SubmittedBy != 0 {
 		where, args = append(where, "submitted_by = ?"), append(args, f.SubmittedBy)
+	}
+
+	if !f.Start.IsZero() {
+		where, args = append(where, "submitted_at >= ?"), append(args, f.Start.UTC().UnixNano())
+	}
+
+	if !f.End.IsZero() {
+		where, args = append(where, "submitted_at < ?"), append(args, f.End.UTC().UnixNano())
 	}
 
 	clause := " WHERE " + strings.Join(where, " AND ")
@@ -780,6 +790,37 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 	d.metrics.count([]completion{{kind, status}})
 
 	return nil
+}
+
+const purgeableMessages = `SELECT m.id FROM messages m
+	WHERE m.kind = 'message' AND m.status != 'pending' AND m.updated_at < ?1
+	AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.report_for = m.id AND (r.status = 'pending' OR r.updated_at >= ?1))
+	ORDER BY m.updated_at LIMIT ?2`
+
+// PurgeMessages deletes up to limit short messages that reached their final status before cutoff, with their delivery
+// attempts and status reports, and returns how many messages it deleted. It keeps a message with a status report that
+// is pending or that reached its final status after cutoff, so that a report always goes with its message.
+func (d *DB) PurgeMessages(ctx context.Context, cutoff time.Time, limit int) (_ int, err error) {
+	defer d.observe(&err)()
+
+	at := cutoff.UTC().UnixNano()
+
+	// DELETE ... LIMIT needs a compile option of SQLite, so the limit is on the subquery. The kind and status are
+	// literals, so that the query matches the WHERE of the messages_purgeable index. The changes it counts leave out the
+	// rows that foreign keys delete: they are the messages only.
+	res, err := d.conn.ExecContext(ctx, `DELETE FROM messages WHERE id IN (`+purgeableMessages+`)`, at, limit)
+	if err != nil {
+		return 0, fmt.Errorf("purge messages: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("purge messages: %w", err)
+	}
+
+	d.metrics.purged.Add(float64(n))
+
+	return int(n), nil
 }
 
 // StatusReportsFor returns the status reports on each of the messages that has some, oldest first.

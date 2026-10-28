@@ -30,6 +30,7 @@ func TestDefaultSettings(t *testing.T) {
 			DefaultValidity: 7 * 24 * time.Hour,
 			RetryIntervals:  []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour},
 		},
+		Retention: settings.Retention{Messages: 30 * 24 * time.Hour},
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -61,6 +62,7 @@ func TestUpdateSettingsPersists(t *testing.T) {
 			DefaultValidity: 48 * time.Hour,
 			RetryIntervals:  []time.Duration{500 * time.Millisecond, 10 * time.Minute},
 		},
+		Retention: settings.Retention{Messages: 2 * 24 * time.Hour},
 	}
 
 	if err := d.UpdateOperator(ctx, want.Operator); err != nil {
@@ -69,6 +71,10 @@ func TestUpdateSettingsPersists(t *testing.T) {
 
 	if err := d.UpdateDelivery(ctx, want.Delivery); err != nil {
 		t.Fatalf("UpdateDelivery: %v", err)
+	}
+
+	if err := d.UpdateRetention(ctx, want.Retention); err != nil {
+		t.Fatalf("UpdateRetention: %v", err)
 	}
 
 	if err := d.Close(); err != nil {
@@ -102,5 +108,13 @@ func TestUpdateSettingsPersists(t *testing.T) {
 
 	if len(got.Delivery.RetryIntervals) != 0 || got.Operator != want.Operator {
 		t.Fatalf("after clearing the retry intervals = %+v", got)
+	}
+}
+
+func TestRetentionRejectsUnderADay(t *testing.T) {
+	d := openTestDB(t)
+
+	if err := d.UpdateRetention(context.Background(), settings.Retention{Messages: 23 * time.Hour}); err == nil {
+		t.Fatal("expected the CHECK constraint to reject a retention under a day")
 	}
 }

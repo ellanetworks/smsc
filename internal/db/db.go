@@ -95,6 +95,8 @@ var migrations = []string{
 	CREATE INDEX messages_originator ON messages (originator, originator_ton, originator_npi, id);
 	CREATE INDEX messages_msisdn ON messages (msisdn, status, next_attempt_at);
 	CREATE INDEX messages_submitted_by ON messages (submitted_by, id);
+	CREATE INDEX messages_submitted_at ON messages (submitted_at);
+	CREATE INDEX messages_purgeable ON messages (updated_at) WHERE kind = 'message' AND status != 'pending';
 	CREATE TABLE delivery_attempts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
@@ -143,7 +145,12 @@ var migrations = []string{
 		attempt INTEGER PRIMARY KEY CHECK (attempt > 0),
 		interval INTEGER NOT NULL CHECK (interval > 0)
 	);
-	INSERT INTO retry_intervals VALUES (1, 60000000000), (2, 300000000000), (3, 900000000000), (4, 3600000000000);`,
+	INSERT INTO retry_intervals VALUES (1, 60000000000), (2, 300000000000), (3, 900000000000), (4, 3600000000000);
+	CREATE TABLE retention (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		messages INTEGER NOT NULL CHECK (messages >= 86400000000000)
+	);
+	INSERT INTO retention VALUES (1, 2592000000000000);`,
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {

@@ -30,8 +30,11 @@ const serveMessages = (items = [message()], totalCount?: number) => {
 const lastQuery = (requests: URL[]) =>
   Object.fromEntries(requests[requests.length - 1].searchParams);
 
-const rowCells = (text: string) =>
-  within(screen.getByText(text).closest(".MuiDataGrid-row") as HTMLElement)
+// listed waits for the default message's row.
+const listed = () => screen.findByRole("gridcell", { name: "+15551230002" });
+
+const rowCells = (to: string) =>
+  within(screen.getByText(to).closest(".MuiDataGrid-row") as HTMLElement)
     .getAllByRole("gridcell")
     .map((c) => c.textContent);
 
@@ -44,29 +47,29 @@ describe("Messages", () => {
     serveMessages([
       message({
         id: 7,
-        text: "part two",
+        to: "+15551230007",
         status: "pending",
         concatenation: { reference: 3, part: 2, total: 3 },
         next_attempt_at: "2026-09-30T12:05:00.000Z",
         submitted_by: "ota@example.com",
       }),
-      message({ id: 8, text: undefined, encoding: "binary" }),
+      message({ id: 8, to: "+15551230008", encoding: "binary" }),
     ]);
 
     renderWithClient(<Messages />);
 
-    await screen.findByText("part two");
-    expect(rowCells("part two")).toEqual([
+    await screen.findByText("+15551230007");
+    expect(rowCells("+15551230007")).toEqual([
       "2026-09-30 12:00:00",
       "+15551230001",
-      "+15551230002",
-      "part two",
+      "+15551230007",
       "2 of 3",
       "pending",
       "ota@example.com",
     ]);
-    expect(rowCells("(binary)")).toContain("—");
-    for (const name of ["ID", "Next attempt", "Encoding"]) {
+    expect(rowCells("+15551230008")).toContain("—");
+    // The content is not listed: reading it is audited.
+    for (const name of ["ID", "Next attempt", "Encoding", "Text"]) {
       expect(
         screen.queryByRole("columnheader", { name }),
       ).not.toBeInTheDocument();
@@ -78,7 +81,7 @@ describe("Messages", () => {
 
     renderWithClient(<Messages />);
 
-    await screen.findByText("hello");
+    await listed();
     expect(lastQuery(requests)).toEqual({ page: "1", per_page: "25" });
   });
 
@@ -86,7 +89,7 @@ describe("Messages", () => {
     const requests = serveMessages();
 
     renderWithClient(<Messages />);
-    await screen.findByText("hello");
+    await listed();
 
     const input = screen.getByRole("textbox", { name: "To" });
     fireEvent.change(input, { target: { value: "+1555" } });
@@ -108,11 +111,59 @@ describe("Messages", () => {
     );
   });
 
+  it("filters by time range", async () => {
+    const requests = serveMessages();
+
+    renderWithClient(<Messages />);
+    await listed();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Time range: Any time" }),
+    );
+    const before = Date.now();
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Last 1 hour" }),
+    );
+
+    await waitFor(() => expect(lastQuery(requests).start).toBeDefined());
+    const query = lastQuery(requests);
+    const start = Date.parse(query.start);
+    expect(start).toBeGreaterThanOrEqual(before - 3_600_000);
+    expect(start).toBeLessThanOrEqual(Date.now() - 3_600_000);
+    expect(query.end).toBeUndefined();
+    expect(query.page).toBe("1");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Time range: Last 1 hour" }),
+    );
+    const custom = screen
+      .getByText("Custom range")
+      .closest(".MuiPopover-paper") as HTMLElement;
+    fireEvent.change(within(custom).getByLabelText("From"), {
+      target: { value: "2026-09-30T10:00" },
+    });
+    fireEvent.change(within(custom).getByLabelText("To"), {
+      target: { value: "2026-09-30T11:30" },
+    });
+
+    await waitFor(() =>
+      expect(lastQuery(requests)).toMatchObject({
+        start: new Date("2026-09-30T10:00").toISOString(),
+        end: new Date("2026-09-30T11:30").toISOString(),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Any time" }));
+    await waitFor(() =>
+      expect(lastQuery(requests)).toEqual({ page: "1", per_page: "25" }),
+    );
+  });
+
   it("filters by status", async () => {
     const requests = serveMessages();
 
     renderWithClient(<Messages />);
-    await screen.findByText("hello");
+    await listed();
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Status" }));
     fireEvent.click(await screen.findByRole("option", { name: "failed" }));
@@ -126,9 +177,11 @@ describe("Messages", () => {
     serveMessages();
 
     renderWithClient(<Messages />);
-    fireEvent.click(await screen.findByText("hello"));
+    fireEvent.click(await listed());
 
-    const drawer = await screen.findByRole("dialog", { name: "Message 1" });
+    const drawer = await screen.findByRole("complementary", {
+      name: "Message 1",
+    });
     expect(
       await within(drawer).findByRole("heading", {
         name: "Delivery attempts (1)",
@@ -137,7 +190,7 @@ describe("Messages", () => {
 
     fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      expect(screen.queryByRole("complementary")).not.toBeInTheDocument(),
     );
   });
 
@@ -146,7 +199,7 @@ describe("Messages", () => {
       message({ id: 1, status: "pending" }),
       message({ id: 2, status: "pending" }),
     ];
-    const listed: URL[] = [];
+    const lists: URL[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -155,7 +208,7 @@ describe("Messages", () => {
             if (init?.method === "POST") {
               return json(201, { result: { items: created } });
             }
-            listed.push(url);
+            lists.push(url);
             return json(200, { result: page([message()]) });
           },
           "/api/v1/messages/1": () => json(200, { result: created[0] }),
@@ -165,8 +218,8 @@ describe("Messages", () => {
     );
 
     renderWithClient(<Messages />);
-    await screen.findByText("hello");
-    const listedBefore = listed.length;
+    await listed();
+    const listedBefore = lists.length;
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const dialog = await screen.findByRole("dialog", { name: "Send" });
@@ -187,11 +240,11 @@ describe("Messages", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Send" })).toBeNull(),
     );
-    await waitFor(() => expect(listed.length).toBeGreaterThan(listedBefore));
+    await waitFor(() => expect(lists.length).toBeGreaterThan(listedBefore));
 
     fireEvent.click(screen.getByRole("button", { name: "View" }));
     expect(
-      await screen.findByRole("dialog", { name: "Message 1" }),
+      await screen.findByRole("complementary", { name: "Message 1" }),
     ).toBeInTheDocument();
   });
 
@@ -233,6 +286,14 @@ describe("Messages delivery settings", () => {
       vi.fn(
         stubApi({
           "/api/v1/messages": () => json(200, { result: page([]) }),
+          "/api/v1/messages/retention": (_url, init) => {
+            if (init?.method !== "PUT") {
+              return json(200, { result: { days: 30 } });
+            }
+            const body = JSON.parse(String(init.body));
+            bodies.push(body);
+            return json(200, { result: body });
+          },
           "/api/v1/delivery": (_url, init) => {
             if (init?.method !== "PUT") {
               return json(200, {
@@ -292,19 +353,67 @@ describe("Messages delivery settings", () => {
   });
 });
 
+describe("Messages retention", () => {
+  it("shows and updates the retention", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        stubApi({
+          "/api/v1/messages": () => json(200, { result: page([]) }),
+          "/api/v1/delivery": () =>
+            json(200, {
+              result: {
+                default_validity_seconds: 604800,
+                retry_intervals_seconds: [],
+              },
+            }),
+          "/api/v1/messages/retention": (_url, init) => {
+            if (init?.method !== "PUT") {
+              return json(200, { result: { days: 30 } });
+            }
+            const body = JSON.parse(String(init.body));
+            bodies.push(body);
+            return json(200, { result: body });
+          },
+        }),
+      ),
+    );
+
+    renderWithClient(<Messages />);
+
+    const line = screen.getByTestId("delivery-settings");
+    await waitFor(() => expect(line).toHaveTextContent("Retention: 30 days"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit retention" }));
+    const days = screen.getByRole("spinbutton", { name: "Days" });
+    fireEvent.change(days, { target: { value: "0" } });
+    expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
+
+    fireEvent.change(days, { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(line).toHaveTextContent("Retention: 1 day"));
+    expect(bodies).toEqual([{ days: 1 }]);
+  });
+});
+
 describe("Messages by role", () => {
   it("lets a Read Only user read, but not send or edit", async () => {
     serveMessages();
 
     renderWithClient(<Messages />, authFor("ro@example.com", RoleID.ReadOnly));
 
-    await screen.findByText("hello");
+    await listed();
     expect(
       screen.queryByRole("button", { name: "Send" }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("delivery-settings")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Edit delivery" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit retention" }),
     ).not.toBeInTheDocument();
   });
 
@@ -316,7 +425,7 @@ describe("Messages by role", () => {
       authFor("ota@example.com", RoleID.Submitter),
     );
 
-    await screen.findByText("hello");
+    await listed();
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
     expect(screen.queryByTestId("delivery-settings")).not.toBeInTheDocument();
     expect(
@@ -328,5 +437,6 @@ describe("Messages by role", () => {
         ([input]) => new URL(String(input), "http://smsc.test").pathname,
       );
     expect(paths).not.toContain("/api/v1/delivery");
+    expect(paths).not.toContain("/api/v1/messages/retention");
   });
 });

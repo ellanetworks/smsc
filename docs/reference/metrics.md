@@ -11,6 +11,7 @@ Ella SMSC exposes Prometheus metrics at `GET /api/v1/metrics`.
 | `ellasmsc_build_info` | Gauge | Always 1. The version and revision of the running build are in its labels. |
 | `ellasmsc_messages_received_total` | Counter | Short messages received, one per part, by origin (`mobile`, `api`) and result (`accepted`, `rejected`, `error`). |
 | `ellasmsc_messages_completed_total` | Counter | Short messages and status reports that reached a final status, by type (`message`, `status_report`) and status (`delivered`, `failed`, `expired`, and `replaced` for a message). |
+| `ellasmsc_messages_purged_total` | Counter | Short messages deleted once their [retention](api/retention.md) passed, with their status reports and delivery attempts. |
 | `ellasmsc_messages_pending` | Gauge | Short messages and status reports waiting for delivery, by type and state: `due`, to be delivered now or being delivered; `waiting`, for a retry or for the phone to be reachable. |
 | `ellasmsc_message_delivery_duration_seconds` | Histogram | Time from submission to delivery of the short messages delivered, the time the phone was unreachable included. |
 | `ellasmsc_hss_peers` | Gauge | Open peers in the operator's realm that support S6c. At 0, messages to phones wait. |

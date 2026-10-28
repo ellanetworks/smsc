@@ -76,6 +76,18 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/MessageStatus"
+        - name: start
+          in: query
+          description: Keeps the messages created at or after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          description: Keeps the messages created before this time. Must not be before start.
+          schema:
+            type: string
+            format: date-time
       responses:
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -91,6 +103,40 @@ paths:
                 properties:
                   result:
                     $ref: "#/components/schemas/ListMessagesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/messages/retention:
+    get:
+      tags: [Messages]
+      operationId: getMessageRetention
+      summary: Get message retention
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          $ref: "#/components/responses/RetentionSettings"
+    put:
+      tags: [Messages]
+      operationId: updateMessageRetention
+      summary: Update message retention
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionSettings"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          $ref: "#/components/responses/RetentionSettings"
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -149,6 +195,36 @@ paths:
                 properties:
                   result:
                     $ref: "#/components/schemas/ListAttemptsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/messages/{id}/content:
+    get:
+      tags: [Messages]
+      operationId: getMessageContent
+      summary: Get message content
+      description: Each read logs an audit event.
+      parameters:
+        - $ref: "#/components/parameters/MessageID"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/MessageContent"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -770,6 +846,16 @@ components:
             properties:
               result:
                 $ref: "#/components/schemas/DeliverySettings"
+    RetentionSettings:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/RetentionSettings"
     BadRequest:
       description: Bad Request
       content:
@@ -1204,8 +1290,6 @@ components:
           type: string
         to:
           $ref: "#/components/schemas/E164"
-        text:
-          type: string
         encoding:
           type: string
           enum: [gsm7, ucs2, binary]
@@ -1233,6 +1317,13 @@ components:
           description: >-
             The user that submitted a message over the API. A user with the Submitter role reads only the messages
             it submitted.
+
+    MessageContent:
+      type: object
+      properties:
+        text:
+          type: string
+          description: Absent for a binary message.
 
     Attempt:
       type: object
@@ -1383,6 +1474,18 @@ components:
               description: Must differ from national_prefix when both are set.
               example: "011"
 
+    RetentionSettings:
+      type: object
+      additionalProperties: false
+      required: [days]
+      properties:
+        days:
+          type: integer
+          format: int64
+          minimum: 1
+          description: How long a message is kept once it has its final status, with its status reports and delivery attempts.
+          example: 30
+
     DeliverySettings:
       type: object
       additionalProperties: false
@@ -1392,7 +1495,7 @@ components:
           type: integer
           format: int64
           minimum: 1
-          description: How long a message without its own validity period is kept for delivery.
+          description: How long delivery of a message without its own validity period is attempted.
           example: 604800
         retry_intervals_seconds:
           type: array

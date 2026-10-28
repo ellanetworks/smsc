@@ -83,13 +83,17 @@ type Permission string
 const public Permission = ""
 
 const (
-	PermCreateMessage  Permission = "message:create"
-	PermReadMessage    Permission = "message:read"
-	PermReadDiameter   Permission = "diameter:read"
-	PermReadOperator   Permission = "operator:read"
-	PermUpdateOperator Permission = "operator:update"
-	PermReadDelivery   Permission = "delivery:read"
-	PermUpdateDelivery Permission = "delivery:update"
+	PermCreateMessage Permission = "message:create"
+	PermReadMessage   Permission = "message:read"
+	// PermReadMessageContent is reading the content of a message, which the other message routes leave out.
+	PermReadMessageContent Permission = "message:content"
+	PermReadDiameter       Permission = "diameter:read"
+	PermReadOperator       Permission = "operator:read"
+	PermUpdateOperator     Permission = "operator:update"
+	PermReadDelivery       Permission = "delivery:read"
+	PermUpdateDelivery     Permission = "delivery:update"
+	PermReadRetention      Permission = "retention:read"
+	PermUpdateRetention    Permission = "retention:update"
 	// PermSelf is reading one's own user, changing one's own password, and managing one's own API tokens.
 	PermSelf Permission = "user:self"
 	// PermManageUsers is managing every user and their API tokens.
@@ -98,16 +102,18 @@ const (
 
 var permissions = map[db.Role][]Permission{
 	db.RoleAdmin: {
-		PermCreateMessage, PermReadMessage, PermReadDiameter, PermReadOperator, PermUpdateOperator, PermReadDelivery,
-		PermUpdateDelivery, PermSelf, PermManageUsers,
+		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
+		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
 	},
-	db.RoleReadOnly: {PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermSelf},
+	// Read Only sees messages but not their content.
+	db.RoleReadOnly: {PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf},
 	db.RoleNetworkManager: {
-		PermCreateMessage, PermReadMessage, PermReadDiameter, PermReadOperator, PermUpdateOperator, PermReadDelivery,
-		PermUpdateDelivery, PermSelf,
+		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
+		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf,
 	},
 	// A Submitter reads only the messages it submitted, which the message routes enforce.
-	db.RoleSubmitter: {PermCreateMessage, PermReadMessage, PermSelf},
+	// A Submitter reads only its own submissions, their content included.
+	db.RoleSubmitter: {PermCreateMessage, PermReadMessage, PermReadMessageContent, PermSelf},
 }
 
 func allowed(role db.Role, perm Permission) bool {

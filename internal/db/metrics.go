@@ -13,6 +13,7 @@ type metrics struct {
 	duration  prometheus.Histogram
 	errors    prometheus.Counter
 	completed *prometheus.CounterVec
+	purged    prometheus.Counter
 }
 
 // finalStatuses are the statuses that each kind of message ends with. Only a short message is replaced.
@@ -24,6 +25,10 @@ var finalStatuses = map[MessageKind][]MessageStatus{
 func newMetrics() metrics {
 	return metrics{
 		completed: newCompleted(),
+		purged: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "ellasmsc_messages_purged_total",
+			Help: "Short messages deleted once their retention period passed, with their status reports and delivery attempts.",
+		}),
 		duration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name: "ellasmsc_database_query_duration_seconds",
 			Help: "Duration of database calls, the wait for the connection, statements, transaction and row scanning included.",
@@ -95,7 +100,10 @@ func failed(err error) bool {
 // call's duration includes the wait for the connection, which every call shares.
 func (d *DB) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		d.metrics.duration, d.metrics.errors, storageCollector{path: d.path}, d.metrics.completed,
+		d.metrics.duration, d.metrics.errors,
+		storageCollector{path: d.path},
+		d.metrics.completed,
+		d.metrics.purged,
 	}
 }
 

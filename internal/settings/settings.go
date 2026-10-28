@@ -13,8 +13,9 @@ import (
 )
 
 type Settings struct {
-	Operator Operator
-	Delivery Delivery
+	Operator  Operator
+	Delivery  Delivery
+	Retention Retention
 }
 
 type Operator struct {
@@ -47,8 +48,17 @@ type Delivery struct {
 	RetryIntervals  []time.Duration
 }
 
+// Retention is how long the SMSC keeps a message once it has its final status. 3GPP sets no such period: the SC is
+// responsible for a message only until its report is received or its validity period expires (TS 23.040 clause 6.1).
+type Retention struct {
+	Messages time.Duration
+}
+
+// MinRetention is the shortest retention.
+const MinRetention = 24 * time.Hour
+
 func (s Settings) Validate() error {
-	return errors.Join(s.Operator.Validate(), s.Delivery.Validate())
+	return errors.Join(s.Operator.Validate(), s.Delivery.Validate(), s.Retention.Validate())
 }
 
 func (o Operator) Validate() error {
@@ -86,9 +96,18 @@ func (d Delivery) Validate() error {
 	return nil
 }
 
+func (r Retention) Validate() error {
+	if r.Messages < MinRetention {
+		return errors.New("messages retention must be at least a day")
+	}
+
+	return nil
+}
+
 type Store interface {
 	UpdateOperator(ctx context.Context, o Operator) error
 	UpdateDelivery(ctx context.Context, d Delivery) error
+	UpdateRetention(ctx context.Context, r Retention) error
 }
 
 // Live serves the current settings to the running SMSC and persists changes
@@ -131,6 +150,14 @@ func (l *Live) UpdateDelivery(ctx context.Context, d Delivery) error {
 	d.RetryIntervals = slices.Clone(d.RetryIntervals)
 
 	return l.update(func() error { return l.store.UpdateDelivery(ctx, d) }, func(s *Settings) { s.Delivery = d })
+}
+
+func (l *Live) UpdateRetention(ctx context.Context, r Retention) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+
+	return l.update(func() error { return l.store.UpdateRetention(ctx, r) }, func(s *Settings) { s.Retention = r })
 }
 
 func (l *Live) update(save func() error, apply func(*Settings)) error {

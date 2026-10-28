@@ -1,23 +1,28 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Box,
   Button,
   Divider,
-  Drawer,
   IconButton,
   Paper,
   Skeleton,
   Stack,
   Typography,
 } from "@mui/material";
+import {
+  Close as CloseIcon,
+  DragIndicator as DragIndicatorIcon,
+} from "@mui/icons-material";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import Fields from "@/components/Fields";
 import QueryAlert from "@/components/QueryAlert";
+import { useAuth } from "@/contexts/AuthContext";
 import { MessageStatusChip, OutcomeChip } from "@/components/chips";
 import {
   type AbsentUserDiagnostics,
   type Attempt,
   getMessage,
+  getMessageContent,
   listMessageAttempts,
   type Message,
   type StatusReport,
@@ -26,7 +31,6 @@ import { formatTimestamp } from "@/utils/dates";
 import {
   diagnosticsLabels,
   encodingLabels,
-  messageText,
   nodeTypeLabels,
   partLabel,
   stepLabels,
@@ -36,6 +40,13 @@ import {
 export const DETAIL_REFRESH_MS = 5000;
 
 const ATTEMPTS_PER_PAGE = 100;
+
+// The panel is Ella Core's event panel: under the app bar, resizable between PANEL_MIN_WIDTH and PANEL_MAX_VW of the
+// window.
+const PANEL_DEFAULT_WIDTH = 560;
+const PANEL_MIN_WIDTH = 350;
+const PANEL_MAX_VW = 0.8;
+const TOOLBAR_HEIGHT = 64;
 
 const durationLabel = (a: Attempt): string => {
   const ms = Date.parse(a.completed_at) - Date.parse(a.started_at);
@@ -56,6 +67,56 @@ const diagnosticsRows = (d?: AbsentUserDiagnostics): [string, ReactNode][] =>
         .filter((k) => d[k])
         .map((k) => [`Absent (${diagnosticsLabels[k]})`, d[k]])
     : [];
+
+// Content shows the content of a message only when asked to: each read is audited. It is fetched once, and forgotten
+// with the drawer.
+function Content({ message }: { message: Message }) {
+  const [shown, setShown] = useState(false);
+  const query = useQuery({
+    queryKey: ["message-content", message.id],
+    queryFn: () => getMessageContent(message.id),
+    enabled: shown,
+    gcTime: 0,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const { data } = query;
+
+  return (
+    <Box component="section" aria-labelledby="content-title">
+      <Typography
+        id="content-title"
+        variant="subtitle1"
+        component="h3"
+        sx={{ mb: 1 }}
+      >
+        Content
+      </Typography>
+      {!shown && (
+        <Button variant="outlined" onClick={() => setShown(true)}>
+          Show content
+        </Button>
+      )}
+      {shown && <QueryAlert query={query} subject="content" />}
+      {shown && !data && !query.error && (
+        <Skeleton variant="rounded" height={48} />
+      )}
+      {data && (
+        <Paper
+          variant="outlined"
+          sx={{
+            p: 1.5,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            color: data.text === undefined ? "text.secondary" : undefined,
+          }}
+        >
+          {data.text ?? "Binary content is not shown."}
+        </Paper>
+      )}
+    </Box>
+  );
+}
 
 function AttemptCard({ attempt, index }: { attempt: Attempt; index: number }) {
   const rows: [string, ReactNode][] = [
@@ -224,6 +285,7 @@ function MessageDetail({
   initial: Message;
   onClose: () => void;
 }) {
+  const auth = useAuth();
   const query = useQuery({
     queryKey: ["message", initial.id],
     queryFn: () => getMessage(initial.id),
@@ -236,7 +298,6 @@ function MessageDetail({
   const message = data ?? initial;
 
   const rows: [string, ReactNode][] = [
-    ["Status", <MessageStatusChip key="status" status={message.status} />],
     ["From", message.from],
     ["To", message.to],
     ["Encoding", encodingLabels[message.encoding]],
@@ -255,44 +316,56 @@ function MessageDetail({
   }
 
   return (
-    <Stack spacing={2} sx={{ p: 2 }}>
-      <Stack direction="row" sx={{ alignItems: "center" }}>
-        <Typography
-          id="message-drawer-title"
-          variant="h6"
-          component="h2"
-          sx={{ flexGrow: 1 }}
-        >
-          Message {message.id}
-        </Typography>
-        <IconButton aria-label="Close" onClick={onClose}>
-          <Box
-            component="span"
-            aria-hidden
-            sx={{ fontSize: 20, lineHeight: 1 }}
-          >
-            ×
-          </Box>
-        </IconButton>
-      </Stack>
-      <QueryAlert query={query} subject="message" />
-      <Fields rows={rows} />
-      <Paper
-        variant="outlined"
+    <>
+      <Box
         sx={{
-          p: 1.5,
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-          color: message.text === undefined ? "text.secondary" : undefined,
+          px: 2,
+          py: 1.5,
+          borderBottom: 1,
+          borderColor: "divider",
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
         }}
       >
-        {messageText(message)}
-      </Paper>
-      <Divider />
-      <Attempts message={message} />
-      <Divider />
-      <StatusReports message={message} />
-    </Stack>
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
+          <Typography
+            id="message-drawer-title"
+            variant="h6"
+            component="h2"
+            noWrap
+          >
+            Message {message.id}
+          </Typography>
+          <MessageStatusChip status={message.status} />
+        </Box>
+        <IconButton aria-label="Close" onClick={onClose} size="small">
+          <CloseIcon />
+        </IconButton>
+      </Box>
+      <Stack spacing={2} sx={{ p: 2, overflow: "auto", flex: 1 }}>
+        <QueryAlert query={query} subject="message" />
+        <Fields rows={rows} />
+        {auth.can("message:content") && (
+          <>
+            <Divider />
+            <Content message={message} />
+          </>
+        )}
+        <Divider />
+        <Attempts message={message} />
+        <Divider />
+        <StatusReports message={message} />
+      </Stack>
+    </>
   );
 }
 
@@ -301,25 +374,104 @@ interface MessageDrawerProps {
   onClose: () => void;
 }
 
+// MessageDrawer shows a message beside the list, as Ella Core shows a network event: the list stays usable, and
+// Escape closes it.
 export default function MessageDrawer({
   message,
   onClose,
 }: MessageDrawerProps) {
+  const open = message !== null;
+  const [width, setWidth] = useState(PANEL_DEFAULT_WIDTH);
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  const onResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const max = window.innerWidth * PANEL_MAX_VW;
+      setWidth(
+        Math.max(
+          PANEL_MIN_WIDTH,
+          Math.min(max, window.innerWidth - ev.clientX),
+        ),
+      );
+    };
+    const onMouseUp = () => {
+      setDragging(false);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
   return (
-    <Drawer
-      anchor="right"
-      open={message !== null}
-      onClose={onClose}
-      slotProps={{
-        paper: {
-          sx: { width: { xs: "100%", sm: 520 } },
-          "aria-labelledby": "message-drawer-title",
-        },
+    <Box
+      component="aside"
+      aria-labelledby={open ? "message-drawer-title" : undefined}
+      aria-hidden={!open}
+      inert={!open}
+      sx={{
+        position: "fixed",
+        top: TOOLBAR_HEIGHT,
+        right: 0,
+        bottom: 0,
+        width: { xs: "100%", sm: width },
+        transform: open ? "translateX(0)" : "translateX(100%)",
+        transition: dragging ? "none" : "transform 200ms ease-in-out",
+        zIndex: (t) => t.zIndex.appBar - 1,
+        bgcolor: "background.paper",
+        boxShadow: open ? 8 : "none",
+        display: "flex",
+        flexDirection: "row",
       }}
     >
-      {message && (
-        <MessageDetail key={message.id} initial={message} onClose={onClose} />
-      )}
-    </Drawer>
+      <Box
+        onMouseDown={onResizeMouseDown}
+        sx={{
+          width: 12,
+          flexShrink: 0,
+          cursor: "ew-resize",
+          display: { xs: "none", sm: "flex" },
+          alignItems: "center",
+          justifyContent: "center",
+          "&:hover .resizeIcon": { opacity: 1 },
+        }}
+      >
+        <DragIndicatorIcon
+          className="resizeIcon"
+          sx={{
+            fontSize: 20,
+            opacity: 0.5,
+            transition: "opacity 120ms",
+            color: "text.secondary",
+          }}
+        />
+      </Box>
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          borderLeft: 1,
+          borderColor: "divider",
+        }}
+      >
+        {message && (
+          <MessageDetail key={message.id} initial={message} onClose={onClose} />
+        )}
+      </Box>
+    </Box>
   );
 }

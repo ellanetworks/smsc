@@ -9,3 +9,27 @@ export const formatTimestamp = (iso: string): string => {
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   );
 };
+
+// formatDateTime is Ella Core's short date and time, such as "Oct 23, 14:30", with the year when it is not this one.
+export const formatDateTime = (value: string): string => {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const includeYear = d.getFullYear() !== new Date().getFullYear();
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(includeYear && { year: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
+
+// startOfLocalDay is midnight, local time, daysBack days before now.
+export const startOfLocalDay = (daysBack = 0, now: Date = new Date()): Date => {
+  const at = new Date(now);
+  at.setDate(at.getDate() - Math.round(daysBack));
+  at.setHours(0, 0, 0, 0);
+  return at;
+};

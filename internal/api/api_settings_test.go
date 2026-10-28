@@ -143,3 +143,40 @@ func TestUpdateDeliveryAcceptsNoRetries(t *testing.T) {
 		t.Fatalf("delivery = %+v", got)
 	}
 }
+
+func TestMessageRetention(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	code, result, _ := a.do(t, http.MethodGet, "/api/v1/messages/retention", "")
+	if got := decode[api.RetentionSettings](t, result); code != http.StatusOK || got.Days != 30 {
+		t.Fatalf("GET = %d %+v, want 30 days", code, got)
+	}
+
+	code, result, errMsg := a.do(t, http.MethodPut, "/api/v1/messages/retention", `{"days": 7}`)
+	if got := decode[api.RetentionSettings](t, result); code != http.StatusOK || got.Days != 7 {
+		t.Fatalf("PUT = %d %+v %q", code, got, errMsg)
+	}
+
+	s, err := a.store.GetSettings(context.Background())
+	if err != nil || s.Retention.Messages != 7*24*time.Hour {
+		t.Fatalf("stored retention = %v, %v", s.Retention, err)
+	}
+
+	for body, want := range map[string]string{
+		`{"days": 0}`:             "days must be between 1 and 106751",
+		`{"days": -1}`:            "days must be between 1 and 106751",
+		`{"days": 106752}`:        "days must be between 1 and 106751",
+		`{"days": 1.5}`:           "Invalid request data",
+		`{"days": "7"}`:           "Invalid request data",
+		`{"days": 7, "hours": 1}`: "Invalid request data",
+	} {
+		if code, _, errMsg := a.do(t, http.MethodPut, "/api/v1/messages/retention", body); code != http.StatusBadRequest ||
+			errMsg != want {
+			t.Errorf("PUT %s = %d %q, want 400 %q", body, code, errMsg, want)
+		}
+	}
+
+	if _, result, _ := a.do(t, http.MethodGet, "/api/v1/messages/retention", ""); decode[api.RetentionSettings](t, result).Days != 7 {
+		t.Fatalf("retention changed after rejected updates: %s", result)
+	}
+}

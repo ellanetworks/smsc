@@ -1,17 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { authFor } from "@/contexts/AuthContext";
 import MessageDrawer, { inProgress } from "@/components/MessageDrawer";
 import type { Attempt, Message } from "@/queries/messages";
+import { RoleID } from "@/queries/users";
 import { json, renderWithClient, stubApi } from "@/test/render";
 import { attempt, message, page } from "@/test/fixtures";
 
-const serve = (m: Message, attemptPages: Attempt[][], total?: number) => {
+const serve = (
+  m: Message,
+  attemptPages: Attempt[][],
+  total?: number,
+  content: { text?: string } = { text: "hello" },
+) => {
   const attemptRequests: URL[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(
       stubApi({
         [`/api/v1/messages/${m.id}`]: () => json(200, { result: m }),
+        [`/api/v1/messages/${m.id}/content`]: () =>
+          json(200, { result: content }),
         [`/api/v1/messages/${m.id}/attempts`]: (url) => {
           attemptRequests.push(url);
           const n = Number(url.searchParams.get("page"));
@@ -68,10 +77,9 @@ describe("MessageDrawer", () => {
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
-    const drawer = screen.getByRole("dialog", { name: "Message 1" });
-    expect(within(drawer).getByText("hello")).toBeInTheDocument();
+    const drawer = screen.getByRole("complementary", { name: "Message 1" });
+    expect(within(drawer).getByText("pending")).toBeInTheDocument();
     expect(fields(drawer)).toMatchObject({
-      Status: "pending",
       Part: "1 of 2",
       Reference: "9",
       Encoding: "GSM-7",
@@ -104,7 +112,7 @@ describe("MessageDrawer", () => {
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
-    const drawer = screen.getByRole("dialog");
+    const drawer = screen.getByRole("complementary");
     expect(
       await within(drawer).findByRole("heading", {
         name: "Delivery attempts (101)",
@@ -123,14 +131,65 @@ describe("MessageDrawer", () => {
     expect(requests.map((r) => r.searchParams.get("page"))).toEqual(["1", "2"]);
   });
 
-  it("shows a binary message without attempts", async () => {
-    const m = message({ text: undefined, encoding: "binary" });
+  it("shows the content only on request, once", async () => {
+    const m = message();
     serve(m, [[]]);
+    const reads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([input]) => String(input).endsWith("/content"))
+        .length;
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
-    const drawer = screen.getByRole("dialog");
-    expect(within(drawer).getByText("(binary)")).toBeInTheDocument();
+    const drawer = screen.getByRole("complementary");
+    expect(
+      await within(drawer).findByText("No delivery attempts yet."),
+    ).toBeInTheDocument();
+    expect(within(drawer).queryByText("hello")).not.toBeInTheDocument();
+    expect(reads()).toBe(0);
+
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Show content" }),
+    );
+
+    expect(await within(drawer).findByText("hello")).toBeInTheDocument();
+    expect(
+      within(drawer).queryByRole("button", { name: "Show content" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(reads()).toBe(1));
+  });
+
+  it("does not offer the content to a Read Only user", () => {
+    const m = message();
+    serve(m, [[]]);
+
+    renderWithClient(
+      <MessageDrawer message={m} onClose={() => {}} />,
+      authFor("ro@example.com", RoleID.ReadOnly),
+    );
+
+    expect(
+      screen.queryByRole("heading", { name: "Content" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show content" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a binary message without attempts", async () => {
+    const m = message({ encoding: "binary" });
+    serve(m, [[]], undefined, {});
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    const drawer = screen.getByRole("complementary");
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Show content" }),
+    );
+    expect(
+      await within(drawer).findByText("Binary content is not shown."),
+    ).toBeInTheDocument();
     expect(
       await within(drawer).findByText("No delivery attempts yet."),
     ).toBeInTheDocument();
@@ -159,9 +218,12 @@ describe("MessageDrawer", () => {
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
-    const section = within(screen.getByRole("dialog")).getByRole("region", {
-      name: "Status reports (1)",
-    });
+    const section = within(screen.getByRole("complementary")).getByRole(
+      "region",
+      {
+        name: "Status reports (1)",
+      },
+    );
     const reports = within(section).getAllByRole("listitem");
     expect(reports).toHaveLength(1);
     expect(
@@ -184,9 +246,12 @@ describe("MessageDrawer", () => {
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
-    const section = within(screen.getByRole("dialog")).getByRole("region", {
-      name: "Status reports",
-    });
+    const section = within(screen.getByRole("complementary")).getByRole(
+      "region",
+      {
+        name: "Status reports",
+      },
+    );
     expect(within(section).getByText(text)).toBeInTheDocument();
     expect(within(section).queryByRole("listitem")).not.toBeInTheDocument();
   });
@@ -197,15 +262,26 @@ describe("MessageDrawer", () => {
 
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
-    expect(fields(screen.getByRole("dialog"))).toMatchObject({
-      Status: "replaced",
-    });
+    expect(
+      within(screen.getByRole("complementary")).getByText("replaced"),
+    ).toBeInTheDocument();
+  });
+
+  it("closes on Escape", () => {
+    const m = message();
+    serve(m, [[]]);
+    const onClose = vi.fn();
+
+    renderWithClient(<MessageDrawer message={m} onClose={onClose} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("renders nothing when no message is selected", () => {
     renderWithClient(<MessageDrawer message={null} onClose={() => {}} />);
 
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
   it("refreshes while the message or a report on it is pending", () => {

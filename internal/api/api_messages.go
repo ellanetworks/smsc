@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -28,6 +29,12 @@ type CreateMessageParams struct {
 	Text string `json:"text"`
 }
 
+// MessageContent is the content of a short message, which the other responses leave out: reading it is audited.
+type MessageContent struct {
+	// Text is the text of a message that is not binary.
+	Text *string `json:"text,omitempty"`
+}
+
 type Concatenation struct {
 	Reference uint16 `json:"reference"`
 	Part      uint8  `json:"part"`
@@ -38,7 +45,6 @@ type Message struct {
 	ID            int64          `json:"id"`
 	From          string         `json:"from"`
 	To            string         `json:"to"`
-	Text          *string        `json:"text,omitempty"`
 	Encoding      string         `json:"encoding"`
 	Concatenation *Concatenation `json:"concatenation,omitempty"`
 	Status        string         `json:"status"`
@@ -240,6 +246,29 @@ func GetMessage(cfg Config) http.Handler {
 	})
 }
 
+// GetMessageContent returns the content of a short message, and logs an audit event that the caller read it.
+func GetMessageContent(cfg Config, a *auth) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m, ok := lookupMessage(w, r, cfg)
+		if !ok {
+			return
+		}
+
+		var out MessageContent
+
+		if submit, err := tpdu.DecodeSubmit(m.TPDU); err == nil {
+			if content, err := submit.Content(); err == nil && content.Encoding != tpdu.EncodingBinary {
+				out.Text = &content.Text
+			}
+		}
+
+		p, _ := PrincipalFrom(r.Context())
+		a.audit(r, "read_message_content", p.Email, fmt.Sprintf("Content of message %d read", m.ID))
+
+		writeResponse(w, out, http.StatusOK, cfg.Logger)
+	})
+}
+
 func ListMessageAttempts(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page, perPage, ok := pagination(w, r, cfg)
@@ -381,6 +410,19 @@ func ListMessages(cfg Config) http.Handler {
 			}
 		}
 
+		if filter.Start, ok = timeParam(w, q.Get("start"), "start", cfg); !ok {
+			return
+		}
+
+		if filter.End, ok = timeParam(w, q.Get("end"), "end", cfg); !ok {
+			return
+		}
+
+		if !filter.Start.IsZero() && !filter.End.IsZero() && filter.End.Before(filter.Start) {
+			writeError(w, http.StatusBadRequest, "end must not be before start", nil, cfg.Logger)
+			return
+		}
+
 		messages, total, err := cfg.Store.ListMessages(r.Context(), filter, page, perPage)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to list messages", err, cfg.Logger)
@@ -473,10 +515,6 @@ func messageOf(m db.Message, reports []db.Message) Message {
 
 	out.Encoding = string(content.Encoding)
 
-	if content.Encoding != tpdu.EncodingBinary {
-		out.Text = &content.Text
-	}
-
 	if c := content.Concatenation; c != nil {
 		out.Concatenation = &Concatenation{Reference: c.Reference, Part: c.Part, Total: c.Total}
 	}
@@ -510,6 +548,21 @@ func formatAddress(a db.Address) string {
 	}
 
 	return a.Digits
+}
+
+// timeParam parses the query parameter name, an RFC 3339 time, and returns the zero time when it is absent.
+func timeParam(w http.ResponseWriter, value, name string, cfg Config) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, true
+	}
+
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, name+" must be an RFC 3339 time such as 2026-10-01T12:00:00Z", nil, cfg.Logger)
+		return time.Time{}, false
+	}
+
+	return t, true
 }
 
 func formatTime(t time.Time) string {

@@ -4,7 +4,6 @@ export const message = (overrides: Partial<Message> = {}): Message => ({
   id: 1,
   from: "+15551230001",
   to: "+15551230002",
-  text: "hello",
   encoding: "gsm7",
   status: "delivered",
   created_at: "2026-09-30T12:00:00.000Z",

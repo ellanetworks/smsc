@@ -611,6 +611,9 @@ type smscConfig struct {
 	config.Config
 	Settings       settings.Settings
 	AttemptTimeout time.Duration
+	// PurgeNow and PurgeInterval, when set, are the clock and the period of the message retention.
+	PurgeNow      func() time.Time
+	PurgeInterval time.Duration
 }
 
 func testConfig(t testing.TB, dbPath string) smscConfig {
@@ -649,9 +652,19 @@ func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 		t.Fatal(err)
 	}
 
+	if r := cfg.Settings.Retention; r.Messages != 0 {
+		if err := store.UpdateRetention(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	srv := &server.Server{Config: cfg.Config, Logger: discardLogger()}
 	srv.SetAttemptTimeout(cfg.AttemptTimeout)
 	srv.SetBcryptCost(bcrypt.MinCost)
+
+	if cfg.PurgeNow != nil {
+		srv.SetPurgeClock(cfg.PurgeNow, cfg.PurgeInterval)
+	}
 
 	if err := srv.Start(context.Background()); err != nil {
 		_ = store.Close()
@@ -1404,7 +1417,7 @@ func TestAPIFindsMobileOriginatedMessages(t *testing.T) {
 		t.Fatalf("list = %d", code)
 	}
 
-	if len(list.Items) != 1 || list.Items[0].From != "+"+alice.msisdn || list.Items[0].Encoding != "binary" || list.Items[0].Text != nil ||
+	if len(list.Items) != 1 || list.Items[0].From != "+"+alice.msisdn || list.Items[0].Encoding != "binary" ||
 		list.Items[0].Status != "delivered" {
 		t.Fatalf("items = %+v", list.Items)
 	}

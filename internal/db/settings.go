@@ -31,6 +31,13 @@ func (d *DB) GetSettings(ctx context.Context) (_ settings.Settings, err error) {
 
 	s.Delivery.DefaultValidity = time.Duration(validity)
 
+	var retention int64
+	if err := d.conn.QueryRowContext(ctx, `SELECT messages FROM retention WHERE id = 1`).Scan(&retention); err != nil {
+		return settings.Settings{}, fmt.Errorf("get retention: %w", err)
+	}
+
+	s.Retention.Messages = time.Duration(retention)
+
 	if s.Delivery.RetryIntervals, err = d.retryIntervals(ctx); err != nil {
 		return settings.Settings{}, err
 	}
@@ -99,6 +106,16 @@ func (d *DB) UpdateDelivery(ctx context.Context, dl settings.Delivery) (err erro
 
 		return nil
 	})
+}
+
+func (d *DB) UpdateRetention(ctx context.Context, r settings.Retention) (err error) {
+	defer d.observe(&err)()
+
+	if _, err := d.conn.ExecContext(ctx, `UPDATE retention SET messages = ? WHERE id = 1`, int64(r.Messages)); err != nil {
+		return fmt.Errorf("update retention: %w", err)
+	}
+
+	return nil
 }
 
 func (d *DB) inTx(ctx context.Context, what string, fn func(tx *sql.Tx) error) error {

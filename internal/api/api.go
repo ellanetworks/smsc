@@ -40,6 +40,7 @@ type Settings interface {
 	Get() settings.Settings
 	UpdateOperator(ctx context.Context, o settings.Operator) error
 	UpdateDelivery(ctx context.Context, d settings.Delivery) error
+	UpdateRetention(ctx context.Context, r settings.Retention) error
 }
 
 type Config struct {
@@ -83,7 +84,10 @@ func routes(cfg Config, a *auth) []route {
 
 		{"POST /api/v1/messages", PermCreateMessage, CreateMessage(cfg)},
 		{"GET /api/v1/messages", PermReadMessage, ListMessages(cfg)},
+		{"GET /api/v1/messages/retention", PermReadRetention, GetRetention(cfg)},
+		{"PUT /api/v1/messages/retention", PermUpdateRetention, UpdateRetention(cfg)},
 		{"GET /api/v1/messages/{id}", PermReadMessage, GetMessage(cfg)},
+		{"GET /api/v1/messages/{id}/content", PermReadMessageContent, GetMessageContent(cfg, a)},
 		{"GET /api/v1/messages/{id}/attempts", PermReadMessage, ListMessageAttempts(cfg)},
 		{"GET /api/v1/diameter", PermReadDiameter, GetDiameterStatus(cfg)},
 		{"GET /api/v1/operator", PermReadOperator, GetOperator(cfg)},

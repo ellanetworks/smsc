@@ -43,6 +43,7 @@ func TestMetrics(t *testing.T) {
 		"ellasmsc_database_storage_bytes",
 		"ellasmsc_messages_received_total",
 		"ellasmsc_messages_completed_total",
+		"ellasmsc_messages_purged_total",
 		"ellasmsc_messages_pending",
 		"ellasmsc_message_delivery_duration_seconds",
 		"ellasmsc_peer_requests_total",

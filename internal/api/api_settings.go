@@ -33,6 +33,14 @@ type DeliverySettings struct {
 	RetryIntervalsSeconds  []int64 `json:"retry_intervals_seconds"`
 }
 
+// RetentionSettings is how long messages are kept once they have their final status, in whole days, like the retention
+// policies of Ella Core.
+type RetentionSettings struct {
+	Days int64 `json:"days"`
+}
+
+const day = 24 * time.Hour
+
 func GetOperator(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeResponse(w, operatorResponse(cfg.Settings.Get().Operator), http.StatusOK, cfg.Logger)
@@ -92,6 +100,26 @@ func UpdateDelivery(cfg Config) http.Handler {
 
 		return cfg.Settings.UpdateDelivery(ctx, d)
 	}, func(s settings.Settings) any { return deliveryResponse(s.Delivery) })
+}
+
+func GetRetention(cfg Config) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeResponse(w, retentionResponse(cfg.Settings.Get().Retention), http.StatusOK, cfg.Logger)
+	})
+}
+
+func UpdateRetention(cfg Config) http.Handler {
+	return updateHandler(cfg, "retention", func(ctx context.Context, p RetentionSettings) error {
+		if p.Days < 1 || p.Days > maxSeconds/int64(day/time.Second) {
+			return invalid(fmt.Errorf("days must be between 1 and %d", maxSeconds/int64(day/time.Second)))
+		}
+
+		return cfg.Settings.UpdateRetention(ctx, settings.Retention{Messages: time.Duration(p.Days) * day})
+	}, func(s settings.Settings) any { return retentionResponse(s.Retention) })
+}
+
+func retentionResponse(r settings.Retention) RetentionSettings {
+	return RetentionSettings{Days: int64(r.Messages / day)}
 }
 
 type invalidError struct{ error }
