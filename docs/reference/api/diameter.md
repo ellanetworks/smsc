@@ -4,13 +4,11 @@ description: RESTful API reference for the Diameter status and the configured Di
 
 # Diameter
 
-The HSSs, MMEs, SMSFs and IP-SM-GWs of the home network connect to the SMSC, and need no configuration. The configured peers are the Diameter agents that the SMSC connects to, such as the DEA of an IPX provider or a DRA in front of the HSS, with the realms they route to.
-
-Reading requires Read Only, Network Manager or Admin. Creating, updating and deleting peers requires Network Manager or Admin.
+Configured peers are the Diameter agents that the SMSC connects to, and their routes. Creating, updating and deleting them requires Network Manager or Admin.
 
 ## Get the Diameter Status
 
-This path returns the Diameter identity of the SMSC, derived from the operator settings, its peers, and its routes.
+This path returns the Diameter identity of the SMSC, its peers, and its routes.
 
 | Method | Path               |
 | ------ | ------------------ |
@@ -22,21 +20,21 @@ This path returns the Diameter identity of the SMSC, derived from the operator s
 | ---------------------- | ------- | ----------- |
 | `host`                 | string  | Origin-Host of the SMSC. |
 | `realm`                | string  | Origin-Realm of the SMSC. |
-| `peers`                | array   | The peers connected to the SMSC, and the configured peers. |
-| `peers[].id`           | int     | ID of a configured peer. Absent for a peer that connected to the SMSC. |
-| `peers[].configured`   | boolean | Whether the peer is a configured peer. |
+| `peers`                | array   | Connected and configured peers. |
+| `peers[].id`           | int     | ID of a configured peer. |
+| `peers[].configured`   | boolean | Whether the peer is configured. |
 | `peers[].host`         | string  | Origin-Host of the peer. |
 | `peers[].realm`        | string  | Origin-Realm of the peer. |
 | `peers[].address`      | string  | Remote address of the connection. |
 | `peers[].state`        | string  | `down`, `connecting`, `open`, `suspect`, `reopen` or `closing`. |
 | `peers[].applications` | array   | Applications the peer supports: `s6c`, `sgd`. |
 | `peers[].since`        | string  | Time of the last state change. |
-| `peers[].error`        | string  | Why the last connection to a configured peer failed or closed. |
+| `peers[].error`        | string  | Last connection error of a configured peer. |
 | `routes`               | array   | The `s6c` route to the HSS, then the routes of the configured peers, default routes last. |
-| `routes[].realm`       | string  | Destination-Realm of the route. Empty for a default route. |
-| `routes[].default`     | boolean | Whether the route takes the realms that no other route or connected peer serves, other than the SMSC's own. |
+| `routes[].realm`       | string  | Destination-Realm. Empty for a default route. |
+| `routes[].default`     | boolean | Whether the route is a default route. |
 | `routes[].application` | string  | `s6c` or `sgd`. |
-| `routes[].peers`       | array   | Hosts of the open peers that serve the route. For the first route, the HSSs: the open peers in the SMSC's realm that support S6c, and the configured peers with an `s6c` route to that realm. |
+| `routes[].peers`       | array   | Hosts of the open peers of the route. |
 
 ### Sample Response
 
@@ -118,8 +116,6 @@ This path returns the Diameter identity of the SMSC, derived from the operator s
 
 ## Create a Peer
 
-The SMSC connects to the peer over SCTP, from `diameter.address`, keeps the connection up, and reconnects after 1 to 30 seconds when it drops.
-
 | Method | Path                     |
 | ------ | ------------------------ |
 | POST   | `/api/v1/diameter/peers` |
@@ -128,16 +124,14 @@ The SMSC connects to the peer over SCTP, from `diameter.address`, keeps the conn
 
 | Field                  | Type    | Required | Description |
 | ---------------------- | ------- | -------- | ----------- |
-| `host`                 | string  | No       | Diameter identity of the peer. When set, the peer must give it as its Origin-Host, and connect from one of its `addresses`. Empty accepts the host the peer gives. |
-| `addresses`            | array   | Yes      | IP addresses of the peer, more than one for a multi-homed peer. List all of them: a peer with a `host` that connects from another address is refused. |
-| `port`                 | int     | No       | Diameter port of the peer. Default `3868`. |
-| `routes`               | array   | No       | What the SMSC sends the peer. |
-| `routes[].realm`       | string  | Yes, unless `default` | Destination-Realm the route serves, e.g. `epc.mnc002.mcc208.3gppnetwork.org`. |
-| `routes[].default`     | boolean | No       | `true` for the default route, which takes every realm that no other route or connected peer serves, other than the SMSC's own. `sgd` only, and without `realm`. |
-| `routes[].application` | string  | Yes      | `sgd`: short messages to the MMEs, SMSFs and IP-SM-GWs of the realm. `s6c`: routing requests to the HSS, with the SMSC's own realm. |
-| `routes[].priority`    | int     | No       | The peers of a route are tried lowest priority first; peers of equal priority share the requests. Default `0`. |
-
-A peer without an `s6c` route is not asked for routing, even when it is the HSS: a configured peer serves only its routes.
+| `host`                 | string  | No       | Origin-Host the peer must give. Empty accepts any. |
+| `addresses`            | array   | Yes      | IP addresses of the peer. A peer with a `host` must connect from one of them. |
+| `port`                 | int     | No       | Default `3868`. |
+| `routes`               | array   | No       | Routes of the peer. |
+| `routes[].realm`       | string  | Unless `default` | Destination-Realm, e.g. `epc.mnc002.mcc208.3gppnetwork.org`. |
+| `routes[].default`     | boolean | No       | Default route: every realm without another route, except the SMSC's own. `sgd` only, without `realm`. |
+| `routes[].application` | string  | Yes      | `sgd` or `s6c`. An `s6c` route takes the SMSC's own realm. |
+| `routes[].priority`    | int     | No       | Lowest first; equal priorities share the load. Default `0`. |
 
 ### Sample Request
 
@@ -158,7 +152,7 @@ A peer without an `s6c` route is not asked for routing, even when it is the HSS:
 | ----- | ----------- |
 | `201` | The peer, with its `id`. |
 | `400` | Invalid peer. |
-| `409` | Another peer has the same `host`, two peers without a `host` share an address, or `host` is the SMSC's own. |
+| `409` | `host` is another peer's or the SMSC's, or two peers without a `host` share an address. |
 
 ## Get a Peer
 
@@ -166,27 +160,29 @@ A peer without an `s6c` route is not asked for routing, even when it is the HSS:
 | ------ | ----------------------------- |
 | GET    | `/api/v1/diameter/peers/{id}` |
 
-The `status` of the peer is absent until the SMSC applies a new peer.
+### Response Fields
+
+The fields of the request body, plus:
 
 | Field           | Type   | Description |
 | --------------- | ------ | ----------- |
+| `id`            | int    | ID of the peer. |
+| `status`        | object | Connection to the peer. Absent until the SMSC applies the peer. |
 | `status.state`  | string | `down`, `connecting`, `open`, `suspect`, `reopen` or `closing`. |
 | `status.host`   | string | Origin-Host the peer gave. |
 | `status.realm`  | string | Origin-Realm the peer gave. |
 | `status.since`  | string | Time of the last state change. |
-| `status.error`  | string | Why the last connection failed or closed. |
+| `status.error`  | string | Last connection error. |
 
 ## Update a Peer
 
-The request body is that of [Create a Peer](#create-a-peer). A change of routes or priorities keeps the connection; a change of `host`, `addresses` or `port` replaces it.
+The request body is that of [Create a Peer](#create-a-peer). A change of `host`, `addresses` or `port` reconnects.
 
 | Method | Path                          |
 | ------ | ----------------------------- |
 | PUT    | `/api/v1/diameter/peers/{id}` |
 
 ## Delete a Peer
-
-The SMSC closes the connection to the peer.
 
 | Method | Path                          |
 | ------ | ----------------------------- |

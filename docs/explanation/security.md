@@ -30,6 +30,6 @@ Ella SMSC serves the UI and the API over plain HTTP unless it is given a certifi
 
 Ella SMSC accepts any Diameter peer that connects and supports S6c or SGd, and its Diameter connections are not encrypted. Keep its Diameter address on a network that only the core network can reach.
 
-Ella SMSC connects only to the Diameter peers that an Admin or a Network Manager configures. A configured peer with a host must give that host when it connects, from one of its addresses.
+Ella SMSC connects only to the peers that an Admin or a Network Manager configures. A configured peer with a host must give that host, from one of its addresses.
 
-Through an agent, requests can come from other networks. Ella SMSC accepts a short message from any Origin-Realm that its agent relays. Have the operator's edge agent (DEA) filter the realms of its roaming partners, as GSMA IR.88 recommends.
+Through an edge agent, short messages can come from other networks, and Ella SMSC accepts them from any realm. The edge agent filters the realms of the operator's roaming partners, as GSMA IR.88 recommends.

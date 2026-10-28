@@ -16,7 +16,17 @@ Ella SMSC has no radio access and stores no subscribers. It relies on the core n
 
 Ella Core provides the HSS, the MME and the SMSF. For how it works with an SMSC, see Ella Core's [SMS Integration](https://docs.ellanetworks.com/core/explanation/sms_integration/).
 
-Ella SMSC's Diameter host and realm derive from the operator's MCC and MNC: `smsc.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`. Its home network's peers connect to it, and it asks the HSSs of that realm for routing. It can also connect to Diameter agents, such as the DEA of an IPX provider or a DRA in front of the HSS, to reach the visited networks of roaming subscribers and HSSs that do not connect to it. See [Connect through Diameter Agents](../how_to/connect_through_diameter_agents.md).
+Ella SMSC's Diameter host and realm derive from the operator's MCC and MNC: `smsc.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`. Its peers connect to it, and it asks the HSSs of that realm for routing.
+
+## Reaching other networks
+
+A subscriber roaming on another network is served by a visited MME or SMSF that never connects to Ella SMSC. Ella SMSC reaches it through a Diameter agent that it connects to, such as the edge agent (DEA) of the operator or of an IPX provider. Likewise, an HSS behind a DRA is reached through the DRA.
+
+Each configured agent has routes: the realms, and the application, S6c or SGd, of the requests it takes. A short message to a node that is not connected goes to the agents of the route to that node's realm, or else of the default route. The agent forwards it to the node, by its Diameter host. The default route never takes Ella SMSC's own realm: a home MME that is briefly disconnected is retried, rather than sent out to the IPX.
+
+A configured agent takes only the requests of its routes. An HSS added as a configured peer is asked for routing only with an S6c route to Ella SMSC's realm.
+
+When an agent fails with a short message in flight, Ella SMSC sends it again through the next agent of the route, marked as a possible retransmission. The visited node may then deliver it twice.
 
 ## Receiving
 
