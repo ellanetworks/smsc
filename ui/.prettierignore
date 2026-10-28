@@ -1,2 +1,6 @@
 dist
 node_modules
+test-results
+playwright-report
+e2e/.auth
+e2e/.build

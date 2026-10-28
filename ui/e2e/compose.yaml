@@ -1,0 +1,22 @@
+configs:
+  smsc_config:
+    content: |
+      logging:
+        level: info
+      db:
+        path: smsc.db
+      api:
+        address: 0.0.0.0
+        port: 5010
+      diameter:
+        name: eth0
+
+services:
+  ella-smsc:
+    image: ${ELLA_SMSC_IMAGE:-ella-smsc:latest}
+    configs:
+      - source: smsc_config
+        target: /smsc.yaml
+    entrypoint: /bin/smsc --config /smsc.yaml
+    ports:
+      - "${ELLA_E2E_PORT:-5110}:5010"

@@ -11,5 +11,9 @@ ui/dist/*
 ui/npm-debug.log*
 ui/*.tsbuildinfo
 ui/.env*.local
+ui/test-results/
+ui/playwright-report/
+ui/e2e/.auth/
+ui/e2e/.build/
 .cache
 site

@@ -1,0 +1,5 @@
+# Runs the SMSC built from this checkout, UI included, in the image of the last build.
+services:
+  ella-smsc:
+    volumes:
+      - ./.build/smsc:/bin/smsc:ro

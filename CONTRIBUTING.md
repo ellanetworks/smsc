@@ -41,3 +41,10 @@ sudo modprobe sctp
 go test ./...
 npm test --prefix ui
 ```
+
+The UI end-to-end tests build the UI and the SMSC, and run it in the `ella-smsc:latest` image with Docker Compose. They need Docker and that image, and Playwright's Chromium:
+
+```sh
+npx --prefix ui playwright install chromium
+npm run test:e2e --prefix ui
+```
