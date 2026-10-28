@@ -20,13 +20,11 @@ Ella SMSC's Diameter host and realm derive from the operator's MCC and MNC: `sms
 
 ## Reaching other networks
 
-A subscriber roaming on another network is served by a visited MME or SMSF that never connects to Ella SMSC. Ella SMSC reaches it through a Diameter agent that it connects to, such as the edge agent (DEA) of the operator or of an IPX provider. Likewise, an HSS behind a DRA is reached through the DRA.
+A subscriber roaming on another network is served by a visited MME or SMSF that never connects to Ella SMSC. Ella SMSC reaches it through a Diameter agent it connects to, such as the edge agent of the operator or of an IPX provider. An HSS behind a DRA is reached the same way.
 
-Each configured agent has routes: the realms, and the application, S6c or SGd, of the requests it takes. A short message to a node that is not connected goes to the agents of the route to that node's realm, or else of the default route. The agent forwards it to the node, by its Diameter host. The default route never takes Ella SMSC's own realm: a home MME that is briefly disconnected is retried, rather than sent out to the IPX.
+Each agent has routes: the realms it reaches. A default route takes every other realm, except Ella SMSC's own, so a home MME that is briefly disconnected is retried rather than sent out to the IPX. An agent is asked only for the requests of its routes: an HSS added as an agent needs an S6c route to Ella SMSC's realm.
 
-A configured agent takes only the requests of its routes. An HSS added as a configured peer is asked for routing only with an S6c route to Ella SMSC's realm.
-
-When an agent fails with a short message in flight, Ella SMSC sends it again through the next agent of the route, marked as a possible retransmission. The visited node may then deliver it twice.
+When an agent fails with a short message in flight, Ella SMSC sends it through the next one, and the subscriber may receive it twice.
 
 ## Receiving
 
