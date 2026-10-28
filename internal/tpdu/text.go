@@ -26,8 +26,10 @@ const (
 )
 
 const (
-	ieiConcat8  = 0x00
-	ieiConcat16 = 0x08
+	ieiConcat8           = 0x00
+	ieiApplicationPort8  = 0x04
+	ieiApplicationPort16 = 0x05
+	ieiConcat16          = 0x08
 )
 
 var ErrTextTooLong = errors.New("text needs more than 255 short messages")
@@ -238,7 +240,7 @@ func (s Submit) Content() (Content, error) {
 	case IsSeptetCoded(s.DataCodingScheme):
 		c.Encoding = EncodingGSM7
 		c.Text = decodeGSM7(s.UserData, len(header), int(s.UserDataLength))
-	case isUCS2(s.DataCodingScheme):
+	case IsUCS2(s.DataCodingScheme):
 		c.Encoding = EncodingUCS2
 		c.Text = decodeUCS2(s.UserData[len(header):])
 	default:

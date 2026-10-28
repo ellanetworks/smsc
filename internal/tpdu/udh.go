@@ -44,6 +44,27 @@ func ValidUserDataHeader(h []byte) bool {
 	return ok
 }
 
+// HasApplicationPort reports whether a well-formed user data header, its length octet included, has an application
+// port addressing information element, of 8 or 16 bit addresses (TS 23.040 clause 9.2.3.24).
+func HasApplicationPort(h []byte) bool {
+	if len(h) == 0 {
+		return false
+	}
+
+	ies, ok := informationElements(h[1:])
+	if !ok {
+		return false
+	}
+
+	for _, ie := range ies {
+		if ie.id == ieiApplicationPort8 || ie.id == ieiApplicationPort16 {
+			return true
+		}
+	}
+
+	return false
+}
+
 // informationElements splits the information elements of a user data header, its length octet excluded. It returns
 // false when they are malformed.
 func informationElements(ies []byte) ([]informationElement, bool) {

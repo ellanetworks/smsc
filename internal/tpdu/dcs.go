@@ -45,7 +45,8 @@ func MessageClass(dcs byte) (uint8, bool) {
 	}
 }
 
-func isUCS2(dcs byte) bool {
+// IsUCS2 is whether a TP-DCS codes the TP-UD in UCS2 (TS 23.038 clause 4).
+func IsUCS2(dcs byte) bool {
 	switch dcs >> 4 {
 	case 0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7:
 		return dcs&0x20 == 0 && (dcs>>2)&0x3 == 0x2

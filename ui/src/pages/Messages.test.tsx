@@ -140,7 +140,8 @@ describe("Messages", () => {
       requests.some((r) => r.searchParams.get("from") === "Ella_Net"),
     ).toBe(false);
 
-    fireEvent.change(input, { target: { value: "+15551230001" } });
+    fireEvent.change(input, { target: { value: "+15551230001 " } });
+    expect(input).toHaveValue("+15551230001 ");
     await waitFor(() =>
       expect(lastQuery(requests)).toMatchObject({ from: "+15551230001" }),
     );

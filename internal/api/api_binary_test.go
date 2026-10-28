@@ -107,8 +107,9 @@ func TestCreateBinaryMessageVariants(t *testing.T) {
 			`{"data_coding_scheme": 4, "user_data_header": "027000", "user_data": "` + strings.Repeat("ab", 137) + `"}`,
 			"41 00 0b91 5155210300f2 00 04 8c 027000" + strings.Repeat("ab", 137), "binary",
 		},
-		"UCS2 reads as text": {
-			`{"data_coding_scheme": 8, "user_data": "00680069"}`, "01 00 0b91 5155210300f2 00 08 04 00680069", "ucs2",
+		"device trigger with an application port": {
+			`{"protocol_identifier": 72, "data_coding_scheme": 4, "user_data_header": "0605040b8423f0", "user_data": "00"}`,
+			"41 00 0b91 5155210300f2 48 04 08 0605040b8423f0 00", "binary",
 		},
 		"class 2 in group 01xx for (U)SIM data download": {
 			`{"protocol_identifier": 127, "data_coding_scheme": 86, "user_data": "00"}`, "01 00 0b91 5155210300f2 7f 56 01 00", "binary",
@@ -139,7 +140,11 @@ func TestCreateBinaryMessageVariants(t *testing.T) {
 func TestCreateBinaryMessageRejectsInvalidInput(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	const class2 = "binary.data_coding_scheme must be message class 2 for this protocol_identifier"
+	const (
+		class2  = "binary.data_coding_scheme must be message class 2 for this protocol_identifier"
+		notText = "binary.data_coding_scheme must not code GSM 7-bit or UCS2; send text instead"
+		noPort  = "binary.user_data_header must have an application port for this protocol_identifier"
+	)
 
 	tests := map[string]struct {
 		body, err string
@@ -152,9 +157,13 @@ func TestCreateBinaryMessageRejectsInvalidInput(t *testing.T) {
 		"missing data coding scheme":    {`{"user_data": "00"}`, "binary.data_coding_scheme is required"},
 		"null user data":                {`{"data_coding_scheme": 4, "user_data": null}`, "binary.user_data is required"},
 		"missing user data":             {`{"data_coding_scheme": 4}`, "binary.user_data is required"},
-		"GSM 7-bit":                     {`{"data_coding_scheme": 0, "user_data": "00"}`, "binary.data_coding_scheme must not be GSM 7-bit; send text instead"},
-		"GSM 7-bit class 2":             {`{"protocol_identifier": 127, "data_coding_scheme": 242, "user_data": "00"}`, "binary.data_coding_scheme must not be GSM 7-bit; send text instead"},
-		"reserved coding group":         {`{"data_coding_scheme": 132, "user_data": "00"}`, "binary.data_coding_scheme must not be GSM 7-bit; send text instead"},
+		"GSM 7-bit":                     {`{"data_coding_scheme": 0, "user_data": "00"}`, notText},
+		"GSM 7-bit class 2":             {`{"protocol_identifier": 127, "data_coding_scheme": 242, "user_data": "00"}`, notText},
+		"reserved coding group":         {`{"data_coding_scheme": 132, "user_data": "00"}`, notText},
+		"UCS2":                          {`{"data_coding_scheme": 8, "user_data": "00410042"}`, notText},
+		"UCS2 class 2":                  {`{"data_coding_scheme": 26, "user_data": "0041"}`, notText},
+		"device trigger without header": {`{"protocol_identifier": 72, "data_coding_scheme": 4, "user_data": "00"}`, noPort},
+		"device trigger without port":   {`{"protocol_identifier": 72, "data_coding_scheme": 4, "user_data_header": "027000", "user_data": "00"}`, noPort},
 		"telematic interworking":        {`{"protocol_identifier": 33, "data_coding_scheme": 4, "user_data": "00"}`, "binary.protocol_identifier requests telematic interworking, which is not supported"},
 		"SIM data download no class":    {`{"protocol_identifier": 127, "data_coding_scheme": 4, "user_data": "00"}`, class2},
 		"SIM data download class 1":     {`{"protocol_identifier": 127, "data_coding_scheme": 245, "user_data": "00"}`, class2},

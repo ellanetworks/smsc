@@ -78,6 +78,8 @@ func TestDeliverReportFailureCause(t *testing.T) {
 		"no failure cause":    {mustHex(t, "00"), 0, false},
 		"submit report":       {mustHex(t, "01"+"c5"+"00"), 0, false},
 		"status report shape": {mustHex(t, "02"+"d0"), 0, false},
+		"unused bit 7":        {mustHex(t, "80"+"d5"+"00"), FailureUnspecified, true},
+		"unused bit 2":        {mustHex(t, "04"+"d5"+"00"), FailureUnspecified, true},
 	}
 
 	for name, tt := range tests {

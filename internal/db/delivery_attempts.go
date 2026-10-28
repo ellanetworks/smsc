@@ -91,27 +91,8 @@ func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, pe
 		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
 	}
 
-	rows, err := d.conn.QueryContext(ctx,
-		`SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE message_id = ? ORDER BY id LIMIT ? OFFSET ?`,
-		messageID, perPage, (page-1)*perPage)
+	attempts, err := d.queryDeliveryAttempts(ctx, `message_id = ? ORDER BY id LIMIT ? OFFSET ?`, messageID, perPage, (page-1)*perPage)
 	if err != nil {
-		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
-	}
-
-	defer func() { _ = rows.Close() }()
-
-	attempts := []DeliveryAttempt{}
-
-	for rows.Next() {
-		a, err := scanDeliveryAttempt(rows)
-		if err != nil {
-			return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
-		}
-
-		attempts = append(attempts, a)
-	}
-
-	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
 	}
 
@@ -122,11 +103,19 @@ func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, pe
 func (d *DB) ListDeliverReports(ctx context.Context, messageID int64) (_ []DeliveryAttempt, err error) {
 	defer d.observe(&err)()
 
-	rows, err := d.conn.QueryContext(ctx,
-		`SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE message_id = ? AND deliver_report IS NOT NULL ORDER BY id`,
-		messageID)
+	attempts, err := d.queryDeliveryAttempts(ctx, `message_id = ? AND deliver_report IS NOT NULL ORDER BY id`, messageID)
 	if err != nil {
 		return nil, fmt.Errorf("list deliver reports: %w", err)
+	}
+
+	return attempts, nil
+}
+
+// queryDeliveryAttempts returns the delivery attempts that the WHERE clause where selects, never nil.
+func (d *DB) queryDeliveryAttempts(ctx context.Context, where string, args ...any) ([]DeliveryAttempt, error) {
+	rows, err := d.conn.QueryContext(ctx, `SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE `+where, args...)
+	if err != nil {
+		return nil, err
 	}
 
 	defer func() { _ = rows.Close() }()
@@ -136,17 +125,13 @@ func (d *DB) ListDeliverReports(ctx context.Context, messageID int64) (_ []Deliv
 	for rows.Next() {
 		a, err := scanDeliveryAttempt(rows)
 		if err != nil {
-			return nil, fmt.Errorf("list deliver reports: %w", err)
+			return nil, err
 		}
 
 		attempts = append(attempts, a)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list deliver reports: %w", err)
-	}
-
-	return attempts, nil
+	return attempts, rows.Err()
 }
 
 func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {

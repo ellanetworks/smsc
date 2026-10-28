@@ -1283,12 +1283,13 @@ components:
           default: 0
           description: >-
             TP-PID (3GPP TS 23.040 clause 9.2.3.9). Telematic interworking is not supported. (U)SIM data download (127)
-            and ANSI-136 R-DATA (124) need a data coding scheme of message class 2.
+            and ANSI-136 R-DATA (124) need a data coding scheme of message class 2. Device triggering (72) needs an
+            application port addressing information element in the user data header.
         data_coding_scheme:
           type: integer
           minimum: 0
           maximum: 255
-          description: TP-DCS (3GPP TS 23.038 clause 4). It must not code the GSM 7 bit default alphabet; send text instead.
+          description: TP-DCS (3GPP TS 23.038 clause 4). It must not code the GSM 7 bit default alphabet or UCS2; send text instead.
         user_data_header:
           allOf:
             - $ref: "#/components/schemas/Octets"

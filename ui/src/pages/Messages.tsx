@@ -152,14 +152,16 @@ export default function Messages() {
   const timeFilter = useMemo(() => timeRangeFilter(timeRange), [timeRange]);
 
   const toInvalid = to !== "" && !isE164(to);
-  const fromInvalid = from !== "" && !isOriginator(from);
+  // The value is kept as typed, since a name may hold spaces, and trimmed of those around it to be used.
+  const sender = from.trim();
+  const fromInvalid = sender !== "" && !isOriginator(sender);
 
   const debouncedTo = useDebouncedValue(
     toInvalid ? "" : to,
     FILTER_DEBOUNCE_MS,
   );
   const debouncedFrom = useDebouncedValue(
-    fromInvalid ? "" : from,
+    fromInvalid ? "" : sender,
     FILTER_DEBOUNCE_MS,
   );
   const filters = {
@@ -233,7 +235,6 @@ export default function Messages() {
           size="small"
           value={from}
           onChange={(e) => {
-            // A name may hold spaces, so the value is kept as typed.
             setFrom(e.target.value);
             resetPage();
           }}

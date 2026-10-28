@@ -716,6 +716,10 @@ func TestDeliverOutcomes(t *testing.T) {
 		"usim data download error fails": {
 			answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x00, tpdu.FailureUSIMDataDownloadError, 0x00), wantStatus: db.StatusFailed,
 		},
+		"usim data download error with unused bits is retried": {
+			answer:     smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x84, tpdu.FailureUSIMDataDownloadError, 0x00),
+			wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute),
+		},
 		"usim toolkit busy is retried": {
 			answer:     smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x00, tpdu.FailureUSIMToolkitBusy, 0x00),
 			wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute),

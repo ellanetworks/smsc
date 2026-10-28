@@ -80,8 +80,10 @@ export default function SendMessageDialog({
     },
   });
 
+  // The value is kept as typed, since a name may hold spaces, and trimmed of those around it to be used.
+  const sender = from.trim();
   const fromError = fieldError(
-    from,
+    sender,
     touched.from,
     isOriginator,
     "E.164, e.g. +15551230001, or a name of up to 11 letters and digits, with single spaces",
@@ -93,7 +95,7 @@ export default function SendMessageDialog({
     "E.164, e.g. +15551230002",
   );
   const valid =
-    isOriginator(from) &&
+    isOriginator(sender) &&
     isE164(to) &&
     text !== "" &&
     !segmentText(text).tooLong;
@@ -106,7 +108,7 @@ export default function SendMessageDialog({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!valid || mutation.isPending) return;
-    mutation.mutate({ from, to, text });
+    mutation.mutate({ from: sender, to, text });
   };
 
   return (
@@ -127,7 +129,6 @@ export default function SendMessageDialog({
           <TextField
             label="From"
             value={from}
-            // A name may hold spaces, so the value is kept as typed.
             onChange={(e) => setFrom(e.target.value)}
             onBlur={() => setTouched((t) => ({ ...t, from: true }))}
             error={fromError !== undefined}

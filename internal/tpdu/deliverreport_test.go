@@ -107,7 +107,12 @@ func TestDecodeDeliverReport(t *testing.T) {
 			"0045" + "7f" + "01" + "aa" + "ffff", true,
 			DeliverReport{ProtocolIdentifier: b(0x7f), UserDataLength: b(1), UserData: mustHex(t, "aa")},
 		},
-		"RP-ERROR without TP-PI": {"00d5", false, DeliverReport{FailureCause: b(0xd5)}},
+		"RP-ERROR without TP-PI":                   {"00d5", false, DeliverReport{FailureCause: b(0xd5)}},
+		"RP-ERROR with unused bits is unspecified": {"a0d5077ff602cafe", false, DeliverReport{FailureCause: b(FailureUnspecified)}},
+		"RP-ACK ignores unused bits": {
+			"8407" + "7ff602cafe", true,
+			DeliverReport{ProtocolIdentifier: b(0x7f), DataCodingScheme: b(0xf6), UserDataLength: b(2), UserData: mustHex(t, "cafe")},
+		},
 		"RP-ERROR with user data": {
 			"00d5077ff602cafe", false,
 			DeliverReport{

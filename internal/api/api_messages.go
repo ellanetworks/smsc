@@ -349,8 +349,10 @@ func binarySubmit(p BinaryParams) (tpdu.Submit, string) {
 
 	dcs := *p.DataCodingScheme
 
-	if tpdu.IsSeptetCoded(dcs) {
-		return tpdu.Submit{}, "binary.data_coding_scheme must not be GSM 7-bit; send text instead"
+	// The API takes octets: the TP-UDL of GSM 7 bit default alphabet counts septets (TS 23.040 clause 9.2.3.16), and
+	// UCS2 user data reads back as text.
+	if tpdu.IsSeptetCoded(dcs) || tpdu.IsUCS2(dcs) {
+		return tpdu.Submit{}, "binary.data_coding_scheme must not code GSM 7-bit or UCS2; send text instead"
 	}
 
 	// The SC has no function to convert a message for a telematic device (TS 23.040 clause 9.2.3.9).
@@ -367,6 +369,12 @@ func binarySubmit(p BinaryParams) (tpdu.Submit, string) {
 
 	if p.UserDataHeader != nil && !tpdu.ValidUserDataHeader(p.UserDataHeader) {
 		return tpdu.Submit{}, "binary.user_data_header is malformed"
+	}
+
+	// The application port addressing information element names the application that a device trigger is for
+	// (TS 23.040 clause 9.2.3.9).
+	if tpdu.IsDeviceTrigger(pid) && !tpdu.HasApplicationPort(p.UserDataHeader) {
+		return tpdu.Submit{}, "binary.user_data_header must have an application port for this protocol_identifier"
 	}
 
 	ud := append(append([]byte{}, p.UserDataHeader...), p.UserData...)
@@ -416,8 +424,8 @@ func GetMessageContent(cfg Config, a *auth) http.Handler {
 			return
 		}
 
-		for _, a := range attempts {
-			out.DeliverReports = append(out.DeliverReports, deliverReportOf(a))
+		for _, attempt := range attempts {
+			out.DeliverReports = append(out.DeliverReports, deliverReportOf(attempt))
 		}
 
 		p, _ := PrincipalFrom(r.Context())
@@ -454,7 +462,7 @@ func contentOf(m db.Message) MessageContent {
 		ProtocolIdentifier: submit.ProtocolIdentifier,
 		DataCodingScheme:   submit.DataCodingScheme,
 		UserDataHeader:     header,
-		UserData:           Hex(append([]byte{}, rest...)),
+		UserData:           rest,
 	}
 
 	return out
@@ -478,7 +486,7 @@ func deliverReportOf(a db.DeliveryAttempt) DeliverReport {
 			return out
 		}
 
-		out.UserDataHeader, out.UserData = header, Hex(append([]byte{}, rest...))
+		out.UserDataHeader, out.UserData = header, rest
 	}
 
 	return out

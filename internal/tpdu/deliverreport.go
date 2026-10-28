@@ -23,7 +23,8 @@ type DeliverReport struct {
 
 // DecodeDeliverReport decodes an SMS-DELIVER-REPORT for RP-ACK when ack is set, and for RP-ERROR otherwise. Both have
 // the same TP-MTI, so only the transfer that carried it tells them apart. A report that ends before its mandatory TP-PI
-// has no optional parameters.
+// has no optional parameters. A report for RP-ERROR with unused bits set in its first octet has only the TP-FCS
+// "Unspecified error cause"; for RP-ACK, those bits are ignored (TS 23.040 clause 9.2.2.1a).
 func DecodeDeliverReport(b []byte, ack bool) (DeliverReport, error) {
 	if len(b) == 0 {
 		return DeliverReport{}, fmt.Errorf("sms-deliver-report: %w", errTruncated)
@@ -40,6 +41,11 @@ func DecodeDeliverReport(b []byte, ack bool) (DeliverReport, error) {
 	if !ack {
 		if len(rest) == 0 {
 			return DeliverReport{}, fmt.Errorf("sms-deliver-report: failure cause %w", errTruncated)
+		}
+
+		if b[0]&deliverReportUnusedBits != 0 {
+			fcs := FailureUnspecified
+			return DeliverReport{FailureCause: &fcs}, nil
 		}
 
 		fcs := rest[0]
