@@ -11,6 +11,7 @@ data:
     api:
       address: 0.0.0.0
       port: 5010
+      drain_delay: 5s
     diameter:
       address: 192.168.252.7
       port: 3868

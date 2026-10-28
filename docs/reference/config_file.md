@@ -20,6 +20,7 @@ The operator and delivery settings are not in this file: they are in the databas
     - `tls` (object, optional): Serve over HTTPS. Default: plain HTTP.
         - `cert` (string): The path to the PEM certificate chain, the server's certificate first.
         - `key` (string): The path to the PEM private key.
+    - `drain_delay` (duration, optional): How long Ella SMSC keeps serving after it is told to stop, with [`GET /api/v1/readyz`](api/status.md#check-readiness) failing. For example `5s`. Default `0s`.
 - `diameter` (object): Diameter, to the HSS, MMEs, SMSFs and IP-SM-GWs.
     - `name` (string): The network interface to listen on, on all its addresses, advertised to peers. Either `name` or `address` must be set.
     - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`. Either `name` or `address` must be set.

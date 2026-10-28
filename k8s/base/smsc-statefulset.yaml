@@ -13,8 +13,8 @@ spec:
       labels:
         app: ella-smsc
     spec:
-      # The SMSC waits up to 35 s for in-flight deliveries when stopped.
-      terminationGracePeriodSeconds: 45
+      # When stopped, the SMSC drains for api.drain_delay (5 s), then waits up to 35 s for in-flight deliveries.
+      terminationGracePeriodSeconds: 50
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -39,15 +39,25 @@ spec:
         - name: diameter
           containerPort: 3868
           protocol: SCTP
+        # Liveness checks only that the process serves HTTP, so that a slow database fails readiness rather than
+        # restarting the SMSC. The startup probe covers the database migrations before the API listens.
+        # With api.tls set, the probes need scheme: HTTPS.
+        startupProbe:
+          httpGet:
+            path: /api/v1/readyz
+            port: http
+          periodSeconds: 2
+          timeoutSeconds: 5
+          failureThreshold: 150
         readinessProbe:
           httpGet:
-            path: /api/v1/status
+            path: /api/v1/readyz
             port: http
           periodSeconds: 10
           timeoutSeconds: 5
         livenessProbe:
           httpGet:
-            path: /api/v1/status
+            path: /api/v1/livez
             port: http
           periodSeconds: 20
           timeoutSeconds: 5

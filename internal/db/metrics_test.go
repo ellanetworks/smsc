@@ -105,8 +105,9 @@ func TestMetricsLint(t *testing.T) {
 // TestEveryCallIsObserved checks that each exported method of DB that calls the database starts with
 // defer d.observe(...)(), so that a new one cannot be left out of the metrics.
 func TestEveryCallIsObserved(t *testing.T) {
-	// CreateMessage calls CreateMessages, which is observed, so that a call is not counted twice.
-	unobserved := map[string]bool{"Close": true, "Collectors": true, "CreateMessage": true}
+	// CreateMessage calls CreateMessages, which is observed, so that a call is not counted twice. Ping is the
+	// readiness probe's, which would fill the query metrics with pings.
+	unobserved := map[string]bool{"Close": true, "Collectors": true, "CreateMessage": true, "Ping": true}
 
 	files, err := filepath.Glob("*.go")
 	if err != nil {

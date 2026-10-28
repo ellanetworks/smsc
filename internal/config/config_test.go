@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const validConfig = `logging:
@@ -91,6 +92,8 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"missing api address":       {"  address: 127.0.0.1\n", ""},
 		"api port out of range":     {"port: 8080", "port: 70000"},
 		"invalid api address":       {"  address: 127.0.0.1\n", "  address: localhost\n"},
+		"negative drain delay":      {"  port: 8080\n", "  port: 8080\n  drain_delay: -1s\n"},
+		"drain delay without unit":  {"  port: 8080\n", "  port: 8080\n  drain_delay: 5\n"},
 	}
 
 	for name, edit := range tests {
@@ -162,5 +165,16 @@ func TestLoadAPIDefaultPort(t *testing.T) {
 
 	if cfg.API.Port != 5010 {
 		t.Fatalf("API = %+v", cfg.API)
+	}
+}
+
+func TestLoadAPIDrainDelay(t *testing.T) {
+	cfg, err := Load(writeConfig(t, strings.Replace(validConfig, "  port: 8080\n", "  port: 8080\n  drain_delay: 5s\n", 1)))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.API.DrainDelay != 5*time.Second {
+		t.Fatalf("API.DrainDelay = %s", cfg.API.DrainDelay)
 	}
 }

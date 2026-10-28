@@ -51,6 +51,9 @@ type Config struct {
 	Notify   func()
 	// Received counts the messages the API submits.
 	Received *intake.Received
+	// Ready reports why the SMSC cannot serve requests, or nil when it can. GET /api/v1/readyz answers 503 when
+	// it fails. Nil is always ready.
+	Ready func(ctx context.Context) error
 	// Metrics are the metrics GET /api/v1/metrics serves.
 	Metrics prometheus.Gatherer
 	// Auth stores the users, their sessions and their API tokens.
@@ -74,6 +77,8 @@ type route struct {
 
 func routes(cfg Config, a *auth) []route {
 	rs := []route{
+		{"GET /api/v1/livez", public, Livez()},
+		{"GET /api/v1/readyz", public, Readyz(cfg)},
 		{"GET /api/v1/status", public, GetStatus(cfg)},
 		{"GET /api/v1/metrics", public, GetMetrics(cfg)},
 		{"GET /api/v1/openapi.yaml", public, OpenAPISpec()},

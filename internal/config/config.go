@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -36,6 +37,9 @@ type API struct {
 	Port    int        `yaml:"port"`
 	// TLS, when set, serves the API and UI over HTTPS.
 	TLS *TLS `yaml:"tls"`
+	// DrainDelay is how long the SMSC keeps serving, with GET /api/v1/readyz failing, once told to stop, so that
+	// a load balancer stops sending it requests before it closes its listener.
+	DrainDelay time.Duration `yaml:"drain_delay"`
 }
 
 // TLS is a PEM certificate chain, and its private key.
@@ -88,6 +92,8 @@ func (c Config) validate() error {
 		return errors.New("api.address is required")
 	case c.API.Port < 1 || c.API.Port > 65535:
 		return fmt.Errorf("api.port %d is out of range", c.API.Port)
+	case c.API.DrainDelay < 0:
+		return fmt.Errorf("api.drain_delay %s is negative", c.API.DrainDelay)
 	case c.Diameter.Name != "" && c.Diameter.Address.IsValid():
 		return errors.New("diameter.name and diameter.address cannot both be set")
 	case c.Diameter.Name == "" && !c.Diameter.Address.IsValid():

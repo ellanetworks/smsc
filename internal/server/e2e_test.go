@@ -1555,3 +1555,59 @@ func TestHeldMessagesFollowInOneSession(t *testing.T) {
 		stamps = append(stamps, stamp)
 	}
 }
+
+func TestShutdownDrainsTheAPI(t *testing.T) {
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
+	cfg.API.DrainDelay = time.Second
+	s := startSMSC(t, cfg)
+
+	get := func(path string) int {
+		t.Helper()
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.url+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_ = resp.Body.Close()
+
+		return resp.StatusCode
+	}
+
+	if code := get("/api/v1/readyz"); code != http.StatusNoContent {
+		t.Fatalf("readyz before shutdown = %d", code)
+	}
+
+	srv := s.server
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		srv.Shutdown(context.Background())
+	}()
+
+	// While draining, the API still serves, but is not ready.
+	deadline := time.Now().Add(waitTimeout)
+	for get("/api/v1/readyz") != http.StatusServiceUnavailable {
+		if time.Now().After(deadline) {
+			t.Fatal("readyz never failed while draining")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if code := get("/api/v1/livez"); code != http.StatusNoContent {
+		t.Fatalf("livez while draining = %d", code)
+	}
+
+	<-done
+
+	s.server = nil
+	_ = s.store.Close()
+}
