@@ -387,6 +387,7 @@ func TestEnquireLink(t *testing.T) {
 		s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{}, submitOK)
 
 		errc := make(chan error, 1)
+
 		go func() { errc <- s.EnquireLink(context.Background()) }()
 
 		h, _ := p.read()
@@ -584,6 +585,7 @@ func TestResponseTimeout(t *testing.T) {
 		submitOK)
 
 	errc := make(chan error, 1)
+
 	go func() { errc <- s.DeliverSM(context.Background(), &DeliverSM{Message: message()}) }()
 
 	h, _ := p.read()
@@ -630,6 +632,7 @@ func TestSequenceWrap(t *testing.T) {
 
 	for _, want := range []uint32{MaxSequence, 2, 3} {
 		errc := make(chan error, 1)
+
 		go func() { errc <- s.DeliverSM(context.Background(), &DeliverSM{Message: message()}) }()
 
 		h, _ := p.read()
@@ -670,6 +673,7 @@ func TestUnbind(t *testing.T) {
 	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{}, submitOK)
 
 	errc := make(chan error, 1)
+
 	go func() { errc <- s.Unbind(context.Background()) }()
 
 	h, _ := p.read()
@@ -703,6 +707,7 @@ func TestUnbindUnanswered(t *testing.T) {
 	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{ResponseTimeout: 50 * time.Millisecond}, submitOK)
 
 	errc := make(chan error, 1)
+
 	go func() { errc <- s.Unbind(context.Background()) }()
 
 	p.read()
@@ -971,6 +976,7 @@ func TestNoRequestAfterUnbind(t *testing.T) {
 	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{OutboundWindow: 1, EnquireLinkInterval: -1}, submitOK)
 
 	first := make(chan error, 1)
+
 	go func() { first <- s.DeliverSM(context.Background(), &DeliverSM{Message: message()}) }()
 
 	h1, _ := p.read()
@@ -979,11 +985,13 @@ func TestNoRequestAfterUnbind(t *testing.T) {
 	}
 
 	second := make(chan error, 1)
+
 	go func() { second <- s.DeliverSM(context.Background(), &DeliverSM{Message: message()}) }()
 
 	time.Sleep(50 * time.Millisecond) // the second waits for the window
 
 	unbound := make(chan error, 1)
+
 	go func() { unbound <- s.Unbind(context.Background()) }()
 
 	h2, _ := p.read()
@@ -1046,6 +1054,7 @@ func TestUnbindRacingSubmit(t *testing.T) {
 		}()
 
 		unbound := make(chan error, 1)
+
 		go func() { unbound <- s.Unbind(context.Background()) }()
 
 		var (

@@ -640,6 +640,7 @@ func TestClientCloseWhileBinding(t *testing.T) {
 	defer cancel()
 
 	closed := make(chan error, 1)
+
 	go func() { closed <- c.Close(ctx) }()
 
 	time.Sleep(50 * time.Millisecond) // Close has cancelled the client
