@@ -69,7 +69,10 @@ func TestParseTimeRelative(t *testing.T) {
 			time.Date(2029, 5, 9, 11, 34, 29, 0, time.UTC),
 		},
 		// §7.1.1.2: t and nn are ignored.
-		"t and nn ignored": {"000000010000549R", RelativePeriod{Hours: 1}, now.Add(time.Hour)},
+		"t and nn ignored":        {"000000010000549R", RelativePeriod{Hours: 1}, now.Add(time.Hour)},
+		"non-digit t and nn":      {"00000100000000AR", RelativePeriod{Days: 1}, now.Add(24 * time.Hour)},
+		"non-digit t, nn of 99":   {"000000000001x99R", RelativePeriod{Seconds: 1}, now.Add(time.Second)},
+		"non-digit nn, no digits": {"000000000000 ??R", RelativePeriod{}, now},
 	}
 
 	for name, tt := range tests {
@@ -117,7 +120,8 @@ func TestParseTimeErrors(t *testing.T) {
 		"non-digit":        "26102812000a000+",
 		"non-digit tenth":  "2610281200000x0+",
 		"non-digit nn":     "26102812000000x+",
-		"relative letter":  "00000100000000AR",
+		"relative day 0a":  "00000a000000000R",
+		"relative second":  "00000000000x000R",
 		"short YYMMDDhhmm": "2610281200",
 	}
 
@@ -184,4 +188,38 @@ func TestFormatAbsoluteOffsets(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRelativePeriodMonthEnd(t *testing.T) {
+	// §7.1.1.2: a period of years, months, days, hours, minutes and seconds from the current SMSC time. A day that the
+	// target month does not have is clamped to its last day before the days and the time are added.
+	tests := map[string]struct {
+		now  time.Time
+		s    string
+		want time.Time
+	}{
+		"31 Jan + 1 month":          {date(2026, 1, 31), "000100000000000R", date(2026, 2, 28)},
+		"31 Jan + 1 month, leap":    {date(2028, 1, 31), "000100000000000R", date(2028, 2, 29)},
+		"31 Jan + 1 month 1 day":    {date(2026, 1, 31), "000101000000000R", date(2026, 3, 1)},
+		"31 Aug + 1 month":          {date(2026, 8, 31), "000100000000000R", date(2026, 9, 30)},
+		"31 Dec + 2 months":         {date(2026, 12, 31), "000200000000000R", date(2027, 2, 28)},
+		"29 Feb + 1 year":           {date(2028, 2, 29), "010000000000000R", date(2029, 2, 28)},
+		"29 Feb + 4 years":          {date(2028, 2, 29), "040000000000000R", date(2032, 2, 29)},
+		"31 Mar + 99 months":        {date(2026, 3, 31), "009900000000000R", date(2034, 6, 30)},
+		"30 Jan + 1 month 12 hours": {date(2026, 1, 30), "000100120000000R", date(2026, 2, 28).Add(12 * time.Hour)},
+		"15 Jan + 1 month":          {date(2026, 1, 15), "000100000000000R", date(2026, 2, 15)},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := ParseTime(tt.s, tt.now)
+			if err != nil || !got.At(tt.now).Equal(tt.want) {
+				t.Fatalf("ParseTime = %+v, %v, at %v; want %v", got, err, got.At(tt.now), tt.want)
+			}
+		})
+	}
+}
+
+func date(y int, m time.Month, d int) time.Time {
+	return time.Date(y, m, d, 9, 30, 0, 0, time.UTC)
 }

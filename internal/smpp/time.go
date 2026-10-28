@@ -22,11 +22,22 @@ type RelativePeriod struct {
 	Years, Months, Days, Hours, Minutes, Seconds int
 }
 
-// From returns t advanced by the period. Years, months and days are added as calendar units (time.Time.AddDate).
+// From returns t advanced by the period, in calendar units: years and months first, with the day of the month clamped
+// to the last day of the target month (31 January + 1 month is 28 or 29 February, 29 February + 1 year is 28
+// February), then days, then hours, minutes and seconds. §7.1.1.2 gives no rule for a day that the target month does
+// not have; the clamp keeps the expiry inside the month the ESME named.
 func (p RelativePeriod) From(t time.Time) time.Time {
+	year, month, day := t.Date()
+	target := time.Date(year+p.Years, month+time.Month(p.Months), 1, 0, 0, 0, 0, t.Location())
+
+	if last := time.Date(target.Year(), target.Month()+1, 0, 0, 0, 0, 0, t.Location()).Day(); day > last {
+		day = last
+	}
+
 	d := time.Duration(p.Hours)*time.Hour + time.Duration(p.Minutes)*time.Minute + time.Duration(p.Seconds)*time.Second
 
-	return t.AddDate(p.Years, p.Months, p.Days).Add(d)
+	return time.Date(target.Year(), target.Month(), day+p.Days, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(),
+		t.Location()).Add(d)
 }
 
 // Time is a schedule_delivery_time or validity_period (§5.2.15, §5.2.16): an absolute time (§7.1.1.1) or a period
@@ -49,7 +60,8 @@ func (t Time) At(now time.Time) time.Time {
 }
 
 // ParseTime parses "YYMMDDhhmmsstnnp" (§7.1.1). p is '+' or '-' for an absolute time whose local time is nn quarter
-// hours ahead of or behind UTC, nn 00 to 48, or 'R' for a relative time, whose t and nn are ignored. The two-digit
+// hours ahead of or behind UTC, nn 00 to 48, or 'R' for a relative time, whose t and nn are ignored, digits or not
+// (§7.1.1.2). The two-digit
 // year of an absolute time is read as the year of the century nearest to now: from 49 years before now's year to 50
 // years after it. An empty C-Octet String means no time; the caller handles it before calling ParseTime.
 func ParseTime(s string, now time.Time) (Time, error) {
@@ -57,9 +69,19 @@ func ParseTime(s string, now time.Time) (Time, error) {
 		return Time{}, fmt.Errorf("%w: %q is %d characters, want %d", ErrInvalidTime, s, len(s), timeLength)
 	}
 
-	var f [7]int // YY MM DD hh mm ss nn
+	p := s[15]
+	if p != 'R' && p != '+' && p != '-' {
+		return Time{}, fmt.Errorf("%w: %q ends in %q, want '+', '-' or 'R'", ErrInvalidTime, s, p)
+	}
 
-	for i := range f {
+	n := 7 // YY MM DD hh mm ss nn
+	if p == 'R' {
+		n = 6 // t and nn are ignored
+	}
+
+	var f [7]int
+
+	for i := range n {
 		pos := 2 * i
 		if i == 6 {
 			pos = 13
@@ -73,21 +95,17 @@ func ParseTime(s string, now time.Time) (Time, error) {
 		f[i] = v
 	}
 
+	if p == 'R' {
+		return Time{Relative: true, Period: RelativePeriod{
+			Years: f[0], Months: f[1], Days: f[2], Hours: f[3], Minutes: f[4], Seconds: f[5],
+		}}, nil
+	}
+
 	if s[12] < '0' || s[12] > '9' {
 		return Time{}, fmt.Errorf("%w: %q has a non-digit tenth of second", ErrInvalidTime, s)
 	}
 
 	tenths := int(s[12] - '0')
-
-	switch s[15] {
-	case 'R':
-		return Time{Relative: true, Period: RelativePeriod{
-			Years: f[0], Months: f[1], Days: f[2], Hours: f[3], Minutes: f[4], Seconds: f[5],
-		}}, nil
-	case '+', '-':
-	default:
-		return Time{}, fmt.Errorf("%w: %q ends in %q, want '+', '-' or 'R'", ErrInvalidTime, s, s[15])
-	}
 
 	if f[6] > maxQuarterHours {
 		return Time{}, fmt.Errorf("%w: %q has an offset of %d quarter hours, more than %d", ErrInvalidTime, s, f[6],
@@ -95,7 +113,7 @@ func ParseTime(s string, now time.Time) (Time, error) {
 	}
 
 	offset := f[6] * secondsPerQuarter
-	if s[15] == '-' {
+	if p == '-' {
 		offset = -offset
 	}
 

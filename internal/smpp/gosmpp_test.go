@@ -99,24 +99,24 @@ func TestGosmppBindTransceiverResp(t *testing.T) {
 		t.Fatalf("sc_interface_version = %x", v.Data)
 	}
 
-	// Disagreement: gosmpp reads a system_id in every bind_transceiver_resp, error or not, and fails on the header-only
-	// error response that §4.1.2 and §4.1.4 prescribe for the two other binds. Table 4-6 (§4.1.6) has no such note, so
-	// a system_id may be sent; this codec decodes both forms (TestDecodeTolerances).
-	nack, err := Encode(&BindResp{ID: CmdBindTransceiverResp}, StatusBindFail, 2)
+	// §4.1.6, Table 4-6: a failed bind_transceiver_resp keeps its system_id, unlike the header-only failures of §4.1.2
+	// and §4.1.4. gosmpp reads a system_id in every bind_transceiver_resp, and parses Ella's.
+	nack, err := Encode(&BindResp{ID: CmdBindTransceiverResp, SystemID: "EllaSMSC"}, StatusBindFail, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := pdu.Parse(bytes.NewReader(nack)); err == nil {
-		t.Fatal("gosmpp now accepts a header-only bind_transceiver_resp: update the comment")
+	r, ok = gosmppParse(t, nack).(*pdu.BindResp)
+	if !ok || r.CommandStatus != data.ESME_RBINDFAIL || r.SystemID != "EllaSMSC" || r.SequenceNumber != 2 {
+		t.Fatalf("gosmpp parsed %+v", r)
 	}
 
 	g := pdu.NewBindTransceiver().(*pdu.BindRequest).GetResponse().(*pdu.BindResp)
 	g.CommandStatus = data.ESME_RBINDFAIL
-	g.SystemID = ""
+	g.SystemID = "SMSC"
 
 	_, p, err := Decode(gosmppBytes(t, g, 3))
-	if err != nil || !reflect.DeepEqual(p, &BindResp{ID: CmdBindTransceiverResp}) {
+	if err != nil || !reflect.DeepEqual(p, &BindResp{ID: CmdBindTransceiverResp, SystemID: "SMSC"}) {
 		t.Fatalf("Decode = %#v, %v", p, err)
 	}
 }

@@ -93,6 +93,21 @@ var pduVectors = map[string]struct {
 		seq:    1,
 		pdu:    &BindResp{ID: CmdBindTransmitterResp},
 	},
+	// §4.1.4, Table 4-4 note: no body when command_status is not ESME_ROK.
+	"bind_receiver_resp ESME_RBINDFAIL": {
+		hex:    "00000010" + "80000001" + "0000000d" + "00000003",
+		status: StatusBindFail,
+		seq:    3,
+		pdu:    &BindResp{ID: CmdBindReceiverResp},
+	},
+	// §4.1.6, Table 4-6: no note, so system_id is sent when command_status is not ESME_ROK.
+	"bind_transceiver_resp ESME_RBINDFAIL": {
+		hex: "00000019" + "80000009" + "0000000d" + "00000002" +
+			"456c6c61534d5343" + "00", // system_id "EllaSMSC"
+		status: StatusBindFail,
+		seq:    2,
+		pdu:    &BindResp{ID: CmdBindTransceiverResp, SystemID: "EllaSMSC"},
+	},
 	// §4.4.1, Table 4-10: an OTA submit, esm_class UDHI, PID 0x7F, data_coding 0x02, relative validity_period and
 	// user_message_reference (§5.3.2.17).
 	"submit_sm": {
@@ -360,6 +375,16 @@ func TestEncodeCStringLimits(t *testing.T) {
 		"source_addr 21":          &SubmitSM{Message: Message{Source: Address{Addr: strings.Repeat("1", 21)}}},
 		"service_type 6":          &SubmitSM{Message: Message{ServiceType: "ABCDEF"}},
 		"validity_period 17":      &SubmitSM{Message: Message{ValidityPeriod: strings.Repeat("0", 17)}},
+		// Table 3-1, Table 4-10: schedule_delivery_time and validity_period are "Fixed 1 or 17".
+		"validity_period 5":         &SubmitSM{Message: Message{ValidityPeriod: "0001R"}},
+		"schedule_delivery_time 15": &SubmitSM{Message: Message{ScheduleDeliveryTime: "000001000000000"}},
+		// Tables 4-10 and 4-18: short_message and message_payload "must not be used simultaneously".
+		"submit_sm both payloads": &SubmitSM{Message: Message{
+			ShortMessage: []byte{1}, Options: Options{MessagePayload: []byte{2}},
+		}},
+		"deliver_sm both payloads": &DeliverSM{Message: Message{
+			ShortMessage: []byte{1}, Options: Options{MessagePayload: []byte{}},
+		}},
 		"deliver_sm validity":     &DeliverSM{Message: Message{ValidityPeriod: "000001000000000R"}},
 		"message_id 65":           &SubmitSMResp{MessageID: strings.Repeat("9", 65)},
 		"deliver_sm_resp id":      &DeliverSMResp{MessageID: "1"},
@@ -380,6 +405,82 @@ func TestEncodeCStringLimits(t *testing.T) {
 	if _, err := Encode(&SubmitSMResp{MessageID: strings.Repeat("9", 64)}, StatusOK, 1); err != nil {
 		t.Fatalf("message_id of 64 characters: %v", err)
 	}
+
+	if _, err := Encode(&SubmitSM{Message: Message{
+		ScheduleDeliveryTime: "261028120000004+", ValidityPeriod: "000001000000000R",
+		ShortMessage: []byte{}, Options: Options{MessagePayload: []byte{1}},
+	}}, StatusOK, 1); err != nil {
+		t.Fatalf("16-character times and message_payload with an empty short_message: %v", err)
+	}
+}
+
+func TestEncodeHeaderRules(t *testing.T) {
+	tests := map[string]struct {
+		pdu    PDU
+		status CommandStatus
+		seq    uint32
+		ok     bool
+	}{
+		// §3.2.1, Table 3-3: command_status "must contain a NULL value in an SMPP request PDU".
+		"submit_sm with a status":    {&SubmitSM{}, StatusSysErr, 1, false},
+		"enquire_link with a status": {&EnquireLink{}, StatusInvCmdLen, 1, false},
+		"bind with a status":         {&Bind{ID: CmdBindTransceiver}, StatusBindFail, 1, false},
+		"response with a status":     {&SubmitSMResp{}, StatusSysErr, 1, true},
+		// §5.1.4: sequence_number is 0x00000001 to 0x7FFFFFFF.
+		"sequence 0":          {&EnquireLink{}, StatusOK, 0, false},
+		"sequence 0 response": {&EnquireLinkResp{}, StatusOK, 0, false},
+		"sequence 0x80000000": {&EnquireLink{}, StatusOK, 0x80000000, false},
+		"sequence 0xffffffff": {&GenericNack{}, StatusInvCmdLen, 0xffffffff, false},
+		"sequence 1":          {&EnquireLink{}, StatusOK, 1, true},
+		"sequence 0x7fffffff": {&EnquireLink{}, StatusOK, 0x7fffffff, true},
+		// Table 4-9: generic_nack has sequence_number NULL when the original PDU cannot be decoded.
+		"generic_nack sequence 0": {&GenericNack{}, StatusInvCmdLen, 0, true},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := Encode(tt.pdu, tt.status, tt.seq)
+			if tt.ok != (err == nil) || (err != nil && !errors.Is(err, ErrInvalidField)) {
+				t.Fatalf("err = %v, want ok %v", err, tt.ok)
+			}
+		})
+	}
+}
+
+func TestEncodeBindRespError(t *testing.T) {
+	// §4.1.2, §4.1.4: no body for transmitter and receiver. §4.1.6, Table 4-6: system_id, without optional parameters,
+	// for transceiver.
+	opts := Options{SCInterfaceVersion: new(byte(0x34))}
+	tests := map[string]struct {
+		pdu *BindResp
+		hex string
+	}{
+		"bind_transmitter_resp": {
+			&BindResp{ID: CmdBindTransmitterResp, SystemID: "EllaSMSC", Options: opts},
+			"00000010" + "80000002" + "0000000d" + "00000001",
+		},
+		"bind_receiver_resp": {
+			&BindResp{ID: CmdBindReceiverResp, SystemID: "EllaSMSC", Options: opts},
+			"00000010" + "80000001" + "0000000d" + "00000001",
+		},
+		"bind_transceiver_resp": {
+			&BindResp{ID: CmdBindTransceiverResp, SystemID: "EllaSMSC", Options: opts},
+			"00000019" + "80000009" + "0000000d" + "00000001" + "456c6c61534d5343" + "00",
+		},
+		"bind_transceiver_resp NULL system_id": {
+			&BindResp{ID: CmdBindTransceiverResp},
+			"00000011" + "80000009" + "0000000d" + "00000001" + "00",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := Encode(tt.pdu, StatusBindFail, 1)
+			if want := mustHex(t, tt.hex); err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("Encode = %x, %v\nwant     %x", got, err, want)
+			}
+		})
+	}
 }
 
 func TestDecodeHeaderCommandLength(t *testing.T) {
@@ -390,7 +491,9 @@ func TestDecodeHeaderCommandLength(t *testing.T) {
 		"15":     {15, false},
 		"16":     {16, true},
 		"65,536": {65536, true},
-		"65,537": {65537, false},
+		"65,903": {65903, true},
+		"69,632": {69632, true},
+		"69,633": {69633, false},
 		"70,000": {70000, false},
 		"0":      {0, false},
 	}
@@ -475,21 +578,28 @@ func TestDecodeBodyErrors(t *testing.T) {
 		status CommandStatus
 		field  string
 	}{
+		// §4.3: a command_length too long for a header-only PDU (Tables 4-28, 4-8, 4-9).
 		"enquire_link with a body": {
-			"00000011" + "00000015" + "00000000" + "00000001" + "00", StatusInvMsgLen, "body",
+			"00000011" + "00000015" + "00000000" + "00000001" + "00", StatusInvCmdLen, "body",
 		},
 		"unbind_resp with a body": {
-			"00000014" + "80000006" + "00000000" + "00000001" + "00000000", StatusInvMsgLen, "body",
+			"00000014" + "80000006" + "00000000" + "00000001" + "00000000", StatusInvCmdLen, "body",
 		},
 		"generic_nack with a body": {
-			"00000011" + "80000000" + "00000003" + "00000001" + "00", StatusInvMsgLen, "body",
+			"00000011" + "80000000" + "00000003" + "00000001" + "00", StatusInvCmdLen, "body",
 		},
-		"submit_sm_resp with octets after message_id": {
-			"00000014" + "80000004" + "00000000" + "00000001" + "3100" + "0000", StatusInvMsgLen, "body",
+		// §3.2.4: the octets after the mandatory parameters are TLVs, here too few for a TLV header (§3.2.4.1).
+		"submit_sm_resp with 2 octets after message_id": {
+			"00000014" + "80000004" + "00000000" + "00000001" + "3100" + "0000", StatusInvOptParStream,
+			"optional parameters",
 		},
-		"bind_transmitter with octets after address_range": {
+		"bind_transmitter with 1 octet after address_range": {
 			"00000018" + "00000002" + "00000000" + "00000001" + "00" + "00" + "00" + "34" + "0000" + "00" + "ff",
-			StatusInvMsgLen, "body",
+			StatusInvOptParStream, "optional parameters",
+		},
+		"deliver_sm_resp TLV length runs past the body": {
+			"00000016" + "80000005" + "00000000" + "00000001" + "00" + "001d" + "0002" + "41",
+			StatusInvOptParStream, "additional_status_info_text",
 		},
 		"sm_length 255": {
 			"00000023" + "00000004" + "00000000" + "00000001" + smPrefix + "ff" + "0000", StatusInvMsgLen, "sm_length",
@@ -541,6 +651,113 @@ func TestDecodeBodyErrors(t *testing.T) {
 				t.Fatalf("err = %v, want %v on %s", err, tt.status, tt.field)
 			}
 		})
+	}
+}
+
+func TestDecodeOptionsAfterMandatory(t *testing.T) {
+	// §3.2.4, §3.3: the octets after the mandatory parameters of any PDU are optional parameters. An unknown one, or a
+	// known one that the PDU's table does not list, is ignored: kept raw in Other where the PDU has Options, dropped
+	// where it has none. A malformed value of a parameter that is not expected is not checked.
+	smPrefix := "00" + "000000" + "000000" + "000000" + "00" + "00" + "00000000"
+
+	tests := map[string]struct {
+		hex string
+		pdu PDU
+	}{
+		// Table 4-1 lists no optional parameters.
+		"bind_transmitter with sc_interface_version": {
+			"0000001c" + "00000002" + "00000000" + "00000001" + "00" + "00" + "00" + "34" + "0000" + "00" +
+				"0210" + "0001" + "34",
+			&Bind{ID: CmdBindTransmitter, InterfaceVersion: 0x34},
+		},
+		// Table 4-11 lists no optional parameters.
+		"submit_sm_resp with additional_status_info_text": {
+			"00000019" + "80000004" + "00000000" + "00000001" + "3100" + "001d" + "0003" + "414200",
+			&SubmitSMResp{MessageID: "1"},
+		},
+		// Table 4-19 lists none; SMPP 5.0 adds some. A network_error_code of 2 octets is not checked.
+		"deliver_sm_resp with network_error_code and a vendor TLV": {
+			"0000001b" + "80000005" + "00000000" + "00000001" + "00" + "0423" + "0002" + "0300" + "1400" + "0000",
+			&DeliverSMResp{},
+		},
+		// Table 4-10 does not list message_state: its 2 octets are kept raw.
+		"submit_sm with message_state of 2 octets": {
+			"00000027" + "00000004" + "00000000" + "00000001" + smPrefix + "00" + "0427" + "0002" + "0102",
+			&SubmitSM{Message: Message{
+				ShortMessage: []byte{},
+				Options:      Options{Other: []TLV{{Tag: TagMessageState, Value: []byte{1, 2}}}},
+			}},
+		},
+		// Table 4-18 does not list dest_addr_subunit: its empty value is kept raw.
+		"deliver_sm with dest_addr_subunit of 0 octets": {
+			"00000025" + "00000005" + "00000000" + "00000001" + smPrefix + "00" + "0005" + "0000",
+			&DeliverSM{Message: Message{
+				ShortMessage: []byte{},
+				Options:      Options{Other: []TLV{{Tag: TagDestAddrSubunit, Value: []byte{}}}},
+			}},
+		},
+		// Table 4-6 does not list receipted_message_id: one without its NULL is kept raw.
+		"bind_transceiver_resp with receipted_message_id without NULL": {
+			"00000017" + "80000009" + "00000000" + "00000001" + "4100" + "001e" + "0001" + "41",
+			&BindResp{ID: CmdBindTransceiverResp, SystemID: "A", Options: Options{
+				Other: []TLV{{Tag: TagReceiptedMessageID, Value: []byte{0x41}}},
+			}},
+		},
+		// Table 4-6: an error response with system_id and sc_interface_version.
+		"bind_transceiver_resp error with sc_interface_version": {
+			"00000017" + "80000009" + "0000000d" + "00000001" + "4100" + "0210" + "0001" + "34",
+			&BindResp{ID: CmdBindTransceiverResp, SystemID: "A", Options: Options{SCInterfaceVersion: new(byte(0x34))}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, p, err := Decode(mustHex(t, tt.hex))
+			if err != nil || !reflect.DeepEqual(p, tt.pdu) {
+				t.Fatalf("Decode = %#v, %v; want %#v", p, err, tt.pdu)
+			}
+		})
+	}
+}
+
+func TestFullMessagePayload(t *testing.T) {
+	// Table 4-10, §5.3.2.32: "Up to 64K octets" of message_payload, here 65,535, with the other mandatory parameters at
+	// their maxima and the sar_* and port TLVs. MaxLength admits it; ReadPDU and DecodeBody read it whole.
+	want := &SubmitSM{Message: Message{
+		ServiceType:          "CMT12",
+		Source:               Address{TON: 1, NPI: 1, Addr: strings.Repeat("1", 20)},
+		Destination:          Address{TON: 1, NPI: 1, Addr: strings.Repeat("2", 20)},
+		ScheduleDeliveryTime: "261028120000004+",
+		ValidityPeriod:       "000001000000000R",
+		ShortMessage:         []byte{},
+		Options: Options{
+			SourcePort:       new(uint16(2948)),
+			DestinationPort:  new(uint16(9200)),
+			SarMsgRefNum:     new(uint16(1)),
+			SarTotalSegments: new(byte(1)),
+			SarSegmentSeqnum: new(byte(1)),
+			MessagePayload:   bytes.Repeat([]byte{0xab}, 0xffff),
+		},
+	}}
+
+	b, err := Encode(want, StatusOK, 1)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	// 16 header, 6 + 23 + 23 + 3 + 17 + 17 + 4 + 1 mandatory, 3 × 6 + 2 × 5 ports and sar_*, 4 + 65,535 payload.
+	if len(b) != 16+94+28+4+0xffff {
+		t.Fatalf("PDU of %d octets", len(b))
+	}
+
+	h, body, err := ReadPDU(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("ReadPDU: %v", err)
+	}
+
+	p, err := DecodeBody(h, body)
+	if err != nil || !reflect.DeepEqual(p, want) {
+		t.Fatalf("DecodeBody: %v", err)
 	}
 }
 
@@ -627,12 +844,13 @@ func TestDecodeTolerances(t *testing.T) {
 		"deliver_sm_resp without body": {
 			"00000010" + "80000005" + "00000000" + "00000001", &DeliverSMResp{},
 		},
-		// Table 4-6 has no note on the body of an error bind_transceiver_resp: a system_id is accepted.
-		"bind_transceiver_resp error with system_id": {
-			"00000012" + "80000009" + "0000000d" + "00000001" + "4100", &BindResp{ID: CmdBindTransceiverResp, SystemID: "A"},
-		},
+		// The header-only form that §4.1.2 and §4.1.4 prescribe for the two other binds is accepted for bind_transceiver_resp
+		// too, as is a body in their error responses.
 		"bind_transceiver_resp error without body": {
 			"00000010" + "80000009" + "0000000d" + "00000001", &BindResp{ID: CmdBindTransceiverResp},
+		},
+		"bind_transmitter_resp error with system_id": {
+			"00000012" + "80000002" + "0000000d" + "00000001" + "4100", &BindResp{ID: CmdBindTransmitterResp, SystemID: "A"},
 		},
 	}
 
