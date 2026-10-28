@@ -51,7 +51,7 @@ In the HSS, give each subscriber that sends or receives SMS an MSISDN. On each S
 
 ## 5. Verify
 
-In the Ella SMSC UI, go to **Diameter**:
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**:
 
 - The HSS shows **open**, with **HSS** set to **yes**. If it shows **no**, its realm differs from Ella SMSC's, or it does not support S6c.
 - Each MME or SMSF shows **open**, with **SGd** in **Applications**.

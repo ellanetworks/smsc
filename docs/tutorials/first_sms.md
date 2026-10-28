@@ -30,7 +30,7 @@ Open your browser at `http://<host-ip>:5010`. The **Initialize Ella SMSC** page 
 
 Enter an email and a password of at least 8 characters, and click **Create**.
 
-The **Diameter** page shows no peers yet.
+The **Diameter** page shows no connected peers yet.
 
 ## 3. Connect Ella Core
 
@@ -44,7 +44,7 @@ Click **Add Service Center** and set:
 
 Click **Add**. The service center shows **Connected**.
 
-In the Ella SMSC UI, go to **Diameter**. Ella Core shows **open**, with **HSS** set to **yes**.
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**, Ella Core shows **open**, with **HSS** set to **yes**.
 
 ## 4. Give the subscribers an MSISDN
 

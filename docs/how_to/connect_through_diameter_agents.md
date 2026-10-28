@@ -9,7 +9,7 @@ This guide connects Ella SMSC to an edge agent (DEA), to deliver short messages 
 ## Prerequisites
 
 - **Ella SMSC**: integrated with its core, as in [Integrate with a Third-Party Core](integrate_with_third_party_core.md).
-- **An API token** of a Network Manager or an Admin: see [Send Messages from an Application](send_messages_from_an_application.md).
+- **A user** with the Network Manager or Admin role.
 - **The agents**: their Diameter hosts and SCTP addresses. Each has Ella SMSC's host, realm and Diameter address as a peer.
 - **The visited networks**: support SMS in MME (SGd), or an SMSF with a Diameter host and realm.
 
@@ -23,41 +23,39 @@ The examples use these values:
 
 ## 1. Add the edge agent
 
-```shell
-curl https://<host-ip>:5010/api/v1/diameter/peers \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "host": "dea1.ipx.example.net",
-    "addresses": ["192.0.2.10", "198.51.100.10"],
-    "routes": [{ "default": true, "application": "sgd" }]
-  }'
-```
+In the Ella SMSC UI, go to **Diameter** and click **Add Peer**:
 
-List every SCTP address of the agent.
+- **Host**: `dea1.ipx.example.net`
+- **Addresses**: `192.0.2.10, 198.51.100.10`, every SCTP address of the agent.
+- **Port**: `3868`
 
-To add a backup agent, repeat with its host and addresses, and `"priority": 1` on its route.
+Click **Add Route**, and keep **Application** set to **SGd** and **Destination** to **Default**. Click **Add**.
+
+To add a backup agent, repeat with its host and addresses, and set the route's **Priority** to `1`.
 
 ## 2. Add the DRA
 
 Skip this step if the HSS connects to Ella SMSC.
 
-```shell
-curl https://<host-ip>:5010/api/v1/diameter/peers \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "host": "dra1.example.net",
-    "addresses": ["10.3.0.20"],
-    "routes": [{ "realm": "epc.mnc001.mcc001.3gppnetwork.org", "application": "s6c" }]
-  }'
-```
+Click **Add Peer**:
+
+- **Host**: `dra1.example.net`
+- **Addresses**: `10.3.0.20`
+- **Port**: `3868`
+
+Click **Add Route**, and set:
+
+- **Application**: **S6c**
+- **Destination**: **Realm**
+- **Realm**: `epc.mnc001.mcc001.3gppnetwork.org`
+
+Click **Add**.
 
 ## 3. Verify
 
-In the Ella SMSC UI, go to **Diameter**:
+On the **Diameter** page, under **Configured Peers**:
 
-- Each agent shows **open**.
+- Each agent shows **open**. Hover over another state to see why.
 - The DRA shows **HSS** set to **yes**.
 
 Send a short message to a roaming subscriber. On the **Messages** page, it shows **delivered**.

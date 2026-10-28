@@ -25,6 +25,6 @@ Follow Ella IMS's [Enable SMS over IP](https://docs.ellanetworks.com/ims/how_to/
 
 ## 2. Verify
 
-In the Ella SMSC UI, go to **Diameter**. Ella IMS shows **open**, with **Applications** set to **SGd** and **HSS** set to **no**.
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**, Ella IMS shows **open**, with **Applications** set to **SGd** and **HSS** set to **no**.
 
 Send an SMS to a phone registered for SMS over IP. On the **Messages** page, click the message: its delivery attempt went to Ella IMS's host, marked **(IP-SM-GW)**.

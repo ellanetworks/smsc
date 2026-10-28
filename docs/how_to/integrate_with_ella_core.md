@@ -61,6 +61,6 @@ On each SIM card, set the SMSC number to `+15550000000`.
 
 ## 6. Verify
 
-In the Ella SMSC UI, go to **Diameter**. Ella Core shows **open**, with **HSS** set to **yes**.
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**, Ella Core shows **open**, with **HSS** set to **yes**.
 
 Send an SMS between two phones. On the **Messages** page, it shows **delivered**.
