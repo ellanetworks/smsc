@@ -58,7 +58,7 @@ func ListPeers(cfg Config) http.Handler {
 		resp := ListPeersResponse{Items: []Peer{}}
 
 		for _, p := range cfg.Settings.Get().Peers {
-			resp.Items = append(resp.Items, peerResponse(cfg, p))
+			resp.Items = append(resp.Items, withStatus(cfg, peerResponse(p)))
 		}
 
 		writeResponse(w, resp, http.StatusOK, cfg.Logger)
@@ -68,7 +68,7 @@ func ListPeers(cfg Config) http.Handler {
 func GetPeer(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p, ok := lookupPeer(w, r, cfg); ok {
-			writeResponse(w, peerResponse(cfg, p), http.StatusOK, cfg.Logger)
+			writeResponse(w, withStatus(cfg, peerResponse(p)), http.StatusOK, cfg.Logger)
 		}
 	})
 }
@@ -89,7 +89,7 @@ func CreatePeer(a *auth) http.Handler {
 
 		principal, _ := PrincipalFrom(r.Context())
 		a.audit(r, "create_diameter_peer", principal.Email, fmt.Sprintf("Diameter peer %d created", p.ID))
-		writeResponse(w, peerResponse(cfg, p), http.StatusCreated, cfg.Logger)
+		writeResponse(w, peerResponse(p), http.StatusCreated, cfg.Logger)
 	})
 }
 
@@ -121,7 +121,7 @@ func UpdatePeer(a *auth) http.Handler {
 			p = stored
 		}
 
-		writeResponse(w, peerResponse(cfg, p), http.StatusOK, cfg.Logger)
+		writeResponse(w, peerResponse(p), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -238,7 +238,9 @@ func peerSaved(w http.ResponseWriter, err error, cfg Config, action string) bool
 	return false
 }
 
-func peerResponse(cfg Config, p settings.Peer) Peer {
+// peerResponse is a peer as stored. The SMSC applies a change of peer after it
+// is stored, so only a read returns the connection to the peer.
+func peerResponse(p settings.Peer) Peer {
 	resp := Peer{ID: p.ID, Host: p.Host, Addresses: []string{}, Port: p.Port, Routes: []PeerRoute{}}
 
 	for _, a := range p.Addresses {
@@ -254,8 +256,13 @@ func peerResponse(cfg Config, p settings.Peer) Peer {
 		})
 	}
 
-	if st, ok := cfg.Diameter.Peer(p.NodeID()); ok {
-		resp.Status = &PeerStatus{
+	return resp
+}
+
+// withStatus adds the connection to a peer.
+func withStatus(cfg Config, p Peer) Peer {
+	if st, ok := cfg.Diameter.Peer(settings.Peer{ID: p.ID}.NodeID()); ok {
+		p.Status = &PeerStatus{
 			State: st.State.String(),
 			Host:  st.Host,
 			Realm: st.Realm,
@@ -264,5 +271,5 @@ func peerResponse(cfg Config, p settings.Peer) Peer {
 		}
 	}
 
-	return resp
+	return p
 }

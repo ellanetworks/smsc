@@ -112,11 +112,17 @@ func TestPeerStatus(t *testing.T) {
 		Configured: true,
 	}}})
 
-	if code, _, errMsg := a.do(t, http.MethodPost, "/api/v1/diameter/peers", deaBody); code != http.StatusCreated {
-		t.Fatalf("POST = %d %s", code, errMsg)
+	// A write returns the peer as stored: the SMSC applies it after the response.
+	code, result, errMsg := a.do(t, http.MethodPost, "/api/v1/diameter/peers", deaBody)
+	if code != http.StatusCreated || decodePeer(t, result).Status != nil {
+		t.Fatalf("POST = %d %s %s", code, result, errMsg)
 	}
 
-	_, result, _ := a.do(t, http.MethodGet, "/api/v1/diameter/peers/1", "")
+	if _, result, _ := a.do(t, http.MethodPut, "/api/v1/diameter/peers/1", deaBody); decodePeer(t, result).Status != nil {
+		t.Fatalf("PUT = %s", result)
+	}
+
+	_, result, _ = a.do(t, http.MethodGet, "/api/v1/diameter/peers/1", "")
 
 	want := &api.PeerStatus{
 		State: "down",

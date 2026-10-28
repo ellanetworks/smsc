@@ -167,7 +167,7 @@ The fields of the request body, plus:
 | Field           | Type   | Description |
 | --------------- | ------ | ----------- |
 | `id`            | int    | ID of the peer. |
-| `status`        | object | Connection to the peer. Absent until the SMSC applies the peer. |
+| `status`        | object | Connection to the peer. Absent until the SMSC applies the peer, and from the responses to create and update. |
 | `status.state`  | string | `down`, `connecting`, `open`, `suspect`, `reopen` or `closing`. |
 | `status.host`   | string | Origin-Host the peer gave. |
 | `status.realm`  | string | Origin-Realm the peer gave. |

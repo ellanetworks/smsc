@@ -1288,7 +1288,9 @@ components:
             $ref: "#/components/schemas/PeerRoute"
         status:
           type: object
-          description: The connection to the peer. Absent until the SMSC applies a new peer.
+          description: >-
+            The connection to the peer, in reads only: the SMSC applies a change of peer after the response. Absent
+            until the SMSC applies a new peer.
           required: [state, since]
           properties:
             state:

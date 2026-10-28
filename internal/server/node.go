@@ -162,8 +162,9 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator, pee
 		return err
 	}
 
+	// A new node has no peers yet.
 	m.mu.Lock()
-	m.open = nil
+	m.peers, m.open = nil, nil
 	m.mu.Unlock()
 
 	m.setPeers(node, peers)
@@ -234,27 +235,33 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 }
 
 // setPeers gives the node its configured peers. The node keeps the connections
-// of the peers that are unchanged, and only replaces their routes. The settings
-// validate the peers as the node does, so it fails only on a bug; the node then
-// keeps the peers it had, and the next change of settings tries again.
+// of the peers that are unchanged, and only replaces their routes. m.peers are
+// the peers the node has. The settings validate the peers as the node does, so
+// SetPeers fails only on a bug: the node then keeps its peers, which differ from
+// the settings, so the next change of settings tries again.
 func (m *nodeManager) setPeers(node *diameter.Node, peers []settings.Peer) {
 	// The peers are known before the node reports their state.
 	m.mu.Lock()
+	previous := m.peers
 	m.peers = peers
+	m.mu.Unlock()
+
+	err := node.SetPeers(toDiameterPeers(peers))
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err != nil {
+		m.logger.Error("failed to apply the Diameter peers", slog.Any("error", err))
+		m.peers = previous
+
+		return
+	}
 
 	for id := range m.open {
 		if !slices.ContainsFunc(peers, func(p settings.Peer) bool { return p.NodeID() == id }) {
 			delete(m.open, id)
 		}
-	}
-	m.mu.Unlock()
-
-	if err := node.SetPeers(toDiameterPeers(peers)); err != nil {
-		m.logger.Error("failed to apply the Diameter peers", slog.Any("error", err))
-
-		m.mu.Lock()
-		m.peers = nil
-		m.mu.Unlock()
 	}
 }
 
