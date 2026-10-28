@@ -1403,8 +1403,7 @@ components:
 
     ESME:
       type: object
-      required:
-        [system_id, user, allowed_networks, max_sessions, forward_sim_answers, default_alphabet, created_at, sessions]
+      required: [system_id, user, allowed_networks, created_at, sessions]
       properties:
         system_id:
           type: string
@@ -1420,19 +1419,6 @@ components:
           items:
             type: string
             example: 10.1.0.0/24
-        max_sessions:
-          type: integer
-          minimum: 1
-          maximum: 16
-        forward_sim_answers:
-          type: boolean
-          description: >-
-            Whether to forward the SIM's answer to a (U)SIM data download message (TP-PID 0x7F) as a deliver_sm even
-            when registered_delivery does not ask for an SME Manual/User Acknowledgement.
-        default_alphabet:
-          type: string
-          enum: [gsm7, latin1]
-          description: What the ESME means by data_coding 0x00, which SMPP 3.4 leaves to the SMSC.
         created_at:
           type: string
           format: date-time
@@ -1477,23 +1463,11 @@ components:
           maxItems: 50
           items:
             type: string
-        max_sessions:
-          type: integer
-          minimum: 1
-          maximum: 16
-          default: 4
-        forward_sim_answers:
-          type: boolean
-          default: false
-        default_alphabet:
-          type: string
-          enum: [gsm7, latin1]
-          default: gsm7
 
     UpdateESMEParams:
       type: object
       additionalProperties: false
-      required: [allowed_networks, max_sessions, forward_sim_answers, default_alphabet]
+      required: [allowed_networks]
       properties:
         password:
           type: string
@@ -1505,15 +1479,6 @@ components:
           maxItems: 50
           items:
             type: string
-        max_sessions:
-          type: integer
-          minimum: 1
-          maximum: 16
-        forward_sim_answers:
-          type: boolean
-        default_alphabet:
-          type: string
-          enum: [gsm7, latin1]
 
     Peer:
       type: object
@@ -2007,7 +1972,8 @@ components:
         validity_seconds:
           type: integer
           minimum: 1
-          description: How long the SMSC attempts delivery. Absent, the default validity applies.
+          maximum: 315360000
+          description: How long the SMSC attempts delivery, at most 10 years. Absent, the default validity applies.
 
     BinaryParams:
       type: object
@@ -2385,7 +2351,8 @@ components:
           type: integer
           format: int64
           minimum: 1
-          description: How long delivery of a message without its own validity period is attempted.
+          maximum: 315360000
+          description: How long delivery of a message without its own validity period is attempted, at most 10 years.
           example: 604800
         retry_intervals_seconds:
           type: array

@@ -47,7 +47,7 @@ A message ends:
 - **delivered**, when a serving node takes it;
 - **failed**, when the recipient is unknown, not allowed SMS, or has no serving node that supports SGd, when the SIM refuses a (U)SIM data download message, or when an attempt fails and the message is single-shot or retries are off;
 - **expired**, when its validity period ends first;
-- **replaced**, when a later message from the same sender replaces it.
+- **replaced**, when a later message from the same sender replaces it. A message from the Messages API or an ESME is replaced only by one from the same user or ESME.
 
 ## Status reports
 
@@ -65,7 +65,7 @@ OTA platform (ESME) ──SMPP over TCP or TLS, 2775──▶ SMPP listener ─�
 
 - **The SMPP listener** accepts the ESMEs' connections, checks each bind against the ESME accounts, and keeps the sessions. An ESME account acts as a user: the messages it submits are that user's, and the user's role decides what it may do.
 - **Submission.** Each `submit_sm` becomes one short message, through the same path as the [Messages API](../reference/api/messages.md), so the same parameters give the same message. Ella SMSC answers once the message is stored, then delivers it as any other.
-- **Notifications.** When a message from an ESME ends, Ella SMSC queues, in the same database transaction, the delivery receipt and the SIM's answer that the ESME asked for. It sends them as `deliver_sm` to a receiving session of that ESME, the answer first, and keeps them until the ESME acknowledges them, binds again, or they expire. They survive a restart.
+- **Notifications.** When a message from an ESME ends, Ella SMSC queues the delivery receipt and the SIM's answer that the ESME asked for. It sends them as `deliver_sm` to a receiving session of that ESME, the answer first, and keeps them until the ESME acknowledges them, binds again, or they expire. They survive a restart.
 
 See the [SMPP reference](../reference/smpp.md).
 

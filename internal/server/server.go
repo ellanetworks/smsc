@@ -170,7 +170,11 @@ func (s *Server) Start(ctx context.Context) error {
 		Identity: nodes.Identity,
 		Settings: live.Get,
 		Store:    database,
-		Stored:   deliverer.Notify,
+		// A replace type message from an MS can replace an SMPP message, which queues its DELETED receipt.
+		Stored: func() {
+			deliverer.Notify()
+			esmes.NotificationsQueued()
+		},
 		Received: m.received,
 		Now:      time.Now,
 		Logger:   s.Logger,
@@ -312,7 +316,8 @@ func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsCo
 		OnDecodeError: esmes.OnDecodeError,
 		// Up to 64 submit_sm per session at once: SMPP 3.4 leaves the window to the SMSC and suggests 10 (sections
 		// 2.5.2 and 2.6.2, notes). The database serializes the writes, so the window only overlaps parsing and I/O.
-		Session: smpp.SessionConfig{InboundWindow: smppInboundWindow, OutboundWindow: esme.DefaultWindow},
+		// The outbound window is the default, 10, which the dispatcher fills.
+		Session: smpp.SessionConfig{InboundWindow: smppInboundWindow},
 		Logger:  s.Logger,
 	})
 	if err != nil {
@@ -597,7 +602,9 @@ type smppSessions struct{ esmes *esme.Service }
 
 func (s smppSessions) CloseESME(id int64) { s.esmes.CloseESME(id) }
 
-func (s smppSessions) CloseUser(id int64) { s.esmes.CloseUser(id) }
+func (s smppSessions) CloseUser(ctx context.Context, id int64) error {
+	return s.esmes.CloseUser(ctx, id)
+}
 
 func (s smppSessions) Sessions(id int64) []api.SMPPSession {
 	var out []api.SMPPSession

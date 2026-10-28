@@ -21,17 +21,6 @@ Submission time: from the MO-Forward-Short-Message request to its answer, the me
 
 Maximum rate with a delivery time p99 under 100 ms: 1,600 messages per second.
 
-## SMPP
-
-Submission time: from a `submit_sm` read to its `submit_sm_resp` written, the message stored. It is the [`ellasmsc_smpp_submit_duration_seconds`](observability.md#metrics) histogram.
-
-| Item | Value |
-| ---- | ----- |
-| Target | 1,000 `submit_sm` per second, with a submission time p99 under 50 ms |
-| Measured | Not yet |
-
-Every write to the database goes through one connection, so more SMPP sessions do not add capacity.
-
 ## Storage
 
 | Item | Value |

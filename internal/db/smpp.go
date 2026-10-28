@@ -63,13 +63,12 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 	at int64,
 ) error {
 	var (
-		esmeID    int64
 		receipt   uint8
 		simAnswer bool
 	)
 
-	err := tx.QueryRowContext(ctx, `SELECT esme_id, receipt, sim_answer FROM smpp_messages WHERE message_id = ?`,
-		messageID).Scan(&esmeID, &receipt, &simAnswer)
+	err := tx.QueryRowContext(ctx, `SELECT receipt, sim_answer FROM smpp_messages WHERE message_id = ?`,
+		messageID).Scan(&receipt, &simAnswer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -99,9 +98,9 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 		}
 
 		if err == nil && len(report) > 0 {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_notifications (message_id, esme_id, type, attempt_id,
-				created_at, expires_at, next_attempt_at, attempts, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-				messageID, esmeID, NotificationSIMAnswer, attemptID, at, expiresAt, at, at); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_notifications (message_id, type, attempt_id, expires_at,
+				next_attempt_at, attempts) VALUES (?, ?, ?, ?, ?, 0)`,
+				messageID, NotificationSIMAnswer, attemptID, expiresAt, at); err != nil {
 				return err
 			}
 		}
@@ -109,9 +108,9 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 
 	// registered_delivery bits 1-0: 01 asks for the final outcome, 10 for a failure only (SMPP 3.4 section 5.2.17).
 	if receipt == ReceiptFinal || receipt == ReceiptFailure && status != StatusDelivered {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_notifications (message_id, esme_id, type, message_state,
-			tp_status, created_at, expires_at, next_attempt_at, attempts, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-			messageID, esmeID, NotificationReceipt, messageState(status), tpStatus, at, expiresAt, at, at); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_notifications (message_id, type, tp_status, expires_at,
+			next_attempt_at, attempts) VALUES (?, ?, ?, ?, ?, 0)`,
+			messageID, NotificationReceipt, tpStatus, expiresAt, at); err != nil {
 			return err
 		}
 	}
@@ -125,11 +124,13 @@ type Notification struct {
 	ESMEID   int64
 	Type     NotificationType
 	Attempts int
-	// MessageState and TPStatus are a receipt's.
+	// MessageState and TPStatus are a receipt's: MessageState is that of the message's final status.
 	MessageState uint8
 	TPStatus     uint8
 	// Message is the message that the notification is on.
-	Message              Message
+	Message Message
+	// SourceNPI is the submit_sm's source_addr_npi.
+	SourceNPI            uint8
 	DataCoding           uint8
 	UserMessageReference *uint16
 	// DeliverReport is a SIM answer's SMS-DELIVER-REPORT, for RP-ACK when Ack is set and RP-ERROR otherwise.
@@ -137,8 +138,8 @@ type Notification struct {
 	Ack           bool
 }
 
-const notificationColumns = `n.id, n.esme_id, n.type, n.attempts, n.message_state, n.tp_status, s.data_coding,
-	s.user_message_reference, a.deliver_report, a.outcome`
+const notificationColumns = `n.id, s.esme_id, n.type, n.attempts, n.tp_status, s.source_npi,
+	s.data_coding, s.user_message_reference, a.deliver_report, a.outcome`
 
 // DueNotifications returns up to limit notifications to an ESME that are due and unexpired at now, oldest first,
 // leaving out those of exclude, which are in flight. A notification waits for the older ones on its message, so that
@@ -166,7 +167,7 @@ func (d *DB) DueNotifications(ctx context.Context, esmeID int64, now time.Time, 
 		JOIN smpp_messages s ON s.message_id = n.message_id
 		JOIN messages m ON m.id = n.message_id
 		LEFT JOIN delivery_attempts a ON a.id = n.attempt_id
-		WHERE n.esme_id = ? AND n.result IS NULL AND n.next_attempt_at <= ? AND n.expires_at > ?
+		WHERE s.esme_id = ? AND n.result IS NULL AND n.next_attempt_at <= ? AND n.expires_at > ?
 		AND NOT EXISTS (SELECT 1 FROM smpp_notifications o WHERE o.message_id = n.message_id AND o.id < n.id
 			AND o.result IS NULL)`+notIn+`
 		ORDER BY n.id LIMIT ?`, args...)
@@ -207,7 +208,7 @@ func prefixed(alias, columns string) string {
 func scanNotification(rows *sql.Rows) (Notification, error) {
 	var (
 		n                        Notification
-		state, status            sql.Null[uint8]
+		status                   sql.Null[uint8]
 		reference                sql.Null[uint16]
 		outcome                  sql.Null[string]
 		reportFor                sql.Null[int64]
@@ -218,7 +219,7 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 		m                        = &n.Message
 	)
 
-	err := rows.Scan(&n.ID, &n.ESMEID, &n.Type, &n.Attempts, &state, &status, &n.DataCoding, &reference,
+	err := rows.Scan(&n.ID, &n.ESMEID, &n.Type, &n.Attempts, &status, &n.SourceNPI, &n.DataCoding, &reference,
 		&n.DeliverReport, &outcome,
 		&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber,
 		&m.Originator.NumberingPlan, &m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan,
@@ -228,7 +229,7 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 		return Notification{}, err
 	}
 
-	n.MessageState, n.TPStatus = state.V, status.V
+	n.TPStatus = status.V
 	n.Ack = outcome.V == "success"
 
 	if reference.Valid {
@@ -242,20 +243,20 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 	m.NextAttemptAt = time.Unix(0, next).UTC()
 	m.UpdatedAt = time.Unix(0, updated).UTC()
 
+	if n.Type == NotificationReceipt {
+		n.MessageState = messageState(m.Status)
+	}
+
 	return n, nil
 }
 
-// CloseNotification gives a notification its final result. An acknowledged or rejected one was sent at the given
-// time. It returns ErrNotFound when the notification no longer exists or already has a result.
-func (d *DB) CloseNotification(ctx context.Context, id int64, result NotificationResult, at time.Time) (err error) {
+// CloseNotification gives a notification its final result. It returns ErrNotFound when the notification no longer
+// exists or already has a result.
+func (d *DB) CloseNotification(ctx context.Context, id int64, result NotificationResult) (err error) {
 	defer d.observe(&err)()
 
-	t := at.UTC().UnixNano()
-
-	sent := sql.Null[int64]{V: t, Valid: result == NotificationAcknowledged || result == NotificationRejected}
-
-	res, err := d.conn.ExecContext(ctx, `UPDATE smpp_notifications SET result = ?, sent_at = ?, updated_at = ?
-		WHERE id = ? AND result IS NULL`, result, sent, t, id)
+	res, err := d.conn.ExecContext(ctx, `UPDATE smpp_notifications SET result = ? WHERE id = ? AND result IS NULL`,
+		result, id)
 	if err != nil {
 		return fmt.Errorf("close notification: %w", err)
 	}
@@ -270,11 +271,11 @@ func (d *DB) CloseNotification(ctx context.Context, id int64, result Notificatio
 }
 
 // RetryNotification counts a failed attempt to send a notification, and schedules the next one.
-func (d *DB) RetryNotification(ctx context.Context, id int64, next, at time.Time) (err error) {
+func (d *DB) RetryNotification(ctx context.Context, id int64, next time.Time) (err error) {
 	defer d.observe(&err)()
 
-	_, err = d.conn.ExecContext(ctx, `UPDATE smpp_notifications SET attempts = attempts + 1, next_attempt_at = ?,
-		updated_at = ? WHERE id = ? AND result IS NULL`, next.UTC().UnixNano(), at.UTC().UnixNano(), id)
+	_, err = d.conn.ExecContext(ctx, `UPDATE smpp_notifications SET attempts = attempts + 1, next_attempt_at = ?
+		WHERE id = ? AND result IS NULL`, next.UTC().UnixNano(), id)
 	if err != nil {
 		return fmt.Errorf("retry notification: %w", err)
 	}
@@ -289,8 +290,8 @@ func (d *DB) ExpireNotifications(ctx context.Context, now time.Time) (_ map[Noti
 
 	at := now.UTC().UnixNano()
 
-	rows, err := d.conn.QueryContext(ctx, `UPDATE smpp_notifications SET result = ?, updated_at = ?
-		WHERE result IS NULL AND expires_at <= ? RETURNING type`, NotificationExpired, at, at)
+	rows, err := d.conn.QueryContext(ctx, `UPDATE smpp_notifications SET result = ?
+		WHERE result IS NULL AND expires_at <= ? RETURNING type`, NotificationExpired, at)
 	if err != nil {
 		return nil, fmt.Errorf("expire notifications: %w", err)
 	}
@@ -349,14 +350,18 @@ func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ ma
 	return out, nil
 }
 
-// NextNotificationAt returns when the next notification to an ESME is due or expires, if any is still to send.
-func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64) (_ time.Time, _ bool, err error) {
+// NextNotificationAt returns when, after now, the next notification to an ESME is due or expires, if any is still to
+// send. A notification already due is left out: it is in flight, or waits for an older one or a free slot, whose end
+// wakes the dispatcher.
+func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (_ time.Time, _ bool, err error) {
 	defer d.observe(&err)()
 
 	var at sql.Null[int64]
 
-	if err := d.conn.QueryRowContext(ctx, `SELECT MIN(MIN(next_attempt_at, expires_at)) FROM smpp_notifications
-		WHERE esme_id = ? AND result IS NULL`, esmeID).Scan(&at); err != nil {
+	if err := d.conn.QueryRowContext(ctx, `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at,
+		n.expires_at) ELSE n.expires_at END) FROM smpp_notifications n JOIN smpp_messages s ON s.message_id = n.message_id
+		WHERE s.esme_id = ? AND n.result IS NULL`,
+		now.UTC().UnixNano(), esmeID).Scan(&at); err != nil {
 		return time.Time{}, false, fmt.Errorf("next notification: %w", err)
 	}
 
@@ -407,24 +412,4 @@ func (d *DB) SystemIDsFor(ctx context.Context, messageIDs []int64) (_ map[int64]
 	}
 
 	return out, nil
-}
-
-// NotificationResult returns the result of the notification of a type on a message, empty while it is still to send.
-// It returns ErrNotFound when there is none.
-func (d *DB) NotificationResult(ctx context.Context, messageID int64, t NotificationType) (_ NotificationResult, err error) {
-	defer d.observe(&err)()
-
-	var r sql.Null[NotificationResult]
-
-	err = d.conn.QueryRowContext(ctx, `SELECT result FROM smpp_notifications WHERE message_id = ? AND type = ?`,
-		messageID, t).Scan(&r)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-
-	if err != nil {
-		return "", fmt.Errorf("get notification result: %w", err)
-	}
-
-	return r.V, nil
 }

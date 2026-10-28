@@ -44,7 +44,7 @@ This path replaces the delivery settings. The new validity applies to the messag
 
 | Field                      | Type  | Required | Description |
 | -------------------------- | ----- | -------- | ----------- |
-| `default_validity_seconds` | int   | Yes      | At least 1. |
+| `default_validity_seconds` | int   | Yes      | `1` to `315360000` (10 years). |
 | `retry_intervals_seconds`  | array | Yes      | Each at least 1. |
 
 ### Sample Request

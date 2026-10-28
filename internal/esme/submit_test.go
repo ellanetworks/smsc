@@ -3,6 +3,7 @@ package esme
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/netip"
@@ -27,7 +28,9 @@ var testNow = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 const destination = "0b915155210300f2"
 
 type testEnv struct {
-	store    *db.DB
+	store *db.DB
+	// path is the database's file, which a test reads apart from the store.
+	path     string
 	service  *Service
 	received *intake.Received
 	esme     db.ESME
@@ -40,7 +43,9 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 
 	ctx := context.Background()
 
-	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "smsc.db"))
+	path := filepath.Join(t.TempDir(), "smsc.db")
+
+	store, err := db.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +63,7 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 	}
 
 	e := db.ESME{
-		SystemID: "ota", UserID: userID, PasswordHash: string(hash), MaxSessions: 4,
-		DefaultAlphabet: db.AlphabetGSM7, CreatedAt: testNow,
+		SystemID: "ota", UserID: userID, PasswordHash: string(hash), CreatedAt: testNow,
 		AllowedNetworks: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
 	}
 
@@ -86,6 +90,7 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 
 	return &testEnv{
 		store: store,
+		path:  path,
 		service: &Service{
 			Store:      store,
 			Submitter:  &submission.Submitter{Store: store, Settings: func() settings.Settings { return current }, Received: received, Now: now},
@@ -201,11 +206,6 @@ func TestSubmitMapping(t *testing.T) {
 			want: "0100" + destination + "0004 02 aabb",
 		},
 		{
-			name:   "an MWI DCS cannot take a subunit",
-			sm:     with(baseSubmit(0xc8, "68"), func(m *smpp.Message) { m.Options.DestAddrSubunit = ptr[byte](1) }),
-			status: smpp.StatusInvOptParamVal,
-		},
-		{
 			// "hi" in unpacked septets, packed by the SC (TS 23.038 clause 6.1.2.1.1).
 			name: "0x00 with the GSM 7 bit default alphabet",
 			sm:   baseSubmit(0x00, "6869"),
@@ -223,9 +223,8 @@ func TestSubmitMapping(t *testing.T) {
 			status: smpp.StatusSubmitFail,
 		},
 		{
-			name: "0x00 as Latin-1 for a latin1 ESME: é is in the GSM 7 bit alphabet",
-			esme: func(e *db.ESME) { e.DefaultAlphabet = db.AlphabetLatin1 },
-			sm:   baseSubmit(0x00, "e9"),
+			name: "0x03 is Latin-1: é is in the GSM 7 bit alphabet",
+			sm:   baseSubmit(0x03, "e9"),
 			want: "0100" + destination + "0000 01 05",
 		},
 		{
@@ -254,12 +253,12 @@ func TestSubmitMapping(t *testing.T) {
 			status: smpp.StatusSubmitFail,
 		},
 		{
-			name: "MWI control is copied, GSM 7 bit",
-			sm:   baseSubmit(0xc8, "6869"),
-			want: "0100" + destination + "00c8 02 e834",
+			name:   "MWI control, store, is not supported",
+			sm:     baseSubmit(0xd8, "6869"),
+			status: smpp.StatusSubmitFail,
 		},
 		{
-			name:   "MWI control with the reserved bit 2",
+			name:   "MWI control, discard, is not supported either",
 			sm:     baseSubmit(0xcc, "6869"),
 			status: smpp.StatusSubmitFail,
 		},
@@ -501,4 +500,41 @@ func receivedCount(t *testing.T, r *intake.Received, result string) float64 {
 	}
 
 	return 0
+}
+
+// TestSubmitFailuresAreCounted checks that a submit_sm the SMSC fails to encode counts as an error, once, as one it
+// fails to store does through the Submitter (SRV-L6).
+func TestSubmitFailuresAreCounted(t *testing.T) {
+	tests := []struct {
+		err    error
+		status smpp.CommandStatus
+		result string
+	}{
+		{fmt.Errorf("%w: x", submission.ErrEncode), smpp.StatusSysErr, intake.Error},
+		{fmt.Errorf("%w: x", submission.ErrEncodeText), smpp.StatusSysErr, intake.Error},
+		{fmt.Errorf("%w: x", submission.ErrStore), smpp.StatusSysErr, ""},
+		{submission.ErrUserDataTooLong, smpp.StatusInvMsgLen, intake.Rejected},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.err.Error(), func(t *testing.T) {
+			env := newTestEnv(t, nil)
+			env.service.init()
+
+			if got := env.service.submitFailed(env.service.Logger, tc.err); got != tc.status {
+				t.Fatalf("status = %s, want %s", got, tc.status)
+			}
+
+			for _, r := range []string{intake.Accepted, intake.Rejected, intake.Error} {
+				want := 0.0
+				if r == tc.result {
+					want = 1
+				}
+
+				if n := receivedCount(t, env.received, r); n != want {
+					t.Errorf("received_total{origin=smpp,result=%s} = %v, want %v", r, n, want)
+				}
+			}
+		})
+	}
 }

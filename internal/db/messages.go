@@ -105,6 +105,9 @@ type NewMessage struct {
 // (U)SIM's answer (SMPP 3.4 section 2.11).
 type NewSMPPMessage struct {
 	ESMEID int64
+	// SourceNPI is the submit_sm's source_addr_npi, which the notifications echo: the stored originator has the
+	// numbering plan of the TPDU.
+	SourceNPI uint8
 	// Receipt is registered_delivery bits 1-0 (SMPP 3.4 section 5.2.17): ReceiptNone, ReceiptFinal or ReceiptFailure.
 	Receipt uint8
 	// SIMAnswer is whether to forward the TP-User-Data of the recipient's SMS-DELIVER-REPORT.
@@ -204,9 +207,9 @@ func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]c
 			reference = sql.Null[uint16]{V: *r.UserMessageReference, Valid: true}
 		}
 
-		if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_messages (message_id, esme_id, receipt, sim_answer, data_coding,
-			user_message_reference) VALUES (?, ?, ?, ?, ?, ?)`, id, r.ESMEID, r.Receipt, r.SIMAnswer, r.DataCoding,
-			reference); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_messages (message_id, esme_id, receipt, sim_answer, source_npi,
+			data_coding, user_message_reference) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, r.ESMEID, r.Receipt, r.SIMAnswer,
+			r.SourceNPI, r.DataCoding, reference); err != nil {
 			return 0, fmt.Errorf("create message: %w", err)
 		}
 	}
@@ -333,14 +336,39 @@ func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewS
 
 // replacePending marks replaced the pending message that the new one replaces, if any: the latest from the same
 // originator, of the same replace type, whatever its recipient (TS 23.040 clause 9.2.3.9: "In MO short messages the SC
-// reacts similarly but only the address of the originating MS or any other source is checked"). It stores the status
-// report on it, if any.
+// reacts similarly but only the address of the originating MS or any other source is checked"). A message from an
+// MS follows that rule. One from the API or SMPP, whose submitter chooses its originator, replaces only one of the
+// same account: the same user for the API, the same ESME for SMPP. It stores the status report on it, if any.
 func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]completion) error {
-	replaced, err := scanMessage(tx.QueryRowContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
-		AND originator_npi = ? AND protocol_identifier = ? AND status = ? ORDER BY id DESC LIMIT 1`,
+	query := `SELECT ` + messageColumns + ` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
+		AND originator_npi = ? AND protocol_identifier = ? AND status = ?`
+
+	args := []any{
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
-		m.ProtocolIdentifier, StatusPending))
+		m.ProtocolIdentifier, StatusPending,
+	}
+
+	switch m.Origin {
+	case OriginMobile:
+	case OriginSMPP:
+		if m.SMPP == nil {
+			return nil
+		}
+
+		query += ` AND origin = ? AND id IN (SELECT message_id FROM smpp_messages WHERE esme_id = ?)`
+
+		args = append(args, OriginSMPP, m.SMPP.ESMEID)
+	default:
+		if m.SubmittedBy == 0 {
+			return nil
+		}
+
+		query += ` AND origin = ? AND submitted_by = ?`
+
+		args = append(args, m.Origin, m.SubmittedBy)
+	}
+
+	replaced, err := scanMessage(tx.QueryRowContext(ctx, query+` ORDER BY id DESC LIMIT 1`, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

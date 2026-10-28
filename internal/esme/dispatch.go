@@ -15,6 +15,9 @@ const (
 	maxWait = time.Minute
 	// dispatchBackoff is how long the dispatcher waits after the database failed.
 	dispatchBackoff = time.Second
+	// window is the most deliver_sm the dispatcher has in flight on a session: the session's outbound window, the
+	// library's default, so that a deliver_sm does not wait for a slot of it.
+	window = smpp.DefaultWindow
 )
 
 // NotificationsQueued wakes the dispatcher: a message completed, which may have queued notifications on it.
@@ -33,7 +36,8 @@ func (s *Service) wakeDispatcher() {
 // Run sends the notifications as deliver_sm to the receiver and transceiver sessions of the ESMEs they are for, until
 // ctx ends. SMPP 3.4 does not say which session a deliver_sm goes to; sending it to the ESME that submitted the
 // message is Ella's convention. A notification waits for the older ones on its message, so that the SIM answer comes
-// before the receipt, and a failed one is retried after 1 minute, doubling, at most 1 hour, until it expires.
+// before the receipt, and a failed attempt is retried after 1 minute, doubling, at most 1 hour, until it expires. A
+// session that ends during an attempt is not a failed attempt: the notification goes to the next receiver session.
 func (s *Service) Run(ctx context.Context) {
 	s.init()
 
@@ -86,7 +90,7 @@ func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done ch
 	for esmeID, sessions := range s.receivers() {
 		free := 0
 		for _, sess := range sessions {
-			free += s.Window - sess.inflight
+			free += window - sess.inflight
 		}
 
 		if free > 0 {
@@ -115,7 +119,7 @@ func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done ch
 
 		// A notification that is due but waits, in flight, behind another or for a free slot, is woken by a send
 		// that ends.
-		next, ok, err := s.Store.NextNotificationAt(ctx, esmeID)
+		next, ok, err := s.Store.NextNotificationAt(ctx, esmeID, now)
 		if err != nil {
 			s.Logger.Error("failed to read the next SMPP notification", slog.Any("error", err))
 			return dispatchBackoff
@@ -160,7 +164,7 @@ func (s *Service) reserve(slots []receiverSlot) *Session {
 
 	for _, slot := range slots {
 		sess := slot.sess
-		if sess.closed || sess.inflight >= s.Window {
+		if sess.closed || sess.inflight >= window {
 			continue
 		}
 
@@ -183,13 +187,14 @@ func (s *Service) release(sess *Session) {
 }
 
 // send sends a notification and stores its outcome (SMPP 3.4 section 4.6.2): ESME_ROK acknowledges it, and
-// ESME_RX_P_APPN or ESME_RX_R_APPN reject it for good. ESME_RX_T_APPN, any other status, generic_nack, no response
-// and a lost session are temporary.
+// ESME_RX_P_APPN or ESME_RX_R_APPN reject it for good. ESME_RX_T_APPN, any other status, generic_nack and no response
+// within the response_timer are failed attempts, retried after a backoff (SMPP 3.4 section 7.1). A session that ends
+// is no attempt: the notification stays due, for the next receiver session.
 func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 	log := s.Logger.With(slog.String("system_id", sess.ESME.SystemID), slog.Int64("message_id", n.Message.ID),
 		slog.String("type", string(n.Type)))
 
-	d, err := deliverSM(n, sess.ESME.DefaultAlphabet)
+	d, err := deliverSM(n)
 	if errors.Is(err, errNoUserData) {
 		s.close(ctx, log, n, db.NotificationNoUserData)
 		return
@@ -208,7 +213,16 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 
 	status, err := conn.Deliver(ctx, d)
 
+	var stateErr *smpp.StateError
+
 	switch {
+	case errors.Is(err, smpp.ErrClosed) || errors.As(err, &stateErr):
+		// The session ended or is unbinding: no other notification goes to it, before the server unregisters it.
+		log.Debug("deliver_sm on a session that ended", slog.Any("error", err))
+
+		s.mu.Lock()
+		sess.closed = true
+		s.mu.Unlock()
 	case err != nil:
 		log.Debug("deliver_sm failed", slog.Any("error", err))
 		s.retry(ctx, log, n)
@@ -224,7 +238,7 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 }
 
 func (s *Service) close(ctx context.Context, log *slog.Logger, n db.Notification, result db.NotificationResult) {
-	err := s.Store.CloseNotification(ctx, n.ID, result, s.Now())
+	err := s.Store.CloseNotification(ctx, n.ID, result)
 	if errors.Is(err, db.ErrNotFound) {
 		// Its message or its ESME was deleted meanwhile.
 		return
@@ -239,9 +253,7 @@ func (s *Service) close(ctx context.Context, log *slog.Logger, n db.Notification
 }
 
 func (s *Service) retry(ctx context.Context, log *slog.Logger, n db.Notification) {
-	now := s.Now()
-
-	if err := s.Store.RetryNotification(ctx, n.ID, now.Add(retryDelay(n.Attempts)), now); err != nil {
+	if err := s.Store.RetryNotification(ctx, n.ID, s.Now().Add(retryDelay(n.Attempts))); err != nil {
 		log.Error("failed to schedule an SMPP notification again", slog.Any("error", err))
 	}
 }

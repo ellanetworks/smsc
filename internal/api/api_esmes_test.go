@@ -28,7 +28,11 @@ type fakeSMPP struct {
 
 func (f *fakeSMPP) CloseESME(id int64) { f.closedESMEs = append(f.closedESMEs, id) }
 
-func (f *fakeSMPP) CloseUser(id int64)                  { f.closedUsers = append(f.closedUsers, id) }
+func (f *fakeSMPP) CloseUser(_ context.Context, id int64) error {
+	f.closedUsers = append(f.closedUsers, id)
+	return nil
+}
+
 func (f *fakeSMPP) Sessions(id int64) []api.SMPPSession { return f.sessions[id] }
 
 // newSMPPTestAPI returns an initialized API, as newTestAPI does, with an SMPP listener.
@@ -104,8 +108,6 @@ func TestESMELifecycle(t *testing.T) {
 		SystemID:        "ota",
 		User:            "ota@example.com",
 		AllowedNetworks: []string{"10.1.0.0/24", "2001:db8::/32"},
-		MaxSessions:     4,
-		DefaultAlphabet: "gsm7",
 		CreatedAt:       "2026-09-29T10:00:00.000Z",
 		Sessions:        []api.ESMESession{},
 	}
@@ -152,21 +154,17 @@ func TestESMELifecycle(t *testing.T) {
 	smpp.sessions = nil
 
 	// Without a password, the old one stays.
-	code, result, msg = a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["192.0.2.7/32"],
-		"max_sessions": 16, "forward_sim_answers": true, "default_alphabet": "latin1"}`)
+	code, result, msg = a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["192.0.2.7/32"]}`)
 	if code != http.StatusOK {
 		t.Fatalf("PUT = %d %q", code, msg)
 	}
 
 	updated := api.ESME{
-		SystemID:          "ota",
-		User:              "ota@example.com",
-		AllowedNetworks:   []string{"192.0.2.7/32"},
-		MaxSessions:       16,
-		ForwardSIMAnswers: true,
-		DefaultAlphabet:   "latin1",
-		CreatedAt:         "2026-09-29T10:00:00.000Z",
-		Sessions:          []api.ESMESession{},
+		SystemID:        "ota",
+		User:            "ota@example.com",
+		AllowedNetworks: []string{"192.0.2.7/32"},
+		CreatedAt:       "2026-09-29T10:00:00.000Z",
+		Sessions:        []api.ESMESession{},
 	}
 
 	if got := decode[api.ESME](t, result); !reflect.DeepEqual(got, updated) {
@@ -182,8 +180,7 @@ func TestESMELifecycle(t *testing.T) {
 		t.Fatalf("GET after PUT = %d %+v", code, got)
 	}
 
-	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": [],
-		"max_sessions": 1, "forward_sim_answers": false, "default_alphabet": "gsm7"}`); code != http.StatusOK {
+	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": []}`); code != http.StatusOK {
 		t.Fatalf("PUT with a password = %d %q", code, msg)
 	}
 
@@ -197,8 +194,7 @@ func TestESMELifecycle(t *testing.T) {
 	}
 
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		if code, _, _ := a.do(t, method, "/api/v1/esmes/ota", `{"allowed_networks": [], "max_sessions": 1,
-			"default_alphabet": "gsm7"}`); code != http.StatusNotFound {
+		if code, _, _ := a.do(t, method, "/api/v1/esmes/ota", `{"allowed_networks": []}`); code != http.StatusNotFound {
 			t.Errorf("%s of a deleted ESME = %d, want 404", method, code)
 		}
 	}
@@ -247,7 +243,7 @@ func TestESMEGeneratedPassword(t *testing.T) {
 		}
 
 		if _, result, _ := a.do(t, http.MethodPut, "/api/v1/esmes/"+systemID,
-			`{"allowed_networks": [], "max_sessions": 1, "default_alphabet": "gsm7"}`); strings.Contains(string(result),
+			`{"allowed_networks": []}`); strings.Contains(string(result),
 			`"password"`) {
 			t.Fatalf("PUT returns a password: %s", result)
 		}
@@ -264,7 +260,7 @@ func TestESMESystemIDInThePath(t *testing.T) {
 		method, body string
 	}{
 		{http.MethodGet, ""},
-		{http.MethodPut, `{"allowed_networks": [], "max_sessions": 2, "default_alphabet": "gsm7"}`},
+		{http.MethodPut, `{"allowed_networks": []}`},
 		{http.MethodDelete, ""},
 	} {
 		if code, _, msg := a.do(t, tc.method, "/api/v1/esmes/my%20esme%2F1", tc.body); code != http.StatusOK {
@@ -307,7 +303,7 @@ func TestESMEValidation(t *testing.T) {
 	}
 
 	update := func(fields string) string {
-		body := `{"allowed_networks": ["10.0.0.0/8"], "max_sessions": 4, "default_alphabet": "gsm7"`
+		body := `{"allowed_networks": ["10.0.0.0/8"]`
 		if fields != "" {
 			body += ", " + fields
 		}
@@ -382,9 +378,13 @@ func TestESMEValidation(t *testing.T) {
 			"not a network", http.MethodPost, "/api/v1/esmes", createWith("allowed_networks", `["example.org/8"]`),
 			http.StatusBadRequest,
 		},
-		{"max_sessions 0", http.MethodPost, "/api/v1/esmes", createWith("max_sessions", `0`), http.StatusBadRequest},
-		{"max_sessions 17", http.MethodPost, "/api/v1/esmes", createWith("max_sessions", `17`), http.StatusBadRequest},
-		{"ucs2", http.MethodPost, "/api/v1/esmes", createWith("default_alphabet", `"ucs2"`), http.StatusBadRequest},
+		// The removed settings are unknown fields.
+		{"max_sessions", http.MethodPost, "/api/v1/esmes", createWith("max_sessions", `4`), http.StatusBadRequest},
+		{"default_alphabet", http.MethodPost, "/api/v1/esmes", createWith("default_alphabet", `"gsm7"`), http.StatusBadRequest},
+		{
+			"forward_sim_answers", http.MethodPost, "/api/v1/esmes", createWith("forward_sim_answers", `true`),
+			http.StatusBadRequest,
+		},
 		{"unknown field", http.MethodPost, "/api/v1/esmes", create(`"tls": true`), http.StatusBadRequest},
 		{"not JSON", http.MethodPost, "/api/v1/esmes", `system_id=new`, http.StatusBadRequest},
 		{"taken system_id", http.MethodPost, "/api/v1/esmes", createWith("system_id", `"ota"`), http.StatusConflict},
@@ -397,15 +397,7 @@ func TestESMEValidation(t *testing.T) {
 			http.StatusBadRequest,
 		},
 		{
-			"update: no max_sessions", http.MethodPut, "/api/v1/esmes/ota",
-			`{"allowed_networks": [], "default_alphabet": "gsm7"}`, http.StatusBadRequest,
-		},
-		{
-			"update: max_sessions 17", http.MethodPut, "/api/v1/esmes/ota", updateWith("max_sessions", `17`),
-			http.StatusBadRequest,
-		},
-		{
-			"update: no alphabet", http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "max_sessions": 1}`,
+			"update: max_sessions", http.MethodPut, "/api/v1/esmes/ota", updateWith("max_sessions", `4`),
 			http.StatusBadRequest,
 		},
 		{
@@ -482,7 +474,7 @@ func TestESMEChangesNeedALogin(t *testing.T) {
 			http.StatusForbidden,
 		},
 		{
-			http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "max_sessions": 1, "default_alphabet": "gsm7"}`,
+			http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": []}`,
 			http.StatusForbidden,
 		},
 		{http.MethodDelete, "/api/v1/esmes/ota", "", http.StatusForbidden},
@@ -496,7 +488,7 @@ func TestESMEChangesNeedALogin(t *testing.T) {
 	}
 
 	if esmes, err := a.store.ListESMEs(context.Background()); err != nil || len(esmes) != 1 ||
-		esmes[0].MaxSessions != 4 {
+		len(esmes[0].AllowedNetworks) != 2 {
 		t.Fatalf("ESMEs after the refused changes = %+v, %v", esmes, err)
 	}
 }
@@ -516,13 +508,11 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 	}
 
 	// A refused change closes nothing.
-	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "max_sessions": 0,
-		"default_alphabet": "gsm7"}`); code != http.StatusBadRequest {
+	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["10.0.0.1"]}`); code != http.StatusBadRequest {
 		t.Fatalf("invalid PUT = %d", code)
 	}
 
-	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "max_sessions": 2,
-		"default_alphabet": "gsm7"}`); code != http.StatusOK {
+	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": []}`); code != http.StatusOK {
 		t.Fatalf("PUT = %d", code)
 	}
 
@@ -542,7 +532,7 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("closed users = %v, want none", smpp.closedUsers)
 	}
 
-	otaUser, otherUser := a.userID(t, "ota@example.com"), a.userID(t, "other@example.com")
+	otaUser := a.userID(t, "ota@example.com")
 
 	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/users/ota@example.com", `{"role_id": 2}`); code != http.StatusOK {
 		t.Fatalf("role change = %d", code)
@@ -558,16 +548,24 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("password change = %d", code)
 	}
 
+	if !slices.Equal(smpp.closedESMEs, []int64{ota, other}) {
+		t.Fatalf("closed ESMEs after a password change = %v, want no more", smpp.closedESMEs)
+	}
+
+	// Deleting a user deletes its ESMEs, whose sessions close: those it had before the deletion.
+	a.createESME(t, `{"system_id": "other2", "user": "other@example.com", "password": "x", "allowed_networks": []}`)
+	other2 := a.storedESME(t, "other2").ID
+
 	if code, _, _ := a.do(t, http.MethodDelete, "/api/v1/users/other@example.com", ""); code != http.StatusOK {
 		t.Fatalf("delete user = %d", code)
 	}
 
-	if !slices.Equal(smpp.closedUsers, []int64{otaUser, otherUser}) {
-		t.Fatalf("closed users after a deletion = %v, want [%d %d]", smpp.closedUsers, otaUser, otherUser)
+	if !slices.Equal(smpp.closedESMEs, []int64{ota, other, other2}) {
+		t.Fatalf("closed ESMEs after a deletion = %v, want [%d %d %d]", smpp.closedESMEs, ota, other, other2)
 	}
 
-	if !slices.Equal(smpp.closedESMEs, []int64{ota, other}) {
-		t.Fatalf("closed ESMEs = %v, want no more", smpp.closedESMEs)
+	if !slices.Equal(smpp.closedUsers, []int64{otaUser}) {
+		t.Fatalf("closed users = %v, want [%d]", smpp.closedUsers, otaUser)
 	}
 }
 
@@ -577,8 +575,7 @@ func TestESMEChangesAreAudited(t *testing.T) {
 
 	a.createESME(t, otaESMEBody)
 
-	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": [],
-		"max_sessions": 2, "default_alphabet": "gsm7"}`); code != http.StatusOK {
+	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": []}`); code != http.StatusOK {
 		t.Fatalf("PUT = %d", code)
 	}
 

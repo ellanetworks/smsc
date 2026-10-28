@@ -1,6 +1,7 @@
 package smpp
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -529,5 +530,175 @@ func TestBackoff(t *testing.T) {
 		if got > tc.want || got < tc.want*4/5 {
 			t.Errorf("backoff(%d) = %v, want %v less up to a fifth", tc.n, got, tc.want)
 		}
+	}
+}
+
+// TestBindClosedDuringAuthenticate checks that a session closed while Authenticate runs, here by the
+// session_init_timer, holds no MaxSessions slot: the account binds again.
+func TestBindClosedDuringAuthenticate(t *testing.T) {
+	ts := newTestServer(t, func(cfg *ServerConfig) {
+		cfg.Session.SessionInitTimeout = 100 * time.Millisecond
+		cfg.Authenticate = func(_ context.Context, req BindRequest) BindOutcome {
+			if req.Bind.SystemID == "slow" {
+				<-req.Session.Done()
+			}
+
+			return BindOutcome{Status: StatusOK, Account: "acct", MaxSessions: 1}
+		}
+	})
+
+	c, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", ts.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = c.Close() }()
+
+	b, err := Encode(&Bind{ID: CmdBindTransceiver, SystemID: "slow", InterfaceVersion: InterfaceVersion}, StatusOK, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.Write(b); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "the slow session to close", func() bool {
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+
+		return len(ts.sessions) == 0
+	})
+
+	ts.mu.Lock()
+	reserved, accounts := len(ts.reserved), len(ts.accounts)
+	ts.mu.Unlock()
+
+	if reserved != 0 || accounts != 0 {
+		t.Fatalf("%d sessions reserved in %d accounts after the session closed", reserved, accounts)
+	}
+
+	fresh := newTestClient(t, ts.addr, func(cfg *ClientConfig) { cfg.Bind.SystemID = "fresh" })
+	waitBound(t, fresh)
+}
+
+// TestDeliverSkipsUnbinding checks that Deliver does not pick a session that is unbinding.
+func TestDeliverSkipsUnbinding(t *testing.T) {
+	ts := newTestServer(t, nil)
+
+	// A raw ESME that binds and never answers the unbind.
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", ts.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	raw := &rawPeer{t: t, c: conn, r: bufio.NewReader(conn)}
+	raw.send(&Bind{ID: CmdBindTransceiver, SystemID: "simota", Password: "secret", InterfaceVersion: InterfaceVersion},
+		StatusOK, 1)
+	raw.expect(CmdBindTransceiverResp, StatusOK, 1)
+
+	unbinding := <-ts.bound
+
+	go func() { _ = unbinding.Unbind(context.Background()) }()
+
+	if h, _ := raw.read(); h.ID != CmdUnbind {
+		t.Fatalf("raw ESME got %s", h.ID)
+	}
+
+	c := newTestClient(t, ts.addr, nil)
+	waitBound(t, c)
+
+	for range 3 {
+		info, err := ts.Deliver(context.Background(), "simota", &DeliverSM{Message: message()})
+		if err != nil || info.ID == unbinding.ID() {
+			t.Fatalf("Deliver = session %d, %v; session %d is unbinding", info.ID, err, unbinding.ID())
+		}
+	}
+}
+
+// TestClientCloseWhileBinding checks that Close unbinds a session that the SMSC binds while Close runs (§4.2).
+func TestClientCloseWhileBinding(t *testing.T) {
+	authenticating := make(chan struct{})
+	release := make(chan struct{})
+
+	ts := newTestServer(t, func(cfg *ServerConfig) {
+		cfg.Authenticate = func(context.Context, BindRequest) BindOutcome {
+			close(authenticating)
+			<-release
+
+			return BindOutcome{Status: StatusOK}
+		}
+	})
+
+	c := newTestClient(t, ts.addr, nil)
+
+	<-authenticating
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close(ctx) }()
+
+	time.Sleep(50 * time.Millisecond) // Close has cancelled the client
+
+	close(release)
+
+	sess := <-ts.bound
+
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-sess.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the server session did not close")
+	}
+
+	if !errors.Is(sess.Err(), ErrUnbound) {
+		t.Fatalf("server session closed for %v", sess.Err())
+	}
+}
+
+// TestBackoffAfterShortSession checks that a session that binds and soon fails does not reset the backoff: an SMSC
+// that binds then drops is retried less and less often.
+func TestBackoffAfterShortSession(t *testing.T) {
+	ts := newTestServer(t, func(cfg *ServerConfig) {
+		cfg.OnBound = func(s *Session) { go func() { _ = s.Close() }() }
+	})
+
+	var (
+		mu    sync.Mutex
+		waits []time.Duration
+	)
+
+	newTestClient(t, ts.addr, func(cfg *ClientConfig) {
+		cfg.MinBackoff, cfg.MaxBackoff = 10*time.Millisecond, 5*time.Second
+		cfg.OnStateChange = func(st ClientState) {
+			if st.Status == ConnDisconnected {
+				mu.Lock()
+
+				waits = append(waits, st.NextAttempt.Sub(st.LastErrorAt))
+				mu.Unlock()
+			}
+		}
+	})
+
+	waitFor(t, "four failed sessions", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return len(waits) >= 4
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// 10, 20, 40, 80 ms, less up to a fifth.
+	if waits[3] < 60*time.Millisecond {
+		t.Fatalf("waits %v: the backoff did not grow", waits)
 	}
 }

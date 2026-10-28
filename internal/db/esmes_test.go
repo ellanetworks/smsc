@@ -18,10 +18,7 @@ func testESME(systemID string, userID int64) ESME {
 			netip.MustParsePrefix("10.1.0.0/24"), netip.MustParsePrefix("2001:db8::/32"),
 			netip.MustParsePrefix("192.0.2.7/32"),
 		},
-		MaxSessions:       4,
-		ForwardSIMAnswers: true,
-		DefaultAlphabet:   AlphabetGSM7,
-		CreatedAt:         time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -65,8 +62,6 @@ func TestESMELifecycle(t *testing.T) {
 
 	second := testESME("second", other)
 	second.AllowedNetworks = nil
-	second.DefaultAlphabet = AlphabetLatin1
-	second.ForwardSIMAnswers = false
 	second.ID = createTestESME(t, d, second)
 	second.AllowedNetworks = []netip.Prefix{}
 
@@ -92,9 +87,6 @@ func TestESMELifecycle(t *testing.T) {
 	// An empty hash keeps the password; the networks are replaced, in their new order.
 	update := want
 	update.PasswordHash = ""
-	update.MaxSessions = 16
-	update.ForwardSIMAnswers = false
-	update.DefaultAlphabet = AlphabetLatin1
 	update.AllowedNetworks = []netip.Prefix{netip.MustParsePrefix("192.0.2.7/32"), netip.MustParsePrefix("10.2.0.0/16")}
 
 	if err := d.UpdateESME(ctx, update); err != nil {
@@ -120,7 +112,7 @@ func TestESMELifecycle(t *testing.T) {
 		t.Fatalf("after UpdateESME = %+v, %v, want %+v", got, err, update)
 	}
 
-	if err := d.UpdateESME(ctx, ESME{ID: 42, MaxSessions: 1, DefaultAlphabet: AlphabetGSM7}); !errors.Is(err, ErrNotFound) {
+	if err := d.UpdateESME(ctx, ESME{ID: 42}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("UpdateESME of an unknown ID = %v, want ErrNotFound", err)
 	}
 
@@ -156,9 +148,6 @@ func TestESMEsAreChecked(t *testing.T) {
 		"empty system_id":   func(e *ESME) { e.SystemID = "" },
 		"16 char system_id": func(e *ESME) { e.SystemID = "abcdefghijklmnop" },
 		"unknown user":      func(e *ESME) { e.UserID = 42 },
-		"no session":        func(e *ESME) { e.MaxSessions = 0 },
-		"17 sessions":       func(e *ESME) { e.MaxSessions = 17 },
-		"unknown alphabet":  func(e *ESME) { e.DefaultAlphabet = "ucs2" },
 		"a network twice":   func(e *ESME) { e.AllowedNetworks = append(e.AllowedNetworks, e.AllowedNetworks[0]) },
 	}
 

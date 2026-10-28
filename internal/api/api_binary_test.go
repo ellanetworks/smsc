@@ -12,7 +12,6 @@ import (
 
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
 // simDataDownload is a (U)SIM data download message (TS 23.040 clause 9.2.3.9): class 2 8-bit data, whose user data
@@ -214,18 +213,17 @@ func TestCreateBinaryReplaceTypeMessage(t *testing.T) {
 		t.Fatalf("second = %+v, %v; want pending", m, err)
 	}
 
-	// A message from a phone with the same originator and replace type is replaced too, and gets the status report
-	// that it asked for.
+	// The API replaces only the messages of the same user: not one from a phone with the same originator and replace
+	// type, whose originator the network vouches for.
 	phone := createMobileMessage(t, a, true, 0x41, true)
 	a.createBinary(t, fmt.Sprintf(replaceType1, 3))
 
-	if m, err := a.store.GetMessage(ctx, phone.ID); err != nil || m.Status != db.StatusReplaced {
-		t.Fatalf("phone message = %+v, %v; want replaced", m, err)
+	if m, err := a.store.GetMessage(ctx, phone.ID); err != nil || m.Status != db.StatusPending {
+		t.Fatalf("phone message = %+v, %v; want pending", m, err)
 	}
 
-	reports, err := a.store.StatusReportsFor(ctx, []int64{phone.ID})
-	if err != nil || len(reports[phone.ID]) != 1 || tpdu.Status(reports[phone.ID][0].ReportStatus) != tpdu.StatusReplaced {
-		t.Fatalf("reports = %+v, %v", reports, err)
+	if m, err := a.store.GetMessage(ctx, second); err != nil || m.Status != db.StatusReplaced {
+		t.Fatalf("second = %+v, %v; want replaced", m, err)
 	}
 }
 
@@ -302,10 +300,16 @@ func TestCreateMessageValidity(t *testing.T) {
 		t.Fatalf("expires_at = %s", got[0].ExpiresAt)
 	}
 
-	for _, v := range []string{"0", "-1", "9223372037"} {
+	// 10 years is the most (SRV-L8); a longer one overflowed the expiry beyond 2262.
+	body = strings.Replace(simDataDownload, `"to": "+15551230002",`, `"to": "+15551230002", "validity_seconds": 315360000,`, 1)
+	if got := a.createBinary(t, body); got[0].ExpiresAt != "2036-09-26T10:00:00.000Z" {
+		t.Fatalf("expires_at of 10 years = %s", got[0].ExpiresAt)
+	}
+
+	for _, v := range []string{"0", "-1", "315360001", "9223372036"} {
 		body := strings.Replace(simDataDownload, `"to": "+15551230002",`, `"to": "+15551230002", "validity_seconds": `+v+`,`, 1)
 		if code, _, errMsg := a.do(t, http.MethodPost, "/api/v1/messages", body); code != http.StatusBadRequest ||
-			!strings.HasPrefix(errMsg, "validity_seconds must be between 1 and ") {
+			errMsg != "validity_seconds must be between 1 and 315360000" {
 			t.Fatalf("validity_seconds %s = %d %q", v, code, errMsg)
 		}
 	}

@@ -67,7 +67,8 @@ nav:
     - Integrate with a Third-Party Core: how_to/integrate_with_third_party_core.md
     - Connect through Diameter Agents: how_to/connect_through_diameter_agents.md
     - Send Messages from an Application: how_to/send_messages_from_an_application.md
-    - Send (U)SIM Data Download Messages: how_to/send_sim_data_download_messages.md
+    - Send (U)SIM Data Download Messages over the API: how_to/send_sim_data_download_messages_over_the_api.md
+    - Send (U)SIM Data Download Messages over SMPP: how_to/send_sim_data_download_messages_over_smpp.md
   - Reference:
     - reference/index.md
     - API:

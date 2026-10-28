@@ -216,8 +216,8 @@ func CreateMessage(cfg Config) http.Handler {
 			return
 		}
 
-		if params.ValiditySeconds != nil && !validSeconds(*params.ValiditySeconds) {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("validity_seconds must be between 1 and %d", maxSeconds), nil, cfg.Logger)
+		if params.ValiditySeconds != nil && !validValidity(*params.ValiditySeconds) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validity_seconds must be between 1 and %d", maxValiditySeconds), nil, cfg.Logger)
 			return
 		}
 

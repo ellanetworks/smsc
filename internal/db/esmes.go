@@ -10,17 +10,6 @@ import (
 	"time"
 )
 
-// Alphabet is what an ESME means by data_coding 0x00, "SMSC Default Alphabet", which SMPP 3.4 leaves to the SMSC
-// (section 5.2.19).
-type Alphabet string
-
-const (
-	// AlphabetGSM7 is the GSM 7 bit default alphabet, one unpacked septet per octet (TS 23.038 clause 6.2.1).
-	AlphabetGSM7 Alphabet = "gsm7"
-	// AlphabetLatin1 is ISO-8859-1, as data_coding 0x03.
-	AlphabetLatin1 Alphabet = "latin1"
-)
-
 // ESME is an account that an External Short Message Entity binds to the SMPP listener with. It acts as its user: the
 // messages it submits are the user's, and the user's role decides which binds it may make.
 type ESME struct {
@@ -30,14 +19,11 @@ type ESME struct {
 	// PasswordHash is the bcrypt hash of the SMPP password.
 	PasswordHash string
 	// AllowedNetworks are the networks that it may bind from. None means no address may bind.
-	AllowedNetworks   []netip.Prefix
-	MaxSessions       int
-	ForwardSIMAnswers bool
-	DefaultAlphabet   Alphabet
-	CreatedAt         time.Time
+	AllowedNetworks []netip.Prefix
+	CreatedAt       time.Time
 }
 
-const esmeColumns = `id, system_id, user_id, password_hash, max_sessions, forward_sim_answers, default_alphabet, created_at`
+const esmeColumns = `id, system_id, user_id, password_hash, created_at`
 
 func scanESME(row rowScanner) (ESME, error) {
 	var (
@@ -45,8 +31,7 @@ func scanESME(row rowScanner) (ESME, error) {
 		created int64
 	)
 
-	if err := row.Scan(&e.ID, &e.SystemID, &e.UserID, &e.PasswordHash, &e.MaxSessions, &e.ForwardSIMAnswers,
-		&e.DefaultAlphabet, &created); err != nil {
+	if err := row.Scan(&e.ID, &e.SystemID, &e.UserID, &e.PasswordHash, &created); err != nil {
 		return ESME{}, err
 	}
 
@@ -74,10 +59,8 @@ func (d *DB) CreateESME(ctx context.Context, e ESME) (_ int64, err error) {
 	var id int64
 
 	err = d.inTx(ctx, "create ESME", func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `INSERT INTO esmes (system_id, user_id, password_hash, max_sessions,
-			forward_sim_answers, default_alphabet, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			e.SystemID, e.UserID, e.PasswordHash, e.MaxSessions, e.ForwardSIMAnswers, e.DefaultAlphabet,
-			e.CreatedAt.UTC().UnixNano())
+		res, err := tx.ExecContext(ctx, `INSERT INTO esmes (system_id, user_id, password_hash, created_at)
+			VALUES (?, ?, ?, ?)`, e.SystemID, e.UserID, e.PasswordHash, e.CreatedAt.UTC().UnixNano())
 		if err != nil {
 			return err
 		}
@@ -95,15 +78,14 @@ func (d *DB) CreateESME(ctx context.Context, e ESME) (_ int64, err error) {
 	return id, err
 }
 
-// UpdateESME replaces the password hash, networks and settings of the ESME of e.ID. It keeps the password hash when
+// UpdateESME replaces the password hash and networks of the ESME of e.ID. It keeps the password hash when
 // e.PasswordHash is empty. It returns ErrNotFound for an unknown ID.
 func (d *DB) UpdateESME(ctx context.Context, e ESME) (err error) {
 	defer d.observe(&err)()
 
 	return d.inTx(ctx, "update ESME", func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE esmes SET password_hash = COALESCE(NULLIF(?, ''), password_hash),
-			max_sessions = ?, forward_sim_answers = ?, default_alphabet = ? WHERE id = ?`,
-			e.PasswordHash, e.MaxSessions, e.ForwardSIMAnswers, e.DefaultAlphabet, e.ID)
+		res, err := tx.ExecContext(ctx, `UPDATE esmes SET password_hash = COALESCE(NULLIF(?, ''), password_hash)
+			WHERE id = ?`, e.PasswordHash, e.ID)
 		if err != nil {
 			return err
 		}
@@ -123,9 +105,9 @@ func (d *DB) UpdateESME(ctx context.Context, e ESME) (err error) {
 }
 
 func insertNetworks(ctx context.Context, tx *sql.Tx, id int64, networks []netip.Prefix) error {
-	for i, p := range networks {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO esme_networks (esme_id, position, prefix) VALUES (?, ?, ?)`,
-			id, i, p.String()); err != nil {
+	for _, p := range networks {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO esme_networks (esme_id, prefix) VALUES (?, ?)`,
+			id, p.String()); err != nil {
 			return err
 		}
 	}
@@ -236,7 +218,7 @@ func (d *DB) esmeNetworks(ctx context.Context, esmes []*ESME) error {
 	}
 
 	rows, err := d.conn.QueryContext(ctx, `SELECT esme_id, prefix FROM esme_networks WHERE esme_id IN (?`+
-		strings.Repeat(`, ?`, len(esmes)-1)+`) ORDER BY esme_id, position`, args...)
+		strings.Repeat(`, ?`, len(esmes)-1)+`) ORDER BY esme_id, rowid`, args...)
 	if err != nil {
 		return fmt.Errorf("get ESME networks: %w", err)
 	}

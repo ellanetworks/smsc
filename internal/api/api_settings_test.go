@@ -100,8 +100,8 @@ func TestUpdateSettingsRejectsInvalidInput(t *testing.T) {
 		"same prefixes":           {"/api/v1/operator", validOperator, `"international_prefix": "00"`, `"international_prefix": "0"`, "numbering.national_prefix and numbering.international_prefix must differ"},
 		"bad national prefix":     {"/api/v1/operator", validOperator, `"national_prefix": "0"`, `"national_prefix": "+"`, "numbering.national_prefix must be up to 4 digits"},
 		"bad intl prefix":         {"/api/v1/operator", validOperator, `"international_prefix": "00"`, `"international_prefix": "+"`, "numbering.international_prefix must be up to 4 digits"},
-		"zero validity":           {"/api/v1/delivery", validDelivery, `172800`, `0`, "default_validity_seconds must be between 1 and 9223372036"},
-		"overflowing validity":    {"/api/v1/delivery", validDelivery, `172800`, `9223372037`, "default_validity_seconds must be between 1 and 9223372036"},
+		"zero validity":           {"/api/v1/delivery", validDelivery, `172800`, `0`, "default_validity_seconds must be between 1 and 315360000"},
+		"validity over 10 years":  {"/api/v1/delivery", validDelivery, `172800`, `315360001`, "default_validity_seconds must be between 1 and 315360000"},
 		"zero retry interval":     {"/api/v1/delivery", validDelivery, `[30, 600]`, `[30, 0]`, "retry_intervals_seconds must be between 1 and 9223372036"},
 		"negative retry interval": {"/api/v1/delivery", validDelivery, `[30, 600]`, `[-30]`, "retry_intervals_seconds must be between 1 and 9223372036"},
 	}

@@ -142,6 +142,7 @@ func (m mapping) request(sm *smpp.Message) (submission.Request, *rejection) {
 
 	r.SMPP = &db.NewSMPPMessage{
 		ESMEID:               m.esme.ID,
+		SourceNPI:            sm.Source.NPI,
 		DataCoding:           sm.DataCoding,
 		UserMessageReference: sm.Options.UserMessageReference,
 	}
@@ -160,8 +161,7 @@ func (m mapping) request(sm *smpp.Message) (submission.Request, *rejection) {
 	}
 
 	r.Data = data
-	r.SMPP.SIMAnswer = sm.RegisteredDelivery&regUserAck != 0 ||
-		m.esme.ForwardSIMAnswers && data.PID == tpdu.ProtocolUSIMDataDownload
+	r.SMPP.SIMAnswer = sm.RegisteredDelivery&regUserAck != 0
 
 	return r, nil
 }
@@ -301,7 +301,8 @@ func esmClass(c byte) (bool, *rejection) {
 		return false, reject(smpp.StatusInvEsmClass, "esm_class carries an ESME acknowledgement")
 	}
 
-	// The SMS-DELIVER that the SC makes from the SMS-SUBMIT does not carry TP-RP (TS 23.040 clause 9.2.3.17).
+	// The reply path asks the SC to set TP-RP in the SMS-DELIVER (TS 23.040 clause 9.2.3.17), which offers the
+	// recipient the SC for its reply. The SC has no reply procedure (TS 23.040 annex D), so it refuses it.
 	if c&esmReplyPath != 0 {
 		return false, reject(smpp.StatusInvEsmClass, "esm_class asks for a reply path")
 	}
@@ -391,10 +392,11 @@ func (m mapping) userData(sm *smpp.Message, udhi bool) (*submission.UserData, *r
 // the GSM 7 bit default alphabet, so the values that SMPP puts on GSM reserved codepoints (note b) are not copied.
 func (m mapping) dataCoding(dc byte, ud []byte) (byte, *string, *rejection) {
 	switch {
-	case dc == dcDefault && m.esme.DefaultAlphabet == db.AlphabetLatin1, dc == dcLatin1:
+	case dc == dcLatin1:
 		text := latin1(ud)
 		return dcsGSM7, &text, nil
 	case dc == dcDefault:
+		// The SMSC Default Alphabet is the GSM 7 bit default alphabet, one unpacked septet per octet.
 		return dcsGSM7, nil, nil
 	case dc == dcIA5:
 		for _, c := range ud {
@@ -410,19 +412,12 @@ func (m mapping) dataCoding(dc byte, ud []byte) (byte, *string, *rejection) {
 		return dcsOctet, nil, nil
 	case dc == dcUCS2:
 		return dcsUCS2, nil, nil
-	case dc >= 0xc0 && dc <= 0xdf:
-		// GSM MWI control, GSM 7 bit default alphabet. Bit 2 is reserved, set to 0 (TS 23.038 clause 4), and the SC may
-		// reject a reserved value.
-		if dc&0x04 != 0 {
-			return 0, nil, reject(smpp.StatusSubmitFail, "data_coding 0x"+strconv.FormatUint(uint64(dc), 16)+" sets a reserved bit")
-		}
-
-		return dc, nil, nil
 	case dc >= 0xf0 && dc <= 0xf7:
 		// GSM message class control. 0xF8 to 0xFF set bit 3, which is reserved (TS 23.038 clause 4).
 		return dc, nil, nil
 	default:
-		// SMPP 3.4 has no status for an invalid data_coding; ESME_RINVDCS is SMPP 5.0's.
+		// SMPP 3.4 has no status for an invalid data_coding; ESME_RINVDCS is SMPP 5.0's. MWI control, 0xC0 to 0xDF, is
+		// not supported.
 		return 0, nil, reject(smpp.StatusSubmitFail, "data_coding 0x"+strconv.FormatUint(uint64(dc), 16)+" is not supported")
 	}
 }

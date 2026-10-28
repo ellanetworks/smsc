@@ -11,25 +11,24 @@ import (
 	"time"
 )
 
-// notificationRow is a row of smpp_notifications, as stored.
+// notificationRow is a row of smpp_notifications, as stored, with the ESME of its message.
 type notificationRow struct {
-	ID, MessageID, ESMEID        int64
-	Type                         NotificationType
-	MessageState, TPStatus       sql.Null[uint8]
-	AttemptID                    sql.Null[int64]
-	CreatedAt, ExpiresAt, NextAt int64
-	Attempts                     int
-	SentAt                       sql.Null[int64]
-	Result                       sql.Null[NotificationResult]
-	UpdatedAt                    int64
+	ID, MessageID, ESMEID int64
+	Type                  NotificationType
+	TPStatus              sql.Null[uint8]
+	AttemptID             sql.Null[int64]
+	ExpiresAt, NextAt     int64
+	Attempts              int
+	Result                sql.Null[NotificationResult]
 }
 
 func notificationRows(t *testing.T, d *DB, messageID int64) []notificationRow {
 	t.Helper()
 
-	rows, err := d.conn.QueryContext(context.Background(), `SELECT id, message_id, esme_id, type, message_state, tp_status,
-		attempt_id, created_at, expires_at, next_attempt_at, attempts, sent_at, result, updated_at
-		FROM smpp_notifications WHERE message_id = ? ORDER BY id`, messageID)
+	rows, err := d.conn.QueryContext(context.Background(), `SELECT n.id, n.message_id, s.esme_id, n.type, n.tp_status,
+		n.attempt_id, n.expires_at, n.next_attempt_at, n.attempts, n.result
+		FROM smpp_notifications n JOIN smpp_messages s ON s.message_id = n.message_id
+		WHERE n.message_id = ? ORDER BY n.id`, messageID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +39,8 @@ func notificationRows(t *testing.T, d *DB, messageID int64) []notificationRow {
 
 	for rows.Next() {
 		var n notificationRow
-		if err := rows.Scan(&n.ID, &n.MessageID, &n.ESMEID, &n.Type, &n.MessageState, &n.TPStatus, &n.AttemptID,
-			&n.CreatedAt, &n.ExpiresAt, &n.NextAt, &n.Attempts, &n.SentAt, &n.Result, &n.UpdatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.MessageID, &n.ESMEID, &n.Type, &n.TPStatus, &n.AttemptID, &n.ExpiresAt, &n.NextAt,
+			&n.Attempts, &n.Result); err != nil {
 			t.Fatal(err)
 		}
 
@@ -198,22 +197,19 @@ func TestCompleteMessageQueuesNotifications(t *testing.T) {
 						}
 
 						for _, n := range rows {
-							if n.ESMEID != f.esme || n.CreatedAt != at.UnixNano() || n.NextAt != at.UnixNano() ||
-								n.ExpiresAt != at.Add(defaultValidity).UnixNano() || n.Attempts != 0 || n.SentAt.Valid ||
-								n.Result.Valid || n.UpdatedAt != at.UnixNano() {
+							if n.ESMEID != f.esme || n.NextAt != at.UnixNano() ||
+								n.ExpiresAt != at.Add(defaultValidity).UnixNano() || n.Attempts != 0 || n.Result.Valid {
 								t.Errorf("notification = %+v", n)
 							}
 
 							switch n.Type {
 							case NotificationSIMAnswer:
-								if n.AttemptID != (sql.Null[int64]{V: answered, Valid: true}) || n.MessageState.Valid ||
-									n.TPStatus.Valid {
+								if n.AttemptID != (sql.Null[int64]{V: answered, Valid: true}) || n.TPStatus.Valid {
 									t.Errorf("SIM answer = %+v, want attempt %d", n, answered)
 								}
 							case NotificationReceipt:
-								if n.MessageState != (sql.Null[uint8]{V: s.state, Valid: true}) ||
-									n.TPStatus != (sql.Null[uint8]{V: 0x42, Valid: true}) || n.AttemptID.Valid {
-									t.Errorf("receipt = %+v, want message_state %d, tp_status 0x42", n, s.state)
+								if n.TPStatus != (sql.Null[uint8]{V: 0x42, Valid: true}) || n.AttemptID.Valid {
+									t.Errorf("receipt = %+v, want tp_status 0x42", n)
 								}
 							}
 						}
@@ -367,10 +363,15 @@ func TestReplacedSMPPMessageGetsADeletedReceipt(t *testing.T) {
 			}
 
 			n := rows[0]
-			if n.Type != NotificationReceipt || n.MessageState != (sql.Null[uint8]{V: 4, Valid: true}) ||
-				n.TPStatus != (sql.Null[uint8]{V: 2, Valid: true}) || n.CreatedAt != replacedAt.UnixNano() ||
+			if n.Type != NotificationReceipt || n.TPStatus != (sql.Null[uint8]{V: 2, Valid: true}) ||
 				n.ExpiresAt != replacedAt.Add(defaultValidity).UnixNano() || n.ESMEID != f.esme {
-				t.Fatalf("receipt = %+v, want DELETED (4) with TP-Status 2", n)
+				t.Fatalf("receipt = %+v, want TP-Status 2", n)
+			}
+
+			// Its message_state is that of the message's status, replaced: DELETED.
+			if due, err := f.d.DueNotifications(ctx, f.esme, replacedAt, nil, 10); err != nil || len(due) != 1 ||
+				due[0].MessageState != 4 {
+				t.Fatalf("DueNotifications = %+v, %v; want DELETED (4)", due, err)
 			}
 
 			if rows := notificationRows(t, f.d, replacementID); len(rows) != 0 {
@@ -516,12 +517,11 @@ func TestDueNotifications(t *testing.T) {
 
 	// Retrying moves the notification on, and counts the attempt.
 	retryAt := later.Add(10 * time.Minute)
-	if err := d.RetryNotification(ctx, failedReceipt, retryAt, later); err != nil {
+	if err := d.RetryNotification(ctx, failedReceipt, retryAt); err != nil {
 		t.Fatalf("RetryNotification: %v", err)
 	}
 
-	if n := notificationByID(t, d, failedReceipt); n.Attempts != 1 || n.NextAt != retryAt.UnixNano() ||
-		n.UpdatedAt != later.UnixNano() || n.Result.Valid {
+	if n := notificationByID(t, d, failedReceipt); n.Attempts != 1 || n.NextAt != retryAt.UnixNano() || n.Result.Valid {
 		t.Fatalf("after RetryNotification = %+v", n)
 	}
 
@@ -535,8 +535,7 @@ func TestDueNotifications(t *testing.T) {
 	}
 
 	// Acknowledging the SIM answer frees the receipt of the same message.
-	sentAt := later.Add(time.Second)
-	if err := d.CloseNotification(ctx, simAnswer, NotificationAcknowledged, sentAt); err != nil {
+	if err := d.CloseNotification(ctx, simAnswer, NotificationAcknowledged); err != nil {
 		t.Fatalf("CloseNotification: %v", err)
 	}
 
@@ -544,37 +543,30 @@ func TestDueNotifications(t *testing.T) {
 		t.Fatalf("DueNotifications after the SIM answer = %v, want its receipt", got)
 	}
 
-	if err := d.CloseNotification(ctx, simAnswer, NotificationRejected, sentAt); !errors.Is(err, ErrNotFound) {
+	if err := d.CloseNotification(ctx, simAnswer, NotificationRejected); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CloseNotification twice = %v, want ErrNotFound", err)
 	}
 
-	if err := d.CloseNotification(ctx, 4242, NotificationAcknowledged, sentAt); !errors.Is(err, ErrNotFound) {
+	if err := d.CloseNotification(ctx, 4242, NotificationAcknowledged); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CloseNotification of an unknown ID = %v, want ErrNotFound", err)
 	}
 
 	// A retry of a closed notification changes nothing.
-	if err := d.RetryNotification(ctx, simAnswer, retryAt, later); err != nil {
+	if err := d.RetryNotification(ctx, simAnswer, retryAt); err != nil {
 		t.Fatal(err)
 	}
 
 	if n := notificationByID(t, d, simAnswer); n.Attempts != 0 ||
-		n.Result != (sql.Null[NotificationResult]{V: NotificationAcknowledged, Valid: true}) ||
-		n.SentAt != (sql.Null[int64]{V: sentAt.UnixNano(), Valid: true}) || n.UpdatedAt != sentAt.UnixNano() {
+		n.Result != (sql.Null[NotificationResult]{V: NotificationAcknowledged, Valid: true}) {
 		t.Fatalf("closed SIM answer = %+v", n)
 	}
 }
 
-func TestCloseNotificationSetsSentAt(t *testing.T) {
-	for _, tt := range []struct {
-		result   NotificationResult
-		wantSent bool
-	}{
-		{NotificationAcknowledged, true},
-		{NotificationRejected, true},
-		{NotificationExpired, false},
-		{NotificationNoUserData, false},
+func TestCloseNotification(t *testing.T) {
+	for _, result := range []NotificationResult{
+		NotificationAcknowledged, NotificationRejected, NotificationExpired, NotificationNoUserData,
 	} {
-		t.Run(string(tt.result), func(t *testing.T) {
+		t.Run(string(result), func(t *testing.T) {
 			ctx := context.Background()
 			f := newSMPPFixture(t)
 
@@ -584,19 +576,16 @@ func TestCloseNotificationSetsSentAt(t *testing.T) {
 			}
 
 			n := notificationRows(t, f.d, id)[0]
-			at := f.origin.Add(time.Minute)
 
-			if err := f.d.CloseNotification(ctx, n.ID, tt.result, at); err != nil {
+			if err := f.d.CloseNotification(ctx, n.ID, result); err != nil {
 				t.Fatalf("CloseNotification: %v", err)
 			}
 
-			n = notificationByID(t, f.d, n.ID)
-			if n.Result != (sql.Null[NotificationResult]{V: tt.result, Valid: true}) || n.SentAt.Valid != tt.wantSent ||
-				tt.wantSent && n.SentAt.V != at.UnixNano() || n.UpdatedAt != at.UnixNano() {
-				t.Fatalf("notification = %+v, want result %s, sent %t", n, tt.result, tt.wantSent)
+			if n = notificationByID(t, f.d, n.ID); n.Result != (sql.Null[NotificationResult]{V: result, Valid: true}) {
+				t.Fatalf("notification = %+v, want result %s", n, result)
 			}
 
-			if err := f.d.CloseNotification(ctx, n.ID, tt.result, at); !errors.Is(err, ErrNotFound) {
+			if err := f.d.CloseNotification(ctx, n.ID, result); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("CloseNotification twice = %v, want ErrNotFound", err)
 			}
 		})
@@ -615,7 +604,7 @@ func TestExpireAndCountNotifications(t *testing.T) {
 		t.Fatalf("CountPendingNotifications of none = %v, %v", counts, err)
 	}
 
-	if _, ok, err := d.NextNotificationAt(ctx, f.esme); err != nil || ok {
+	if _, ok, err := d.NextNotificationAt(ctx, f.esme, f.origin); err != nil || ok {
 		t.Fatalf("NextNotificationAt of none = %t, %v", ok, err)
 	}
 
@@ -641,23 +630,28 @@ func TestExpireAndCountNotifications(t *testing.T) {
 		t.Fatalf("CountPendingNotifications = %v, %v", counts, err)
 	}
 
-	if at, ok, err := d.NextNotificationAt(ctx, f.esme); err != nil || !ok || !at.Equal(t0) {
+	if at, ok, err := d.NextNotificationAt(ctx, f.esme, f.origin); err != nil || !ok || !at.Equal(t0) {
 		t.Fatalf("NextNotificationAt = %v, %t, %v, want %v", at, ok, err, t0)
+	}
+
+	// The rows already due, in flight or waiting behind another, do not count: the next is the second's (SRV-L2).
+	if at, ok, err := d.NextNotificationAt(ctx, f.esme, t0); err != nil || !ok || !at.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("NextNotificationAt after the first is due = %v, %t, %v, want %v", at, ok, err, t0.Add(time.Hour))
 	}
 
 	// A retry later than its expiry: the expiry comes first.
 	thirdReceipt := notificationRows(t, d, third)[0].ID
-	if err := d.RetryNotification(ctx, thirdReceipt, t0.Add(30*24*time.Hour), t0); err != nil {
+	if err := d.RetryNotification(ctx, thirdReceipt, t0.Add(30*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 
-	if at, ok, err := d.NextNotificationAt(ctx, otherESME); err != nil || !ok || !at.Equal(t0.Add(defaultValidity)) {
+	if at, ok, err := d.NextNotificationAt(ctx, otherESME, t0); err != nil || !ok || !at.Equal(t0.Add(defaultValidity)) {
 		t.Fatalf("NextNotificationAt = %v, %t, %v, want the expiry %v", at, ok, err, t0.Add(defaultValidity))
 	}
 
 	// Closed rows do not count.
 	firstRows := notificationRows(t, d, first)
-	if err := d.CloseNotification(ctx, firstRows[0].ID, NotificationAcknowledged, t0); err != nil {
+	if err := d.CloseNotification(ctx, firstRows[0].ID, NotificationAcknowledged); err != nil {
 		t.Fatal(err)
 	}
 
@@ -684,8 +678,7 @@ func TestExpireAndCountNotifications(t *testing.T) {
 	}
 
 	for _, id := range []int64{firstRows[1].ID, thirdReceipt} {
-		if n := notificationByID(t, d, id); n.Result != (sql.Null[NotificationResult]{V: NotificationExpired, Valid: true}) ||
-			n.SentAt.Valid || n.UpdatedAt != expiry.UnixNano() {
+		if n := notificationByID(t, d, id); n.Result != (sql.Null[NotificationResult]{V: NotificationExpired, Valid: true}) {
 			t.Errorf("expired notification = %+v", n)
 		}
 	}
@@ -694,11 +687,11 @@ func TestExpireAndCountNotifications(t *testing.T) {
 		t.Errorf("acknowledged notification = %+v, want it left acknowledged", n)
 	}
 
-	if _, ok, err := d.NextNotificationAt(ctx, otherESME); err != nil || ok {
+	if _, ok, err := d.NextNotificationAt(ctx, otherESME, expiry); err != nil || ok {
 		t.Fatalf("NextNotificationAt with only closed rows = %t, %v", ok, err)
 	}
 
-	if at, ok, err := d.NextNotificationAt(ctx, f.esme); err != nil || !ok || !at.Equal(t0.Add(time.Hour)) {
+	if at, ok, err := d.NextNotificationAt(ctx, f.esme, t0); err != nil || !ok || !at.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("NextNotificationAt = %v, %t, %v, want the second's", at, ok, err)
 	}
 
@@ -770,7 +763,7 @@ func TestPurgeKeepsMessagesWithNotificationsToSend(t *testing.T) {
 			}
 
 			if tt.close != "" {
-				if err := f.d.CloseNotification(ctx, notificationRows(t, f.d, id)[0].ID, tt.close, before); err != nil {
+				if err := f.d.CloseNotification(ctx, notificationRows(t, f.d, id)[0].ID, tt.close); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -799,5 +792,85 @@ func TestPurgeKeepsMessagesWithNotificationsToSend(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestReplaceIsScopedToTheAccount checks that a replace type from the API or SMPP replaces only a pending message of
+// the same account, while one from an MS replaces any of its originator (TS 23.040 clause 9.2.3.9).
+func TestReplaceIsScopedToTheAccount(t *testing.T) {
+	ctx := context.Background()
+	f := newSMPPFixture(t)
+	other := createTestUser(t, f.d, "other@example.com", RoleSubmitter)
+	otherESME := createTestESME(t, f.d, testESME("other", other))
+
+	api := func(user int64, at time.Time) NewMessage {
+		m := replaceType(testMessage(0, false, []byte{0x01}, at))
+		m.Origin, m.SubmittedBy = OriginAPI, user
+
+		return m
+	}
+
+	status := func(id int64) MessageStatus {
+		t.Helper()
+
+		m, err := f.d.GetMessage(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return m.Status
+	}
+
+	create := func(m NewMessage) int64 {
+		t.Helper()
+
+		id, err := f.d.CreateMessage(ctx, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return id
+	}
+
+	// SMPP: another ESME with the same originator does not replace it; the same ESME does.
+	smppID := create(replaceType(smppMessage(f.esme, f.user, ReceiptNone, false, f.origin)))
+	create(replaceType(smppMessage(otherESME, other, ReceiptNone, false, f.origin.Add(time.Second))))
+
+	if s := status(smppID); s != StatusPending {
+		t.Fatalf("SMPP message after another ESME's replace = %s, want pending", s)
+	}
+
+	// An API message of the same user as the ESME is another account.
+	create(api(f.user, f.origin.Add(2*time.Second)))
+
+	if s := status(smppID); s != StatusPending {
+		t.Fatalf("SMPP message after its user's API replace = %s, want pending", s)
+	}
+
+	create(replaceType(smppMessage(f.esme, f.user, ReceiptNone, false, f.origin.Add(3*time.Second))))
+
+	if s := status(smppID); s != StatusReplaced {
+		t.Fatalf("SMPP message after its ESME's replace = %s, want replaced", s)
+	}
+
+	// API: another user does not replace it; the same user does.
+	apiID := create(api(other, f.origin.Add(4*time.Second)))
+	create(api(f.user, f.origin.Add(5*time.Second)))
+
+	if s := status(apiID); s != StatusPending {
+		t.Fatalf("API message after another user's replace = %s, want pending", s)
+	}
+
+	latest := create(api(other, f.origin.Add(6*time.Second)))
+
+	if s := status(apiID); s != StatusReplaced {
+		t.Fatalf("API message after its user's replace = %s, want replaced", s)
+	}
+
+	// An MS follows the plain rule: the latest pending message of the originator and the replace type.
+	create(replaceType(testMessage(0, false, []byte{0x01}, f.origin.Add(7*time.Second))))
+
+	if s := status(latest); s != StatusReplaced {
+		t.Fatalf("API message after an MS replace = %s, want replaced", s)
 	}
 }

@@ -78,8 +78,10 @@ type Server struct {
 	listeners map[net.Listener]struct{}
 	sessions  map[uint64]*Session
 	accounts  map[string]map[uint64]*Session
-	next      uint64
-	wg        sync.WaitGroup
+	// reserved is the account that bind filed each session under, for closed to remove it.
+	reserved map[uint64]string
+	next     uint64
+	wg       sync.WaitGroup
 }
 
 // NewServer checks cfg and returns a server.
@@ -103,7 +105,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 	return &Server{
 		cfg: cfg, log: cfg.Logger, listeners: map[net.Listener]struct{}{}, sessions: map[uint64]*Session{},
-		accounts: map[string]map[uint64]*Session{},
+		accounts: map[string]map[uint64]*Session{}, reserved: map[uint64]string{},
 	}, nil
 }
 
@@ -248,6 +250,13 @@ func (s *Server) bind(ctx context.Context, sess *Session, b *Bind, isTLS bool) b
 		return bindDecision{status: StatusSysErr}
 	}
 
+	select {
+	case <-sess.Done():
+		// The session closed during Authenticate, and closed has run or waits for s.mu: reserve nothing.
+		return bindDecision{status: StatusBindFail}
+	default:
+	}
+
 	if out.MaxSessions > 0 && len(s.accounts[account]) >= out.MaxSessions {
 		s.log.Info("SMPP bind refused: too many sessions", slog.String("account", account),
 			slog.Int("max_sessions", out.MaxSessions))
@@ -260,6 +269,7 @@ func (s *Server) bind(ctx context.Context, sess *Session, b *Bind, isTLS bool) b
 	}
 
 	s.accounts[account][sess.id] = sess
+	s.reserved[sess.id] = account
 
 	return bindDecision{status: StatusOK, account: account, data: out.Data}
 }
@@ -268,7 +278,8 @@ func (s *Server) closed(sess *Session) {
 	s.mu.Lock()
 	delete(s.sessions, sess.id)
 
-	if acc := sess.Account(); acc != "" {
+	if acc, ok := s.reserved[sess.id]; ok {
+		delete(s.reserved, sess.id)
 		delete(s.accounts[acc], sess.id)
 
 		if len(s.accounts[acc]) == 0 {
@@ -282,7 +293,8 @@ func (s *Server) closed(sess *Session) {
 	}
 }
 
-// bound lists the bound sessions of an account, or of all accounts when account is empty, by ID.
+// bound lists the bound sessions of an account, or of all accounts when account is empty, by ID. A session that is
+// unbinding takes no new request, so it is left out.
 func (s *Server) bound(account string) []*Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -291,7 +303,7 @@ func (s *Server) bound(account string) []*Session {
 
 	add := func(m map[uint64]*Session) {
 		for _, sess := range m {
-			if sess.State().Bound() {
+			if sess.State().Bound() && !sess.isUnbinding() {
 				out = append(out, sess)
 			}
 		}

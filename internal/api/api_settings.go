@@ -15,6 +15,10 @@ import (
 
 const maxSeconds = math.MaxInt64 / int64(time.Second)
 
+// maxValiditySeconds is the longest validity period, 10 years, so that an expiry stays well within the times that
+// int64 nanoseconds since 1970 hold, until 2262.
+const maxValiditySeconds = 10 * 365 * 24 * 60 * 60
+
 type OperatorSettings struct {
 	MCC                  string            `json:"mcc"`
 	MNC                  string            `json:"mnc"`
@@ -81,8 +85,8 @@ func GetDelivery(cfg Config) http.Handler {
 
 func UpdateDelivery(cfg Config) http.Handler {
 	return updateHandler(cfg, "delivery", func(ctx context.Context, p DeliverySettings) error {
-		if !validSeconds(p.DefaultValiditySeconds) {
-			return invalid(fmt.Errorf("default_validity_seconds must be between 1 and %d", maxSeconds))
+		if !validValidity(p.DefaultValiditySeconds) {
+			return invalid(fmt.Errorf("default_validity_seconds must be between 1 and %d", maxValiditySeconds))
 		}
 
 		d := settings.Delivery{
@@ -162,6 +166,10 @@ func updateHandler[P any](cfg Config, subject string, apply func(context.Context
 
 func validSeconds(seconds int64) bool {
 	return seconds >= 1 && seconds <= maxSeconds
+}
+
+func validValidity(seconds int64) bool {
+	return seconds >= 1 && seconds <= maxValiditySeconds
 }
 
 func operatorResponse(o settings.Operator) OperatorSettings {

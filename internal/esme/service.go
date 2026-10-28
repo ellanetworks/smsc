@@ -32,8 +32,8 @@ const (
 	// interfaceVersion34 is the interface_version of SMPP 3.4. An ESME of an earlier version cannot take optional
 	// parameters (SMPP 3.4 section 3.4), which receipts need, so it cannot bind.
 	interfaceVersion34 = 0x34
-	// DefaultWindow is the most deliver_sm outstanding on a session, the guideline of SMPP 3.4 section 2.6.2.
-	DefaultWindow = 10
+	// MaxSessions is the most sessions an ESME binds at once.
+	MaxSessions = 4
 )
 
 // BindType is the kind of session an ESME binds (SMPP 3.4 section 2.2).
@@ -107,11 +107,12 @@ type SessionInfo struct {
 type Store interface {
 	GetESMEBySystemID(ctx context.Context, systemID string) (db.ESME, error)
 	GetUserByID(ctx context.Context, id int64) (db.User, error)
+	ListESMEsOfUser(ctx context.Context, userID int64) ([]db.ESME, error)
 	DueNotifications(ctx context.Context, esmeID int64, now time.Time, exclude []int64, limit int) ([]db.Notification, error)
-	CloseNotification(ctx context.Context, id int64, result db.NotificationResult, at time.Time) error
-	RetryNotification(ctx context.Context, id int64, next, at time.Time) error
+	CloseNotification(ctx context.Context, id int64, result db.NotificationResult) error
+	RetryNotification(ctx context.Context, id int64, next time.Time) error
 	ExpireNotifications(ctx context.Context, now time.Time) (map[db.NotificationType]int, error)
-	NextNotificationAt(ctx context.Context, esmeID int64) (time.Time, bool, error)
+	NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (time.Time, bool, error)
 }
 
 // Service is the SMSC side of the SMPP interface. Its zero values take defaults; it must not be copied once used.
@@ -127,8 +128,6 @@ type Service struct {
 	// BcryptCost is the cost of the dummy hash that an unknown system_id is checked against: bcrypt's default when
 	// zero. It should be the cost of the ESME password hashes.
 	BcryptCost int
-	// Window is the most deliver_sm outstanding on a session: DefaultWindow when zero.
-	Window int
 	// Accounts is the server's registry of sessions, which closes those of an account, binding ones included. It is
 	// set once the server exists.
 	Accounts interface{ CloseAccount(account string) int }
@@ -136,28 +135,22 @@ type Service struct {
 	Logger   *slog.Logger
 
 	initOnce  sync.Once
+	dummyOnce sync.Once
 	dummyHash []byte
 	binds     *ratelimit.Limiter
+	// failures are the wrong passwords per account from inside its networks, and outsiders those from outside them
+	// and those for unknown system_ids.
 	failures  *ratelimit.Limiter
+	outsiders *ratelimit.Limiter
 	bcrypt    chan struct{}
 	wake      chan struct{}
 
 	mu       sync.Mutex
 	sessions map[uint64]*Session
-	// users are the users of the accounts that bound, so that a change to a user closes their sessions.
-	users map[string]int64
 }
 
 func (s *Service) init() {
 	s.initOnce.Do(func() {
-		password := make([]byte, 32)
-		_, _ = rand.Read(password) // It never fails.
-
-		dummy, err := bcrypt.GenerateFromPassword(password, s.BcryptCost)
-		if err != nil {
-			panic(fmt.Sprintf("esme: bcrypt cost %d: %v", s.BcryptCost, err))
-		}
-
 		if s.Now == nil {
 			s.Now = time.Now
 		}
@@ -166,26 +159,22 @@ func (s *Service) init() {
 			s.Logger = slog.Default()
 		}
 
-		if s.Window <= 0 {
-			s.Window = DefaultWindow
-		}
-
-		s.dummyHash = dummy
 		s.binds = ratelimit.New(api.LoginRateLimit, api.LoginRateWindow, s.Now)
 		s.failures = ratelimit.New(api.AccountFailureLimit, api.AccountFailureWindow, s.Now)
+		s.outsiders = ratelimit.New(api.AccountFailureLimit, api.AccountFailureWindow, s.Now)
 		s.bcrypt = make(chan struct{}, runtime.GOMAXPROCS(0))
 		s.wake = make(chan struct{}, 1)
 		s.sessions = map[uint64]*Session{}
-		s.users = map[string]int64{}
 	})
 }
 
 // Authenticate decides a bind request (SMPP 3.4 section 4.1), as smpp.ServerConfig.Authenticate. Every refusal is
 // ESME_RBINDFAIL, so that the response does not tell which check failed; the log does. The checks run in order: the
-// binds per client address, the interface version, the password, which bcrypt checks against a dummy hash for an
-// unknown system_id so that the time taken does not tell it exists, the wrong passwords per account, the client
-// address against the account's networks, and the user's role against the kind of bind. The server then counts the
-// account's sessions against max_sessions.
+// binds per client address, the interface version, the wrong passwords per account, counted apart for the clients
+// outside the account's networks and for unknown system_ids, the password, which bcrypt checks against a dummy hash
+// for an unknown system_id so that the time taken does not tell it exists, the client address against the account's
+// networks, and the user's role against the kind of bind. The server then counts the account's sessions against
+// max_sessions.
 func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.BindOutcome {
 	s.init()
 
@@ -208,7 +197,7 @@ func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.B
 			Status:      smpp.StatusOK,
 			Account:     accountOf(sess.ESME.ID),
 			Data:        sess,
-			MaxSessions: sess.ESME.MaxSessions,
+			MaxSessions: MaxSessions,
 		}
 	}
 
@@ -258,37 +247,45 @@ func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind)
 	}
 
 	known := err == nil
+	// A client outside the account's networks cannot bind to it, whatever its password, so its wrong passwords count
+	// apart from the account's: they cannot lock the ESME out. An unknown system_id counts with them, so that an
+	// account locked by its own clients does not tell an outsider that it exists, and so that unknown system_ids cannot
+	// fill the account limiter. An empty list allows no address.
+	inside := known && slices.ContainsFunc(e.AllowedNetworks, func(p netip.Prefix) bool { return p.Contains(addr) })
 
-	hash := s.dummyHash
+	failures := s.outsiders
+	if inside {
+		failures = s.failures
+	}
+
+	if failures.Exceeded(b.SystemID) {
+		return nil, "too many wrong passwords for the account", nil
+	}
+
+	hash := s.dummy()
 	if known {
 		hash = []byte(e.PasswordHash)
 	}
 
-	if s.failures.Exceeded(b.SystemID) {
-		return nil, "too many wrong passwords for the account", nil
-	}
-
+	// bcrypt runs for every system_id, known or not, inside the networks or not, so that the time taken tells
+	// nothing.
 	match, err := s.checkPassword(ctx, hash, b.Password)
 	if err != nil {
 		return nil, "", err
 	}
 
-	// An unknown system_id counts as a wrong password, so that a locked account does not tell that it exists.
 	switch {
 	case !known:
-		s.failures.Allow(b.SystemID)
+		failures.Allow(b.SystemID)
 		return nil, "unknown system_id", nil
 	case !match:
-		s.failures.Allow(b.SystemID)
+		failures.Allow(b.SystemID)
 		return nil, "wrong password", nil
+	case !inside:
+		return nil, "client address not in the allowed networks", nil
 	}
 
 	s.failures.Reset(b.SystemID)
-
-	// An empty list allows no address.
-	if !slices.ContainsFunc(e.AllowedNetworks, func(p netip.Prefix) bool { return p.Contains(addr) }) {
-		return nil, "client address not in the allowed networks", nil
-	}
 
 	u, err := s.Store.GetUserByID(ctx, e.UserID)
 	if err != nil {
@@ -301,11 +298,24 @@ func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind)
 		}
 	}
 
-	s.mu.Lock()
-	s.users[accountOf(e.ID)] = u.ID
-	s.mu.Unlock()
-
 	return &Session{ESME: e, UserID: u.ID, BindType: bindType, Remote: remote}, "", nil
+}
+
+// dummy returns the hash that the password of an unknown system_id is checked against, made on the first bind.
+func (s *Service) dummy() []byte {
+	s.dummyOnce.Do(func() {
+		password := make([]byte, 32)
+		_, _ = rand.Read(password) // It never fails.
+
+		hash, err := bcrypt.GenerateFromPassword(password, s.BcryptCost)
+		if err != nil {
+			panic(fmt.Sprintf("esme: bcrypt cost %d: %v", s.BcryptCost, err))
+		}
+
+		s.dummyHash = hash
+	})
+
+	return s.dummyHash
 }
 
 func (s *Service) checkPassword(ctx context.Context, hash []byte, password string) (bool, error) {
@@ -348,7 +358,8 @@ func (s *Service) OnDecodeError(_ *smpp.Session, h smpp.Header, _ error) {
 }
 
 // ServeSMPP answers a submit_sm, as smpp.Handler. The delivery learns of the message once the submit_sm_resp is
-// written, so that the ESME has the message_id before any deliver_sm about it.
+// written, so that the ESME has the message_id before any deliver_sm about it. That order is best effort: a deliverer
+// already running, woken by another message, can deliver this one and its notification go out first.
 func (s *Service) ServeSMPP(ctx context.Context, ls *smpp.Session, req smpp.Request) smpp.Response {
 	started := s.now()
 
@@ -440,28 +451,21 @@ func (s *Service) CloseESME(esmeID int64) {
 	s.closeWhere(func(sess *Session) bool { return sess.ESME.ID == esmeID })
 }
 
-// CloseUser closes the sessions of the ESMEs of a user, whose role changed or who was deleted.
-func (s *Service) CloseUser(userID int64) {
+// CloseUser closes the sessions, bound or binding, of the ESMEs of a user whose role changed, so that they bind again
+// under the checks of the new role. The ESMEs are those of the database, whatever sessions bound before.
+func (s *Service) CloseUser(ctx context.Context, userID int64) error {
 	s.init()
 
-	s.mu.Lock()
-
-	var accounts []string
-
-	for account, u := range s.users {
-		if u == userID {
-			accounts = append(accounts, account)
-		}
-	}
-	s.mu.Unlock()
-
-	if s.Accounts != nil {
-		for _, a := range accounts {
-			s.Accounts.CloseAccount(a)
-		}
+	esmes, err := s.Store.ListESMEsOfUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list the user's ESMEs: %w", err)
 	}
 
-	s.closeWhere(func(sess *Session) bool { return sess.UserID == userID })
+	for _, e := range esmes {
+		s.CloseESME(e.ID)
+	}
+
+	return nil
 }
 
 func (s *Service) closeWhere(match func(*Session) bool) {
@@ -504,7 +508,8 @@ func (s *Service) Sessions(esmeID int64) []SessionInfo {
 
 // SubmitSM stores the message of a submit_sm and returns its message_id, the decimal ID of the stored message (SMPP
 // 3.4 section 4.4.2), or the command_status that refuses it (SMPP 3.4 section 5.1.3). The caller calls Submitted once
-// it has written the submit_sm_resp, so that the ESME has the message_id before any deliver_sm about the message.
+// it has written the submit_sm_resp, so that the ESME has the message_id before any deliver_sm about the message, as
+// a best effort.
 func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM) (string, smpp.CommandStatus) {
 	s.init()
 
@@ -532,28 +537,37 @@ func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM
 
 	ids, err := s.Submitter.Submit(ctx, req)
 	if err != nil {
-		status := submissionStatus(err)
-		if status != smpp.StatusSysErr {
-			s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
-			log.Debug("submit_sm refused", slog.Any("reason", err), slog.String("status", status.String()))
-		} else {
-			log.Error("failed to store a submit_sm", slog.Any("error", err))
-		}
-
-		return "", status
+		return "", s.submitFailed(log, err)
 	}
 
 	return strconv.FormatInt(ids[0], 10), smpp.StatusOK
 }
 
-// Submitted tells the delivery that a message is stored, once the ESME has its message_id.
+// submitFailed counts and logs a submit_sm that the Submitter did not store, and returns its command_status. The
+// Submitter counts the store failures itself.
+func (s *Service) submitFailed(log *slog.Logger, err error) smpp.CommandStatus {
+	status := submissionStatus(err)
+
+	switch {
+	case status != smpp.StatusSysErr:
+		s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
+		log.Debug("submit_sm refused", slog.Any("reason", err), slog.String("status", status.String()))
+	case errors.Is(err, submission.ErrStore):
+		log.Error("failed to store a submit_sm", slog.Any("error", err))
+	default:
+		s.Received.Add(intake.OriginSMPP, intake.Error, 1)
+		log.Error("failed to encode a submit_sm", slog.Any("error", err))
+	}
+
+	return status
+}
+
+// Submitted tells the delivery that a message is stored, once the ESME has its message_id, and wakes the dispatcher:
+// a replace type message may have replaced one, which queued its DELETED receipt.
 func (s *Service) Submitted() {
 	if s.Notify != nil {
 		s.Notify()
 	}
-}
 
-// ObserveSubmit times a submit_sm, from when it is read to when its submit_sm_resp is written.
-func (s *Service) ObserveSubmit(d time.Duration) {
-	s.Metrics.submitted(d)
+	s.NotificationsQueued()
 }

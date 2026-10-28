@@ -34,7 +34,7 @@ const (
 
 // startSMPPSMSC starts an SMSC with an SMPP listener, connected to a core that serves bob, and an ESME owned by a
 // Submitter user.
-func startSMPPSMSC(t *testing.T, edit func(*smscConfig), esme api.CreateESMEParams) (*fakeCore, *smsc) {
+func startSMPPSMSC(t *testing.T, edit func(*smscConfig)) (*fakeCore, *smsc) {
 	t.Helper()
 
 	core := newFakeCore(t, alice, bob)
@@ -54,9 +54,10 @@ func startSMPPSMSC(t *testing.T, edit func(*smscConfig), esme api.CreateESMEPara
 		t.Fatalf("POST /api/v1/users = %d", code)
 	}
 
-	esme.SystemID, esme.User = esmeSystemID, "ota@example.com"
-	esme.Password = ptrTo(esmePassword)
-	esme.AllowedNetworks = []string{"127.0.0.0/8"}
+	esme := api.CreateESMEParams{
+		SystemID: esmeSystemID, User: "ota@example.com", Password: ptrTo(esmePassword),
+		AllowedNetworks: []string{"127.0.0.0/8"},
+	}
 
 	if code := s.api(t, http.MethodPost, "/api/v1/esmes", esme, nil); code != http.StatusCreated {
 		t.Fatalf("POST /api/v1/esmes = %d", code)
@@ -198,7 +199,7 @@ func receiptText(id int64) string { return "id:" + strconv.FormatInt(id, 10) + "
 // TestSMPPSIMDataDownload binds a transceiver, submits a (U)SIM data download message that asks for a receipt and a
 // user acknowledgement (registered_delivery 0x09), and gets the (U)SIM's answer from the RP-ACK, then the receipt.
 func TestSMPPSIMDataDownload(t *testing.T) {
-	core, s := startSMPPSMSC(t, nil, api.CreateESMEParams{})
+	core, s := startSMPPSMSC(t, nil)
 
 	// The Response Packet on an RP-ACK, without TP-UDHI (TS 31.115 clause 4.1).
 	core.setAnswerMT(func(string) *diameter.Message {
@@ -240,7 +241,7 @@ func TestSMPPSIMDataDownload(t *testing.T) {
 // TestSMPPSIMDataDownloadError answers RP-ERROR with TP-FCS 0xD5 and TP-UD: the answer is forwarded, and the receipt
 // is UNDELIV err:066 after one attempt.
 func TestSMPPSIMDataDownloadError(t *testing.T) {
-	core, s := startSMPPSMSC(t, nil, api.CreateESMEParams{})
+	core, s := startSMPPSMSC(t, nil)
 
 	core.setAnswerMT(func(string) *diameter.Message {
 		return experimental(tgpp.ResultErrorSMDeliveryFailure,
@@ -272,7 +273,7 @@ func TestSMPPSIMDataDownloadError(t *testing.T) {
 
 // TestSMPPNotificationsWaitForAReceiver submits on a transmitter: the receipt waits until a receiver binds.
 func TestSMPPNotificationsWaitForAReceiver(t *testing.T) {
-	_, s := startSMPPSMSC(t, nil, api.CreateESMEParams{ForwardSIMAnswers: ptrTo(true)})
+	_, s := startSMPPSMSC(t, nil)
 
 	transmitter := bindESME(t, s, tx, gosmpp.NonTLSDialer)
 	id := submitted(t, transmitter, otaSubmit(t, 0x01))
@@ -290,7 +291,7 @@ func TestSMPPNotificationsWaitForAReceiver(t *testing.T) {
 func TestSMPPOverTLS(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir())
 
-	_, s := startSMPPSMSC(t, func(c *smscConfig) { c.SMPP.TLS = &config.TLS{Cert: cert, Key: key} }, api.CreateESMEParams{})
+	_, s := startSMPPSMSC(t, func(c *smscConfig) { c.SMPP.TLS = &config.TLS{Cert: cert, Key: key} })
 
 	pem, err := os.ReadFile(cert)
 	if err != nil {
@@ -326,7 +327,7 @@ func TestSMPPListenerIsOptional(t *testing.T) {
 
 // TestSMPPRevocation checks that deleting the ESME closes its session.
 func TestSMPPRevocation(t *testing.T) {
-	_, s := startSMPPSMSC(t, nil, api.CreateESMEParams{})
+	_, s := startSMPPSMSC(t, nil)
 	esme := bindESME(t, s, trx, gosmpp.NonTLSDialer)
 
 	if code := s.api(t, http.MethodDelete, "/api/v1/esmes/"+esmeSystemID, nil, nil); code != http.StatusOK {
@@ -341,7 +342,7 @@ func TestSMPPRevocation(t *testing.T) {
 // TestSMPPAndAPIParity submits the same PID, DCS, UDH and user data over the API and as submit_sm: the stored
 // SMS-SUBMITs are the same octets.
 func TestSMPPAndAPIParity(t *testing.T) {
-	_, s := startSMPPSMSC(t, nil, api.CreateESMEParams{})
+	_, s := startSMPPSMSC(t, nil)
 	esme := bindESME(t, s, trx, gosmpp.NonTLSDialer)
 
 	pid, dcs := uint8(0x7f), uint8(0xf6)

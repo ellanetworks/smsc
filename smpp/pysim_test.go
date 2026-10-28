@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -119,9 +120,12 @@ func TestPySimOTATool(t *testing.T) {
 		t.Fatalf("submit_sm %+v", m)
 	}
 
+	// The tool unbinds before it exits.
 	select {
 	case err := <-unbound:
-		t.Logf("session closed: %v", err)
+		if !errors.Is(err, ErrUnbound) {
+			t.Fatalf("session closed for %v, want ErrUnbound", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the session did not close after the tool exited")
 	}

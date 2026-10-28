@@ -77,7 +77,8 @@ const columns: GridColDef<Message>[] = [
     width: 170,
     valueFormatter: formatOptionalTimestamp,
   },
-  { field: "from", headerName: "From", width: 160 },
+  // From and To share the spare width.
+  { field: "from", headerName: "From", flex: 1, minWidth: 160 },
   { field: "to", headerName: "To", flex: 1, minWidth: 160 },
   {
     field: "part",

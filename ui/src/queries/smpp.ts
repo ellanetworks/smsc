@@ -9,17 +9,11 @@ export interface SMPPSession {
   bound_at: string;
 }
 
-// DefaultAlphabet is what data_coding 0x00 means in the short messages of an ESME.
-export type DefaultAlphabet = "gsm7" | "latin1";
-
 // ESME is an SMPP client account. The messages it submits are attributed to its user.
 export interface ESME {
   system_id: string;
   user: string;
   allowed_networks: string[];
-  max_sessions: number;
-  forward_sim_answers: boolean;
-  default_alphabet: DefaultAlphabet;
   created_at: string;
   sessions: SMPPSession[];
 }
@@ -28,9 +22,6 @@ export interface ESME {
 export interface ESMEUpdate {
   password?: string;
   allowed_networks: string[];
-  max_sessions: number;
-  forward_sim_answers: boolean;
-  default_alphabet: DefaultAlphabet;
 }
 
 // ESMECreate is a new ESME. Without a password, the server generates one.
@@ -42,8 +33,8 @@ export interface ESMECreate extends ESMEUpdate {
 // CreatedESME is a new ESME, with the password the server generated for it, if it did: it is not given again.
 export type CreatedESME = ESME & { password?: string };
 
-export const DEFAULT_MAX_SESSIONS = 4;
-export const MAX_SESSIONS = 16;
+// MAX_SESSIONS is the most sessions an ESME binds at once.
+export const MAX_SESSIONS = 4;
 export const MAX_SYSTEM_ID_LENGTH = 15;
 export const MAX_PASSWORD_LENGTH = 8;
 

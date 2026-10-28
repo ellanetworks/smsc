@@ -24,11 +24,11 @@ This path submits a text message, or a binary message, to a phone. It returns on
 | `to`   | string | Yes      | E.164 number with `+` of the recipient. |
 | `text` | string | One of `text` and `binary` | Not empty. GSM-7 if every character is in the GSM 7-bit default alphabet or its extension table, else UCS-2. Up to 255 parts. |
 | `binary` | object | One of `text` and `binary` | TPDU parameters of one short message, delivered unchanged. |
-| `binary.protocol_identifier` | int | No | TP-PID (TS 23.040 §9.2.3.9), `0` to `255`. Default `0`. Not `32` to `62`, telematic interworking. `65` to `71`, replace types 1 to 7, replace the pending message of the same type from the same `from`. `72`, device triggering, needs an application port addressing information element in `user_data_header`. |
+| `binary.protocol_identifier` | int | No | TP-PID (TS 23.040 §9.2.3.9), `0` to `255`. Default `0`. Not `32` to `62`, telematic interworking. `65` to `71`, replace types 1 to 7, replace the pending message of the same type from the same `from`, submitted by the same user; never a message from a phone or an ESME. `72`, device triggering, needs an application port addressing information element in `user_data_header`. |
 | `binary.data_coding_scheme` | int | Yes | TP-DCS (TS 23.038 §4), `0` to `255`. Not a GSM 7-bit, UCS2 or reserved coding. Message class 2 when `protocol_identifier` is `124`, ANSI-136 R-DATA, or `127`, (U)SIM data download. |
 | `binary.user_data_header` | string | No | TP-UDH (TS 23.040 §9.2.3.24) in hexadecimal, its length octet included. |
 | `binary.user_data` | string | Yes | TP-UD after the header, in hexadecimal. May be empty. At most 140 octets with `user_data_header`. Not split into parts. |
-| `validity_seconds` | int | No | How long delivery is attempted, at least `1`. Default: the default validity of the [delivery settings](delivery.md). |
+| `validity_seconds` | int | No | How long delivery is attempted, `1` to `315360000` (10 years). Default: the default validity of the [delivery settings](delivery.md). |
 
 A message from the API never asks for status reports.
 

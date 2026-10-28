@@ -181,18 +181,13 @@ var migrations = []string{
 		system_id TEXT NOT NULL UNIQUE CHECK (length(system_id) BETWEEN 1 AND 15),
 		user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
 		password_hash TEXT NOT NULL,
-		max_sessions INTEGER NOT NULL CHECK (max_sessions BETWEEN 1 AND 16),
-		forward_sim_answers INTEGER NOT NULL CHECK (forward_sim_answers IN (0, 1)),
-		default_alphabet TEXT NOT NULL CHECK (default_alphabet IN ('gsm7', 'latin1')),
 		created_at INTEGER NOT NULL
 	);
 	CREATE INDEX esmes_user_id ON esmes (user_id);
 	CREATE TABLE esme_networks (
 		esme_id INTEGER NOT NULL REFERENCES esmes (id) ON DELETE CASCADE,
-		position INTEGER NOT NULL,
 		prefix TEXT NOT NULL,
-		PRIMARY KEY (esme_id, position),
-		UNIQUE (esme_id, prefix)
+		PRIMARY KEY (esme_id, prefix)
 	);
 	CREATE TABLE smpp_messages (
 		message_id INTEGER PRIMARY KEY REFERENCES messages (id) ON DELETE CASCADE,
@@ -200,33 +195,30 @@ var migrations = []string{
 		-- registered_delivery bits 1-0 (SMPP 3.4 section 5.2.17).
 		receipt INTEGER NOT NULL CHECK (receipt IN (0, 1, 2)),
 		sim_answer INTEGER NOT NULL CHECK (sim_answer IN (0, 1)),
+		-- source_addr_npi as submitted, which the notifications echo (SMPP 3.4 section 2.11).
+		source_npi INTEGER NOT NULL CHECK (source_npi BETWEEN 0 AND 255),
 		data_coding INTEGER NOT NULL CHECK (data_coding BETWEEN 0 AND 255),
 		user_message_reference INTEGER CHECK (user_message_reference BETWEEN 0 AND 65535)
 	);
 	CREATE INDEX smpp_messages_esme_id ON smpp_messages (esme_id);
 	CREATE TABLE smpp_notifications (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
-		esme_id INTEGER NOT NULL REFERENCES esmes (id) ON DELETE CASCADE,
+		-- The ESME is the message's, in smpp_messages.
+		message_id INTEGER NOT NULL REFERENCES smpp_messages (message_id) ON DELETE CASCADE,
 		type TEXT NOT NULL CHECK (type IN ('receipt', 'sim_answer')),
-		-- A receipt's message_state (SMPP 3.4 section 5.2.28) and TP-Status (TS 23.040 clause 9.2.3.15).
-		message_state INTEGER,
+		-- A receipt's TP-Status (TS 23.040 clause 9.2.3.15). Its message_state is the message's status.
 		tp_status INTEGER,
 		-- A SIM answer's delivery attempt, whose SMS-DELIVER-REPORT it forwards.
 		attempt_id INTEGER REFERENCES delivery_attempts (id) ON DELETE CASCADE,
-		created_at INTEGER NOT NULL,
 		expires_at INTEGER NOT NULL,
 		next_attempt_at INTEGER NOT NULL,
 		attempts INTEGER NOT NULL,
-		sent_at INTEGER,
 		result TEXT CHECK (result IN ('acknowledged', 'rejected', 'expired', 'no_user_data')),
-		updated_at INTEGER NOT NULL,
 		UNIQUE (message_id, type),
-		CHECK (type = 'receipt' AND message_state IS NOT NULL AND tp_status IS NOT NULL AND attempt_id IS NULL
-			OR type = 'sim_answer' AND attempt_id IS NOT NULL AND message_state IS NULL AND tp_status IS NULL),
-		CHECK (sent_at IS NULL OR result IN ('acknowledged', 'rejected'))
+		CHECK (type = 'receipt' AND tp_status IS NOT NULL AND attempt_id IS NULL
+			OR type = 'sim_answer' AND attempt_id IS NOT NULL AND tp_status IS NULL)
 	);
-	CREATE INDEX smpp_notifications_due ON smpp_notifications (esme_id, next_attempt_at) WHERE result IS NULL;
+	CREATE INDEX smpp_notifications_due ON smpp_notifications (next_attempt_at) WHERE result IS NULL;
 	CREATE INDEX smpp_notifications_message_id ON smpp_notifications (message_id);`,
 }
 

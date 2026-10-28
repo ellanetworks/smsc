@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-	"unicode/utf16"
 
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/tpdu"
@@ -35,15 +34,15 @@ var stat = map[smpp.MessageState]string{
 }
 
 // deliverSM returns the deliver_sm of a notification. Both kinds go from the original destination to the original
-// source (SMPP 3.4 section 2.11), and carry the message ID and the ESME's user_message_reference (SMPP 3.4 Table
-// 4-18).
-func deliverSM(n db.Notification, alphabet db.Alphabet) (*smpp.DeliverSM, error) {
+// source (SMPP 3.4 section 2.11), with the source_addr_npi as submitted rather than the TPDU's, and carry the message
+// ID and the ESME's user_message_reference (SMPP 3.4 Table 4-18).
+func deliverSM(n db.Notification) (*smpp.DeliverSM, error) {
 	m := n.Message
 	id := strconv.FormatInt(m.ID, 10)
 
 	d := &smpp.DeliverSM{Message: smpp.Message{
 		Source:      smpp.Address{TON: m.Recipient.TypeOfNumber, NPI: m.Recipient.NumberingPlan, Addr: m.Recipient.Digits},
-		Destination: smpp.Address{TON: m.Originator.TypeOfNumber, NPI: m.Originator.NumberingPlan, Addr: m.Originator.Digits},
+		Destination: smpp.Address{TON: m.Originator.TypeOfNumber, NPI: n.SourceNPI, Addr: m.Originator.Digits},
 		Options:     smpp.Options{ReceiptedMessageID: &id, UserMessageReference: n.UserMessageReference},
 	}}
 
@@ -52,7 +51,7 @@ func deliverSM(n db.Notification, alphabet db.Alphabet) (*smpp.DeliverSM, error)
 		return d, nil
 	}
 
-	return d, simAnswer(d, n, alphabet)
+	return d, simAnswer(d, n)
 }
 
 // receipt makes d an SMSC Delivery Receipt (SMPP 3.4 section 2.11), with the text of SMPP 3.4 Appendix B, which is
@@ -68,16 +67,12 @@ func receipt(d *smpp.DeliverSM, n db.Notification) {
 		delivered = "001"
 	}
 
-	// The submit date of a replaced message is when it was replaced (SMPP 3.4 Appendix B, Table B-1).
-	submitted := m.SubmittedAt
-	if state == smpp.StateDeleted {
-		submitted = m.UpdatedAt
-	}
-
+	// The submit date is when the message was submitted, in every state. Table B-1's replace time is that of an SMPP
+	// replace_sm, after which the message lives on; a replaced message ends.
 	d.ESMClass = esmTypeReceipt
 	d.DataCoding = dcIA5
 	d.ShortMessage = fmt.Appendf(nil, "id:%d sub:001 dlvrd:%s submit date:%s done date:%s stat:%s err:%03d text:",
-		m.ID, delivered, submitted.UTC().Format(receiptTime), m.UpdatedAt.UTC().Format(receiptTime), stat[state], n.TPStatus)
+		m.ID, delivered, m.SubmittedAt.UTC().Format(receiptTime), m.UpdatedAt.UTC().Format(receiptTime), stat[state], n.TPStatus)
 	d.Options.MessageState = &state
 }
 
@@ -86,7 +81,7 @@ func receipt(d *smpp.DeliverSM, n db.Notification) {
 // reply message sent in response to an application request message" (SMPP 3.4 section 2.11). That type, and
 // receipted_message_id, which SMPP 3.4 section 5.3.2.12 defines for receipts, are Ella's choices: SMPP 3.4 has no
 // field for the answer.
-func simAnswer(d *smpp.DeliverSM, n db.Notification, alphabet db.Alphabet) error {
+func simAnswer(d *smpp.DeliverSM, n db.Notification) error {
 	r, err := tpdu.DecodeDeliverReport(n.DeliverReport, n.Ack)
 	if err != nil || r.UserDataLength == nil {
 		return errNoUserData
@@ -125,8 +120,9 @@ func simAnswer(d *smpp.DeliverSM, n db.Notification, alphabet db.Alphabet) error
 
 	switch {
 	case tpdu.IsSeptetCoded(dcs):
+		// Unpacked septets, as data_coding 0x00, the GSM 7 bit default alphabet.
 		septets := tpdu.UnpackSeptets(r.UserData, len(header), int(*r.UserDataLength))
-		d.DataCoding, d.ShortMessage = septetsFor(header, septets, alphabet)
+		d.DataCoding, d.ShortMessage = dcDefault, append(append([]byte{}, header...), septets...)
 	case tpdu.IsUCS2(dcs):
 		d.DataCoding, d.ShortMessage = dcUCS2, r.UserData
 	default:
@@ -134,22 +130,6 @@ func simAnswer(d *smpp.DeliverSM, n db.Notification, alphabet db.Alphabet) error
 	}
 
 	return nil
-}
-
-// septetsFor returns the data_coding and short_message of GSM 7 bit user data: unpacked septets as data_coding 0x00
-// for an ESME that takes 0x00 for the GSM 7 bit default alphabet, and the text in UCS2 for one that takes it for
-// Latin-1.
-func septetsFor(header, septets []byte, alphabet db.Alphabet) (byte, []byte) {
-	if alphabet != db.AlphabetLatin1 {
-		return dcDefault, append(append([]byte{}, header...), septets...)
-	}
-
-	out := append([]byte{}, header...)
-	for _, u := range utf16.Encode([]rune(tpdu.SeptetsText(septets))) {
-		out = append(out, byte(u>>8), byte(u))
-	}
-
-	return dcUCS2, out
 }
 
 // octetCoding returns the data_coding of 8-bit user data: the submit_sm's when it codes 8-bit data, as pySim-smpp2sim

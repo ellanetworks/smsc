@@ -1,7 +1,8 @@
 package smpp
 
-// Session interoperability with github.com/linxGnu/gosmpp (Apache-2.0), a test-only dependency: a gosmpp ESME bound
-// to our Server, and our Client bound to a server built from gosmpp's codec.
+// Interoperability with github.com/linxGnu/gosmpp (Apache-2.0), a test-only dependency: a gosmpp ESME session bound to
+// our Server, and our Client bound to a scripted SMSC that frames its PDUs with gosmpp's codec. gosmpp has no SMSC
+// session, so the second proves codec interop and our Client's session behaviour, not gosmpp's.
 
 import (
 	"bytes"
@@ -19,8 +20,10 @@ import (
 // TestGosmppESME binds a gosmpp transceiver to our server: submit_sm, deliver_sm with optional parameters, the
 // server's enquire_link, and gosmpp's unbind.
 func TestGosmppESME(t *testing.T) {
+	// An enquire_link every 50 ms, closing the session if one is unanswered within 300 ms.
 	ts := newTestServer(t, func(cfg *ServerConfig) {
 		cfg.Session.EnquireLinkInterval = 50 * time.Millisecond
+		cfg.Session.ResponseTimeout = 300 * time.Millisecond
 	})
 
 	received := make(chan pdu.PDU, 10)
@@ -69,8 +72,9 @@ func TestGosmppESME(t *testing.T) {
 		t.Fatalf("submit_sm_resp %+v", resp)
 	}
 
-	// The server's enquire_link, answered by gosmpp, keeps the session bound.
-	time.Sleep(200 * time.Millisecond)
+	// The server's enquire_links, answered by gosmpp, keep the session bound past the response_timer: an unanswered
+	// one would close it with ErrEnquireLinkTimeout.
+	time.Sleep(time.Second)
 
 	if sess.State() != StateBoundTRX {
 		t.Fatalf("state %s, err %v", sess.State(), sess.Err())
@@ -104,6 +108,10 @@ func TestGosmppESME(t *testing.T) {
 	case <-sess.Done():
 	case <-time.After(3 * time.Second):
 		t.Fatal("the session did not close after gosmpp's unbind")
+	}
+
+	if !errors.Is(sess.Err(), ErrUnbound) {
+		t.Fatalf("session closed for %v, want ErrUnbound", sess.Err())
 	}
 }
 
@@ -219,8 +227,9 @@ func (g *gosmppSMSC) serve(c net.Conn) error {
 	}
 }
 
-// TestClientToGosmppSMSC binds our client to the gosmpp-built SMSC: submit_sm with a user data header and an
-// optional parameter, deliver_sm answered, unbind.
+// TestClientToGosmppSMSC binds our client to the scripted SMSC: submit_sm with a user data header and an optional
+// parameter, deliver_sm answered, unbind. It checks that each PDU decodes on the other side, and that Close ends the
+// session with unbind and its unbind_resp.
 func TestClientToGosmppSMSC(t *testing.T) {
 	d := pdu.NewDeliverSM().(*pdu.DeliverSM)
 	d.SourceAddr = gosmppAddress(t, "15551230002")
@@ -292,11 +301,17 @@ func TestClientToGosmppSMSC(t *testing.T) {
 		t.Fatalf("gosmpp got %+v, UDH %x, UD %x", s, udh, ud)
 	}
 
+	sess := c.Session()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	if err := c.Close(ctx); err != nil {
 		t.Fatal(err)
+	}
+
+	if !errors.Is(sess.Err(), ErrUnbound) {
+		t.Fatalf("client session closed for %v, want ErrUnbound", sess.Err())
 	}
 
 	if err := <-g.finished; err != nil && !errors.Is(err, net.ErrClosed) {

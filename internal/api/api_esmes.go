@@ -18,8 +18,6 @@ const (
 	maxSMPPPassword = 8
 	// generatedPasswordLength is the length of a generated SMPP password, of 62 characters: about 47.6 bits.
 	generatedPasswordLength = 8
-	defaultMaxSessions      = 4
-	maxMaxSessions          = 16
 	// maxAllowedNetworks bounds the networks of an ESME.
 	maxAllowedNetworks = 50
 )
@@ -27,14 +25,11 @@ const (
 // ESME is an account that an External Short Message Entity binds to the SMPP listener with (SMPP 3.4 section 2.2). It
 // acts as its user.
 type ESME struct {
-	SystemID          string        `json:"system_id"`
-	User              string        `json:"user"`
-	AllowedNetworks   []string      `json:"allowed_networks"`
-	MaxSessions       int           `json:"max_sessions"`
-	ForwardSIMAnswers bool          `json:"forward_sim_answers"`
-	DefaultAlphabet   string        `json:"default_alphabet"`
-	CreatedAt         string        `json:"created_at"`
-	Sessions          []ESMESession `json:"sessions"`
+	SystemID        string        `json:"system_id"`
+	User            string        `json:"user"`
+	AllowedNetworks []string      `json:"allowed_networks"`
+	CreatedAt       string        `json:"created_at"`
+	Sessions        []ESMESession `json:"sessions"`
 	// Password is the generated password, in the response that creates the ESME only.
 	Password string `json:"password,omitempty"`
 }
@@ -47,21 +42,15 @@ type ESMESession struct {
 }
 
 type CreateESMEParams struct {
-	SystemID          string   `json:"system_id"`
-	User              string   `json:"user"`
-	Password          *string  `json:"password"`
-	AllowedNetworks   []string `json:"allowed_networks"`
-	MaxSessions       *int     `json:"max_sessions"`
-	ForwardSIMAnswers *bool    `json:"forward_sim_answers"`
-	DefaultAlphabet   *string  `json:"default_alphabet"`
+	SystemID        string   `json:"system_id"`
+	User            string   `json:"user"`
+	Password        *string  `json:"password"`
+	AllowedNetworks []string `json:"allowed_networks"`
 }
 
 type UpdateESMEParams struct {
-	Password          *string  `json:"password"`
-	AllowedNetworks   []string `json:"allowed_networks"`
-	MaxSessions       int      `json:"max_sessions"`
-	ForwardSIMAnswers bool     `json:"forward_sim_answers"`
-	DefaultAlphabet   string   `json:"default_alphabet"`
+	Password        *string  `json:"password"`
+	AllowedNetworks []string `json:"allowed_networks"`
 }
 
 type ListESMEsResponse struct {
@@ -149,25 +138,7 @@ func CreateESME(a *auth) http.Handler {
 			return
 		}
 
-		e := db.ESME{
-			SystemID:        params.SystemID,
-			UserID:          u.ID,
-			MaxSessions:     defaultMaxSessions,
-			DefaultAlphabet: db.AlphabetGSM7,
-			CreatedAt:       cfg.Now(),
-		}
-
-		if params.MaxSessions != nil {
-			e.MaxSessions = *params.MaxSessions
-		}
-
-		if params.ForwardSIMAnswers != nil {
-			e.ForwardSIMAnswers = *params.ForwardSIMAnswers
-		}
-
-		if params.DefaultAlphabet != nil {
-			e.DefaultAlphabet = db.Alphabet(*params.DefaultAlphabet)
-		}
+		e := db.ESME{SystemID: params.SystemID, UserID: u.ID, CreatedAt: cfg.Now()}
 
 		if !validESME(w, &e, params.AllowedNetworks, cfg) {
 			return
@@ -227,8 +198,8 @@ func CreateESME(a *auth) http.Handler {
 	})
 }
 
-// UpdateESME replaces the settings of an ESME, and its password when one is given. It closes its sessions, which bind
-// again under the new settings.
+// UpdateESME replaces the allowed networks of an ESME, and its password when one is given. It closes its sessions,
+// which bind again under the new settings.
 func UpdateESME(a *auth) http.Handler {
 	cfg := a.cfg
 
@@ -242,9 +213,6 @@ func UpdateESME(a *auth) http.Handler {
 		if !ok {
 			return
 		}
-
-		e.MaxSessions, e.ForwardSIMAnswers, e.DefaultAlphabet = params.MaxSessions, params.ForwardSIMAnswers,
-			db.Alphabet(params.DefaultAlphabet)
 
 		if !validESME(w, &e, params.AllowedNetworks, cfg) {
 			return
@@ -339,20 +307,8 @@ func lookupESME(w http.ResponseWriter, r *http.Request, cfg Config) (db.ESME, bo
 	return e, true
 }
 
-// validESME checks the settings of an ESME and sets its networks, or writes the error.
+// validESME checks the networks of an ESME and sets them, or writes the error.
 func validESME(w http.ResponseWriter, e *db.ESME, networks []string, cfg Config) bool {
-	if e.MaxSessions < 1 || e.MaxSessions > maxMaxSessions {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("max_sessions must be between 1 and %d", maxMaxSessions), nil,
-			cfg.Logger)
-
-		return false
-	}
-
-	if e.DefaultAlphabet != db.AlphabetGSM7 && e.DefaultAlphabet != db.AlphabetLatin1 {
-		writeError(w, http.StatusBadRequest, "default_alphabet must be gsm7 or latin1", nil, cfg.Logger)
-		return false
-	}
-
 	if len(networks) > maxAllowedNetworks {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("allowed_networks must have at most %d networks", maxAllowedNetworks),
 			nil, cfg.Logger)
@@ -414,14 +370,11 @@ func newSMPPPassword() string {
 
 func esmeResponse(cfg Config, e db.ESME, email string) ESME {
 	resp := ESME{
-		SystemID:          e.SystemID,
-		User:              email,
-		AllowedNetworks:   make([]string, 0, len(e.AllowedNetworks)),
-		MaxSessions:       e.MaxSessions,
-		ForwardSIMAnswers: e.ForwardSIMAnswers,
-		DefaultAlphabet:   string(e.DefaultAlphabet),
-		CreatedAt:         formatTime(e.CreatedAt),
-		Sessions:          []ESMESession{},
+		SystemID:        e.SystemID,
+		User:            email,
+		AllowedNetworks: make([]string, 0, len(e.AllowedNetworks)),
+		CreatedAt:       formatTime(e.CreatedAt),
+		Sessions:        []ESMESession{},
 	}
 
 	for _, p := range e.AllowedNetworks {

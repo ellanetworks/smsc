@@ -9,9 +9,6 @@ const ota = {
   system_id: "ota1",
   user: "ota@example.com",
   allowed_networks: ["10.1.0.0/24", "2001:db8::/32"],
-  max_sessions: 4,
-  forward_sim_answers: true,
-  default_alphabet: "gsm7",
   created_at: "2026-09-30T12:00:00.000Z",
   sessions: [
     {
@@ -31,9 +28,6 @@ const idle = {
   system_id: "bulk sender",
   user: "bulk@example.com",
   allowed_networks: [],
-  max_sessions: 1,
-  forward_sim_answers: false,
-  default_alphabet: "latin1",
   created_at: "2026-09-30T12:00:00.000Z",
   sessions: [],
 };
@@ -71,6 +65,20 @@ const serve = (
         "/api/v1/esmes/bulk%20sender": recorded(() =>
           json(200, { result: idle }),
         ),
+        "/api/v1/users": () =>
+          json(200, {
+            result: {
+              items: [
+                { email: "admin@example.com", role_id: RoleID.Admin },
+                { email: "ota@example.com", role_id: RoleID.Submitter },
+                { email: "nobody@example.com", role_id: RoleID.Submitter },
+                { email: "viewer@example.com", role_id: RoleID.ReadOnly },
+              ],
+              page: 1,
+              per_page: 100,
+              total_count: 4,
+            },
+          }),
       }),
     ),
   );
@@ -90,6 +98,16 @@ const rowCells = (text: string) =>
 const openAdd = async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Add ESME" }));
   return screen.findByRole("dialog");
+};
+
+// pickUser chooses a user in the Add dialog's User list.
+const pickUser = async (dialog: HTMLElement, email: string) => {
+  fireEvent.mouseDown(within(dialog).getByLabelText(/User/));
+  fireEvent.click(
+    await within(screen.getByRole("listbox")).findByRole("option", {
+      name: new RegExp(`^${email}`),
+    }),
+  );
 };
 
 const fill = (dialog: HTMLElement, label: string | RegExp, value: string) =>
@@ -115,33 +133,18 @@ describe("SMPP", () => {
       within(grid())
         .getAllByRole("columnheader")
         .map((h) => h.textContent),
-    ).toEqual([
-      "System ID",
-      "User",
-      "Allowed Networks",
-      "Max Sessions",
-      "Forward SIM Answers",
-      "Default Alphabet",
-      "Sessions",
-      "Actions",
-    ]);
+    ).toEqual(["System ID", "User", "Allowed Networks", "Sessions", "Actions"]);
     expect(rowCells("ota1")).toEqual([
       "ota1",
       "ota@example.com",
       "10.1.0.0/242001:db8::/32",
-      "4",
-      "yes",
-      "GSM 7-bit",
-      "2 boundTransceiver from 10.1.0.5:40000Receiver from 10.1.0.6:40001",
+      "2 of 4 boundTransceiver from 10.1.0.5:40000Receiver from 10.1.0.6:40001",
       "",
     ]);
     expect(rowCells("bulk sender")).toEqual([
       "bulk sender",
       "bulk@example.com",
       "None",
-      "1",
-      "no",
-      "Latin-1",
       "None",
       "",
     ]);
@@ -166,15 +169,9 @@ describe("SMPP", () => {
 
     const dialog = await openAdd();
     fill(dialog, /System ID/, "ota2");
-    fill(dialog, /User/, "ota@example.com");
+    await pickUser(dialog, "ota@example.com");
     fill(dialog, /Password/, "secret1");
     fill(dialog, /Allowed networks/, "10.1.0.0/24, 2001:db8::/32");
-    fill(dialog, /Max sessions/, "2");
-    fireEvent.click(
-      within(dialog).getByRole("switch", { name: "Forward SIM answers" }),
-    );
-    fireEvent.mouseDown(within(dialog).getByLabelText("Default alphabet"));
-    fireEvent.click(screen.getByRole("option", { name: "Latin-1" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
 
     await waitFor(() =>
@@ -187,9 +184,6 @@ describe("SMPP", () => {
             user: "ota@example.com",
             password: "secret1",
             allowed_networks: ["10.1.0.0/24", "2001:db8::/32"],
-            max_sessions: 2,
-            forward_sim_answers: true,
-            default_alphabet: "latin1",
           },
         },
       ]),
@@ -213,7 +207,7 @@ describe("SMPP", () => {
 
     const dialog = await openAdd();
     fill(dialog, /System ID/, "ota2");
-    fill(dialog, /User/, "ota@example.com");
+    await pickUser(dialog, "ota@example.com");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
 
     const shown = await screen.findByRole("dialog", { name: "ESME Password" });
@@ -228,9 +222,6 @@ describe("SMPP", () => {
           system_id: "ota2",
           user: "ota@example.com",
           allowed_networks: [],
-          max_sessions: 4,
-          forward_sim_answers: false,
-          default_alphabet: "gsm7",
         },
       },
     ]);
@@ -268,9 +259,8 @@ describe("SMPP", () => {
     ).toBeVisible();
     fill(dialog, /System ID/, "ota2");
 
-    fill(dialog, /User/, "ota");
-    expect(within(dialog).getByText("Enter an email address.")).toBeVisible();
-    fill(dialog, /User/, "ota@example.com");
+    expect(add).toBeDisabled();
+    await pickUser(dialog, "ota@example.com");
     expect(add).toBeEnabled();
 
     fill(dialog, /Password/, "toolongpw");
@@ -296,14 +286,24 @@ describe("SMPP", () => {
     expect(add).toBeDisabled();
     fill(dialog, /Allowed networks/, "::/0, 0.0.0.0/0, ::ffff:10.0.0.0/104");
     expect(add).toBeEnabled();
+  });
 
-    fill(dialog, /Max sessions/, "17");
-    expect(within(dialog).getByText("1 to 16.")).toBeVisible();
-    expect(add).toBeDisabled();
-    fill(dialog, /Max sessions/, "0");
-    expect(add).toBeDisabled();
-    fill(dialog, /Max sessions/, "16");
-    expect(add).toBeEnabled();
+  it("lists the users, a Read Only one disabled", async () => {
+    serve(() => json(200, { result: { items: [] } }));
+    renderWithClient(<SMPP />);
+
+    const dialog = await openAdd();
+    fireEvent.mouseDown(within(dialog).getByLabelText(/User/));
+    const options = await within(screen.getByRole("listbox")).findAllByRole(
+      "option",
+    );
+    expect(options.map((o) => o.textContent)).toEqual([
+      "admin@example.com · Admin",
+      "ota@example.com · Submitter",
+      "nobody@example.com · Submitter",
+      "viewer@example.com · Read Only",
+    ]);
+    expect(options[3]).toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows the server's reason when it refuses an ESME", async () => {
@@ -317,7 +317,7 @@ describe("SMPP", () => {
 
     const dialog = await openAdd();
     fill(dialog, /System ID/, "ota2");
-    fill(dialog, /User/, "nobody@example.com");
+    await pickUser(dialog, "nobody@example.com");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
 
     expect(
@@ -336,14 +336,17 @@ describe("SMPP", () => {
     const dialog = await screen.findByRole("dialog");
 
     expect(within(dialog).getByLabelText(/System ID/)).toBeDisabled();
-    expect(within(dialog).getByLabelText(/User/)).toBeDisabled();
+    // The owner cannot change: its select is disabled.
+    expect(within(dialog).getByLabelText(/User/)).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(within(dialog).getByLabelText(/Password/)).toHaveValue("");
     expect(within(dialog).getByLabelText(/Allowed networks/)).toHaveValue(
       "10.1.0.0/24, 2001:db8::/32",
     );
 
     fill(dialog, /Allowed networks/, "10.1.0.0/24");
-    fill(dialog, /Max sessions/, "8");
     fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
 
     await waitFor(() =>
@@ -353,9 +356,6 @@ describe("SMPP", () => {
           path: "/api/v1/esmes/ota1",
           body: {
             allowed_networks: ["10.1.0.0/24"],
-            max_sessions: 8,
-            forward_sim_answers: true,
-            default_alphabet: "gsm7",
           },
         },
       ]),
@@ -383,9 +383,6 @@ describe("SMPP", () => {
           body: {
             password: "newpass",
             allowed_networks: [],
-            max_sessions: 1,
-            forward_sim_answers: false,
-            default_alphabet: "latin1",
           },
         },
       ]),

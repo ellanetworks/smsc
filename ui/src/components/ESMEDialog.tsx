@@ -1,23 +1,19 @@
 import { useState } from "react";
 import {
   Alert,
-  Box,
   Button,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControlLabel,
-  FormHelperText,
   IconButton,
   MenuItem,
-  Switch,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
 import { ContentCopy as ContentCopyIcon } from "@mui/icons-material";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
 import PasswordField from "@/components/PasswordField";
 import { useSnackbar } from "@/contexts/SnackbarContext";
@@ -25,19 +21,15 @@ import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import {
   createESME,
   type CreatedESME,
-  DEFAULT_MAX_SESSIONS,
-  type DefaultAlphabet,
   type ESME,
   type ESMEUpdate,
   MAX_PASSWORD_LENGTH,
-  MAX_SESSIONS,
   MAX_SYSTEM_ID_LENGTH,
   updateESME,
 } from "@/queries/smpp";
+import { listUsers, RoleID, roleLabels } from "@/queries/users";
 
 const PRINTABLE = /^[\x20-\x7E]*$/;
-
-const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
 // systemIDError is why s is not a system ID: 1 to 15 printable ASCII characters.
 export const systemIDError = (s: string): string | undefined =>
@@ -87,11 +79,6 @@ const splitNetworks = (s: string): string[] =>
     .map((a) => a.trim())
     .filter(Boolean);
 
-export const alphabetLabels: Record<DefaultAlphabet, string> = {
-  gsm7: "GSM 7-bit",
-  latin1: "Latin-1",
-};
-
 export default function ESMEDialog({
   esme,
   onCreated,
@@ -104,6 +91,12 @@ export default function ESMEDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  // The users an ESME can belong to; listing them needs the same permission as adding an ESME.
+  const users = useQuery({
+    queryKey: ["users", { page: 1, perPage: 100 }],
+    queryFn: () => listUsers({ page: 1, perPage: 100 }),
+    enabled: esme === undefined,
+  });
   const { showSnackbar } = useSnackbar();
   const [systemID, setSystemID] = useState(esme?.system_id ?? "");
   const [user, setUser] = useState(esme?.user ?? "");
@@ -111,22 +104,10 @@ export default function ESMEDialog({
   const [networks, setNetworks] = useState(
     (esme?.allowed_networks ?? []).join(", "),
   );
-  const [maxSessions, setMaxSessions] = useState(
-    String(esme?.max_sessions ?? DEFAULT_MAX_SESSIONS),
-  );
-  const [forwardSIMAnswers, setForwardSIMAnswers] = useState(
-    esme?.forward_sim_answers ?? false,
-  );
-  const [alphabet, setAlphabet] = useState<DefaultAlphabet>(
-    esme?.default_alphabet ?? "gsm7",
-  );
 
   const params = (): ESMEUpdate => ({
     ...(password !== "" ? { password } : {}),
     allowed_networks: splitNetworks(networks),
-    max_sessions: Number(maxSessions),
-    forward_sim_answers: forwardSIMAnswers,
-    default_alphabet: alphabet,
   });
 
   const mutation = useMutation({
@@ -147,10 +128,6 @@ export default function ESMEDialog({
 
   const systemIDProblem =
     esme || systemID === "" ? undefined : systemIDError(systemID);
-  const userError =
-    esme || user === "" || EMAIL.test(user)
-      ? undefined
-      : "Enter an email address.";
   const passwordProblem = password === "" ? undefined : passwordError(password);
   const networkList = splitNetworks(networks);
   const badNetwork = networkList.find((n) => !isPrefix(n));
@@ -158,18 +135,12 @@ export default function ESMEDialog({
     badNetwork !== undefined
       ? `${badNetwork} is not a network prefix, such as 10.1.0.0/24.`
       : undefined;
-  const sessions = Number(maxSessions);
-  const maxSessionsError =
-    /^\d+$/.test(maxSessions) && sessions >= 1 && sessions <= MAX_SESSIONS
-      ? undefined
-      : `1 to ${MAX_SESSIONS}.`;
 
   const valid =
     (esme !== undefined ||
-      (systemIDError(systemID) === undefined && EMAIL.test(user))) &&
+      (systemIDError(systemID) === undefined && user !== "")) &&
     passwordProblem === undefined &&
-    networksError === undefined &&
-    maxSessionsError === undefined;
+    networksError === undefined;
 
   return (
     <EditDialog
@@ -200,19 +171,34 @@ export default function ESMEDialog({
         autoComplete="off"
       />
       <TextField
+        select
         label="User"
-        type="email"
         value={user}
-        onChange={(e) => setUser(e.target.value.trim())}
-        error={userError !== undefined}
+        onChange={(e) => setUser(e.target.value)}
         helperText={
-          userError ??
-          "The email of the user the ESME's messages are attributed to."
+          users.isError
+            ? "Could not load the users."
+            : "The user the ESME acts as: its messages are attributed to it, and its role decides the binds it may make. Cannot be changed."
         }
+        error={users.isError}
         disabled={esme !== undefined}
         required={!esme}
-        placeholder="ota@example.com"
-      />
+      >
+        {esme ? (
+          <MenuItem value={esme.user}>{esme.user}</MenuItem>
+        ) : (
+          (users.data?.items ?? []).map((u) => (
+            // A Read Only user may not bind.
+            <MenuItem
+              key={u.email}
+              value={u.email}
+              disabled={u.role_id === RoleID.ReadOnly}
+            >
+              {u.email} · {roleLabels[u.role_id]}
+            </MenuItem>
+          ))
+        )}
+      </TextField>
       <PasswordField
         label="Password"
         value={password}
@@ -238,43 +224,6 @@ export default function ESMEDialog({
         }
         placeholder="10.1.0.0/24, 2001:db8::/32"
       />
-      <TextField
-        label="Max sessions"
-        value={maxSessions}
-        onChange={(e) => setMaxSessions(e.target.value.trim())}
-        error={maxSessionsError !== undefined}
-        helperText={
-          maxSessionsError ??
-          `The sessions the ESME may bind at once, 1 to ${MAX_SESSIONS}.`
-        }
-        inputMode="numeric"
-        required
-      />
-      <TextField
-        select
-        label="Default alphabet"
-        value={alphabet}
-        onChange={(e) => setAlphabet(e.target.value as DefaultAlphabet)}
-        helperText="What data_coding 0 means in the ESME's short messages."
-      >
-        <MenuItem value="gsm7">{alphabetLabels.gsm7}</MenuItem>
-        <MenuItem value="latin1">{alphabetLabels.latin1}</MenuItem>
-      </TextField>
-      <Box>
-        <FormControlLabel
-          control={
-            <Switch
-              checked={forwardSIMAnswers}
-              onChange={(e) => setForwardSIMAnswers(e.target.checked)}
-            />
-          }
-          label="Forward SIM answers"
-        />
-        <FormHelperText sx={{ mt: 0 }}>
-          Forward the SIM&apos;s answer to (U)SIM data download messages (PID
-          0x7F) even when registered_delivery does not ask for it.
-        </FormHelperText>
-      </Box>
     </EditDialog>
   );
 }

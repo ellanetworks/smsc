@@ -43,7 +43,7 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter i
 - **Validity period.** Relative, absolute and enhanced formats, including single-shot messages.
 - **Status reports.** On the delivery, failure, expiry or replacement of a message whose sender set TP-Status-Report-Request.
 - **Reject duplicates.** TP-Reject-Duplicates.
-- **Replace short message.** Replace types 1 to 7 of TP-Protocol-Identifier, from phones and from the API.
+- **Replace short message.** Replace types 1 to 7 of TP-Protocol-Identifier, from phones, the API and SMPP. A message from the API or SMPP replaces only one of the same user or ESME.
 - **Binary messages from the API.** TP-Protocol-Identifier, TP-Data-Coding-Scheme, TP-User-Data-Header and TP-User-Data delivered unchanged, including (U)SIM data download.
 - **SMS-DELIVER-REPORT.** Kept from each delivery: in the SM-RP-UI of a successful MT-Forward-Short-Message answer, and in the SM-Diagnostic-Info of an SM Delivery Failure.
 - **(U)SIM data download error.** A message whose SMS-DELIVER-REPORT has the TP-Failure-Cause `usim_data_download_error` fails without another attempt.

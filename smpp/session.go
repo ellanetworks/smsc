@@ -298,11 +298,9 @@ type Session struct {
 	kick   chan struct{}
 
 	state     atomic.Int32
-	unbinding atomic.Bool
 	enquiring atomic.Bool
 	lastRecv  atomic.Int64
 	outbound  chan struct{}
-	handlers  sync.WaitGroup
 	wmu       sync.Mutex
 
 	mu       sync.Mutex
@@ -310,7 +308,11 @@ type Session struct {
 	closed   bool
 	pending  map[uint32]*pending
 	seq      uint32
+	// unbinding is set, under mu, once an unbind is sent or received: no new request is sent or handled after it.
+	unbinding bool
+	// inflight counts the requests being handled, and idle, when set, is closed once it drops to zero.
 	inflight int
+	idle     chan struct{}
 	// Set at bind.
 	systemID    string
 	account     string
@@ -464,6 +466,11 @@ func (s *Session) write(b []byte) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 
+	return s.writeLocked(b)
+}
+
+// writeLocked is write with s.wmu held.
+func (s *Session) writeLocked(b []byte) error {
 	if t := s.cfg.ResponseTimeout; t > 0 {
 		_ = s.conn.SetWriteDeadline(time.Now().Add(t))
 	}
@@ -567,6 +574,14 @@ func (s *Session) readLoop() {
 // arrive in any order (§2.5.2). One that matches no request, or whose command_id is not the request's response, is
 // discarded.
 func (s *Session) handleResponse(h Header, body []byte) {
+	if !h.ID.Defined() {
+		// An undefined command_id is answered generic_nack ESME_RINVCMDID (§3.3), response or not.
+		s.log.Debug("undefined SMPP command", slog.String("command", h.ID.String()))
+		s.nack(h.Sequence, StatusInvCmdID)
+
+		return
+	}
+
 	s.mu.Lock()
 	p := s.pending[h.Sequence]
 
@@ -616,7 +631,10 @@ func (s *Session) bound(id CommandID, r *BindResp) {
 	}
 	s.mu.Unlock()
 
-	s.state.Store(int32(boundState(id)))
+	if !s.state.CompareAndSwap(int32(StateOpen), int32(boundState(id))) {
+		return // closed meanwhile
+	}
+
 	s.poke()
 
 	if s.hooks.bound != nil {
@@ -640,6 +658,13 @@ func (s *Session) handleRequest(h Header, body []byte) {
 	peer := roleESME
 	if s.role == roleESME {
 		peer = roleSMSC
+	}
+
+	if h.ID == CmdAlertNotification {
+		// alert_notification has "no SMPP response" (§2.8, §4.12).
+		s.log.Debug("discarding SMPP alert_notification")
+
+		return
 	}
 
 	if !h.ID.Supported() || !peer.issues(h.ID) {
@@ -728,7 +753,10 @@ func (s *Session) handleBind(h Header, b *Bind) {
 	s.boundAt = time.Now()
 	s.mu.Unlock()
 
-	s.state.Store(int32(boundState(h.ID)))
+	if !s.state.CompareAndSwap(int32(StateOpen), int32(boundState(h.ID))) {
+		return // closed meanwhile
+	}
+
 	s.poke()
 	s.log.Info("SMPP session bound", slog.String("system_id", b.SystemID), slog.String("state", s.State().String()))
 
@@ -738,15 +766,18 @@ func (s *Session) handleBind(h Header, b *Bind) {
 }
 
 // serve passes a request to the Handler, within the inbound window, and writes its response.
+// The in-flight count is checked and incremented under s.mu together with unbinding, so that an unbind waits for
+// every request accepted before it.
 func (s *Session) serve(h Header, p PDU) {
-	if s.unbinding.Load() {
+	s.mu.Lock()
+	switch {
+	case s.unbinding:
+		s.mu.Unlock()
+
 		_ = s.respond(h, nil, StatusInvBndSts)
 
 		return
-	}
-
-	s.mu.Lock()
-	if s.inflight >= s.cfg.InboundWindow {
+	case s.inflight >= s.cfg.InboundWindow:
 		s.mu.Unlock()
 
 		_ = s.respond(h, nil, StatusThrottled)
@@ -755,15 +786,18 @@ func (s *Session) serve(h Header, p PDU) {
 	}
 
 	s.inflight++
-	s.handlers.Add(1)
 	s.mu.Unlock()
 
 	go func() {
 		defer func() {
 			s.mu.Lock()
 			s.inflight--
+
+			if s.inflight == 0 && s.idle != nil {
+				close(s.idle)
+				s.idle = nil
+			}
 			s.mu.Unlock()
-			s.handlers.Done()
 		}()
 
 		r := s.call(h, p)
@@ -794,12 +828,19 @@ func (s *Session) call(h Header, p PDU) (r Response) {
 
 // waitHandlers waits for the requests being handled to be answered, at most until ctx ends.
 func (s *Session) waitHandlers(ctx context.Context) {
-	idle := make(chan struct{})
+	s.mu.Lock()
+	if s.inflight == 0 {
+		s.mu.Unlock()
 
-	go func() {
-		s.handlers.Wait()
-		close(idle)
-	}()
+		return
+	}
+
+	if s.idle == nil {
+		s.idle = make(chan struct{})
+	}
+
+	idle := s.idle
+	s.mu.Unlock()
 
 	select {
 	case <-idle:
@@ -810,7 +851,7 @@ func (s *Session) waitHandlers(ctx context.Context) {
 // peerUnbind answers the peer's unbind: no new request is handled, the ones in progress are answered, then
 // unbind_resp, and the session closes once the peer has closed the connection or after unbindLinger.
 func (s *Session) peerUnbind(h Header) {
-	s.unbinding.Store(true)
+	s.startUnbind()
 
 	ctx, cancel := context.WithTimeout(s.ctx, s.responseTimeout())
 	s.waitHandlers(ctx)
@@ -906,7 +947,7 @@ func (s *Session) check(now time.Time) (time.Duration, bool) {
 		if t := s.cfg.EnquireLinkInterval; t > 0 {
 			d := t - idle
 			if d <= 0 {
-				if !s.unbinding.Load() && s.enquiring.CompareAndSwap(false, true) {
+				if !s.isUnbinding() && s.enquiring.CompareAndSwap(false, true) {
 					go s.keepAlive()
 				}
 
@@ -939,8 +980,8 @@ func (s *Session) register(id CommandID) (uint32, *pending, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed {
-		return 0, nil, s.closedError()
+	if err := s.refuse(id); err != nil {
+		return 0, nil, err
 	}
 
 	for {
@@ -960,10 +1001,72 @@ func (s *Session) register(id CommandID) (uint32, *pending, error) {
 	return s.seq, p, nil
 }
 
+// send registers the request p and writes it. The writer's lock is held from the registration to the write, so that
+// a request registered before an unbind is also written before it.
+func (s *Session) send(id CommandID, p PDU) (uint32, *pending, error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+
+	seq, pd, err := s.register(id)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	b, err := Encode(p, StatusOK, seq)
+	if err != nil {
+		s.unregister(seq)
+
+		return 0, nil, err
+	}
+
+	if err := s.writeLocked(b); err != nil {
+		s.unregister(seq)
+
+		return 0, nil, fmt.Errorf("%w: %w", ErrClosed, err)
+	}
+
+	return seq, pd, nil
+}
+
 func (s *Session) unregister(seq uint32) {
 	s.mu.Lock()
 	delete(s.pending, seq)
 	s.mu.Unlock()
+}
+
+// refuse is the error for sending the request id now, or nil: the session is closed, the role does not issue it or
+// the state does not allow it (Table 2-1), or an unbind has started. It runs again in register, under the lock that
+// sets unbinding, so that nothing but the unbind itself is sent after the unbind (§4.2). s.mu is held.
+func (s *Session) refuse(id CommandID) error {
+	st := s.State()
+
+	switch {
+	case s.closed || st == StateClosed:
+		return s.closedError()
+	case !s.role.issues(id) || !allowedIn(id, st) || s.unbinding && id != CmdUnbind:
+		return &StateError{Command: id, State: st}
+	}
+
+	return nil
+}
+
+// startUnbind sets unbinding, and reports whether it was not set already.
+func (s *Session) startUnbind() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	first := !s.unbinding
+	s.unbinding = true
+
+	return first
+}
+
+// isUnbinding reports whether an unbind has been sent or received: the session takes no new request and closes soon.
+func (s *Session) isUnbinding() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.unbinding
 }
 
 // closedError is ErrClosed with the reason; s.mu is held.
@@ -996,29 +1099,28 @@ func hasOptions(p PDU) bool {
 
 // Send sends the request p and waits for its response, within the outbound window and the response_timer. A
 // response with a command_status other than ESME_ROK, or a generic_nack, is returned with a *StatusError. A request
-// that the state or the role does not allow returns a *StateError without being sent.
+// that the state or the role does not allow returns a *StateError without being sent. bind and unbind change the
+// session's state, so they are not sent through Send but by the Client and by Unbind: Send returns a *StateError
+// for them.
 func (s *Session) Send(ctx context.Context, p PDU) (Header, PDU, error) {
+	if id := p.CommandID(); id.IsBind() || id == CmdUnbind {
+		return Header{}, nil, &StateError{Command: id, State: s.State()}
+	}
+
 	return s.request(ctx, p, true)
 }
 
 func (s *Session) request(ctx context.Context, p PDU, windowed bool) (Header, PDU, error) {
 	id := p.CommandID()
 
-	if st := s.State(); !s.role.issues(id) || !allowedIn(id, st) || s.unbinding.Load() && id != CmdUnbind {
-		if st == StateClosed {
-			s.mu.Lock()
-			err := s.closedError()
-			s.mu.Unlock()
-
-			return Header{}, nil, err
-		}
-
-		return Header{}, nil, &StateError{Command: id, State: st}
-	}
-
 	s.mu.Lock()
+	err := s.refuse(id)
 	tlv := s.peerTLV
 	s.mu.Unlock()
+
+	if err != nil {
+		return Header{}, nil, err
+	}
 
 	if !tlv && hasOptions(p) {
 		return Header{}, nil, ErrNoOptionalParameters
@@ -1038,22 +1140,9 @@ func (s *Session) request(ctx context.Context, p PDU, windowed bool) (Header, PD
 		}
 	}
 
-	seq, pd, err := s.register(id)
+	seq, pd, err := s.send(id, p)
 	if err != nil {
 		return Header{}, nil, err
-	}
-
-	b, err := Encode(p, StatusOK, seq)
-	if err != nil {
-		s.unregister(seq)
-
-		return Header{}, nil, err
-	}
-
-	if err := s.write(b); err != nil {
-		s.unregister(seq)
-
-		return Header{}, nil, fmt.Errorf("%w: %w", ErrClosed, err)
 	}
 
 	var timeout <-chan time.Time
@@ -1125,7 +1214,7 @@ func (s *Session) Unbind(ctx context.Context) error {
 		return &StateError{Command: CmdUnbind, State: st}
 	}
 
-	if !s.unbinding.CompareAndSwap(false, true) {
+	if !s.startUnbind() {
 		select {
 		case <-s.done:
 			return nil

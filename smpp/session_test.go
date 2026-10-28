@@ -265,6 +265,10 @@ func TestStateErrors(t *testing.T) {
 		{"deliver_sm to an SMSC", roleSMSC, CmdBindTransceiver, deliver, nil, CmdGenericNack, StatusInvCmdID, 2},
 		{"data_sm, unsupported", roleSMSC, CmdBindTransceiver, nil, header(CmdDataSM, 9, 0, 0), CmdGenericNack, StatusInvCmdID, 9},
 		{"reserved command_id", roleSMSC, CmdBindTransceiver, nil, header(0x77, 3), CmdGenericNack, StatusInvCmdID, 3},
+		{
+			"undefined response command_id (§3.3)", roleSMSC, CmdBindTransceiver, nil, header(0x80000077, 6), CmdGenericNack,
+			StatusInvCmdID, 6,
+		},
 		{"outbind to an SMSC", roleSMSC, 0, nil, header(CmdOutbind, 3, 0, 0), CmdGenericNack, StatusInvCmdID, 3},
 		{
 			"enquire_link with a body (§4.3)", roleSMSC, CmdBindTransceiver, nil, header(CmdEnquireLink, 5, 0), CmdGenericNack,
@@ -911,4 +915,180 @@ func FuzzSession(f *testing.F) {
 			t.Fatal("the session did not close")
 		}
 	})
+}
+
+// TestAlertNotificationUnanswered checks that alert_notification gets no response (§2.8), not generic_nack.
+func TestAlertNotificationUnanswered(t *testing.T) {
+	_, p := pipe(t, roleESME, SessionConfig{}, nil, hooks{})
+
+	alert := binary.BigEndian.AppendUint32(nil, HeaderLength+6)
+	alert = binary.BigEndian.AppendUint32(alert, uint32(CmdAlertNotification))
+	alert = binary.BigEndian.AppendUint32(alert, 0)
+	alert = binary.BigEndian.AppendUint32(alert, 7)
+	alert = append(alert, 0, 0, 0, 0, 0, 0)
+
+	p.sendRaw(alert)
+	p.send(&EnquireLink{}, StatusOK, 8)
+
+	// The next PDU answers the enquire_link: nothing answered the alert_notification.
+	p.expect(CmdEnquireLinkResp, StatusInvBndSts, 8)
+}
+
+// TestSendRefusesBindAndUnbind checks that Send does not send bind or unbind, which would change the state behind
+// the session's back: an unbind_resp would leave the session CLOSED with its connection open.
+func TestSendRefusesBindAndUnbind(t *testing.T) {
+	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{EnquireLinkInterval: -1}, submitOK)
+
+	var se *StateError
+	if _, _, err := s.Send(context.Background(), &Unbind{}); !errors.As(err, &se) || se.Command != CmdUnbind {
+		t.Fatalf("Send(unbind) = %v", err)
+	}
+
+	esme, _ := pipe(t, roleESME, SessionConfig{}, nil, hooks{})
+	if _, _, err := esme.Send(context.Background(), &Bind{ID: CmdBindTransceiver, SystemID: "e"}); !errors.As(err, &se) ||
+		se.Command != CmdBindTransceiver {
+		t.Fatalf("Send(bind) = %v", err)
+	}
+
+	// Nothing was sent: the next PDU is the enquire_link's response, and the session is still bound.
+	go func() { _ = s.EnquireLink(context.Background()) }()
+
+	h, _ := p.read()
+	if h.ID != CmdEnquireLink {
+		t.Fatalf("got %s", h.ID)
+	}
+
+	p.send(&EnquireLinkResp{}, StatusOK, h.Sequence)
+
+	if st := s.State(); st != StateBoundTRX {
+		t.Fatalf("state %s", st)
+	}
+}
+
+// TestNoRequestAfterUnbind checks that a deliver_sm waiting for the outbound window is not sent after unbind
+// (Table 2-1, §4.2).
+func TestNoRequestAfterUnbind(t *testing.T) {
+	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{OutboundWindow: 1, EnquireLinkInterval: -1}, submitOK)
+
+	first := make(chan error, 1)
+	go func() { first <- s.DeliverSM(context.Background(), &DeliverSM{Message: message()}) }()
+
+	h1, _ := p.read()
+	if h1.ID != CmdDeliverSM {
+		t.Fatalf("got %s", h1.ID)
+	}
+
+	second := make(chan error, 1)
+	go func() { second <- s.DeliverSM(context.Background(), &DeliverSM{Message: message()}) }()
+
+	time.Sleep(50 * time.Millisecond) // the second waits for the window
+
+	unbound := make(chan error, 1)
+	go func() { unbound <- s.Unbind(context.Background()) }()
+
+	h2, _ := p.read()
+	if h2.ID != CmdUnbind {
+		t.Fatalf("got %s, want unbind", h2.ID)
+	}
+
+	// The window opens after unbind: the second deliver_sm is refused, not sent.
+	p.send(&DeliverSMResp{}, StatusOK, h1.Sequence)
+
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+
+	var se *StateError
+	if err := <-second; !errors.As(err, &se) {
+		t.Fatalf("second deliver_sm: %v", err)
+	}
+
+	p.send(&UnbindResp{}, StatusOK, h2.Sequence)
+
+	if err := <-unbound; err != nil {
+		t.Fatal(err)
+	}
+
+	_ = p.c.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	for {
+		h, _, err := ReadPDU(p.r)
+		if err != nil {
+			break
+		}
+
+		t.Errorf("%s sent after unbind", h.ID)
+	}
+}
+
+// TestUnbindRacingSubmit runs a local unbind against a submit_sm arriving at the same time: the submit_sm gets one
+// response (§2.8), and a submit_sm accepted for handling is answered before the unbind.
+func TestUnbindRacingSubmit(t *testing.T) {
+	h := HandlerFunc(func(context.Context, *Session, Request) Response {
+		time.Sleep(time.Millisecond)
+
+		return Response{PDU: &SubmitSMResp{MessageID: "m1"}}
+	})
+
+	for i := range 50 {
+		s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{EnquireLinkInterval: -1}, h)
+
+		submit, err := Encode(&SubmitSM{Message: message()}, StatusOK, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		written := make(chan error, 1)
+
+		go func() {
+			_, err := p.c.Write(submit)
+			written <- err
+		}()
+
+		unbound := make(chan error, 1)
+		go func() { unbound <- s.Unbind(context.Background()) }()
+
+		var (
+			unbind      bool
+			submitResps int
+		)
+
+		_ = p.c.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+		for {
+			hd, _, err := ReadPDU(p.r)
+			if err != nil {
+				break
+			}
+
+			switch hd.ID {
+			case CmdSubmitSMResp:
+				submitResps++
+
+				if hd.Status == StatusOK && unbind {
+					t.Fatalf("run %d: submit_sm_resp ESME_ROK after unbind", i)
+				}
+			case CmdUnbind:
+				unbind = true
+
+				// net.Pipe has no buffer: answer on another goroutine, after the submit_sm, while this one reads.
+				go func() {
+					if err := <-written; err != nil {
+						return
+					}
+
+					resp, _ := Encode(&UnbindResp{}, StatusOK, hd.Sequence)
+					_, _ = p.c.Write(resp)
+				}()
+			}
+		}
+
+		if err := <-unbound; err != nil {
+			t.Fatalf("run %d: Unbind = %v", i, err)
+		}
+
+		if submitResps != 1 {
+			t.Fatalf("run %d: %d responses to the submit_sm", i, submitResps)
+		}
+	}
 }

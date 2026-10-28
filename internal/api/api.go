@@ -34,13 +34,15 @@ type ESMEStore interface {
 	DeleteESME(ctx context.Context, id int64) error
 	GetESMEBySystemID(ctx context.Context, systemID string) (db.ESME, error)
 	ListESMEs(ctx context.Context) ([]db.ESME, error)
+	ListESMEsOfUser(ctx context.Context, userID int64) ([]db.ESME, error)
 }
 
 // SMPP is the SMPP listener: the sessions of the ESMEs, which a change to an ESME or its user closes, so that it binds
 // again under the checks of the change.
 type SMPP interface {
 	CloseESME(esmeID int64)
-	CloseUser(userID int64)
+	// CloseUser closes the sessions of the ESMEs that the database has for a user.
+	CloseUser(ctx context.Context, userID int64) error
 	Sessions(esmeID int64) []SMPPSession
 }
 
@@ -54,9 +56,9 @@ type SMPPSession struct {
 // noSMPP is the SMPP of an SMSC without an SMPP listener.
 type noSMPP struct{}
 
-func (noSMPP) CloseESME(int64)              {}
-func (noSMPP) CloseUser(int64)              {}
-func (noSMPP) Sessions(int64) []SMPPSession { return nil }
+func (noSMPP) CloseESME(int64)                        {}
+func (noSMPP) CloseUser(context.Context, int64) error { return nil }
+func (noSMPP) Sessions(int64) []SMPPSession           { return nil }
 
 type Diameter interface {
 	Identity() diameter.Identity

@@ -15,10 +15,7 @@ import {
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import ESMEDialog, {
-  alphabetLabels,
-  ESMEPasswordDialog,
-} from "@/components/ESMEDialog";
+import ESMEDialog, { ESMEPasswordDialog } from "@/components/ESMEDialog";
 import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import { useAuth } from "@/contexts/AuthContext";
@@ -29,6 +26,7 @@ import {
   deleteESME,
   type ESME,
   listESMEs,
+  MAX_SESSIONS,
 } from "@/queries/smpp";
 import { formatTimestamp } from "@/utils/dates";
 import { GRID_SX } from "@/utils/layout";
@@ -75,27 +73,6 @@ const columns = (
       ),
   },
   {
-    field: "max_sessions",
-    headerName: "Max Sessions",
-    flex: 0.4,
-    minWidth: 110,
-  },
-  {
-    field: "forward_sim_answers",
-    headerName: "Forward SIM Answers",
-    flex: 0.5,
-    minWidth: 150,
-    valueGetter: (_value, row) => (row.forward_sim_answers ? "yes" : "no"),
-  },
-  {
-    field: "default_alphabet",
-    headerName: "Default Alphabet",
-    flex: 0.5,
-    minWidth: 130,
-    valueGetter: (_value, row) =>
-      alphabetLabels[row.default_alphabet] ?? row.default_alphabet,
-  },
-  {
     field: "sessions",
     headerName: "Sessions",
     flex: 1.2,
@@ -105,7 +82,9 @@ const columns = (
         "None"
       ) : (
         <Stack>
-          <span>{row.sessions.length} bound</span>
+          <span>
+            {row.sessions.length} of {MAX_SESSIONS} bound
+          </span>
           {row.sessions.map((s) => (
             <Tooltip
               key={`${s.remote_address}|${s.bound_at}|${s.bind_type}`}

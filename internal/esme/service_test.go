@@ -10,6 +10,7 @@ import (
 
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/ratelimit"
 	"github.com/ellanetworks/smsc/smpp"
 )
 
@@ -120,6 +121,43 @@ func TestBindAccountFailures(t *testing.T) {
 	}
 }
 
+// TestBindFailuresOutsideTheNetworks checks that the wrong passwords from outside an account's networks neither count
+// toward its lockout nor are refused by it, and that unknown system_ids, counted with them, cannot fill the account
+// limiter (SRV-M1).
+func TestBindFailuresOutsideTheNetworks(t *testing.T) {
+	env := newTestEnv(t, nil)
+	ctx := context.Background()
+
+	outside := func(i int) string {
+		return netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, 1, byte(i / 256), byte(i % 256)}), 4000).String()
+	}
+
+	for i := range api.AccountFailureLimit {
+		env.service.Authenticate(ctx, bindRequest(smpp.CmdBindTransceiver, "ota", "wrong", outside(i)))
+	}
+
+	if out := env.service.Authenticate(ctx, bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
+		"127.0.0.1:4000")); out.Status != smpp.StatusOK {
+		t.Fatalf("bind after %d wrong passwords from outside = %s, want ESME_ROK", api.AccountFailureLimit, out.Status)
+	}
+
+	// The outsiders' limit refuses outsiders only.
+	if out := env.service.Authenticate(ctx, bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
+		outside(1000))); out.Status != smpp.StatusBindFail {
+		t.Fatalf("bind from outside = %s, want ESME_RBINDFAIL", out.Status)
+	}
+
+	// A full limiter of unknown system_ids does not refuse a known account.
+	for i := range ratelimit.MaxKeys {
+		env.service.outsiders.Allow("unknown" + strconv.Itoa(i))
+	}
+
+	if out := env.service.Authenticate(ctx, bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
+		"127.0.0.2:4000")); out.Status != smpp.StatusOK {
+		t.Fatalf("bind with a full limiter of unknown system_ids = %s, want ESME_ROK", out.Status)
+	}
+}
+
 // fakeAccounts is the server's registry.
 type fakeAccounts struct{ closed []string }
 
@@ -150,7 +188,9 @@ func TestRevocation(t *testing.T) {
 		t.Fatal("closing another ESME closed the session")
 	}
 
-	env.service.CloseUser(env.user.ID)
+	if err := env.service.CloseUser(context.Background(), env.user.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	if !conn.closed.Load() || len(accounts.closed) != 2 || accounts.closed[1] != strconv.FormatInt(env.esme.ID, 10) {
 		t.Fatalf("CloseUser: session closed %t, accounts closed %v", conn.closed.Load(), accounts.closed)
@@ -191,12 +231,8 @@ func TestSubmitStoresSMPP(t *testing.T) {
 		{name: "user acknowledgement", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.RegisteredDelivery = 0x08 }), simAnswer: true},
 		{name: "both acknowledgements and intermediate", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.RegisteredDelivery = 0x1d }), receipt: 1, simAnswer: true},
 		{
-			name: "forward_sim_answers for PID 0x7F", esme: func(e *db.ESME) { e.ForwardSIMAnswers = true },
-			sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.ProtocolID = 0x7f }), simAnswer: true,
-		},
-		{
-			name: "forward_sim_answers for another PID", esme: func(e *db.ESME) { e.ForwardSIMAnswers = true },
-			sm: baseSubmit(0x04, "aa"),
+			name: "PID 0x7F without a user acknowledgement",
+			sm:   with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.ProtocolID = 0x7f }),
 		},
 		{
 			name: "relative validity", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.ValidityPeriod = "000001020000000R" }),
@@ -224,5 +260,29 @@ func TestSubmitStoresSMPP(t *testing.T) {
 				t.Fatalf("request %+v, smpp %+v", r, *r.SMPP)
 			}
 		})
+	}
+}
+
+// TestCloseUserWithoutABind checks that CloseUser finds the ESMEs of a user in the database: a session of an ESME that
+// has not completed a bind, such as one binding while the role changes, is closed through the server's registry
+// (SRV-L7).
+func TestCloseUserWithoutABind(t *testing.T) {
+	env := newTestEnv(t, nil)
+	accounts := &fakeAccounts{}
+	env.service.Accounts = accounts
+
+	if err := env.service.CloseUser(context.Background(), env.user.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := strconv.FormatInt(env.esme.ID, 10); len(accounts.closed) != 1 || accounts.closed[0] != want {
+		t.Fatalf("accounts closed = %v, want [%s]", accounts.closed, want)
+	}
+
+	// Another user has no ESME.
+	accounts.closed = nil
+
+	if err := env.service.CloseUser(context.Background(), env.user.ID+1); err != nil || len(accounts.closed) != 0 {
+		t.Fatalf("CloseUser of another user = %v, closed %v", err, accounts.closed)
 	}
 }

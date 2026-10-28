@@ -2,6 +2,7 @@ package esme
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"strconv"
@@ -193,6 +194,29 @@ func TestReceipt(t *testing.T) {
 	waitResult(t, env, id, db.NotificationReceipt, db.NotificationAcknowledged)
 }
 
+// TestReceiptEchoesTheSourceNPI checks that a receipt goes to the source address as submitted, source_addr_npi
+// included (SMPP 3.4 section 2.11), while the stored originator, which the TPDU takes, is normalised (SRV-L9).
+func TestReceiptEchoesTheSourceNPI(t *testing.T) {
+	env := newTestEnv(t, nil)
+	c := env.run(t)
+	conn := env.bind(1, Receiver, env.esme)
+
+	id := env.stored(t, with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) {
+		m.Source.NPI = 0
+		m.RegisteredDelivery = 0x01
+	}))
+
+	if m, err := env.store.GetMessage(context.Background(), id); err != nil || m.Originator.NumberingPlan != 1 {
+		t.Fatalf("stored originator = %+v, %v; want NPI 1", m.Originator, err)
+	}
+
+	env.complete(t, id, db.StatusDelivered, 0, "", "", c.Now())
+
+	if d := conn.next(t); d.Destination != (smpp.Address{TON: 1, NPI: 0, Addr: "15550001000"}) {
+		t.Fatalf("receipt destination = %+v, want TON 1, NPI 0", d.Destination)
+	}
+}
+
 // waitResult waits until the notification of a type on a message has a result.
 func waitResult(t *testing.T, env *testEnv, messageID int64, typ db.NotificationType, want db.NotificationResult) {
 	t.Helper()
@@ -247,8 +271,8 @@ func TestReceiptStates(t *testing.T) {
 	}
 }
 
-// TestReplacedReceipt checks the DELETED receipt on a message that a replace type message replaces, whose submit
-// date is when it was replaced (SMPP 3.4 Appendix B, Table B-1).
+// TestReplacedReceipt checks the DELETED receipt on a message that a replace type message replaces: its submit date is
+// when it was submitted (SRV-L10), and the replacing submit wakes the dispatcher (SRV-L3).
 func TestReplacedReceipt(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
@@ -257,12 +281,20 @@ func TestReplacedReceipt(t *testing.T) {
 	sm := with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.ProtocolID, m.RegisteredDelivery = 0x41, 0x01 })
 	first := env.stored(t, sm)
 
+	// The dispatcher idles, with nothing to send.
+	conn.none(t)
+
 	c.advance(5 * time.Minute)
-	env.stored(t, with(sm, func(m *smpp.Message) { m.RegisteredDelivery = 0 }))
-	env.service.NotificationsQueued()
+
+	if _, status := env.service.SubmitSM(context.Background(), env.session(Transceiver),
+		&smpp.SubmitSM{Message: with(sm, func(m *smpp.Message) { m.RegisteredDelivery = 0 })}); status != smpp.StatusOK {
+		t.Fatalf("submit_sm = %s", status)
+	}
+
+	env.service.Submitted()
 
 	want := "id:" + strconv.FormatInt(first, 10) +
-		" sub:001 dlvrd:000 submit date:2610281205 done date:2610281205 stat:DELETED err:002 text:"
+		" sub:001 dlvrd:000 submit date:2610281200 done date:2610281205 stat:DELETED err:002 text:"
 	if d := conn.next(t); string(d.ShortMessage) != want || *d.Options.MessageState != smpp.StateDeleted {
 		t.Fatalf("receipt %q, state %v; want %q", d.ShortMessage, d.Options.MessageState, want)
 	}
@@ -286,10 +318,9 @@ func TestSIMAnswer(t *testing.T) {
 		ud       string
 	}{
 		{
-			name: "pySim with forward_sim_answers",
-			esme: func(e *db.ESME) { e.ForwardSIMAnswers = true },
+			name: "pySim, asking for a user acknowledgement",
 			sm: with(baseSubmit(0x02, "027000 0011aabb"), func(m *smpp.Message) {
-				m.ESMClass, m.ProtocolID = 0x40, 0x7f
+				m.ESMClass, m.ProtocolID, m.RegisteredDelivery = 0x40, 0x7f, 0x08
 			}),
 			outcome: "success", report: ack, status: db.StatusDelivered,
 			esmClass: 0x50, dc: 0x02, pid: 0x7f, ud: "02710003aabbcc",
@@ -333,13 +364,6 @@ func TestSIMAnswer(t *testing.T) {
 			outcome: "success", report: "00 04 02 e834", status: db.StatusDelivered,
 			esmClass: 0x10, dc: 0x00, pid: 0x00, ud: "6869",
 		},
-		{
-			name:    "a report in GSM 7 bit to a latin1 ESME",
-			esme:    func(e *db.ESME) { e.DefaultAlphabet = db.AlphabetLatin1 },
-			sm:      with(baseSubmit(0x04, "68"), func(m *smpp.Message) { m.RegisteredDelivery = 0x08 }),
-			outcome: "success", report: "00 04 02 e834", status: db.StatusDelivered,
-			esmClass: 0x10, dc: 0x08, pid: 0x00, ud: "00680069",
-		},
 	}
 
 	for _, tc := range tests {
@@ -374,6 +398,29 @@ func TestSIMAnswer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestNoSIMAnswerUnasked checks that a (U)SIM data download whose registered_delivery bits 3-2 ask for no SME
+// acknowledgement gets no SIM answer (SMPP 3.4 sections 2.11 and 5.2.17).
+func TestNoSIMAnswerUnasked(t *testing.T) {
+	env := newTestEnv(t, nil)
+	c := env.run(t)
+	conn := env.bind(1, Transceiver, env.esme)
+
+	id := env.stored(t, with(baseSubmit(0x02, "027000 0011aabb"), func(m *smpp.Message) {
+		m.ESMClass, m.ProtocolID, m.RegisteredDelivery = 0x40, 0x7f, 0x01
+	}))
+	env.complete(t, id, db.StatusDelivered, 0, "success", "00 07 7f f6 07 02710003aabbcc", c.Now())
+
+	if d := conn.next(t); d.ESMClass != esmTypeReceipt {
+		t.Fatalf("esm_class %#x, want only the receipt", d.ESMClass)
+	}
+
+	conn.none(t)
+
+	if r := notificationResult(t, env, id, db.NotificationSIMAnswer); r != "missing" {
+		t.Fatalf("SIM answer %q, want none", r)
 	}
 }
 
@@ -498,8 +545,7 @@ func TestRouting(t *testing.T) {
 	c := env.run(t)
 
 	otherID, err := env.store.CreateESME(context.Background(), db.ESME{
-		SystemID: "other", UserID: env.user.ID, PasswordHash: env.esme.PasswordHash, MaxSessions: 1,
-		DefaultAlphabet: db.AlphabetGSM7, CreatedAt: testNow,
+		SystemID: "other", UserID: env.user.ID, PasswordHash: env.esme.PasswordHash, CreatedAt: testNow,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -519,22 +565,32 @@ func TestRouting(t *testing.T) {
 	waitResult(t, env, id, db.NotificationReceipt, db.NotificationAcknowledged)
 }
 
-// TestLostSession checks that a deliver_sm that fails because its session closed is sent again on the next bind.
+// TestLostSession checks that a deliver_sm that fails because its session ended is no failed attempt: it goes, with no
+// backoff, to the next session, however many ended before (SRV-L1).
 func TestLostSession(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
 
-	conn := env.bind(1, Receiver, env.esme)
-	conn.answer = func(*smpp.DeliverSM) (smpp.CommandStatus, error) { return 0, smpp.ErrClosed }
-
 	id := env.stored(t, with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.RegisteredDelivery = 0x01 }))
-	env.complete(t, id, db.StatusDelivered, 0, "", "", c.Now())
-	conn.next(t)
-	env.service.detach(&Session{ID: 1, BindType: Receiver})
 
-	c.advance(time.Minute)
+	for i := range 4 {
+		conn := env.bind(uint64(i+1), Receiver, env.esme)
+		conn.answer = func(*smpp.DeliverSM) (smpp.CommandStatus, error) { return 0, smpp.ErrClosed }
 
-	again := env.bind(2, Receiver, env.esme)
+		if i == 0 {
+			env.complete(t, id, db.StatusDelivered, 0, "", "", c.Now())
+		} else {
+			env.service.NotificationsQueued()
+		}
+
+		conn.next(t)
+		// The session takes no other deliver_sm, before the server unregisters it.
+		env.service.NotificationsQueued()
+		conn.none(t)
+		env.service.detach(&Session{ID: uint64(i + 1), BindType: Receiver})
+	}
+
+	again := env.bind(9, Receiver, env.esme)
 	again.next(t)
 	waitResult(t, env, id, db.NotificationReceipt, db.NotificationAcknowledged)
 }
@@ -549,12 +605,23 @@ func TestRetryDelay(t *testing.T) {
 	}
 }
 
-// notificationResult reads the result of the notification of a type on a message, "" while it is open.
+// notificationResult reads the result of the notification of a type on a message, "" while it is open, from the
+// database file.
 func notificationResult(t *testing.T, env *testEnv, messageID int64, typ db.NotificationType) db.NotificationResult {
 	t.Helper()
 
-	r, err := env.store.NotificationResult(context.Background(), messageID, typ)
-	if errors.Is(err, db.ErrNotFound) {
+	conn, err := sql.Open("sqlite3", "file:"+env.path+"?mode=ro&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	var r sql.Null[db.NotificationResult]
+
+	err = conn.QueryRowContext(context.Background(), `SELECT result FROM smpp_notifications WHERE message_id = ? AND type = ?`,
+		messageID, typ).Scan(&r)
+	if errors.Is(err, sql.ErrNoRows) {
 		return "missing"
 	}
 
@@ -562,5 +629,5 @@ func notificationResult(t *testing.T, env *testEnv, messageID int64, typ db.Noti
 		t.Fatal(err)
 	}
 
-	return r
+	return r.V
 }

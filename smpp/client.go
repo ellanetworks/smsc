@@ -62,6 +62,7 @@ type ClientConfig struct {
 	// Handler handles deliver_sm. When nil, each one is acknowledged ESME_ROK and dropped.
 	Handler Handler
 	// MinBackoff and MaxBackoff bound the wait before connecting again, doubled after each failure.
+	// The backoff starts again from MinBackoff after a session that stayed bound for MaxBackoff.
 	MinBackoff, MaxBackoff time.Duration
 	// OnStateChange, when set, is called with each new state, in order.
 	OnStateChange func(ClientState)
@@ -79,12 +80,13 @@ type Client struct {
 	done   chan struct{}
 	start  sync.Once
 
-	mu      sync.Mutex
-	closing bool
-	state   ClientState
-	session *Session
-	bound   chan struct{}
-	notify  sync.Mutex
+	mu sync.Mutex
+	// closeCtx is the context of Close, which bounds the unbind of the bound session.
+	closeCtx context.Context
+	state    ClientState
+	session  *Session
+	bound    chan struct{}
+	notify   sync.Mutex
 }
 
 // NewClient checks cfg and returns a client, which connects once started.
@@ -199,14 +201,10 @@ func (c *Client) Close(ctx context.Context) error {
 		close(c.done)
 	})
 
+	// run unbinds the bound session, also one that binds while Close runs.
 	c.mu.Lock()
-	c.closing = true
-	s := c.session
+	c.closeCtx = ctx
 	c.mu.Unlock()
-
-	if s != nil {
-		_ = s.Unbind(ctx)
-	}
 
 	c.cancel()
 
@@ -263,8 +261,6 @@ func (c *Client) run() {
 
 		s, err := c.connect()
 		if err == nil {
-			failures = 0
-
 			c.mu.Lock()
 			c.session = s
 			close(c.bound)
@@ -280,16 +276,25 @@ func (c *Client) run() {
 			case <-s.Done():
 				err = s.Err()
 			case <-c.ctx.Done():
+				c.mu.Lock()
+				ctx := c.closeCtx
+				c.mu.Unlock()
+
+				_ = s.Unbind(ctx)
 				_ = s.Close()
 			}
 
 			c.mu.Lock()
 			c.session = nil
-			closing := c.closing
 			c.mu.Unlock()
 
-			if closing || c.ctx.Err() != nil {
+			if c.ctx.Err() != nil {
 				return
+			}
+
+			// A session that binds and soon fails counts as a failure, so that the backoff grows.
+			if time.Since(s.Info().BoundAt) >= c.cfg.MaxBackoff {
+				failures = 0
 			}
 		}
 
@@ -355,8 +360,13 @@ func (c *Client) connect() (*Session, error) {
 	s := newSession(conn, roleESME, c.cfg.Session, c.cfg.Handler, hooks{})
 	s.start()
 
+	// A bind under way waits for its response even after Close, so that a session the SMSC has bound is unbound
+	// (§4.2) rather than dropped.
+	bctx, bcancel := context.WithTimeout(context.WithoutCancel(c.ctx), timeout)
+	defer bcancel()
+
 	b := c.cfg.Bind
-	if _, err := s.bind(ctx, &b); err != nil {
+	if _, err := s.bind(bctx, &b); err != nil {
 		_ = s.Close()
 
 		var se *StatusError

@@ -22,7 +22,7 @@ Give each application its own Submitter user: it can send messages, and read onl
 
 An ESME, such as an OTA platform, binds to the [SMPP listener](../reference/smpp.md) with a `system_id` and a password. SMPP 3.4 limits that password to 8 characters, so Ella SMSC adds other checks:
 
-- Each ESME acts as a user, whose role decides whether it may submit or receive. Give each ESME a dedicated Submitter user.
+- Each ESME acts as a user, whose role decides whether it may submit or receive.
 - An ESME binds only from the networks in its allow-list. An empty list allows no address.
 - Passwords are stored as bcrypt hashes. A password the SMSC generates has 8 random letters and digits.
 - Binds are limited from each address, and wrong passwords for each ESME. Every refused bind gets the same answer, so a client cannot tell which check failed.
