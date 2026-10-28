@@ -16,13 +16,18 @@ var ErrUnsupportedAddress = errors.New("unsupported address type")
 type Address struct {
 	TypeOfNumber  uint8
 	NumberingPlan uint8
-	Digits        string
+	// Digits holds the characters of the address, not digits, when TypeOfNumber is TypeOfNumberAlphanumeric.
+	Digits string
 }
 
 const bcdDigits = "0123456789*#abc"
 
 // maxAddressDigits is the most digits of an address field (TS 23.040 clause 9.1.2.5).
 const maxAddressDigits = 20
+
+// maxAlphanumericChars is the most characters of an alphanumeric address: the 12-octet address field leaves 10
+// Address-Value octets (TS 23.040 clause 9.1.2.5).
+const maxAlphanumericChars = 11
 
 func decodeAddress(b []byte) (Address, int, error) {
 	if len(b) < 2 {
@@ -33,7 +38,7 @@ func decodeAddress(b []byte) (Address, int, error) {
 	toa := b[1]
 	valueOctets := (length + 1) / 2
 
-	if (toa>>4)&0x7 != TypeOfNumberAlphanumeric && length > maxAddressDigits {
+	if length > maxAddressDigits {
 		return Address{}, 0, fmt.Errorf("address: %w: %d digits exceeds %d", ErrUnsupportedAddress, length, maxAddressDigits)
 	}
 
@@ -47,7 +52,8 @@ func decodeAddress(b []byte) (Address, int, error) {
 	}
 
 	if addr.TypeOfNumber == TypeOfNumberAlphanumeric {
-		return Address{}, 0, fmt.Errorf("address: %w: alphanumeric", ErrUnsupportedAddress)
+		addr.Digits = decodeAlphanumeric(b[2:2+valueOctets], length)
+		return addr, 2 + valueOctets, nil
 	}
 
 	digits := make([]byte, 0, length)
@@ -69,7 +75,7 @@ func decodeAddress(b []byte) (Address, int, error) {
 // Encode returns the address field of TS 23.040 clause 9.1.2.5.
 func (a Address) Encode() ([]byte, error) {
 	if a.TypeOfNumber == TypeOfNumberAlphanumeric {
-		return nil, fmt.Errorf("address: %w: alphanumeric", ErrUnsupportedAddress)
+		return a.encodeAlphanumeric()
 	}
 
 	if a.TypeOfNumber > 0x7 || a.NumberingPlan > 0xf {
@@ -113,4 +119,43 @@ func semiOctet(c byte) (byte, error) {
 	}
 
 	return 0, fmt.Errorf("address: invalid digit %q", c)
+}
+
+// encodeAlphanumeric returns the address field of TS 23.040 clause 9.1.2.5 for Type-of-number 101: the characters of
+// the default alphabet packed as in TS 23.038 clause 6.1.2.1.1, with Address-Length in useful semi-octets.
+func (a Address) encodeAlphanumeric() ([]byte, error) {
+	if a.NumberingPlan != 0 {
+		return nil, fmt.Errorf("address: invalid type of address %d/%d", a.TypeOfNumber, a.NumberingPlan)
+	}
+
+	septets := make([]byte, 0, maxAlphanumericChars)
+
+	for _, r := range a.Digits {
+		s, ok := gsm7BasicIndex[r]
+		if !ok {
+			return nil, fmt.Errorf("address: %q is not in the GSM 7-bit default alphabet", r)
+		}
+
+		septets = append(septets, s)
+	}
+
+	if len(septets) == 0 || len(septets) > maxAlphanumericChars {
+		return nil, fmt.Errorf("address: %d characters, want 1 to %d", len(septets), maxAlphanumericChars)
+	}
+
+	value := gsm7Part(nil, septets).UserData
+
+	return append([]byte{byte((7*len(septets) + 3) / 4), 0x80 | TypeOfNumberAlphanumeric<<4}, value...), nil
+}
+
+// decodeAlphanumeric returns the characters of an alphanumeric Address-Value of length useful semi-octets. The count
+// comes from the length, not the octets, so that fill bits are not read as '@'. An escape is read as the basic
+// character at its index.
+func decodeAlphanumeric(value []byte, length int) string {
+	runes := make([]rune, length*4/7)
+	for i := range runes {
+		runes[i] = gsm7Basic[septetAt(value, i)]
+	}
+
+	return string(runes)
 }

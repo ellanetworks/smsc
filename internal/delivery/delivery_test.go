@@ -477,6 +477,32 @@ func TestDeliverViaMME(t *testing.T) {
 	}
 }
 
+func TestDeliverAlphanumericOriginator(t *testing.T) {
+	m := pendingMessage(t)
+	m.Origin = db.OriginAPI
+	m.Originator = db.Address{Digits: "EllaSMSC", TypeOfNumber: 5, NumberingPlan: 0}
+	m.TPDU = mustHex(t, "01"+"00"+"0b91"+"5155210300f2"+"00"+"00"+"02"+"e834")
+
+	store := newFakeStore(m)
+	router := &fakeRouter{routing: mmeRouting()}
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+
+	process(t, newDeliverer(store, router, sender))
+
+	if store.messages[1].Status != db.StatusDelivered {
+		t.Fatalf("status = %s", store.messages[1].Status)
+	}
+
+	if len(router.requests) != 1 || !bytes.Equal(router.requests[0].SMEA, mustHex(t, "0e"+"d0"+"45363b3c6d4e87")) {
+		t.Fatalf("routing requests = %+v", router.requests)
+	}
+
+	want := mustHex(t, "04"+"0ed045363b3c6d4e87"+"00"+"00"+"62907211950000"+"02"+"e834")
+	if got := avpData(t, sender.requests[0], sgd.AVPSMRPUI, tgpp.VendorID); !bytes.Equal(got, want) {
+		t.Fatalf("SMS-DELIVER = %x, want %x", got, want)
+	}
+}
+
 func TestDeliverSignalsMoreMessages(t *testing.T) {
 	next := pendingMessage(t)
 	next.ID = 2

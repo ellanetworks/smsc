@@ -42,6 +42,8 @@ var (
 )
 
 type Address struct {
+	// Digits holds the characters of the address, not digits, when TypeOfNumber is alphanumeric (TS 23.040 clause
+	// 9.1.2.5).
 	Digits        string
 	TypeOfNumber  uint8
 	NumberingPlan uint8
@@ -415,7 +417,9 @@ func (d *DB) GetMessage(ctx context.Context, id int64) (_ Message, err error) {
 type MessageFilter struct {
 	MSISDN     string
 	Originator string
-	Status     MessageStatus
+	// OriginatorTON, when not nil, keeps only the messages whose originator has this type of number.
+	OriginatorTON *uint8
+	Status        MessageStatus
 	// SubmittedBy, when not zero, keeps only the messages that user submitted.
 	SubmittedBy int64
 	// Start and End, when not zero, keep only the messages submitted at or after Start, and before End.
@@ -434,6 +438,10 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 
 	if f.Originator != "" {
 		where, args = append(where, "originator = ?"), append(args, f.Originator)
+	}
+
+	if f.OriginatorTON != nil {
+		where, args = append(where, "originator_ton = ?"), append(args, *f.OriginatorTON)
 	}
 
 	if f.Status != "" {

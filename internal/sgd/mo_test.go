@@ -292,6 +292,7 @@ func TestMOForwardSubmitRejections(t *testing.T) {
 		fcs  byte
 	}{
 		"alphanumeric destination":  {"01" + "00" + "04d0" + "c1e1" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
+		"named destination":         {"01" + "00" + "07d0" + "45363b0c" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"empty destination":         {"01" + "00" + "0091" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"network-specific number":   {"01" + "00" + "04b1" + "2143" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"21-digit destination":      {"01" + "00" + "1591" + "21436587092143658709f1" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},

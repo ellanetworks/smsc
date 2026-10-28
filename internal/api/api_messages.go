@@ -22,6 +22,8 @@ const (
 	defaultPerPage = 25
 	maxPerPage     = 100
 	maxE164Digits  = 15
+	// maxOriginatorName is the most characters of an alphanumeric originator (TS 23.040 clause 9.1.2.5).
+	maxOriginatorName = 11
 )
 
 type CreateMessageParams struct {
@@ -133,9 +135,8 @@ func CreateMessage(cfg Config) http.Handler {
 			return
 		}
 
-		from, ok := e164Digits(params.From)
+		originator, ok := originatorOf(w, params.From, cfg)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "from must be an E.164 number such as +15551230001", nil, cfg.Logger)
 			return
 		}
 
@@ -186,7 +187,7 @@ func CreateMessage(cfg Config) http.Handler {
 			}
 
 			messages = append(messages, db.NewMessage{
-				Originator:  db.Address{Digits: from, TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN},
+				Originator:  originator,
 				Recipient:   recipient,
 				MSISDN:      to,
 				Origin:      db.OriginAPI,
@@ -393,10 +394,12 @@ func ListMessages(cfg Config) http.Handler {
 		}
 
 		if from := q.Get("from"); from != "" {
-			if filter.Originator, ok = e164Digits(from); !ok {
-				writeError(w, http.StatusBadRequest, "from must be an E.164 number such as +15551230001", nil, cfg.Logger)
+			originator, ok := originatorOf(w, from, cfg)
+			if !ok {
 				return
 			}
+
+			filter.Originator, filter.OriginatorTON = originator.Digits, &originator.TypeOfNumber
 		}
 
 		if status := db.MessageStatus(q.Get("status")); status != "" {
@@ -573,6 +576,53 @@ func timeParam(w http.ResponseWriter, value, name string, cfg Config) (time.Time
 
 func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+}
+
+// originatorOf returns the originator a from value names: an E.164 number when it starts with '+', and an
+// alphanumeric name (TS 23.040 clause 9.1.2.5) otherwise.
+func originatorOf(w http.ResponseWriter, from string, cfg Config) (db.Address, bool) {
+	if strings.HasPrefix(from, "+") {
+		digits, ok := e164Digits(from)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "from must be an E.164 number such as +15551230001", nil, cfg.Logger)
+			return db.Address{}, false
+		}
+
+		return db.Address{Digits: digits, TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN}, true
+	}
+
+	if !isOriginatorName(from) {
+		writeError(w, http.StatusBadRequest,
+			"from must be an E.164 number such as +15551230001, or a name of 1 to 11 letters and digits, with single spaces between words", nil, cfg.Logger)
+
+		return db.Address{}, false
+	}
+
+	return db.Address{Digits: from, TypeOfNumber: tpdu.TypeOfNumberAlphanumeric}, true
+}
+
+// isOriginatorName reports whether s is 1 to 11 ASCII letters and digits, with single spaces between words, not all
+// digits. An all-digit value is a number, not a name.
+func isOriginatorName(s string) bool {
+	if s == "" || len(s) > maxOriginatorName || s[0] == ' ' || s[len(s)-1] == ' ' || strings.Contains(s, "  ") {
+		return false
+	}
+
+	digits := true
+
+	for i := range len(s) {
+		c := s[i]
+
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c == ' ':
+			digits = false
+		default:
+			return false
+		}
+	}
+
+	return !digits
 }
 
 func e164Digits(s string) (string, bool) {

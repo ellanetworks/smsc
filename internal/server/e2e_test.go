@@ -1269,6 +1269,32 @@ func TestAPIMessageIsDelivered(t *testing.T) {
 	}
 }
 
+// TestAPIMessageFromNameIsDelivered sends a message from an alphanumeric name, which reaches the phone as TP-OA of
+// Type-of-number alphanumeric (TS 23.040 clause 9.1.2.5), and the HSS as the same SM-RP-SMEA.
+func TestAPIMessageFromNameIsDelivered(t *testing.T) {
+	core := newFakeCore(t, bob)
+	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
+	core.connect(s)
+
+	sent := s.send(t, "EllaSMSC", "+"+bob.msisdn, "hello")
+	if len(sent) != 1 || sent[0].From != "EllaSMSC" {
+		t.Fatalf("sent = %+v", sent)
+	}
+
+	s.waitForAPIStatus(t, sent[0].ID, "delivered")
+
+	originator := []byte{0x0e, 0xd0, 0x45, 0x36, 0x3b, 0x3c, 0x6d, 0x4e, 0x87}
+
+	got := core.deliveredTo(bob.imsi)
+	if len(got) != 1 || !bytes.HasPrefix(got[0].tpdu[1:], originator) {
+		t.Fatalf("delivered = %+v", got)
+	}
+
+	if routings := core.routingDetails(); len(routings) != 1 || !bytes.Equal(routings[0].smea, originator) {
+		t.Fatalf("routing requests = %+v", routings)
+	}
+}
+
 // TestAPITokenMessageIsDelivered is the integration of an external platform: the admin creates it a Submitter and an
 // API token, with which it submits a message that is delivered, and which it alone can follow.
 func TestAPITokenMessageIsDelivered(t *testing.T) {

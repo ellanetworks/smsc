@@ -262,6 +262,20 @@ func TestCreateMessage(t *testing.T) {
 		!bytes.Equal(m.TPDU, []byte{0x01, 0x00, 0x0b, 0x91, 0x51, 0x55, 0x21, 0x03, 0x00, 0xf2, 0x00, 0x00, 0x05, 0xe8, 0x32, 0x9b, 0xfd, 0x06}) {
 		t.Fatalf("stored = %+v (TPDU %x)", m, m.TPDU)
 	}
+
+	named := a.create(t, "EllaSMSC", "+15551230002", "hello")
+	if len(named) != 1 || named[0].From != "EllaSMSC" {
+		t.Fatalf("items = %+v, want one from EllaSMSC", named)
+	}
+
+	m, err = a.store.GetMessage(context.Background(), named[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m.Originator != (db.Address{Digits: "EllaSMSC", TypeOfNumber: 5, NumberingPlan: 0}) {
+		t.Fatalf("stored originator = %+v", m.Originator)
+	}
 }
 
 func TestCreateConcatenatedMessage(t *testing.T) {
@@ -298,21 +312,39 @@ func TestCreateConcatenatedMessage(t *testing.T) {
 func TestCreateMessageRejectsInvalidInput(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	tests := map[string]string{
-		"not JSON":           `hello`,
-		"missing from":       `{"to": "+15551230002", "text": "hi"}`,
-		"from without plus":  `{"from": "15550001111", "to": "+15551230002", "text": "hi"}`,
-		"from leading zero":  `{"from": "+05550001111", "to": "+15551230002", "text": "hi"}`,
-		"from too long":      `{"from": "+1234567890123456", "to": "+15551230002", "text": "hi"}`,
-		"alphanumeric to":    `{"from": "+15550001111", "to": "+1555ABC", "text": "hi"}`,
-		"missing text":       `{"from": "+15550001111", "to": "+15551230002"}`,
-		"text over 255 SMSs": `{"from": "+15550001111", "to": "+15551230002", "text": "` + strings.Repeat("a", 255*153+1) + `"}`,
+	const (
+		e164From = "from must be an E.164 number such as +15551230001"
+		nameFrom = "from must be an E.164 number such as +15551230001, or a name of 1 to 11 letters and digits, with single spaces between words"
+	)
+
+	tests := map[string]struct {
+		body, err string
+	}{
+		"not JSON":            {`hello`, "Invalid request data"},
+		"missing from":        {`{"to": "+15551230002", "text": "hi"}`, nameFrom},
+		"from without plus":   {`{"from": "15550001111", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"from leading zero":   {`{"from": "+05550001111", "to": "+15551230002", "text": "hi"}`, e164From},
+		"from too long":       {`{"from": "+1234567890123456", "to": "+15551230002", "text": "hi"}`, e164From},
+		"from plus name":      {`{"from": "+EllaSMSC", "to": "+15551230002", "text": "hi"}`, e164From},
+		"empty name":          {`{"from": "", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"all-digit name":      {`{"from": "15551230001", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"name too long":       {`{"from": "EllaNetworks", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"name underscore":     {`{"from": "Ella_Net", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"name not ASCII":      {`{"from": "Café", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"name only spaces":    {`{"from": "   ", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"name leading space":  {`{"from": " Ella", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"name trailing space": {`{"from": "Ella ", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"name double space":   {`{"from": "ACME  Ltd", "to": "+15551230002", "text": "hi"}`, nameFrom},
+		"alphanumeric to":     {`{"from": "+15550001111", "to": "+1555ABC", "text": "hi"}`, "to must be an E.164 number such as +15551230002"},
+		"name to":             {`{"from": "+15550001111", "to": "EllaSMSC", "text": "hi"}`, "to must be an E.164 number such as +15551230002"},
+		"missing text":        {`{"from": "+15550001111", "to": "+15551230002"}`, "text is required"},
+		"text over 255 SMSs":  {`{"from": "+15550001111", "to": "+15551230002", "text": "` + strings.Repeat("a", 255*153+1) + `"}`, "text is too long"},
 	}
 
-	for name, body := range tests {
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			if code, _, errMsg := a.do(t, http.MethodPost, "/api/v1/messages", body); code != http.StatusBadRequest || errMsg == "" {
-				t.Fatalf("code = %d, error = %q", code, errMsg)
+			if code, _, errMsg := a.do(t, http.MethodPost, "/api/v1/messages", tc.body); code != http.StatusBadRequest || errMsg != tc.err {
+				t.Fatalf("code = %d, error = %q; want %q", code, errMsg, tc.err)
 			}
 		})
 	}
@@ -622,6 +654,19 @@ func TestListMessages(t *testing.T) {
 	a.create(t, "+15550001111", "+15551230003", "two")
 	a.create(t, "+15551230003", "+15551230002", "three")
 
+	a.create(t, "EllaSMSC", "+15551230004", "four")
+
+	// A numeric originator with the same characters as the name, which only the network could store.
+	if _, err := a.store.CreateMessage(context.Background(), db.NewMessage{
+		Originator: db.Address{Digits: "EllaSMSC", TypeOfNumber: 1, NumberingPlan: 1},
+		Recipient:  db.Address{Digits: "15551230004", TypeOfNumber: 1, NumberingPlan: 1},
+		MSISDN:     "15551230004", Origin: db.OriginMobile,
+		TPDU:        []byte{0x01, 0x00, 0x0b, 0x91, 0x51, 0x55, 0x21, 0x03, 0x00, 0xf4, 0x00, 0x00, 0x02, 0xe8, 0x34},
+		SubmittedAt: testNow, ExpiresAt: testNow.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := a.store.CompleteMessage(context.Background(), 3, db.StatusDelivered, testNow, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -631,11 +676,12 @@ func TestListMessages(t *testing.T) {
 		ids   []int64
 		total int
 	}{
-		"newest first":   {"", []int64{3, 2, 1}, 3},
+		"newest first":   {"", []int64{5, 4, 3, 2, 1}, 5},
 		"by recipient":   {"?to=%2B15551230002", []int64{3, 1}, 2},
 		"by originator":  {"?from=%2B15551230003", []int64{3}, 1},
+		"by name":        {"?from=EllaSMSC", []int64{4}, 1},
 		"by status":      {"?to=%2B15551230002&status=pending", []int64{1}, 1},
-		"paged":          {"?page=2&per_page=2", []int64{1}, 3},
+		"paged":          {"?page=2&per_page=2", []int64{3, 2}, 5},
 		"no match":       {"?to=%2B19999999999", []int64{}, 0},
 		"delivered only": {"?status=delivered", []int64{3}, 1},
 	}
@@ -713,7 +759,7 @@ func TestListMessagesRejectsInvalidFilters(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
 	for _, query := range []string{
-		"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=15551230002", "?from=abc", "?status=lost",
+		"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=15551230002", "?from=15551230001", "?from=Ella_Net", "?status=lost",
 		"?start=yesterday", "?end=2026-09-29", "?end=9999-12-31T00:00:00Z", "?start=1000-01-01T00:00:00Z", "?start=2026-09-29T11:00:00Z&end=2026-09-29T10:00:00Z",
 	} {
 		if code, _, errMsg := a.do(t, http.MethodGet, "/api/v1/messages"+query, ""); code != http.StatusBadRequest || errMsg == "" {

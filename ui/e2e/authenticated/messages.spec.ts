@@ -9,11 +9,15 @@ import { ROLES } from "../roles";
 
 // send submits a message to a number of its own, so that tests running at the same time find their row, and returns
 // that number. With no core connected, the message stays pending.
-const send = async (request: APIRequestContext, text: string) => {
+const send = async (
+  request: APIRequestContext,
+  text: string,
+  from = "+15550001000",
+) => {
   const to = `+1555${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`;
   await json(request, "post", "/api/v1/messages", {
     token: await adminToken(request),
-    data: { from: "+15550001000", to, text },
+    data: { from, to, text },
   });
   return to;
 };
@@ -76,6 +80,19 @@ test("the time range filters the messages on the server", async ({
   await page.getByRole("button", { name: /^Time range:/ }).click();
   await page.getByRole("menuitem", { name: "Last 15 minutes" }).click();
   await expect(page.getByRole("gridcell", { name: to })).toBeVisible();
+});
+
+test("the sender filter finds a message sent from a name", async ({
+  page,
+  request,
+}) => {
+  const to = await send(request, "from a name", "Ella E2E");
+  await page.goto("/messages");
+  await page.getByLabel("From", { exact: true }).fill("Ella E2E");
+  await expect(page.getByRole("gridcell", { name: to })).toBeVisible();
+
+  await page.getByLabel("From", { exact: true }).fill("+15550001000");
+  await expect(page.getByRole("gridcell", { name: to })).toHaveCount(0);
 });
 
 test.describe("Read Only", () => {

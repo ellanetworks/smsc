@@ -75,14 +75,14 @@ func TestStatusReportEncodeErrors(t *testing.T) {
 	base := StatusReport{Recipient: reportRecipient, ServiceCentreTimeStamp: reportTimeStamp, DischargeTime: reportDischarge}
 
 	alphanumeric := base
-	alphanumeric.Recipient = Address{TypeOfNumber: TypeOfNumberAlphanumeric, Digits: "1"}
+	alphanumeric.Recipient = Address{TypeOfNumber: TypeOfNumberAlphanumeric, NumberingPlan: NumberingPlanISDN, Digits: "1"}
 
 	oddZone := base
 	oddZone.DischargeTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("", 600))
 
 	for name, r := range map[string]StatusReport{
-		"alphanumeric recipient": alphanumeric,
-		"odd time zone":          oddZone,
+		"alphanumeric with ISDN plan": alphanumeric,
+		"odd time zone":               oddZone,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := r.Encode(); err == nil {

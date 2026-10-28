@@ -20,7 +20,7 @@ This path submits a text message to a phone. It returns one message per part.
 
 | Field  | Type   | Required | Description |
 | ------ | ------ | -------- | ----------- |
-| `from` | string | Yes      | E.164 number with `+`, shown to the recipient as the sender. |
+| `from` | string | Yes      | Shown to the recipient as the sender. An E.164 number with `+`, or a name of 1 to 11 ASCII letters and digits, with single spaces between words, that is not all digits, such as `EllaSMSC`. A value without `+` is a name, delivered as given. |
 | `to`   | string | Yes      | E.164 number with `+` of the recipient. |
 | `text` | string | Yes      | Not empty. GSM-7 if every character is in the GSM 7-bit default alphabet or its extension table, else UCS-2. Up to 255 parts. |
 
@@ -81,7 +81,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | Name       | In    | Type | Default | Allowed | Description |
 | ---------- | ----- | ---- | ------- | ------- | ----------- |
 | `to`       | query | str  |         | E.164 with `+` | Recipient. |
-| `from`     | query | str  |         | E.164 with `+` | Sender. |
+| `from`     | query | str  |         | E.164 with `+`, or a name as in [Create a Message](#create-a-message) | Sender. |
 | `status`   | query | str  |         | `pending`, `delivered`, `failed`, `expired`, `replaced` | Status. |
 | `start`    | query | str  |         | RFC 3339 time | Created at or after. |
 | `end`      | query | str  |         | RFC 3339 time, not before `start` | Created before. |
@@ -93,7 +93,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | Field                           | Type    | Description |
 | ------------------------------- | ------- | ----------- |
 | `id`                            | int     | Message identifier. |
-| `from`                          | string  | Sender, an E.164 number with `+`: the MSISDN of the phone, or the `from` of the API request. |
+| `from`                          | string  | Sender: the MSISDN of the phone, an E.164 number with `+`, or the `from` of the API request. |
 | `to`                            | string  | Recipient, an E.164 number with `+`. |
 | `encoding`                      | string  | `gsm7`, `ucs2` or `binary`. |
 | `concatenation`                 | object  | Present for a part of a longer message. |

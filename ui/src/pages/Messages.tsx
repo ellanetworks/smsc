@@ -45,6 +45,7 @@ import { GRID_SX } from "@/utils/layout";
 import { formatTimestamp } from "@/utils/dates";
 import { formatDuration } from "@/utils/durations";
 import { isE164 } from "@/utils/e164";
+import { isOriginator } from "@/utils/originator";
 import { encodingLabels, partLabel } from "@/utils/labels";
 
 export const MESSAGES_REFRESH_MS = 5000;
@@ -62,6 +63,9 @@ const STATUSES: MessageStatus[] = [
 ];
 
 const E164_HINT = "E.164, e.g. +15551230002";
+
+const ORIGINATOR_HINT =
+  "E.164, e.g. +15551230001, or a name of up to 11 letters and digits, with single spaces";
 
 const formatOptionalTimestamp = (value?: string) =>
   value ? formatTimestamp(value) : "—";
@@ -148,7 +152,7 @@ export default function Messages() {
   const timeFilter = useMemo(() => timeRangeFilter(timeRange), [timeRange]);
 
   const toInvalid = to !== "" && !isE164(to);
-  const fromInvalid = from !== "" && !isE164(from);
+  const fromInvalid = from !== "" && !isOriginator(from);
 
   const debouncedTo = useDebouncedValue(
     toInvalid ? "" : to,
@@ -229,11 +233,12 @@ export default function Messages() {
           size="small"
           value={from}
           onChange={(e) => {
-            setFrom(e.target.value.trim());
+            // A name may hold spaces, so the value is kept as typed.
+            setFrom(e.target.value);
             resetPage();
           }}
           error={fromInvalid}
-          helperText={fromInvalid ? E164_HINT : undefined}
+          helperText={fromInvalid ? ORIGINATOR_HINT : undefined}
           placeholder="+15551230001"
         />
         <TextField

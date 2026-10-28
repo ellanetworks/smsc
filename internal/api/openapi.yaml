@@ -71,7 +71,7 @@ paths:
         - name: from
           in: query
           schema:
-            $ref: "#/components/schemas/E164"
+            $ref: "#/components/schemas/Originator"
         - name: status
           in: query
           schema:
@@ -1184,6 +1184,18 @@ components:
       pattern: '^\+[1-9][0-9]{0,14}$'
       examples: ["+15551230001"]
 
+    Originator:
+      description: >-
+        An E.164 number, or a name of 1 to 11 ASCII letters and digits, with single spaces between words, that is not
+        all digits (TS 23.040
+        clause 9.1.2.5, Type-of-number alphanumeric). A value that starts with + is an E.164 number. A name is
+        delivered as given.
+      oneOf:
+        - $ref: "#/components/schemas/E164"
+        - type: string
+          pattern: '^(?=.{1,11}$)(?=.*[^0-9])[A-Za-z0-9]+( [A-Za-z0-9]+)*$'
+      examples: ["+15551230001", "EllaSMSC"]
+
     MessageStatus:
       type: string
       description: >-
@@ -1246,7 +1258,7 @@ components:
       required: [from, to, text]
       properties:
         from:
-          $ref: "#/components/schemas/E164"
+          $ref: "#/components/schemas/Originator"
         to:
           $ref: "#/components/schemas/E164"
         text:

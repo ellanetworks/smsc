@@ -111,6 +111,41 @@ describe("Messages", () => {
     );
   });
 
+  it("filters by sender, a number or a name", async () => {
+    const requests = serveMessages();
+
+    renderWithClient(<Messages />);
+    await listed();
+
+    const input = screen.getByRole("textbox", { name: "From" });
+    fireEvent.change(input, { target: { value: "Ella_Net" } });
+    expect(
+      screen.getByText(
+        "E.164, e.g. +15551230001, or a name of up to 11 letters and digits, with single spaces",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "ACME Ltd" } });
+    expect(input).toHaveValue("ACME Ltd");
+
+    await waitFor(() =>
+      expect(lastQuery(requests)).toEqual({
+        page: "1",
+        per_page: "25",
+        from: "ACME Ltd",
+      }),
+    );
+    expect(requests[requests.length - 1].search).toContain("from=ACME+Ltd");
+    expect(
+      requests.some((r) => r.searchParams.get("from") === "Ella_Net"),
+    ).toBe(false);
+
+    fireEvent.change(input, { target: { value: "+15551230001" } });
+    await waitFor(() =>
+      expect(lastQuery(requests)).toMatchObject({ from: "+15551230001" }),
+    );
+  });
+
   it("filters by time range", async () => {
     const requests = serveMessages();
 
