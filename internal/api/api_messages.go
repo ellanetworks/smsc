@@ -38,6 +38,8 @@ type CreateMessageParams struct {
 	// Text and Binary are mutually exclusive.
 	Text   string        `json:"text"`
 	Binary *BinaryParams `json:"binary"`
+	// ValiditySeconds is how long the SC attempts delivery; absent, the default validity applies.
+	ValiditySeconds *int64 `json:"validity_seconds"`
 }
 
 // BinaryParams are the TPDU parameters of a short message that the caller codes itself, such as a (U)SIM data
@@ -223,6 +225,11 @@ func CreateMessage(cfg Config) http.Handler {
 			return
 		}
 
+		if params.ValiditySeconds != nil && !validSeconds(*params.ValiditySeconds) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validity_seconds must be between 1 and %d", maxSeconds), nil, cfg.Logger)
+			return
+		}
+
 		destination := tpdu.Address{TypeOfNumber: tpdu.TypeOfNumberInternational, NumberingPlan: tpdu.NumberingPlanISDN, Digits: to}
 
 		var submits []tpdu.Submit
@@ -264,6 +271,11 @@ func CreateMessage(cfg Config) http.Handler {
 		now := cfg.Now()
 		current := cfg.Settings.Get()
 
+		validity := current.Delivery.DefaultValidity
+		if params.ValiditySeconds != nil {
+			validity = time.Duration(*params.ValiditySeconds) * time.Second
+		}
+
 		messages := make([]db.NewMessage, 0, len(submits))
 
 		for _, submit := range submits {
@@ -282,7 +294,7 @@ func CreateMessage(cfg Config) http.Handler {
 				ProtocolIdentifier: submit.ProtocolIdentifier,
 				TPDU:               b,
 				SubmittedAt:        now,
-				ExpiresAt:          now.Add(current.Delivery.DefaultValidity),
+				ExpiresAt:          now.Add(validity),
 			}
 
 			// The SC replaces a message from any source as it does one from an MS (TS 23.040 clause 9.2.3.9). A

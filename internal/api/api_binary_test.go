@@ -293,3 +293,20 @@ func TestGetMessageContentDeliverReports(t *testing.T) {
 		t.Fatalf("attempts carry the deliver reports: %s", result)
 	}
 }
+
+func TestCreateMessageValidity(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	body := strings.Replace(simDataDownload, `"to": "+15551230002",`, `"to": "+15551230002", "validity_seconds": 3600,`, 1)
+	if got := a.createBinary(t, body); got[0].ExpiresAt != "2026-09-29T11:00:00.000Z" {
+		t.Fatalf("expires_at = %s", got[0].ExpiresAt)
+	}
+
+	for _, v := range []string{"0", "-1", "9223372037"} {
+		body := strings.Replace(simDataDownload, `"to": "+15551230002",`, `"to": "+15551230002", "validity_seconds": `+v+`,`, 1)
+		if code, _, errMsg := a.do(t, http.MethodPost, "/api/v1/messages", body); code != http.StatusBadRequest ||
+			!strings.HasPrefix(errMsg, "validity_seconds must be between 1 and ") {
+			t.Fatalf("validity_seconds %s = %d %q", v, code, errMsg)
+		}
+	}
+}

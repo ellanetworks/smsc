@@ -1746,6 +1746,10 @@ components:
           minLength: 1
         binary:
           $ref: "#/components/schemas/BinaryParams"
+        validity_seconds:
+          type: integer
+          minimum: 1
+          description: How long the SMSC attempts delivery. Absent, the default validity applies.
 
     BinaryParams:
       type: object

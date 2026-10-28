@@ -28,8 +28,9 @@ This path submits a text message, or a binary message, to a phone. It returns on
 | `binary.data_coding_scheme` | int | Yes | TP-DCS (TS 23.038 §4), `0` to `255`. Not a GSM 7-bit, UCS2 or reserved coding. Message class 2 when `protocol_identifier` is `124`, ANSI-136 R-DATA, or `127`, (U)SIM data download. |
 | `binary.user_data_header` | string | No | TP-UDH (TS 23.040 §9.2.3.24) in hexadecimal, its length octet included. |
 | `binary.user_data` | string | Yes | TP-UD after the header, in hexadecimal. May be empty. At most 140 octets with `user_data_header`. Not split into parts. |
+| `validity_seconds` | int | No | How long delivery is attempted, at least `1`. Default: the default validity of the [delivery settings](delivery.md). |
 
-A message from the API never asks for status reports, and is kept for the default validity of the [delivery settings](delivery.md).
+A message from the API never asks for status reports.
 
 ### Response Codes
 
