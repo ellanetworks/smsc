@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { authFor } from "@/contexts/AuthContext";
 import MessageDrawer, { inProgress } from "@/components/MessageDrawer";
-import type { Attempt, Message } from "@/queries/messages";
+import type { Attempt, Message, MessageContent } from "@/queries/messages";
 import { RoleID } from "@/queries/users";
 import { json, renderWithClient, stubApi } from "@/test/render";
 import { attempt, message, page } from "@/test/fixtures";
@@ -12,7 +12,7 @@ const serve = (
   m: Message,
   attemptPages: Attempt[][],
   total?: number,
-  content: { text?: string } = { text: "hello" },
+  content: MessageContent = { text: "hello" },
 ) => {
   const attemptRequests: URL[] = [];
   vi.stubGlobal(
@@ -194,6 +194,61 @@ describe("MessageDrawer", () => {
     expect(
       await within(drawer).findByText("No delivery attempts yet."),
     ).toBeInTheDocument();
+  });
+
+  it("shows the TPDU parameters of a binary message, and the deliver reports", async () => {
+    const m = message({ encoding: "binary" });
+    serve(m, [[]], undefined, {
+      binary: {
+        protocol_identifier: 0x7f,
+        data_coding_scheme: 0xf6,
+        user_data_header: "027000",
+        user_data: "0011223344",
+      },
+      deliver_reports: [
+        {
+          attempt_id: 3,
+          tpdu: "00077ff602cafe",
+          protocol_identifier: 0x7f,
+          data_coding_scheme: 0xf6,
+          user_data: "cafe",
+        },
+        { attempt_id: 5, tpdu: "01" },
+      ],
+    });
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    const drawer = screen.getByRole("complementary");
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Show content" }),
+    );
+
+    const content = await within(drawer).findByRole("region", {
+      name: "Content",
+    });
+    const reports = await within(content).findByRole("region", {
+      name: "Deliver reports (2)",
+    });
+    const [first, second] = within(reports).getAllByRole("listitem");
+    expect(fields(first)).toEqual({
+      TPDU: "00077ff602cafe",
+      "Protocol identifier": "0x7f",
+      "Data coding scheme": "0xf6",
+      "User data": "cafe",
+    });
+    expect(fields(second)).toEqual({ TPDU: "01" });
+
+    const binary = content.querySelector("dl")!;
+    expect(fields(binary as HTMLElement)).toEqual({
+      "Protocol identifier": "0x7f",
+      "Data coding scheme": "0xf6",
+      "User data header": "027000",
+      "User data": "0011223344",
+    });
+    expect(
+      within(content).queryByText("Binary content is not shown."),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the status reports on the message", () => {

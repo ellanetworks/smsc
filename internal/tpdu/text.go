@@ -235,7 +235,7 @@ func (s Submit) Content() (Content, error) {
 	}
 
 	switch {
-	case isSeptetCoded(s.DataCodingScheme):
+	case IsSeptetCoded(s.DataCodingScheme):
 		c.Encoding = EncodingGSM7
 		c.Text = decodeGSM7(s.UserData, len(header), int(s.UserDataLength))
 	case isUCS2(s.DataCodingScheme):

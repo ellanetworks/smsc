@@ -21,6 +21,8 @@ import { MessageStatusChip, OutcomeChip } from "@/components/chips";
 import {
   type AbsentUserDiagnostics,
   type Attempt,
+  type BinaryContent,
+  type DeliverReport,
   getMessage,
   getMessageContent,
   listMessageAttempts,
@@ -31,6 +33,7 @@ import { formatTimestamp } from "@/utils/dates";
 import {
   diagnosticsLabels,
   encodingLabels,
+  hex,
   nodeTypeLabels,
   partLabel,
   stepLabels,
@@ -68,6 +71,57 @@ const diagnosticsRows = (d?: AbsentUserDiagnostics): [string, ReactNode][] =>
         .map((k) => [`Absent (${diagnosticsLabels[k]})`, d[k]])
     : [];
 
+const octets = (o: string): ReactNode => (
+  <Box component="span" sx={{ fontFamily: "monospace" }}>
+    {o === "" ? "—" : o}
+  </Box>
+);
+
+// tpduRows are the TPDU parameters of a binary message or a deliver report, those that it has.
+const tpduRows = (p: BinaryContent | DeliverReport): [string, ReactNode][] => {
+  const rows: [string, ReactNode][] = [];
+  if (p.protocol_identifier !== undefined) {
+    rows.push(["Protocol identifier", hex(p.protocol_identifier)]);
+  }
+  if (p.data_coding_scheme !== undefined) {
+    rows.push(["Data coding scheme", hex(p.data_coding_scheme)]);
+  }
+  if (p.user_data_header !== undefined) {
+    rows.push(["User data header", octets(p.user_data_header)]);
+  }
+  if (p.user_data !== undefined) rows.push(["User data", octets(p.user_data)]);
+  return rows;
+};
+
+// DeliverReports shows what the recipient answered the delivery attempts with, oldest first, such as a (U)SIM's answer
+// to a (U)SIM data download message.
+function DeliverReports({ reports }: { reports: DeliverReport[] }) {
+  return (
+    <Box component="section" aria-labelledby="deliver-reports-title">
+      <Typography
+        id="deliver-reports-title"
+        variant="subtitle2"
+        component="h4"
+        sx={{ mt: 2, mb: 1 }}
+      >
+        Deliver reports ({reports.length})
+      </Typography>
+      <Stack component="ol" spacing={1} sx={{ listStyle: "none", p: 0, m: 0 }}>
+        {reports.map((r) => (
+          <Paper
+            key={r.attempt_id}
+            component="li"
+            variant="outlined"
+            sx={{ p: 1.5 }}
+          >
+            <Fields rows={[["TPDU", octets(r.tpdu)], ...tpduRows(r)]} />
+          </Paper>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
 // Content shows the content of a message only when asked to: each read is audited. It is fetched once, and forgotten
 // with the drawer.
 function Content({ message }: { message: Message }) {
@@ -101,7 +155,12 @@ function Content({ message }: { message: Message }) {
       {shown && !data && !query.error && (
         <Skeleton variant="rounded" height={48} />
       )}
-      {data && (
+      {data && data.binary && (
+        <Paper variant="outlined" sx={{ p: 1.5 }}>
+          <Fields rows={tpduRows(data.binary)} />
+        </Paper>
+      )}
+      {data && !data.binary && (
         <Paper
           variant="outlined"
           sx={{
@@ -113,6 +172,9 @@ function Content({ message }: { message: Message }) {
         >
           {data.text ?? "Binary content is not shown."}
         </Paper>
+      )}
+      {data?.deliver_reports && (
+        <DeliverReports reports={data.deliver_reports} />
       )}
     </Box>
   );

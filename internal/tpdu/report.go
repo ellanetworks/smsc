@@ -17,6 +17,7 @@ const (
 	FailureUSIMStorageFull                   byte = 0xd0
 	FailureMemoryCapacityExceeded            byte = 0xd3
 	FailureUSIMToolkitBusy                   byte = 0xd4
+	FailureUSIMDataDownloadError             byte = 0xd5
 	FailureUnspecified                       byte = 0xff
 )
 

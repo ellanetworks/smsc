@@ -233,6 +233,12 @@ func TestDeliveryAttempts(t *testing.T) {
 			Step: StepDelivery, Node: "smsf.5gc.example.org", NodeType: NodeTypeSMSF3GPP,
 			Outcome: "sm_delivery_failure", ResultCode: u32(5555), VendorID: u32(10415),
 			FailureCause: "equipment_protocol_error", TPFailureCause: "usim_sms_storage_full",
+			DeliverReport: []byte{0x00, 0xd0, 0x00},
+		},
+		{
+			MessageID: id, StartedAt: first.Add(4 * time.Minute), CompletedAt: first.Add(4*time.Minute + time.Second),
+			Step: StepDelivery, Node: "smsf.5gc.example.org", NodeType: NodeTypeSMSF3GPP,
+			Outcome: "success", ResultCode: u32(2001), DeliverReport: []byte{0x00, 0x04, 0x02, 0xca, 0xfe},
 		},
 	}
 
@@ -262,6 +268,15 @@ func TestDeliveryAttempts(t *testing.T) {
 	none, total, err := d.ListDeliveryAttempts(ctx, id+1, 1, 10)
 	if err != nil || total != 0 || none == nil || len(none) != 0 {
 		t.Fatalf("attempts of another message = %+v (total %d), %v", none, total, err)
+	}
+
+	reports, err := d.ListDeliverReports(ctx, id)
+	if err != nil || !reflect.DeepEqual(reports, want[4:]) {
+		t.Fatalf("deliver reports = %+v, %v; want %+v", reports, err, want[4:])
+	}
+
+	if none, err := d.ListDeliverReports(ctx, id+1); err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("deliver reports of another message = %+v, %v", none, err)
 	}
 }
 

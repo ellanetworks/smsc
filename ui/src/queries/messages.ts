@@ -50,10 +50,35 @@ export interface Message {
   submitted_by?: string;
 }
 
+// Octets are in hexadecimal, two digits each.
+export type Octets = string;
+
+// BinaryContent is the TPDU parameters of a binary message (TS 23.040 clause 9.2.3.9).
+export interface BinaryContent {
+  protocol_identifier: number;
+  data_coding_scheme: number;
+  // user_data_header is the TP-UDH, its length octet included. It is absent when there is none.
+  user_data_header?: Octets;
+  user_data: Octets;
+}
+
+// DeliverReport is an SMS-DELIVER-REPORT that the recipient answered a delivery attempt with (TS 23.040 clause
+// 9.2.2.1a). Only tpdu is present when it does not decode.
+export interface DeliverReport {
+  attempt_id: number;
+  tpdu: Octets;
+  protocol_identifier?: number;
+  data_coding_scheme?: number;
+  user_data_header?: Octets;
+  user_data?: Octets;
+}
+
 // MessageContent is the content of a message, which the other responses leave out. Reading it is audited.
 export interface MessageContent {
   // text is absent for a binary message.
   text?: string;
+  binary?: BinaryContent;
+  deliver_reports?: DeliverReport[];
 }
 
 export type AttemptStep = "routing" | "delivery";

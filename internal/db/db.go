@@ -115,7 +115,8 @@ var migrations = []string{
 		absent_user_diagnostic_sgsn TEXT,
 		absent_user_diagnostic_ip_sm_gw TEXT,
 		absent_user_diagnostic_smsf_3gpp TEXT,
-		absent_user_diagnostic_smsf_non_3gpp TEXT
+		absent_user_diagnostic_smsf_non_3gpp TEXT,
+		deliver_report BLOB
 	);
 	CREATE INDEX delivery_attempts_message_id ON delivery_attempts (message_id);
 	CREATE TABLE recipients (

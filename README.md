@@ -12,14 +12,14 @@
 
 ## Key Features
 
-- SMS over 4G and 5G, through the MME or SMSF (SGd), with routing from the HSS (S6c)
-- SMS over IP, through an IP-SM-GW
-- Store and forward: retries, validity periods, and delivery as soon as a phone is reachable again
-- Status reports
-- Application messages over the HTTP API
-- Embedded database (SQLite)
-- Web UI and HTTP API
-- Prometheus metrics
+- **SMS over 4G and 5G**: phones send and receive SMS through the MME or SMSF of the core, over SGd, with routing from the HSS over S6c.
+- **SMS over IP**: phones registered with an IP-SM-GW, such as Ella IMS's, send and receive SMS through it.
+- **Store and forward**: messages wait while a phone is unreachable, are retried, and go out as soon as the HSS says it is back, within their validity period.
+- **3GPP compliant**: status reports, replace short message and reject duplicates, per TS 23.040 and TS 29.338.
+- **Application messages**: send text from the web UI or the HTTP API, from a number or a name such as `EllaSMSC`, and binary messages such as SIM OTA updates from the HTTP API.
+- **Delivery visibility**: every routing lookup and delivery attempt is recorded, with why it failed.
+- **Secure**: users with roles, API tokens, HTTPS, and audited reads of message content.
+- **Easy to operate**: a single binary with an embedded database and configurable retention, a web UI, an HTTP API, and Prometheus metrics. Install with snap, Docker or Kubernetes.
 
 ## Quick Links
 

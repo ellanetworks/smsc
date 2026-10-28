@@ -337,7 +337,7 @@ func TestCreateMessageRejectsInvalidInput(t *testing.T) {
 		"name double space":   {`{"from": "ACME  Ltd", "to": "+15551230002", "text": "hi"}`, nameFrom},
 		"alphanumeric to":     {`{"from": "+15550001111", "to": "+1555ABC", "text": "hi"}`, "to must be an E.164 number such as +15551230002"},
 		"name to":             {`{"from": "+15550001111", "to": "EllaSMSC", "text": "hi"}`, "to must be an E.164 number such as +15551230002"},
-		"missing text":        {`{"from": "+15550001111", "to": "+15551230002"}`, "text is required"},
+		"missing text":        {`{"from": "+15550001111", "to": "+15551230002"}`, "text or binary is required"},
 		"text over 255 SMSs":  {`{"from": "+15550001111", "to": "+15551230002", "text": "` + strings.Repeat("a", 255*153+1) + `"}`, "text is too long"},
 	}
 
@@ -433,7 +433,9 @@ func TestGetMessageContent(t *testing.T) {
 		t.Fatalf("content = %+v", got)
 	}
 
-	if got := a.content(t, a.token, binary); got.Text != nil {
+	if got := a.content(t, a.token, binary); !reflect.DeepEqual(got, api.MessageContent{Binary: &api.BinaryContent{
+		DataCodingScheme: 0x04, UserData: api.Hex{0xca, 0xfe},
+	}}) {
 		t.Fatalf("content of a binary message = %+v", got)
 	}
 

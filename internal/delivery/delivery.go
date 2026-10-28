@@ -118,6 +118,8 @@ type forwardResult struct {
 	rejected bool
 	// status is the TP-Status of a status report on an attempt that did not deliver the message.
 	status tpdu.Status
+	// deliverReport is the SMS-DELIVER-REPORT for RP-ACK that the serving node passed on, if any.
+	deliverReport []byte
 }
 
 type nodeOutcome struct {
@@ -665,6 +667,10 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 		r, err := d.forward(ctx, imsi, t, deliver, more)
 
 		deliveryAttempt := deliveryAttemptOf(t.kind, err)
+		if len(r.deliverReport) > 0 {
+			deliveryAttempt.DeliverReport = r.deliverReport
+		}
+
 		deliveryAttempt.Step, deliveryAttempt.Node, deliveryAttempt.StartedAt = db.StepDelivery, t.name, started
 
 		d.record(ctx, log, m.ID, deliveryAttempt)
@@ -945,9 +951,14 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 		return forwardResult{outcome: temporary, status: statusCongestion}, err
 	}
 
-	_, err = sgd.ParseMTForwardShortMessageAnswer(ans)
+	answer, err := sgd.ParseMTForwardShortMessageAnswer(ans)
 
-	return classifyForwardAnswer(err), err
+	r := classifyForwardAnswer(err)
+	if err == nil {
+		r.deliverReport = answer.SMRPUI
+	}
+
+	return r, err
 }
 
 func classifyForwardAnswer(err error) forwardResult {
@@ -988,6 +999,12 @@ func classifyForwardAnswer(err error) forwardResult {
 		return forwardResult{outcome: permanent, status: tpdu.StatusConnectionRejected}
 	case tgpp.ResultErrorSMDeliveryFailure:
 		cause := re.DeliveryFailureCause
+
+		// The (U)SIM processed a (U)SIM data download message and answered with an error (TS 23.040 clause 9.2.3.22).
+		// Sending the same message again would get the same answer.
+		if fcs, ok := tpdu.DeliverReportFailureCause(re.DiagnosticInfo); ok && fcs == tpdu.FailureUSIMDataDownloadError {
+			return forwardResult{outcome: permanent, status: tpdu.StatusConnectionRejected}
+		}
 
 		switch {
 		case cause != nil && *cause == sgd.CauseEquipmentNotSMEquipped:

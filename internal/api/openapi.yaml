@@ -1255,7 +1255,8 @@ components:
 
     CreateMessageParams:
       type: object
-      required: [from, to, text]
+      description: Exactly one of text and binary.
+      required: [from, to]
       properties:
         from:
           $ref: "#/components/schemas/Originator"
@@ -1264,6 +1265,44 @@ components:
         text:
           type: string
           minLength: 1
+        binary:
+          $ref: "#/components/schemas/BinaryParams"
+
+    BinaryParams:
+      type: object
+      description: >-
+        One short message whose TPDU parameters the caller codes, such as a (U)SIM data download message (3GPP TS 23.040
+        clause 9.2.3.9). The SMSC delivers them unchanged. The user data header and user data together are at most 140
+        octets.
+      required: [data_coding_scheme, user_data]
+      properties:
+        protocol_identifier:
+          type: integer
+          minimum: 0
+          maximum: 255
+          default: 0
+          description: >-
+            TP-PID (3GPP TS 23.040 clause 9.2.3.9). Telematic interworking is not supported. (U)SIM data download (127)
+            and ANSI-136 R-DATA (124) need a data coding scheme of message class 2.
+        data_coding_scheme:
+          type: integer
+          minimum: 0
+          maximum: 255
+          description: TP-DCS (3GPP TS 23.038 clause 4). It must not code the GSM 7 bit default alphabet; send text instead.
+        user_data_header:
+          allOf:
+            - $ref: "#/components/schemas/Octets"
+          description: The TP-UDH, its length octet included (3GPP TS 23.040 clause 9.2.3.24). Absent when the user data has no header.
+        user_data:
+          allOf:
+            - $ref: "#/components/schemas/Octets"
+          description: The TP-UD that follows the header.
+
+    Octets:
+      type: string
+      pattern: "^([0-9a-fA-F]{2})*$"
+      description: Octets in hexadecimal, two digits each. Responses use lowercase.
+      example: "027000"
 
     CreateMessageResponse:
       type: object
@@ -1366,6 +1405,64 @@ components:
         text:
           type: string
           description: Absent for a binary message.
+        binary:
+          $ref: "#/components/schemas/BinaryContent"
+        deliver_reports:
+          type: array
+          description: >-
+            The SMS-DELIVER-REPORTs that the recipient answered with, when the serving node passed them on: in the
+            RP-ACK of a delivery attempt that succeeded, and in the RP-ERROR of one that failed (3GPP TS 23.040 clause
+            9.2.2.1a). Their user data is for the originator, such as a (U)SIM's answer to a (U)SIM data download
+            message. Absent when there are none.
+          items:
+            $ref: "#/components/schemas/DeliverReport"
+
+    BinaryContent:
+      type: object
+      description: The TPDU parameters of a binary message.
+      required: [protocol_identifier, data_coding_scheme, user_data]
+      properties:
+        protocol_identifier:
+          type: integer
+          minimum: 0
+          maximum: 255
+        data_coding_scheme:
+          type: integer
+          minimum: 0
+          maximum: 255
+        user_data_header:
+          allOf:
+            - $ref: "#/components/schemas/Octets"
+          description: The TP-UDH, its length octet included. Absent when the user data has no header.
+        user_data:
+          $ref: "#/components/schemas/Octets"
+
+    DeliverReport:
+      type: object
+      required: [attempt_id, tpdu]
+      properties:
+        attempt_id:
+          type: integer
+          format: int64
+          description: The delivery attempt that the recipient answered.
+        tpdu:
+          allOf:
+            - $ref: "#/components/schemas/Octets"
+          description: The SMS-DELIVER-REPORT. The other properties are absent when it does not decode.
+        protocol_identifier:
+          type: integer
+          minimum: 0
+          maximum: 255
+        data_coding_scheme:
+          type: integer
+          minimum: 0
+          maximum: 255
+        user_data_header:
+          $ref: "#/components/schemas/Octets"
+        user_data:
+          allOf:
+            - $ref: "#/components/schemas/Octets"
+          description: Absent when the report has no user data.
 
     Attempt:
       type: object

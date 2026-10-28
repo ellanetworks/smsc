@@ -10,7 +10,7 @@ Responses carry no content. [Get the content of a message](#get-the-content-of-a
 
 ## Create a Message
 
-This path submits a text message to a phone. It returns one message per part.
+This path submits a text message, or a binary message, to a phone. It returns one message per part.
 
 | Method | Path               |
 | ------ | ------------------ |
@@ -22,7 +22,12 @@ This path submits a text message to a phone. It returns one message per part.
 | ------ | ------ | -------- | ----------- |
 | `from` | string | Yes      | Shown to the recipient as the sender. An E.164 number with `+`, or a name of 1 to 11 ASCII letters and digits, with single spaces between words, that is not all digits, such as `EllaSMSC`. A value without `+` is a name, delivered as given. |
 | `to`   | string | Yes      | E.164 number with `+` of the recipient. |
-| `text` | string | Yes      | Not empty. GSM-7 if every character is in the GSM 7-bit default alphabet or its extension table, else UCS-2. Up to 255 parts. |
+| `text` | string | One of `text` and `binary` | Not empty. GSM-7 if every character is in the GSM 7-bit default alphabet or its extension table, else UCS-2. Up to 255 parts. |
+| `binary` | object | One of `text` and `binary` | TPDU parameters of one short message, delivered unchanged. |
+| `binary.protocol_identifier` | int | No | TP-PID (TS 23.040 §9.2.3.9), `0` to `255`. Default `0`. Not `32` to `62`, telematic interworking. `65` to `71`, replace types 1 to 7, replace the pending message of the same type from the same `from`. |
+| `binary.data_coding_scheme` | int | Yes | TP-DCS (TS 23.038 §4), `0` to `255`. Not a GSM 7-bit or reserved coding. Message class 2 when `protocol_identifier` is `124`, ANSI-136 R-DATA, or `127`, (U)SIM data download. |
+| `binary.user_data_header` | string | No | TP-UDH (TS 23.040 §9.2.3.24) in hexadecimal, its length octet included. |
+| `binary.user_data` | string | Yes | TP-UD after the header, in hexadecimal. May be empty. At most 140 octets with `user_data_header`. Not split into parts. |
 
 A message from the API never asks for status reports, and is kept for the default validity of the [delivery settings](delivery.md).
 
@@ -30,7 +35,7 @@ A message from the API never asks for status reports, and is kept for the defaul
 
 | Code  | Description |
 | ----- | ----------- |
-| `400` | A field is missing or invalid, or the text needs more than 255 parts. |
+| `400` | A field is missing or invalid, both or neither of `text` and `binary`, the text needs more than 255 parts, or the binary user data is over 140 octets. |
 
 ### Sample Request
 
@@ -39,6 +44,21 @@ A message from the API never asks for status reports, and is kept for the defaul
     "from": "+15550001000",
     "to": "+15551230002",
     "text": "Your code is 1234"
+}
+```
+
+### Sample Request (Binary)
+
+```json
+{
+    "from": "+15550001000",
+    "to": "+15551230002",
+    "binary": {
+        "protocol_identifier": 127,
+        "data_coding_scheme": 246,
+        "user_data_header": "027000",
+        "user_data": "0011223344"
+    }
 }
 ```
 
@@ -100,7 +120,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | `concatenation.reference`       | int     | Reference shared by the parts of the message. |
 | `concatenation.part`            | int     | Number of this part, from 1. |
 | `concatenation.total`           | int     | Number of parts. |
-| `status`                        | string  | `pending`; `delivered`; `failed`; `expired`, when its validity period ended before its delivery; or `replaced`, by a later message from the same phone, of the same replace type, before its delivery. |
+| `status`                        | string  | `pending`; `delivered`; `failed`; `expired`, when its validity period ended before its delivery; or `replaced`, by a later message from the same sender, of the same replace type, before its delivery. |
 | `created_at`                    | string  | Time the SMSC received the message. |
 | `updated_at`                    | string  | Time of the last change. |
 | `expires_at`                    | string  | End of the validity period. |
@@ -222,6 +242,18 @@ This path returns the content of a message, and logs an audit event `read_messag
 | Field  | Type   | Description |
 | ------ | ------ | ----------- |
 | `text` | string | Text of the part. Absent for a binary message. |
+| `binary` | object | TPDU parameters of a binary message. |
+| `binary.protocol_identifier` | int | TP-PID. |
+| `binary.data_coding_scheme` | int | TP-DCS. |
+| `binary.user_data_header` | string | TP-UDH in hexadecimal, its length octet included. Absent when there is none. |
+| `binary.user_data` | string | TP-UD after the header, in hexadecimal. |
+| `deliver_reports` | array | SMS-DELIVER-REPORTs (TS 23.040 §9.2.2.1a) the serving nodes passed on, oldest first. Absent when there are none. |
+| `deliver_reports[].attempt_id` | int | [Delivery attempt](#list-delivery-attempts) of the report: in the RP-ACK when its `outcome` is `success`, else in the RP-ERROR. |
+| `deliver_reports[].tpdu` | string | The report in hexadecimal. The other `deliver_reports[]` fields are absent when it does not decode. |
+| `deliver_reports[].protocol_identifier` | int | TP-PID, when present. |
+| `deliver_reports[].data_coding_scheme` | int | TP-DCS, when present. |
+| `deliver_reports[].user_data_header` | string | TP-UDH in hexadecimal, when present. |
+| `deliver_reports[].user_data` | string | TP-UD after the header, in hexadecimal, when present. |
 
 ### Response Codes
 
@@ -235,6 +267,30 @@ This path returns the content of a message, and logs an audit event `read_messag
 {
     "result": {
         "text": "Your code is 1234"
+    }
+}
+```
+
+### Sample Response (Binary)
+
+```json
+{
+    "result": {
+        "binary": {
+            "protocol_identifier": 127,
+            "data_coding_scheme": 246,
+            "user_data_header": "027000",
+            "user_data": "0011223344"
+        },
+        "deliver_reports": [
+            {
+                "attempt_id": 2,
+                "tpdu": "00077ff602cafe",
+                "protocol_identifier": 127,
+                "data_coding_scheme": 246,
+                "user_data": "cafe"
+            }
+        ]
     }
 }
 ```

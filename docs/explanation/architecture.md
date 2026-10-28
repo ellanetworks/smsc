@@ -39,8 +39,18 @@ A message ends:
 - **delivered**, when a serving node takes it;
 - **failed**, when the recipient is unknown, not allowed SMS, or has no serving node that supports SGd, or when an attempt fails and the message is single-shot or retries are off;
 - **expired**, when its validity period ends first;
-- **replaced**, when a later message from the same phone replaces it.
+- **replaced**, when a later message from the same sender replaces it.
 
 ## Status reports
 
 When a phone asks for status reports, Ella SMSC returns one to it when the message ends. It delivers the report as it does a message.
+
+## Binary messages
+
+Some messages are not for the person holding the phone. An OTA platform, which holds the keys of the SIM cards, builds secured packets for the SIM, for example to steer roaming, and sends them as (U)SIM data download messages: the phone passes them to the SIM instead of showing them. Ella SMSC only carries them. It checks that the message is well formed and delivers its parameters and user data unchanged, without reading the packet inside.
+
+The phone answers each message with a deliver report, which can carry the SIM's response. Ella SMSC keeps the report of each delivery attempt when the serving node passes it on, so the OTA platform can read the SIM's response. The report is part of the message's content, so reading it takes the same role and is audited.
+
+When the SIM refuses a packet, the phone reports a (U)SIM data download error. The SIM has read the packet and answered, so delivering it again would get the same answer: Ella SMSC fails the message instead of retrying it. The platform builds a new packet if it needs to.
+
+Ella SMSC does not split binary user data into parts. When a SIM packet spans several messages, its security header is only in the first one, and only the OTA platform knows its layout, so the platform splits it.

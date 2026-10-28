@@ -19,6 +19,7 @@ type Store interface {
 	GetMessage(ctx context.Context, id int64) (db.Message, error)
 	ListMessages(ctx context.Context, f db.MessageFilter, page, perPage int) ([]db.Message, int, error)
 	ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) ([]db.DeliveryAttempt, int, error)
+	ListDeliverReports(ctx context.Context, messageID int64) ([]db.DeliveryAttempt, error)
 	StatusReportsFor(ctx context.Context, messageIDs []int64) (map[int64][]db.Message, error)
 }
 
