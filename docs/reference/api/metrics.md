@@ -6,7 +6,7 @@ description: RESTful API reference for the Prometheus metrics of Ella SMSC.
 
 ## Get Metrics
 
-This path returns the metrics of the SMSC in the [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details), negotiated from the request's `Accept` header. See [Metrics](../metrics.md) for the list.
+This path returns the metrics of the SMSC in the [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details), negotiated from the request's `Accept` header. See [Observability](../observability.md#metrics) for the list.
 
 | Method | Path              |
 | ------ | ----------------- |

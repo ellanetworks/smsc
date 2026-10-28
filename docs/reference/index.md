@@ -4,7 +4,7 @@ This section provides detailed reference material for Ella SMSC, from configurat
 
 - [API](api/index.md)
 - [Configuration File](config_file.md)
-- [Metrics](metrics.md)
+- [Observability](observability.md)
 - [Connectivity](connectivity.md)
 - [Performance](performance.md)
 - [3GPP Compliance](3gpp_compliance.md)

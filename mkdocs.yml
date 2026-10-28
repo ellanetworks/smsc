@@ -61,6 +61,7 @@ nav:
   - How-to Guides:
     - how_to/index.md
     - Install: how_to/install.md
+    - Back Up and Restore: how_to/back_up_and_restore.md
     - Integrate with Ella Core: how_to/integrate_with_ella_core.md
     - Integrate with Ella IMS: how_to/integrate_with_ella_ims.md
     - Integrate with a Third-Party Core: how_to/integrate_with_third_party_core.md
@@ -81,13 +82,14 @@ nav:
       - Status: reference/api/status.md
       - Metrics: reference/api/metrics.md
     - Configuration File: reference/config_file.md
-    - Metrics: reference/metrics.md
+    - Observability: reference/observability.md
     - Connectivity: reference/connectivity.md
     - Performance: reference/performance.md
     - 3GPP Compliance: reference/3gpp_compliance.md
   - Explanation:
     - explanation/index.md
     - Architecture: explanation/architecture.md
+    - Security: explanation/security.md
 plugins:
   - search
   - glightbox
