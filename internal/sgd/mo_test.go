@@ -405,14 +405,14 @@ func TestMOForwardMissingAVPs(t *testing.T) {
 		code, vendorID uint32
 		minimum        int
 	}{
-		"Session-Id":         {diameter.AVPSessionID, 0, 0},
+		"Session-Id":         {diameter.AVPSessionID, 0, 1},
 		"Auth-Session-State": {diameter.AVPAuthSessionState, 0, 4},
-		"Origin-Host":        {diameter.AVPOriginHost, 0, 0},
-		"Origin-Realm":       {diameter.AVPOriginRealm, 0, 0},
-		"Destination-Realm":  {diameter.AVPDestinationRealm, 0, 0},
-		"SC-Address":         {tgpp.AVPSCAddress, tgpp.VendorID, 0},
-		"User-Identifier":    {tgpp.AVPUserIdentifier, tgpp.VendorID, 0},
-		"SM-RP-UI":           {sgd.AVPSMRPUI, tgpp.VendorID, 0},
+		"Origin-Host":        {diameter.AVPOriginHost, 0, 1},
+		"Origin-Realm":       {diameter.AVPOriginRealm, 0, 1},
+		"Destination-Realm":  {diameter.AVPDestinationRealm, 0, 1},
+		"SC-Address":         {tgpp.AVPSCAddress, tgpp.VendorID, 1},
+		"User-Identifier":    {tgpp.AVPUserIdentifier, tgpp.VendorID, 1},
+		"SM-RP-UI":           {sgd.AVPSMRPUI, tgpp.VendorID, 1},
 	}
 
 	for name, tt := range tests {

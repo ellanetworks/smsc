@@ -10,8 +10,9 @@ import (
 )
 
 type fakeStore struct {
-	saved []any
-	err   error
+	saved  []any
+	err    error
+	peerID int64
 }
 
 func (f *fakeStore) save(v any) error {
@@ -29,6 +30,20 @@ func (f *fakeStore) UpdateOperator(_ context.Context, o Operator) error { return
 func (f *fakeStore) UpdateDelivery(_ context.Context, d Delivery) error { return f.save(d) }
 
 func (f *fakeStore) UpdateRetention(_ context.Context, r Retention) error { return f.save(r) }
+
+func (f *fakeStore) CreatePeer(_ context.Context, p Peer) (int64, error) {
+	if err := f.save(p); err != nil {
+		return 0, err
+	}
+
+	f.peerID++
+
+	return f.peerID, nil
+}
+
+func (f *fakeStore) UpdatePeer(_ context.Context, p Peer) error { return f.save(p) }
+
+func (f *fakeStore) DeletePeer(_ context.Context, id int64) error { return f.save(id) }
 
 func validOperator() Operator {
 	return Operator{MCC: "001", MNC: "01", ServiceCentreAddress: "15550000000", Numbering: numbering.Plan{CountryCode: "1"}}

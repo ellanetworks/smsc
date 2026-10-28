@@ -16,7 +16,7 @@ Ella SMSC has no radio access and stores no subscribers. It relies on the core n
 
 Ella Core provides the HSS, the MME and the SMSF. For how it works with an SMSC, see Ella Core's [SMS Integration](https://docs.ellanetworks.com/core/explanation/sms_integration/).
 
-Ella SMSC's Diameter host and realm derive from the operator's MCC and MNC: `smsc.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`. Its peers connect to it, and it asks the HSSs of that realm for routing.
+Ella SMSC's Diameter host and realm derive from the operator's MCC and MNC: `smsc.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`. Its home network's peers connect to it, and it asks the HSSs of that realm for routing. It can also connect to Diameter agents, such as the DEA of an IPX provider or a DRA in front of the HSS, to reach the visited networks of roaming subscribers and HSSs that do not connect to it. See [Connect through Diameter Agents](../how_to/connect_through_diameter_agents.md).
 
 ## Receiving
 

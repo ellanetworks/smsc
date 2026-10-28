@@ -27,14 +27,17 @@ type Store interface {
 type Diameter interface {
 	Identity() diameter.Identity
 	Peers() []diameter.PeerStatus
+	// Peer returns the status of the peer of a node ID, such as a configured peer's settings.Peer.NodeID.
+	Peer(id string) (diameter.PeerStatus, bool)
 	Routes() []Route
 }
 
 // Route is a realm-based routing table entry (RFC 6733, section 2.7) and the
-// open peers that can currently serve it.
+// open peers that can currently serve it. A default route has no realm.
 type Route struct {
 	Realm         string
 	ApplicationID uint32
+	Default       bool
 	Peers         []string
 }
 
@@ -43,6 +46,9 @@ type Settings interface {
 	UpdateOperator(ctx context.Context, o settings.Operator) error
 	UpdateDelivery(ctx context.Context, d settings.Delivery) error
 	UpdateRetention(ctx context.Context, r settings.Retention) error
+	CreatePeer(ctx context.Context, p settings.Peer) (settings.Peer, error)
+	UpdatePeer(ctx context.Context, p settings.Peer) error
+	DeletePeer(ctx context.Context, id int64) error
 }
 
 type Config struct {
@@ -97,6 +103,11 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/messages/{id}/content", PermReadMessageContent, GetMessageContent(cfg, a)},
 		{"GET /api/v1/messages/{id}/attempts", PermReadMessage, ListMessageAttempts(cfg)},
 		{"GET /api/v1/diameter", PermReadDiameter, GetDiameterStatus(cfg)},
+		{"GET /api/v1/diameter/peers", PermReadDiameter, ListPeers(cfg)},
+		{"POST /api/v1/diameter/peers", PermUpdateDiameter, CreatePeer(a)},
+		{"GET /api/v1/diameter/peers/{id}", PermReadDiameter, GetPeer(cfg)},
+		{"PUT /api/v1/diameter/peers/{id}", PermUpdateDiameter, UpdatePeer(a)},
+		{"DELETE /api/v1/diameter/peers/{id}", PermUpdateDiameter, DeletePeer(a)},
 		{"GET /api/v1/operator", PermReadOperator, GetOperator(cfg)},
 		{"PUT /api/v1/operator", PermUpdateOperator, UpdateOperator(cfg)},
 		{"GET /api/v1/delivery", PermReadDelivery, GetDelivery(cfg)},

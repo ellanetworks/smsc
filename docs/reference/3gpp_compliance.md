@@ -30,6 +30,13 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter i
 - **Report-SM-Delivery-Status**, sent: the outcome of a delivery, which sets or clears the HSS's message waiting data.
 - **Alert-Service-Centre**, received: the recipient, or the Alert MSISDN of its subscription, can be reached again.
 
+### Diameter routing (RFC 6733, GSMA IR.88)
+
+- **Configured peers.** Static peering over SCTP, with multi-homed peers, as IR.88 recommends. Ella SMSC opens and keeps the connection.
+- **Realm routing.** An MT-Forward-Short-Message to an MME, SMSF or IP-SM-GW that is not connected goes to the peers of the route to its realm, then of the default route, with its Destination-Host unchanged (RFC 6733 clause 6.1). The default route never takes the SMSC's own realm.
+- **Failover.** By priority, with load sharing between peers of equal priority, and retransmission with the T flag (RFC 6733 clause 5.5.4).
+- **Agents.** Requests that an agent relays are answered on the connection they came on.
+
 ### Short messages (TS 23.040)
 
 - **TPDUs.** SMS-SUBMIT received; SMS-DELIVER and SMS-STATUS-REPORT sent; SMS-SUBMIT-REPORT with the TP-Failure-Cause of a refused SMS-SUBMIT.
@@ -51,4 +58,6 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter i
 - **Device triggering from phones.** Refused with the TP-Failure-Cause `unspecified_tp_pid_error`.
 - **SMS-MI-Correlation-ID.** A short message that carries one is refused with DIAMETER_ERROR_FACILITY_NOT_SUPPORTED.
 - **Diameter over TCP.**
+- **Delivery to an MSC.** A visited network must deliver SMS over SGd (SMS in MME). Ella SMSC does not deliver to an MSC-Number, directly or through a Diameter-to-MAP interworking function.
+- **Destination-Host in Report-SM-Delivery-Status.** It is sent to the HSS's realm (TS 29.338 clause 5.3.1.1.2 allows either).
 - **MAP over SS7.**

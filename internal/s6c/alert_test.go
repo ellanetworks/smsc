@@ -85,7 +85,7 @@ func TestAlertServiceCentre(t *testing.T) {
 	a := &alerts{}
 	ans := newAlertHandler(a).ServeDiameter(context.Background(), nil,
 		alr(t, scAddressAVP(t, "5155000000f0"), userIdentifier(t, "5155210300f2"),
-			diameter.Time(s6c.AVPMaximumUEAvailabilityTime, 0, tgpp.VendorID, testTime)))
+			diameter.Time(tgpp.AVPMaximumUEAvailabilityTime, 0, tgpp.VendorID, testTime)))
 
 	if code := answerResult(t, ans); code != diameter.ResultSuccess || len(a.msisdns) != 1 || a.msisdns[0] != "15551230002" {
 		t.Fatalf("result = %d, alerts = %v", code, a.msisdns)

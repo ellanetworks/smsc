@@ -14,6 +14,7 @@ const status = {
       state: "open",
       applications: ["s6c", "sgd", "16777999"],
       since: "2026-09-30T12:05:18.843Z",
+      configured: false,
     },
     {
       host: "",
@@ -22,11 +23,13 @@ const status = {
       state: "connecting",
       applications: [],
       since: "2026-09-30T12:05:18.843Z",
+      configured: false,
     },
   ],
   routes: [
     {
       realm: "epc.example.org",
+      default: false,
       application: "s6c",
       peers: ["hss.epc.example.org"],
     },
@@ -103,13 +106,49 @@ describe("Diameter", () => {
     ]);
   });
 
+  it("marks only the peers of the S6c route to this SMSC's realm as HSSs", async () => {
+    serve(() =>
+      json(200, {
+        result: {
+          ...status,
+          routes: [
+            {
+              realm: "epc.other.org",
+              default: false,
+              application: "s6c",
+              peers: ["hss.epc.example.org"],
+            },
+            {
+              realm: "EPC.example.org",
+              default: false,
+              application: "s6c",
+              peers: [],
+            },
+          ],
+        },
+      }),
+    );
+
+    renderWithClient(<Diameter />);
+
+    await screen.findByText("10.0.0.5");
+    expect(rowCells("10.0.0.5")[4]).toBe("no");
+  });
+
   it("shows an empty table without peers", async () => {
     serve(() =>
       json(200, {
         result: {
           ...status,
           peers: [],
-          routes: [{ realm: "epc.example.org", application: "s6c", peers: [] }],
+          routes: [
+            {
+              realm: "epc.example.org",
+              default: false,
+              application: "s6c",
+              peers: [],
+            },
+          ],
         },
       }),
     );

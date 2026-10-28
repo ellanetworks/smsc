@@ -40,6 +40,16 @@ func (f fakeDiameter) Identity() diameter.Identity {
 
 func (f fakeDiameter) Peers() []diameter.PeerStatus { return f.peers }
 
+func (f fakeDiameter) Peer(id string) (diameter.PeerStatus, bool) {
+	for _, p := range f.peers {
+		if p.ID == id {
+			return p, true
+		}
+	}
+
+	return diameter.PeerStatus{}, false
+}
+
 func (f fakeDiameter) Routes() []api.Route { return f.routes }
 
 type testAPI struct {
@@ -777,6 +787,7 @@ func TestGetDiameterStatus(t *testing.T) {
 		routes: []api.Route{
 			{Realm: "epc.mnc001.mcc001.3gppnetwork.org", ApplicationID: s6c.ApplicationID, Peers: []string{"mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org"}},
 			{Realm: "example.net", ApplicationID: s6c.ApplicationID},
+			{ApplicationID: sgd.ApplicationID, Default: true, Peers: []string{"dea1.ipx.example.net"}},
 		},
 		peers: []diameter.PeerStatus{{
 			Host:       "mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org",
@@ -803,6 +814,7 @@ func TestGetDiameterStatus(t *testing.T) {
 		Routes: []api.DiameterRoute{
 			{Realm: "epc.mnc001.mcc001.3gppnetwork.org", Application: "s6c", Peers: []string{"mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org"}},
 			{Realm: "example.net", Application: "s6c", Peers: []string{}},
+			{Default: true, Application: "sgd", Peers: []string{"dea1.ipx.example.net"}},
 		},
 		Peers: []api.DiameterPeer{{
 			Host:         "mmec01.mmegi0001.mme.epc.mnc001.mcc001.3gppnetwork.org",

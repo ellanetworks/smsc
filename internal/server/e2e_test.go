@@ -104,11 +104,13 @@ type fakeCore struct {
 	absent      map[string]bool
 	mwdStatus   map[string]uint32
 	// ipSMGW is the host of the IP-SM-GW that the routing answers name, if any, without its realm.
-	ipSMGW    string
-	answerMT  func(imsi string) *diameter.Message
-	routings  []routingRequest
-	delivered []mtMessage
-	reports   []deliveryReport
+	ipSMGW string
+	// servingMME and servingRealm are the MME that the routing answers name, when it is not the core itself.
+	servingMME, servingRealm string
+	answerMT                 func(imsi string) *diameter.Message
+	routings                 []routingRequest
+	delivered                []mtMessage
+	reports                  []deliveryReport
 }
 
 func skipIfNoSCTP(t testing.TB) {
@@ -275,9 +277,14 @@ func (c *fakeCore) sendRoutingInfo(req *diameter.Message) *diameter.Message {
 		return ans
 	}
 
+	mmeName, mmeRealm := c.host, c.realm
+	if c.servingMME != "" {
+		mmeName, mmeRealm = c.servingMME, c.servingRealm
+	}
+
 	servingNode := diameter.Grouped(avpServingNode, diameter.AVPFlagMandatory, tgpp.VendorID,
-		diameter.UTF8String(avpMMEName, diameter.AVPFlagMandatory, tgpp.VendorID, c.host),
-		diameter.UTF8String(avpMMERealm, 0, tgpp.VendorID, c.realm),
+		diameter.UTF8String(avpMMEName, diameter.AVPFlagMandatory, tgpp.VendorID, mmeName),
+		diameter.UTF8String(avpMMERealm, 0, tgpp.VendorID, mmeRealm),
 		diameter.OctetString(tgpp.AVPMMENumberForMTSMS, 0, tgpp.VendorID, mustTBCD(c.t, mmeNumber)),
 	)
 
@@ -614,6 +621,8 @@ type smscConfig struct {
 	// PurgeNow and PurgeInterval, when set, are the clock and the period of the message retention.
 	PurgeNow      func() time.Time
 	PurgeInterval time.Duration
+	// Logger is the SMSC's logger, which discards the logs when nil.
+	Logger *slog.Logger
 }
 
 func testConfig(t testing.TB, dbPath string) smscConfig {
@@ -658,7 +667,12 @@ func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 		}
 	}
 
-	srv := &server.Server{Config: cfg.Config, Logger: discardLogger()}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = discardLogger()
+	}
+
+	srv := &server.Server{Config: cfg.Config, Logger: logger}
 	srv.SetAttemptTimeout(cfg.AttemptTimeout)
 	srv.SetBcryptCost(bcrypt.MinCost)
 

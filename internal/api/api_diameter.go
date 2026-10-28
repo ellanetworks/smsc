@@ -6,19 +6,26 @@ import (
 
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/sgd"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 type DiameterPeer struct {
+	// ID is the ID of a configured peer, and zero for a peer that connected to the SMSC.
+	ID           int64    `json:"id,omitempty"`
+	Configured   bool     `json:"configured"`
 	Host         string   `json:"host"`
 	Realm        string   `json:"realm"`
 	Address      string   `json:"address"`
 	State        string   `json:"state"`
 	Applications []string `json:"applications"`
 	Since        string   `json:"since"`
+	Error        string   `json:"error,omitempty"`
 }
 
+// DiameterRoute is a route, with an empty realm for a default route.
 type DiameterRoute struct {
 	Realm       string   `json:"realm"`
+	Default     bool     `json:"default"`
 	Application string   `json:"application"`
 	Peers       []string `json:"peers"`
 }
@@ -44,6 +51,7 @@ func GetDiameterStatus(cfg Config) http.Handler {
 		for _, r := range cfg.Diameter.Routes() {
 			route := DiameterRoute{
 				Realm:       r.Realm,
+				Default:     r.Default,
 				Application: applicationName(r.ApplicationID),
 				Peers:       []string{},
 			}
@@ -54,11 +62,17 @@ func GetDiameterStatus(cfg Config) http.Handler {
 
 		for _, p := range cfg.Diameter.Peers() {
 			peer := DiameterPeer{
+				Configured:   p.Configured,
 				Host:         p.Host,
 				Realm:        p.Realm,
 				State:        p.State.String(),
 				Applications: []string{},
 				Since:        formatTime(p.Since),
+				Error:        p.LastError,
+			}
+
+			if p.Configured {
+				peer.ID, _ = settings.PeerID(p.ID)
 			}
 
 			if p.RemoteAddr.IsValid() {

@@ -113,8 +113,8 @@ func peerResult(ans *diameter.Message, err error) string {
 
 var hssPeersDesc = prometheus.NewDesc(
 	"ellasmsc_hss_peers",
-	"Open Diameter peers in the operator's realm that serve S6c, which the SMSC asks to route messages. At 0, "+
-		"messages to phones wait.",
+	"Open Diameter peers that serve S6c in the operator's realm, which the SMSC asks to route messages: HSSs, "+
+		"or agents towards them. At 0, messages to phones wait.",
 	nil, nil,
 )
 

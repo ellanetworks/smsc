@@ -35,7 +35,7 @@ The **Diameter** page shows Ella SMSC's **Host** and **Realm**, e.g. `smsc.node.
 
 ## 3. Add Ella SMSC to the core
 
-Ella SMSC does not connect to its peers: each peer connects to it. In the HSS, and in each MME or SMSF, add Ella SMSC as a Diameter peer:
+The HSS and the MMEs or SMSFs connect to Ella SMSC. In the HSS, and in each MME or SMSF, add Ella SMSC as a Diameter peer:
 
 - **Address**: `10.3.0.7`
 - **Port**: `3868`
@@ -57,5 +57,7 @@ In the Ella SMSC UI, go to **Diameter**:
 - Each MME or SMSF shows **open**, with **SGd** in **Applications**.
 
 Send an SMS between two phones. On the **Messages** page, it shows **delivered**.
+
+To reach subscribers roaming on other networks, or an HSS that sits behind a DRA, see [Connect through Diameter Agents](connect_through_diameter_agents.md).
 
 See [Connectivity](../reference/connectivity.md) and [3GPP Compliance](../reference/3gpp_compliance.md) for the interfaces Ella SMSC supports.

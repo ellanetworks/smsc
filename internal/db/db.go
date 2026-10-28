@@ -151,7 +151,31 @@ var migrations = []string{
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		messages INTEGER NOT NULL CHECK (messages >= 86400000000000)
 	);
-	INSERT INTO retention VALUES (1, 2592000000000000);`,
+	INSERT INTO retention VALUES (1, 2592000000000000);
+	CREATE TABLE diameter_peers (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host TEXT NOT NULL DEFAULT '' COLLATE NOCASE,
+		port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535)
+	);
+	CREATE UNIQUE INDEX diameter_peers_host ON diameter_peers (host) WHERE host != '';
+	CREATE TABLE diameter_peer_addresses (
+		peer_id INTEGER NOT NULL REFERENCES diameter_peers (id) ON DELETE CASCADE,
+		position INTEGER NOT NULL,
+		address TEXT NOT NULL,
+		PRIMARY KEY (peer_id, position),
+		UNIQUE (peer_id, address)
+	);
+	CREATE TABLE diameter_routes (
+		peer_id INTEGER NOT NULL REFERENCES diameter_peers (id) ON DELETE CASCADE,
+		position INTEGER NOT NULL,
+		realm TEXT NOT NULL COLLATE NOCASE,
+		application TEXT NOT NULL CHECK (application IN ('s6c', 'sgd')),
+		priority INTEGER NOT NULL CHECK (priority >= 0),
+		PRIMARY KEY (peer_id, position),
+		UNIQUE (peer_id, realm, application),
+		-- An empty realm is the default route, which only SGd takes.
+		CHECK (realm != '' OR application = 'sgd')
+	);`,
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {

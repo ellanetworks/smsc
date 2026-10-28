@@ -88,12 +88,14 @@ const (
 	// PermReadMessageContent is reading the content of a message, which the other message routes leave out.
 	PermReadMessageContent Permission = "message:content"
 	PermReadDiameter       Permission = "diameter:read"
-	PermReadOperator       Permission = "operator:read"
-	PermUpdateOperator     Permission = "operator:update"
-	PermReadDelivery       Permission = "delivery:read"
-	PermUpdateDelivery     Permission = "delivery:update"
-	PermReadRetention      Permission = "retention:read"
-	PermUpdateRetention    Permission = "retention:update"
+	// PermUpdateDiameter is changing the Diameter peers, which the SMSC connects to and sends requests through.
+	PermUpdateDiameter  Permission = "diameter:update"
+	PermReadOperator    Permission = "operator:read"
+	PermUpdateOperator  Permission = "operator:update"
+	PermReadDelivery    Permission = "delivery:read"
+	PermUpdateDelivery  Permission = "delivery:update"
+	PermReadRetention   Permission = "retention:read"
+	PermUpdateRetention Permission = "retention:update"
 	// PermSelf is reading one's own user, changing one's own password, and managing one's own API tokens.
 	PermSelf Permission = "user:self"
 	// PermManageUsers is managing every user and their API tokens.
@@ -106,13 +108,13 @@ var permissions = map[db.Role][]Permission{
 	db.RoleAdmin: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
-		PermReadProfiles,
+		PermReadProfiles, PermUpdateDiameter,
 	},
 	// Read Only sees messages but not their content.
 	db.RoleReadOnly: {PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf},
 	db.RoleNetworkManager: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
-		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf,
+		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermUpdateDiameter,
 	},
 	// A Submitter reads only the messages it submitted, which the message routes enforce.
 	// A Submitter reads only its own submissions, their content included.

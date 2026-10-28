@@ -143,7 +143,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Logger:   s.Logger,
 	})
 
-	if err := nodes.start(ctx, initial.Operator); err != nil {
+	if err := nodes.start(ctx, initial.Operator, initial.Peers); err != nil {
 		_ = database.Close()
 		return err
 	}
@@ -383,8 +383,47 @@ func (d diameterStatus) Identity() diameter.Identity { return d.nodes.Identity()
 
 func (d diameterStatus) Peers() []diameter.PeerStatus { return d.nodes.Node().Peers() }
 
+func (d diameterStatus) Peer(id string) (diameter.PeerStatus, bool) { return d.nodes.Node().Peer(id) }
+
+// Routes are the route to the HSS, then the routes of the configured peers, with
+// the default routes last. The route to the HSS takes the configured peers of
+// its realm, and the connected HSSs.
 func (d diameterStatus) Routes() []api.Route {
-	return []api.Route{{Realm: d.hss.realm(), ApplicationID: s6c.ApplicationID, Peers: d.hss.hosts()}}
+	realm := d.hss.realm()
+	routes := []api.Route{{Realm: realm, ApplicationID: s6c.ApplicationID, Peers: d.hss.hosts()}}
+
+	var defaults []api.Route
+
+	for _, r := range d.nodes.Node().Routes() {
+		if r.Application == s6c.ApplicationID && strings.EqualFold(r.Realm, realm) {
+			continue
+		}
+
+		route := api.Route{Realm: r.Realm, ApplicationID: r.Application, Default: r.Default}
+		configured := false
+
+		for _, p := range r.Peers {
+			if p.Implicit {
+				continue
+			}
+
+			configured = true
+
+			if p.State == diameter.PeerOpen {
+				route.Peers = append(route.Peers, p.Host)
+			}
+		}
+
+		switch {
+		case !configured:
+		case r.Default:
+			defaults = append(defaults, route)
+		default:
+			routes = append(routes, route)
+		}
+	}
+
+	return append(routes, defaults...)
 }
 
 func (h hssSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }

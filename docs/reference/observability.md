@@ -18,7 +18,7 @@ Ella SMSC exposes Prometheus metrics at [`GET /api/v1/metrics`](api/metrics.md).
 | `ellasmsc_messages_purged_total` | Counter | Short messages deleted once their [retention](api/retention.md) passed, with their status reports and delivery attempts. |
 | `ellasmsc_messages_pending` | Gauge | Short messages and status reports waiting for delivery, by type and state: `due`, to be delivered now or being delivered; `waiting`, for a retry or for the phone to be reachable. |
 | `ellasmsc_message_delivery_duration_seconds` | Histogram | Time from submission to delivery of the short messages delivered, the time the phone was unreachable included. |
-| `ellasmsc_hss_peers` | Gauge | Open peers in the operator's realm that support S6c. At 0, messages to phones wait. |
+| `ellasmsc_hss_peers` | Gauge | Open peers that serve S6c in the operator's realm: the HSSs that connect, and the configured peers with an s6c route to that realm, such as a DRA in front of the HSS. At 0, messages to phones wait. |
 | `ellasmsc_peer_requests_total` | Counter | Requests to the HSS and to the MMEs, SMSFs and IP-SM-GWs, by interface (`s6c`, `sgd`) and result (`success`, `failure`, `absent_user`, `error`, `timeout`). |
 | `ellasmsc_peer_request_duration_seconds` | Histogram | Duration of requests to the HSS and to the MMEs, SMSFs and IP-SM-GWs, by interface. |
 | `ellasmsc_database_query_duration_seconds` | Histogram | Duration of database calls, the wait for the connection included. |

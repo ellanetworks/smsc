@@ -42,6 +42,10 @@ func (d *DB) GetSettings(ctx context.Context) (_ settings.Settings, err error) {
 		return settings.Settings{}, err
 	}
 
+	if s.Peers, err = d.peers(ctx); err != nil {
+		return settings.Settings{}, err
+	}
+
 	return s, nil
 }
 

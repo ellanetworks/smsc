@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +28,7 @@ var applications = []diameter.Application{
 
 // nodeManager owns the Diameter node. The node's identity comes from the
 // operator settings, so a change of MCC/MNC replaces the node and its listener.
+// The node dials the configured peers, and follows their changes in place.
 type nodeManager struct {
 	addresses []netip.Addr
 	port      int
@@ -38,6 +41,10 @@ type nodeManager struct {
 	node     *diameter.Node
 	listener *sctp.Listener
 	replaced chan struct{}
+	// peers are the configured peers that the node has.
+	peers []settings.Peer
+	// open are the configured peers that are open, by peer ID.
+	open map[string]bool
 }
 
 func (m *nodeManager) Node() *diameter.Node {
@@ -74,9 +81,11 @@ func (m *nodeManager) do(ctx context.Context, node *diameter.Node, req *diameter
 	return ans, err
 }
 
-// doHost addresses a request to a peer by its Destination-Host. The node falls
-// back to static realm routes for a host it has no peer for, and the SMSC has
-// no routes, so that ends as an unknown peer.
+// doHost addresses a request to a peer by its Destination-Host. For a host it
+// has no peer for, such as a visited MME, the node falls back to the realm
+// routes, then the default route, of the configured peers, which forward the
+// request with its Destination-Host (RFC 6733 section 6.1). With none, it ends
+// as an unknown peer. The default route never takes the SMSC's own realm.
 func (m *nodeManager) doHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
 	addressed := *req
 	addressed.AVPs = withDestinationHost(req.AVPs, host)
@@ -135,7 +144,7 @@ func (m *nodeManager) Addr() net.Addr {
 	return m.listener.Addr()
 }
 
-func (m *nodeManager) start(ctx context.Context, operator settings.Operator) error {
+func (m *nodeManager) start(ctx context.Context, operator settings.Operator, peers []settings.Peer) error {
 	node, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{
 			OriginHost:      operator.Host(),
@@ -146,11 +155,18 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator) err
 		Handler:                 m.mux,
 		AcceptUnknownPeers:      true,
 		UnknownPeerApplications: applications,
+		OnPeerStateChange:       func(status diameter.PeerStatus) { m.peerStateChanged(operator, status) },
 		Logger:                  m.logger,
 	})
 	if err != nil {
 		return err
 	}
+
+	m.mu.Lock()
+	m.open = nil
+	m.mu.Unlock()
+
+	m.setPeers(node, peers)
 
 	laddr := &sctp.SCTPAddr{Port: m.port}
 	for _, a := range m.addresses {
@@ -189,20 +205,24 @@ func (m *nodeManager) shutdown(ctx context.Context) {
 	}
 }
 
-// follow replaces the node whenever the operator settings change its identity.
+// follow replaces the node whenever the operator settings change its identity,
+// and gives it the configured peers whenever they change.
 func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 	for {
 		changed := live.Changed()
+		current := live.Get()
 
-		if operator := live.Get().Operator; operator.Host() != m.Identity().OriginHost {
+		if operator := current.Operator; operator.Host() != m.Identity().OriginHost {
 			m.logger.Info("restarting Diameter for the new identity; cores reconnect",
 				slog.String("host", operator.Host()), slog.String("realm", operator.Realm()))
 
 			m.shutdown(ctx)
 
-			if err := m.start(ctx, operator); err != nil {
+			if err := m.start(ctx, operator, current.Peers); err != nil {
 				m.logger.Error("failed to restart Diameter", slog.String("host", operator.Host()), slog.Any("error", err))
 			}
+		} else if !slices.EqualFunc(current.Peers, m.configuredPeers(), settings.Peer.Equal) {
+			m.setPeers(m.Node(), current.Peers)
 		}
 
 		select {
@@ -211,6 +231,119 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 		case <-changed:
 		}
 	}
+}
+
+// setPeers gives the node its configured peers. The node keeps the connections
+// of the peers that are unchanged, and only replaces their routes.
+func (m *nodeManager) setPeers(node *diameter.Node, peers []settings.Peer) {
+	if err := node.SetPeers(toDiameterPeers(peers)); err != nil {
+		m.logger.Error("failed to apply the Diameter peers", slog.Any("error", err))
+		return
+	}
+
+	m.mu.Lock()
+	m.peers = peers
+	m.mu.Unlock()
+}
+
+func (m *nodeManager) configuredPeers() []settings.Peer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.peers
+}
+
+func toDiameterPeers(peers []settings.Peer) []diameter.Peer {
+	out := make([]diameter.Peer, 0, len(peers))
+
+	for _, p := range peers {
+		routes := make([]diameter.Route, 0, len(p.Routes))
+
+		for _, r := range p.Routes {
+			routes = append(routes, diameter.Route{
+				Realm:       r.Realm,
+				Application: applicationID(r.Application),
+				Priority:    r.Priority,
+				Default:     r.Default,
+			})
+		}
+
+		out = append(out, diameter.Peer{
+			ID:        p.NodeID(),
+			Host:      p.Host,
+			Addresses: p.Addresses,
+			// S6c and SGd run over SCTP (3GPP TS 29.338 clause 4.6).
+			Transports:   []diameter.Transport{diameter.TransportSCTP},
+			Applications: applications,
+			Routes:       routes,
+			Dial:         &diameter.Dial{Port: uint16(p.Port)},
+		})
+	}
+
+	return out
+}
+
+func applicationID(name string) uint32 {
+	if name == settings.ApplicationS6c {
+		return s6c.ApplicationID
+	}
+
+	return sgd.ApplicationID
+}
+
+// peerStateChanged logs the configured peers that open and close. A configured
+// peer is never an implicit route, so an HSS that is one serves S6c only
+// through an s6c route to the operator's realm: it warns of one without.
+func (m *nodeManager) peerStateChanged(operator settings.Operator, status diameter.PeerStatus) {
+	if !status.Configured {
+		return
+	}
+
+	m.mu.Lock()
+
+	wasOpen := m.open[status.ID]
+	isOpen := status.State == diameter.PeerOpen
+
+	if m.open == nil {
+		m.open = make(map[string]bool)
+	}
+
+	m.open[status.ID] = isOpen
+
+	i := slices.IndexFunc(m.peers, func(p settings.Peer) bool { return p.NodeID() == status.ID })
+
+	var cfg settings.Peer
+	if i >= 0 {
+		cfg = m.peers[i]
+	}
+	m.mu.Unlock()
+
+	attrs := []any{slog.String("peer", status.ID), slog.String("host", status.Host), slog.String("realm", status.Realm)}
+
+	switch {
+	case isOpen && !wasOpen:
+		m.logger.Info("Diameter peer open", attrs...)
+
+		realm := operator.Realm()
+		if strings.EqualFold(status.Realm, realm) && advertises(status, s6c.ApplicationID) && !routesS6c(cfg, realm) {
+			m.logger.Warn("Diameter peer in the operator's realm advertises S6c, but has no s6c route to it: "+
+				"the SMSC sends it no routing requests", attrs...)
+		}
+	case !isOpen && wasOpen:
+		m.logger.Info("Diameter peer closed", append(attrs, slog.String("error", status.LastError))...)
+	}
+}
+
+func advertises(status diameter.PeerStatus, app uint32) bool {
+	return slices.ContainsFunc(status.Applications, func(a diameter.Application) bool {
+		return a.ID == app || a.ID == diameter.RelayApplicationID
+	})
+}
+
+func routesS6c(p settings.Peer, realm string) bool {
+	return slices.ContainsFunc(p.Routes, func(r settings.Route) bool {
+		return r.Application == settings.ApplicationS6c && strings.EqualFold(r.Realm, realm)
+	})
 }
 
 // listenAddresses are the addresses Diameter listens on and advertises: the

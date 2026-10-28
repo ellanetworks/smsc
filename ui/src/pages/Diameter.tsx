@@ -34,8 +34,14 @@ const applicationLabels: Record<string, string> = {
 
 const applicationLabel = (name: string) => applicationLabels[name] ?? name;
 
+// The HSS route is the S6c route to this SMSC's own realm: a configured peer may
+// also route S6c to another realm.
 const hssPeers = (status: DiameterStatus): string[] =>
-  status.routes.find((route) => route.application === "s6c")?.peers ?? [];
+  status.routes.find(
+    (route) =>
+      route.application === "s6c" &&
+      route.realm.toLowerCase() === status.realm.toLowerCase(),
+  )?.peers ?? [];
 
 type PeerRow = DiameterPeer & { hss: boolean };
 
@@ -145,7 +151,9 @@ export default function Diameter() {
             hss: hss.includes(peer.host),
           }))}
           columns={columns}
-          getRowId={(peer) => `${peer.host}|${peer.address}`}
+          getRowId={(peer) =>
+            peer.id ? `peer-${peer.id}` : `${peer.host}|${peer.address}`
+          }
           disableColumnSorting
           disableColumnFilter
           disableColumnMenu

@@ -254,6 +254,128 @@ paths:
                   result:
                     $ref: "#/components/schemas/DiameterStatus"
 
+  /api/v1/diameter/peers:
+    get:
+      tags: [Diameter]
+      operationId: listDiameterPeers
+      summary: List Diameter peers
+      description: The Diameter agents and nodes that the SMSC connects to, with their routes and connection status.
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Peer"
+    post:
+      tags: [Diameter]
+      operationId: createDiameterPeer
+      summary: Create Diameter peer
+      description: >-
+        The SMSC connects to the peer over SCTP, keeps the connection up, and sends it the requests of its routes. The
+        cores and HSSs that connect to the SMSC need no peer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeerParams"
+      responses:
+        "201":
+          $ref: "#/components/responses/Peer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/diameter/peers/{id}:
+    get:
+      tags: [Diameter]
+      operationId: getDiameterPeer
+      summary: Get Diameter peer
+      parameters:
+        - $ref: "#/components/parameters/PeerID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Peer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Diameter]
+      operationId: updateDiameterPeer
+      summary: Update Diameter peer
+      parameters:
+        - $ref: "#/components/parameters/PeerID"
+      description: >-
+        A change of routes or priorities keeps the connection. A change of host, addresses or port replaces it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeerParams"
+      responses:
+        "200":
+          $ref: "#/components/responses/Peer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Diameter]
+      operationId: deleteDiameterPeer
+      summary: Delete Diameter peer
+      parameters:
+        - $ref: "#/components/parameters/PeerID"
+      description: Closes the connection to the peer.
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/operator:
     get:
       tags: [Operator]
@@ -1037,6 +1159,13 @@ components:
       description: The ID of the token, the part of it between ellasmsc_ and the next underscore.
       schema:
         type: string
+    PeerID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
     MessageID:
       name: id
       in: path
@@ -1083,6 +1212,99 @@ components:
         default: 25
 
   responses:
+    PeerParams:
+      type: object
+      additionalProperties: false
+      required: [addresses, routes]
+      properties:
+        host:
+          type: string
+          description: >-
+            The peer's Diameter identity, such as dea1.ipx.example.net. When set, the peer must give it as its
+            Origin-Host, and connect from one of its addresses. Empty accepts the identity the peer gives.
+          example: dea1.ipx.example.net
+        addresses:
+          type: array
+          minItems: 1
+          description: The peer's IP addresses, more than one for a multi-homed SCTP peer. List all of them.
+          items:
+            type: string
+          example: ["192.0.2.10", "198.51.100.10"]
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 3868
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PeerRoute"
+
+    PeerRoute:
+      type: object
+      additionalProperties: false
+      required: [application]
+      properties:
+        realm:
+          type: string
+          description: The Destination-Realm the route serves. Absent for a default route.
+          example: epc.mnc002.mcc208.3gppnetwork.org
+        default:
+          type: boolean
+          default: false
+          description: >-
+            Whether the route takes the foreign realms that no other route or connected peer serves, such as the
+            visited networks of roaming subscribers. It never takes the SMSC's own realm. Only sgd takes one.
+        application:
+          type: string
+          enum: [s6c, sgd]
+          description: s6c to reach the HSS through the peer, in the SMSC's own realm. sgd to reach MMEs and SMSFs.
+        priority:
+          type: integer
+          minimum: 0
+          default: 0
+          description: The peers of a route are tried lowest priority first. Peers of equal priority share the requests.
+
+    Peer:
+      type: object
+      required: [id, host, addresses, port, routes]
+      properties:
+        id:
+          type: integer
+          format: int64
+        host:
+          type: string
+        addresses:
+          type: array
+          items:
+            type: string
+        port:
+          type: integer
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PeerRoute"
+        status:
+          type: object
+          description: The connection to the peer. Absent until the SMSC applies a new peer.
+          required: [state, since]
+          properties:
+            state:
+              type: string
+              enum: [down, connecting, open, suspect, reopen, closing]
+            host:
+              type: string
+              description: The Origin-Host the peer gave.
+            realm:
+              type: string
+              description: The Origin-Realm the peer gave.
+            since:
+              type: string
+              format: date-time
+            error:
+              type: string
+              description: Why the last connection to the peer failed or closed.
+
     OperatorSettings:
       description: OK
       content:
@@ -1113,6 +1335,16 @@ components:
             properties:
               result:
                 $ref: "#/components/schemas/RetentionSettings"
+    Peer:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [result]
+            properties:
+              result:
+                $ref: "#/components/schemas/Peer"
     BadRequest:
       description: Bad Request
       content:
@@ -1299,7 +1531,7 @@ components:
       enum: [1, 2, 3, 4]
       description: >-
         1 Admin: everything. 2 Read Only: reads messages, Diameter and settings. 3 Network Manager: also submits
-        messages and changes settings. 4 Submitter: submits messages and reads only those it submitted.
+        messages and changes settings and Diameter peers. 4 Submitter: submits messages and reads only those it submitted.
 
     User:
       type: object
@@ -1810,10 +2042,16 @@ components:
 
     DiameterRoute:
       type: object
-      required: [realm, application, peers]
+      required: [realm, default, application, peers]
       properties:
         realm:
           type: string
+          description: Empty for a default route.
+        default:
+          type: boolean
+          description: >-
+            Whether the route takes the foreign realms that no other route or connected peer serves. It never takes the
+            SMSC's own realm.
         application:
           type: string
         peers:
@@ -1891,8 +2129,14 @@ components:
 
     DiameterPeer:
       type: object
-      required: [host, realm, address, state, applications, since]
+      required: [configured, host, realm, address, state, applications, since]
       properties:
+        id:
+          type: integer
+          format: int64
+          description: The ID of a configured peer. Absent for a peer that connected to the SMSC.
+        configured:
+          type: boolean
         host:
           type: string
         realm:
@@ -1909,3 +2153,6 @@ components:
         since:
           type: string
           format: date-time
+        error:
+          type: string
+          description: Why the last connection to the peer failed or closed.
