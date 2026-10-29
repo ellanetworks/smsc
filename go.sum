@@ -5,8 +5,8 @@ github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F9
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
-github.com/ellanetworks/core/diameter v0.0.0-20261029193154-fe9185b1a6bc h1:0lwQvssJv9a3OEvOwpXLmvzUE8nSLg9htX+5gORJmu0=
-github.com/ellanetworks/core/diameter v0.0.0-20261029193154-fe9185b1a6bc/go.mod h1:gskT7CTW6KQlLge0De8okxdR57vW0mKB60QjQwjS18U=
+github.com/ellanetworks/core/diameter v0.0.0-20261029224453-05651a99fe33 h1:P0Va5MXb7R64ic6vayOGK9DPcte+G1A6SVPZxp3F6uc=
+github.com/ellanetworks/core/diameter v0.0.0-20261029224453-05651a99fe33/go.mod h1:gskT7CTW6KQlLge0De8okxdR57vW0mKB60QjQwjS18U=
 github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f h1:467mMwOqgbeKZQPV/Jztg1RJFofLhJ5NqJGzT96SUrM=
 github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f/go.mod h1:qttv0gHtCuOunPG/VvNgd4p4RTzj3Q5Gh7g4Rd14MYw=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=

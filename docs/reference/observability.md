@@ -51,7 +51,7 @@ Ella SMSC exports [OpenTelemetry](https://opentelemetry.io/) traces when `teleme
 | `submit_sm` | Server | A `submit_sm` from an ESME. | `ESME_RSYSERR`, `_OTHER` |
 | `deliver` | Consumer | A delivery attempt of a short message or status report. Root span, linked to the span that created the message. | `failed`, `expired`, `_OTHER` |
 | `deliver_sm` | Client | A delivery receipt or SIM answer to an ESME. Root span, linked to the span that created the message. | A `command_status` that SMPP 3.4 names, `session_closed`, `timeout`, `canceled`, `_OTHER` |
-| `S6c/{command}`, `SGd/{command}` | Server, Client | A Diameter request. Child of the trace context of a [configured peer](api/diameter.md), linked to that of another peer. | Client: a Result-Code from 3000, `closed`, `not_connected`, `unknown_peer`, `application_unsupported`, `unable_to_deliver`, `loop_detected`, `not_proxiable`, `timeout`, `canceled`, `_OTHER`. Server: `3001`, `3002`, `3004`, `5012`, `overloaded`, `shutting_down`. |
+| `S6c/{command}`, `SGd/{command}` | Server, Client | A Diameter request. Child of the peer's trace context. | Client: a Result-Code from 3000, `closed`, `not_connected`, `unknown_peer`, `application_unsupported`, `unable_to_deliver`, `loop_detected`, `not_proxiable`, `timeout`, `canceled`, `_OTHER`. Server: `3001`, `3002`, `3004`, `5012`, `overloaded`, `shutting_down`. |
 
 ### Attributes
 

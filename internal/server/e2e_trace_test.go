@@ -27,9 +27,10 @@ func spanNamed(spans []sdktrace.ReadOnlySpan, name string, kind trace.SpanKind) 
 	return out
 }
 
-// TestMobileOriginatedMessageIsTraced follows a message from an MS through the SMSC: the core's request carries its
-// trace context, which the MO-Forward-Short-Message span links to, the core not being a configured peer; the delivery
-// attempt starts a trace that links to that span, and its routing lookup and delivery are part of it.
+// TestMobileOriginatedMessageIsTraced follows a message from an MS through the SMSC and back to the core: the core's
+// request carries its trace context, which the MO-Forward-Short-Message span continues, though the core is not a
+// configured peer; the delivery attempt starts a trace that links to that span, and its routing lookup and delivery,
+// which the core continues in turn, are part of it.
 func TestMobileOriginatedMessageIsTraced(t *testing.T) {
 	coreSpans, smscSpans := tracetest.NewSpanRecorder(), tracetest.NewSpanRecorder()
 
@@ -59,8 +60,8 @@ func TestMobileOriginatedMessageIsTraced(t *testing.T) {
 		t.Fatalf("%d MO-Forward-Short-Message client spans and %d server spans, want 1 and 1", len(mo), len(received))
 	}
 
-	if r := received[0]; r.Parent().IsValid() || len(r.Links()) != 1 || r.Links()[0].SpanContext.SpanID() != mo[0].SpanContext().SpanID() {
-		t.Fatalf("MO server span parent %v, links %+v; want a link to the core's span", r.Parent(), r.Links())
+	if r := received[0]; r.Parent().SpanID() != mo[0].SpanContext().SpanID() || len(r.Links()) != 0 {
+		t.Fatalf("MO server span parent %v, links %+v; want a child of the core's span", r.Parent(), r.Links())
 	}
 
 	d := deliver[0]
@@ -84,6 +85,12 @@ func TestMobileOriginatedMessageIsTraced(t *testing.T) {
 
 		if len(children) != 1 {
 			t.Errorf("%d %s spans in the delivery attempt, want 1", len(children), name)
+			continue
+		}
+
+		served := spanNamed(coreSpans.Ended(), name, trace.SpanKindServer)
+		if len(served) != 1 || served[0].Parent().SpanID() != children[0].SpanContext().SpanID() {
+			t.Errorf("the core's %s spans %d, want one, a child of the SMSC's request", name, len(served))
 		}
 	}
 }
