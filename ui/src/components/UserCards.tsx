@@ -311,7 +311,7 @@ export function UserAPITokensCard({
                       </TableCell>
                       <TableCell>
                         {token.expires_at
-                          ? formatTimestamp(token.expires_at)
+                          ? `through ${lastDay(token.expires_at)}`
                           : "Never"}
                       </TableCell>
                       <TableCell>
@@ -374,6 +374,11 @@ export const endOfDay = (date: string) => {
   const [year, month, day] = date.split("-").map(Number);
   return new Date(year, month - 1, day + 1);
 };
+
+// lastDay is the last day, YYYY-MM-DD in the browser's time zone, before an expiry: the date picked for a token that
+// expires at the end of it.
+export const lastDay = (expiry: string) =>
+  localDate(new Date(new Date(expiry).getTime() - 1));
 
 function CreateAPITokenDialog({
   email,

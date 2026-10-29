@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { TextField } from "@mui/material";
+import { Alert, TextField } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
 import { useSnackbar } from "@/contexts/SnackbarContext";
@@ -39,6 +39,11 @@ export default function EditOperatorIdDialog({
       onSubmit={() => mutation.mutate({ ...operator, mcc, mnc })}
       onClose={onClose}
     >
+      <Alert severity="warning">
+        This SMSC&apos;s Diameter host and realm change with the MCC and MNC.
+        Update the S6c routes of its peers to the new realm, and its identity in
+        the core and the HSS.
+      </Alert>
       <TextField
         label="MCC"
         value={mcc}

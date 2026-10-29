@@ -44,9 +44,9 @@ import { RoleID } from "@/queries/users";
 import { GRID_SX } from "@/utils/layout";
 import { formatTimestamp } from "@/utils/dates";
 import { formatDuration } from "@/utils/durations";
-import { isE164 } from "@/utils/e164";
-import { isOriginator } from "@/utils/originator";
-import { encodingLabels, partLabel } from "@/utils/labels";
+import { isPartialNumber } from "@/utils/e164";
+import { isOriginatorName } from "@/utils/originator";
+import { capitalized, encodingLabels, partLabel } from "@/utils/labels";
 
 export const MESSAGES_REFRESH_MS = 5000;
 
@@ -62,46 +62,54 @@ const STATUSES: MessageStatus[] = [
   "replaced",
 ];
 
-const E164_HINT = "E.164, e.g. +15551230002";
+const NUMBER_HINT = "All or part of a number, e.g. +1555123 or 0002";
 
-const ORIGINATOR_HINT =
-  "E.164, e.g. +15551230001, or a name of up to 11 letters and digits, with single spaces";
+const SENDER_HINT =
+  "All or part of a number, e.g. +1555123, or a name of up to 11 letters and digits, with single spaces";
+
+// A filter is applied once valid; a lone "+", the start of a number, is neither applied nor an error.
+const numberStarted = (value: string) => value === "+";
 
 const formatOptionalTimestamp = (value?: string) =>
   value ? formatTimestamp(value) : "—";
+
+// DATE_WIDTH fits a date of 19 characters, YYYY-MM-DD HH:MM:SS: 160px in Source Code Pro at 14px, with the 10px
+// padding each side of a cell, and some room.
+const DATE_WIDTH = 190;
 
 const columns: GridColDef<Message>[] = [
   {
     field: "created_at",
     headerName: "Created",
-    width: 170,
+    width: DATE_WIDTH,
     valueFormatter: formatOptionalTimestamp,
   },
-  // From and To share the spare width.
-  { field: "from", headerName: "From", flex: 1, minWidth: 160 },
-  { field: "to", headerName: "To", flex: 1, minWidth: 160 },
+  // The text columns share the spare width, so that none is cut while there is room.
+  // At 140px, they fit an E.164 number of 15 digits or a name of 11 characters, and the columns fit 1280px wide.
+  { field: "from", headerName: "From", flex: 1, minWidth: 140 },
+  { field: "to", headerName: "To", flex: 1, minWidth: 140 },
   {
     field: "part",
     headerName: "Part",
-    width: 90,
+    width: 80,
     valueGetter: (_value, row) => partLabel(row),
   },
   {
     field: "status",
     headerName: "Status",
-    width: 120,
+    width: 110,
     renderCell: ({ row }) => <MessageStatusChip status={row.status} />,
   },
   {
     field: "updated_at",
     headerName: "Updated",
-    width: 170,
+    width: DATE_WIDTH,
     valueFormatter: formatOptionalTimestamp,
   },
   {
     field: "expires_at",
     headerName: "Expires",
-    width: 170,
+    width: DATE_WIDTH,
     valueFormatter: formatOptionalTimestamp,
   },
   {
@@ -113,7 +121,8 @@ const columns: GridColDef<Message>[] = [
   {
     field: "submitted_by",
     headerName: "Submitted by",
-    width: 200,
+    flex: 1.5,
+    minWidth: 220,
     valueGetter: (_value, row) => row.submitted_by ?? "",
   },
 ];
@@ -152,17 +161,22 @@ export default function Messages() {
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   const timeFilter = useMemo(() => timeRangeFilter(timeRange), [timeRange]);
 
-  const toInvalid = to !== "" && !isE164(to);
+  // Numbers match by part, and names in any case.
+  const toInvalid = to !== "" && !numberStarted(to) && !isPartialNumber(to);
   // The value is kept as typed, since a name may hold spaces, and trimmed of those around it to be used.
   const sender = from.trim();
-  const fromInvalid = sender !== "" && !isOriginator(sender);
+  const fromInvalid =
+    sender !== "" &&
+    !numberStarted(sender) &&
+    !isPartialNumber(sender) &&
+    !isOriginatorName(sender);
 
   const debouncedTo = useDebouncedValue(
-    toInvalid ? "" : to,
+    toInvalid || numberStarted(to) ? "" : to,
     FILTER_DEBOUNCE_MS,
   );
   const debouncedFrom = useDebouncedValue(
-    fromInvalid ? "" : sender,
+    fromInvalid || numberStarted(sender) ? "" : sender,
     FILTER_DEBOUNCE_MS,
   );
   const filters = {
@@ -228,7 +242,7 @@ export default function Messages() {
             resetPage();
           }}
           error={toInvalid}
-          helperText={toInvalid ? E164_HINT : undefined}
+          helperText={toInvalid ? NUMBER_HINT : undefined}
           placeholder="+15551230002"
         />
         <TextField
@@ -240,7 +254,7 @@ export default function Messages() {
             resetPage();
           }}
           error={fromInvalid}
-          helperText={fromInvalid ? ORIGINATOR_HINT : undefined}
+          helperText={fromInvalid ? SENDER_HINT : undefined}
           placeholder="+15551230001"
         />
         <TextField
@@ -257,7 +271,7 @@ export default function Messages() {
           <MenuItem value="">All</MenuItem>
           {STATUSES.map((s) => (
             <MenuItem key={s} value={s}>
-              {s}
+              {capitalized(s)}
             </MenuItem>
           ))}
         </TextField>
@@ -349,6 +363,7 @@ export default function Messages() {
       <QueryAlert query={messages} subject="messages" />
       <DataGrid<Message>
         aria-label="Messages"
+        density="compact"
         rows={data?.items ?? []}
         columns={columns}
         rowCount={data?.total_count ?? 0}
@@ -373,6 +388,7 @@ export default function Messages() {
         disableColumnSorting
         disableColumnFilter
         disableRowSelectionOnClick
+        hideFooterSelectedRowCount
         rowSelectionModel={{
           type: "include",
           ids: new Set(selected ? [selected.id] : []),

@@ -144,7 +144,7 @@ describe("SMPP", () => {
     expect(rowCells("bulk sender")).toEqual([
       "bulk sender",
       "bulk@example.com",
-      "None",
+      "None: may not bind",
       "None",
       "",
     ]);

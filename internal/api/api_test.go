@@ -689,14 +689,20 @@ func TestListMessages(t *testing.T) {
 		ids   []int64
 		total int
 	}{
-		"newest first":   {"", []int64{5, 4, 3, 2, 1}, 5},
-		"by recipient":   {"?to=%2B15551230002", []int64{3, 1}, 2},
-		"by originator":  {"?from=%2B15551230003", []int64{3}, 1},
-		"by name":        {"?from=EllaSMSC", []int64{4}, 1},
-		"by status":      {"?to=%2B15551230002&status=pending", []int64{1}, 1},
-		"paged":          {"?page=2&per_page=2", []int64{3, 2}, 5},
-		"no match":       {"?to=%2B19999999999", []int64{}, 0},
-		"delivered only": {"?status=delivered", []int64{3}, 1},
+		"newest first":          {"", []int64{5, 4, 3, 2, 1}, 5},
+		"by recipient":          {"?to=%2B15551230002", []int64{3, 1}, 2},
+		"by originator":         {"?from=%2B15551230003", []int64{3}, 1},
+		"by name":               {"?from=EllaSMSC", []int64{4}, 1},
+		"by name in any case":   {"?from=ellasmsc", []int64{4}, 1},
+		"not by part of a name": {"?from=Ella", []int64{}, 0},
+		"by part of recipient":  {"?to=123000", []int64{5, 4, 3, 2, 1}, 5},
+		"by recipient prefix":   {"?to=%2B1555123000", []int64{5, 4, 3, 2, 1}, 5},
+		"by end of recipient":   {"?to=0002", []int64{3, 1}, 2},
+		"by part of originator": {"?from=0001111", []int64{2, 1}, 2},
+		"by status":             {"?to=%2B15551230002&status=pending", []int64{1}, 1},
+		"paged":                 {"?page=2&per_page=2", []int64{3, 2}, 5},
+		"no match":              {"?to=%2B19999999999", []int64{}, 0},
+		"delivered only":        {"?status=delivered", []int64{3}, 1},
 	}
 
 	for name, tc := range tests {
@@ -772,7 +778,7 @@ func TestListMessagesRejectsInvalidFilters(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
 	for _, query := range []string{
-		"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=15551230002", "?from=15551230001", "?from=Ella_Net", "?status=lost",
+		"?page=0", "?page=abc", "?per_page=0", "?per_page=x", "?per_page=101", "?to=%2B", "?to=1555-123", "?to=1234567890123456", "?from=%2B", "?from=Ella_Net", "?status=lost",
 		"?start=yesterday", "?end=2026-09-29", "?end=9999-12-31T00:00:00Z", "?start=1000-01-01T00:00:00Z", "?start=2026-09-29T11:00:00Z&end=2026-09-29T10:00:00Z",
 	} {
 		if code, _, errMsg := a.do(t, http.MethodGet, "/api/v1/messages"+query, ""); code != http.StatusBadRequest || errMsg == "" {

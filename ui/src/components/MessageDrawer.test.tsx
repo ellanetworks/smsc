@@ -79,7 +79,7 @@ describe("MessageDrawer", () => {
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
     const drawer = screen.getByRole("complementary", { name: "Message 1" });
-    expect(within(drawer).getByText("pending")).toBeInTheDocument();
+    expect(within(drawer).getByText("Pending")).toBeInTheDocument();
     expect(fields(drawer)).toMatchObject({
       Part: "1 of 2",
       Reference: "9",
@@ -92,7 +92,7 @@ describe("MessageDrawer", () => {
     expect(
       within(items[1]).getByRole("heading", { name: "2. Delivery" }),
     ).toBeInTheDocument();
-    expect(within(items[1]).getByText("absent user")).toBeInTheDocument();
+    expect(within(items[1]).getByText("Absent user")).toBeInTheDocument();
     expect(fields(items[1])).toEqual({
       Started: "2026-09-30 12:00:00",
       Duration: "2.5 s",
@@ -163,7 +163,7 @@ describe("MessageDrawer", () => {
   });
 
   it("shows the content only on request, once", async () => {
-    const m = message();
+    const m = message({ status: "pending" });
     serve(m, [[]]);
     const reads = () =>
       vi
@@ -222,7 +222,7 @@ describe("MessageDrawer", () => {
       await within(drawer).findByText("Binary content is not shown."),
     ).toBeInTheDocument();
     expect(
-      await within(drawer).findByText("No delivery attempts yet."),
+      await within(drawer).findByText("No delivery attempts."),
     ).toBeInTheDocument();
   });
 
@@ -315,7 +315,7 @@ describe("MessageDrawer", () => {
     expect(
       within(reports[0]).getByRole("heading", { name: "no response (0x62)" }),
     ).toBeInTheDocument();
-    expect(within(reports[0]).getByText("pending")).toBeInTheDocument();
+    expect(within(reports[0]).getByText("Pending")).toBeInTheDocument();
     expect(fields(reports[0])).toEqual({
       Created: "2026-09-30 12:30:00",
       Updated: "2026-09-30 12:30:00",
@@ -342,6 +342,68 @@ describe("MessageDrawer", () => {
     expect(within(section).queryByRole("listitem")).not.toBeInTheDocument();
   });
 
+  it("tells which earlier message to the same number a pending one waits behind", async () => {
+    const m = message({ id: 7, status: "pending", to: "+15551230002" });
+    const lists: URL[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        stubApi({
+          [`/api/v1/messages/${m.id}/attempts`]: () =>
+            json(200, { result: page([]) }),
+          "/api/v1/messages": (url) => {
+            lists.push(url);
+            return json(200, {
+              result: page([
+                m,
+                // A longer number that the to filter, which matches by part, also returns.
+                message({ id: 6, status: "pending", to: "+155512300021" }),
+                message({ id: 5, status: "pending", to: "+15551230002" }),
+                message({ id: 2, status: "pending", to: "+15551230002" }),
+              ]),
+            });
+          },
+        }),
+      ),
+    );
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    expect(
+      await within(screen.getByRole("complementary")).findByText(
+        "Waits behind message 5 to the same number.",
+      ),
+    ).toBeInTheDocument();
+    expect(lists[0].searchParams.get("to")).toBe("+15551230002");
+    expect(lists[0].searchParams.get("status")).toBe("pending");
+  });
+
+  it("does not wait for attempts on an expired message", async () => {
+    const m = message({ status: "expired" });
+    serve(m, [[]]);
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    expect(
+      await within(screen.getByRole("complementary")).findByText(
+        "No delivery attempts.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("spells out the acronyms of an outcome", async () => {
+    const m = message();
+    serve(m, [[attempt({ id: 1, step: "routing", outcome: "no_hss" })]]);
+
+    renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
+
+    expect(
+      await within(screen.getByRole("complementary")).findByText(
+        "No HSS connected",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows a replaced message", () => {
     const m = message({ status: "replaced" });
     serve(m, [[]]);
@@ -349,7 +411,7 @@ describe("MessageDrawer", () => {
     renderWithClient(<MessageDrawer message={m} onClose={() => {}} />);
 
     expect(
-      within(screen.getByRole("complementary")).getByText("replaced"),
+      within(screen.getByRole("complementary")).getByText("Replaced"),
     ).toBeInTheDocument();
   });
 

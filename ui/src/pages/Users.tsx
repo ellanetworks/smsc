@@ -59,7 +59,7 @@ export default function Users() {
         id="users-title"
         title="Users"
         count={data?.total_count}
-        description="The people and platforms that use the UI and the API, and what each role may do."
+        description="The people and platforms that use the UI and the API, and their roles."
         action={
           <Button
             variant="contained"

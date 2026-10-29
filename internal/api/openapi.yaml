@@ -68,12 +68,19 @@ paths:
         - $ref: "#/components/parameters/PerPage"
         - name: to
           in: query
+          description: All or part of the recipient's E.164 number, with or without +. Matches the numbers that contain its digits.
           schema:
-            $ref: "#/components/schemas/E164"
+            type: string
+            pattern: '^\+?[0-9]{1,15}$'
+            examples: ["+1555123", "1230002"]
         - name: from
           in: query
+          description: >-
+            All or part of the sender's E.164 number, with or without +, which matches the numbers that contain its
+            digits; or a name, as in the request to create a message, which matches that name in any case.
           schema:
-            $ref: "#/components/schemas/Originator"
+            type: string
+            examples: ["1230001", "EllaSMSC"]
         - name: status
           in: query
           schema:

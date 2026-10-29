@@ -390,12 +390,15 @@ func TestListMessages(t *testing.T) {
 		want          []int64
 		total         int
 	}{
-		"all newest first": {MessageFilter{}, 1, 10, []int64{ids[3], ids[2], ids[1], ids[0]}, 4},
-		"by recipient":     {MessageFilter{MSISDN: testMSISDN}, 1, 10, []int64{ids[3], ids[2], ids[0]}, 3},
-		"by originator":    {MessageFilter{Originator: "15551230003"}, 1, 10, []int64{ids[2]}, 1},
-		"by status":        {MessageFilter{MSISDN: testMSISDN, Status: StatusPending}, 1, 10, []int64{ids[2], ids[0]}, 2},
-		"second page":      {MessageFilter{}, 2, 3, []int64{ids[0]}, 4},
-		"past the end":     {MessageFilter{}, 3, 3, []int64{}, 4},
+		"all newest first":          {MessageFilter{}, 1, 10, []int64{ids[3], ids[2], ids[1], ids[0]}, 4},
+		"by recipient":              {MessageFilter{MSISDN: testMSISDN}, 1, 10, []int64{ids[3], ids[2], ids[0]}, 3},
+		"by originator":             {MessageFilter{Originator: "15551230003"}, 1, 10, []int64{ids[2]}, 1},
+		"by part of recipient":      {MessageFilter{MSISDN: "1230003"}, 1, 10, []int64{ids[1]}, 1},
+		"by part of originator":     {MessageFilter{Originator: "1230003", OriginatorContains: true}, 1, 10, []int64{ids[2]}, 1},
+		"not by part of originator": {MessageFilter{Originator: "1230003"}, 1, 10, []int64{}, 0},
+		"by status":                 {MessageFilter{MSISDN: testMSISDN, Status: StatusPending}, 1, 10, []int64{ids[2], ids[0]}, 2},
+		"second page":               {MessageFilter{}, 2, 3, []int64{ids[0]}, 4},
+		"past the end":              {MessageFilter{}, 3, 3, []int64{}, 4},
 	}
 
 	for name, tc := range tests {

@@ -64,7 +64,7 @@ describe("Messages", () => {
       "+15551230001",
       "+15551230007",
       "2 of 3",
-      "pending",
+      "Pending",
       "ota@example.com",
     ]);
     expect(rowCells("+15551230008")).toContain("—");
@@ -85,30 +85,40 @@ describe("Messages", () => {
     expect(lastQuery(requests)).toEqual({ page: "1", per_page: "25" });
   });
 
-  it("filters by recipient once the number is valid", async () => {
+  it("filters by all or part of the recipient's number", async () => {
     const requests = serveMessages();
 
     renderWithClient(<Messages />);
     await listed();
 
     const input = screen.getByRole("textbox", { name: "To" });
-    fireEvent.change(input, { target: { value: "+1555" } });
+    // The start of a number is no error.
+    fireEvent.change(input, { target: { value: "+" } });
+    expect(input).toHaveAttribute("aria-invalid", "false");
+
     fireEvent.change(input, { target: { value: "+1555x" } });
+    expect(
+      screen.getByText("All or part of a number, e.g. +1555123 or 0002"),
+    ).toBeInTheDocument();
 
-    expect(screen.getByText("E.164, e.g. +15551230002")).toBeInTheDocument();
-
-    fireEvent.change(input, { target: { value: "+15551230002" } });
-
+    fireEvent.change(input, { target: { value: "+1555" } });
     await waitFor(() =>
       expect(lastQuery(requests)).toEqual({
         page: "1",
         per_page: "25",
-        to: "+15551230002",
+        to: "+1555",
       }),
     );
-    expect(requests.some((r) => r.searchParams.get("to") === "+1555x")).toBe(
-      false,
+
+    fireEvent.change(input, { target: { value: "0002" } });
+    await waitFor(() =>
+      expect(lastQuery(requests)).toMatchObject({ to: "0002" }),
     );
+    expect(
+      requests.some((r) =>
+        ["+", "+1555x"].includes(r.searchParams.get("to") ?? ""),
+      ),
+    ).toBe(false);
   });
 
   it("filters by sender, a number or a name", async () => {
@@ -121,7 +131,7 @@ describe("Messages", () => {
     fireEvent.change(input, { target: { value: "Ella_Net" } });
     expect(
       screen.getByText(
-        "E.164, e.g. +15551230001, or a name of up to 11 letters and digits, with single spaces",
+        "All or part of a number, e.g. +1555123, or a name of up to 11 letters and digits, with single spaces",
       ),
     ).toBeInTheDocument();
 
@@ -144,6 +154,11 @@ describe("Messages", () => {
     expect(input).toHaveValue("+15551230001 ");
     await waitFor(() =>
       expect(lastQuery(requests)).toMatchObject({ from: "+15551230001" }),
+    );
+
+    fireEvent.change(input, { target: { value: "1230001" } });
+    await waitFor(() =>
+      expect(lastQuery(requests)).toMatchObject({ from: "1230001" }),
     );
   });
 
@@ -202,7 +217,7 @@ describe("Messages", () => {
     await listed();
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Status" }));
-    fireEvent.click(await screen.findByRole("option", { name: "failed" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Failed" }));
 
     await waitFor(() =>
       expect(lastQuery(requests)).toMatchObject({ status: "failed" }),
@@ -223,6 +238,8 @@ describe("Messages", () => {
         name: "Delivery attempts (1)",
       }),
     ).toBeInTheDocument();
+    // The open message is highlighted, not selected for an action.
+    expect(screen.queryByText(/row selected/)).not.toBeInTheDocument();
 
     fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
     await waitFor(() =>

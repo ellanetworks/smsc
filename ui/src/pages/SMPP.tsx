@@ -63,7 +63,7 @@ const columns = (
     minWidth: 160,
     renderCell: ({ row }) =>
       row.allowed_networks.length === 0 ? (
-        "None"
+        "None: may not bind"
       ) : (
         <Stack>
           {row.allowed_networks.map((n) => (

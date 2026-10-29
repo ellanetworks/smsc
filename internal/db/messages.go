@@ -489,8 +489,12 @@ func (d *DB) GetMessage(ctx context.Context, id int64) (_ Message, err error) {
 }
 
 type MessageFilter struct {
-	MSISDN     string
-	Originator string
+	// MSISDN, when not empty, keeps only the messages whose MSISDN contains these digits.
+	MSISDN string
+	// Originator, when not empty, keeps only the messages whose originator is it, in any case; or, with
+	// OriginatorContains, contains it.
+	Originator         string
+	OriginatorContains bool
 	// OriginatorTON, when not nil, keeps only the messages whose originator has this type of number.
 	OriginatorTON *uint8
 	Status        MessageStatus
@@ -507,11 +511,14 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 	where, args := []string{"kind = ?"}, []any{KindMessage}
 
 	if f.MSISDN != "" {
-		where, args = append(where, "msisdn = ?"), append(args, f.MSISDN)
+		where, args = append(where, "instr(msisdn, ?) > 0"), append(args, f.MSISDN)
 	}
 
-	if f.Originator != "" {
-		where, args = append(where, "originator = ?"), append(args, f.Originator)
+	switch {
+	case f.Originator != "" && f.OriginatorContains:
+		where, args = append(where, "instr(originator, ?) > 0"), append(args, f.Originator)
+	case f.Originator != "":
+		where, args = append(where, "originator = ? COLLATE NOCASE"), append(args, f.Originator)
 	}
 
 	if f.OriginatorTON != nil {

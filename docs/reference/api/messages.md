@@ -101,8 +101,8 @@ This path returns the list of messages, most recent first. For a Submitter, only
 
 | Name       | In    | Type | Default | Allowed | Description |
 | ---------- | ----- | ---- | ------- | ------- | ----------- |
-| `to`       | query | str  |         | E.164 with `+` | Recipient. |
-| `from`     | query | str  |         | E.164 with `+`, or a name as in [Create a Message](#create-a-message) | Sender. |
+| `to`       | query | str  |         | 1 to 15 digits, after an optional `+` | Recipient: the numbers that contain these digits. `+1555123` and `1555123` match `+15551230002`, and so does `0002`. |
+| `from`     | query | str  |         | 1 to 15 digits, after an optional `+`, or a name as in [Create a Message](#create-a-message) | Sender: the numbers that contain these digits, or the name, in any case. |
 | `status`   | query | str  |         | `pending`, `delivered`, `failed`, `expired`, `replaced` | Status. |
 | `start`    | query | str  |         | RFC 3339 time | Created at or after. |
 | `end`      | query | str  |         | RFC 3339 time, not before `start` | Created before. |

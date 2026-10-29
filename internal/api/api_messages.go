@@ -551,19 +551,29 @@ func ListMessages(cfg Config) http.Handler {
 		filter := db.MessageFilter{SubmittedBy: ownSubmissions(r.Context())}
 
 		if to := q.Get("to"); to != "" {
-			if filter.MSISDN, ok = e164Digits(to); !ok {
-				writeError(w, http.StatusBadRequest, "to must be an E.164 number such as +15551230002", nil, cfg.Logger)
+			if filter.MSISDN, ok = partialNumber(to); !ok {
+				writeError(w, http.StatusBadRequest, "to must be all or part of an E.164 number, such as +1555123 or 1230002", nil,
+					cfg.Logger)
+
 				return
 			}
 		}
 
 		if from := q.Get("from"); from != "" {
-			originator, ok := originatorOf(w, from, cfg)
-			if !ok {
+			// A sender is a number, matched by part, or a name, matched in any case.
+			if digits, isNumber := partialNumber(from); isNumber {
+				ton := uint8(tpdu.TypeOfNumberInternational)
+				filter.Originator, filter.OriginatorContains, filter.OriginatorTON = digits, true, &ton
+			} else if submission.IsOriginatorName(from) {
+				ton := uint8(tpdu.TypeOfNumberAlphanumeric)
+				filter.Originator, filter.OriginatorTON = from, &ton
+			} else {
+				writeError(w, http.StatusBadRequest,
+					"from must be all or part of an E.164 number, such as +1555123 or 1230001, or a name of 1 to 11 letters and digits, with single spaces between words",
+					nil, cfg.Logger)
+
 				return
 			}
-
-			filter.Originator, filter.OriginatorTON = originator.Digits, &originator.TypeOfNumber
 		}
 
 		if status := db.MessageStatus(q.Get("status")); status != "" {
@@ -769,6 +779,22 @@ func originatorOf(w http.ResponseWriter, from string, cfg Config) (db.Address, b
 	}
 
 	return db.Address{Digits: from, TypeOfNumber: tpdu.TypeOfNumberAlphanumeric}, true
+}
+
+// partialNumber returns the digits of all or part of an E.164 number: 1 to 15 digits, after an optional +.
+func partialNumber(s string) (string, bool) {
+	digits := strings.TrimPrefix(s, "+")
+	if digits == "" || len(digits) > maxE164Digits {
+		return "", false
+	}
+
+	for i := range len(digits) {
+		if digits[i] < '0' || digits[i] > '9' {
+			return "", false
+		}
+	}
+
+	return digits, true
 }
 
 func e164Digits(s string) (string, bool) {

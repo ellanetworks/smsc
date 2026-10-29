@@ -107,7 +107,16 @@ func (e *testEnv) run(t *testing.T) *clock {
 
 // bind attaches a session of a kind, as the server does once the ESME has its bind response.
 func (e *testEnv) bind(id uint64, kind BindType, esme db.ESME) *fakeConn {
+	return e.bindAnswering(id, kind, esme, nil)
+}
+
+// bindAnswering binds a session that answers each deliver_sm with what answer returns. answer is set before the session
+// is attached, since the service may deliver to it as soon as it is.
+func (e *testEnv) bindAnswering(
+	id uint64, kind BindType, esme db.ESME, answer func(*smpp.DeliverSM) (smpp.CommandStatus, error),
+) *fakeConn {
 	conn := newFakeConn()
+	conn.answer = answer
 	e.service.attach(&Session{ID: id, ESME: esme, UserID: esme.UserID, BindType: kind}, conn)
 
 	return conn
@@ -574,8 +583,9 @@ func TestLostSession(t *testing.T) {
 	id := env.stored(t, with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.RegisteredDelivery = 0x01 }))
 
 	for i := range 4 {
-		conn := env.bind(uint64(i+1), Receiver, env.esme)
-		conn.answer = func(*smpp.DeliverSM) (smpp.CommandStatus, error) { return 0, smpp.ErrClosed }
+		conn := env.bindAnswering(uint64(i+1), Receiver, env.esme, func(*smpp.DeliverSM) (smpp.CommandStatus, error) {
+			return 0, smpp.ErrClosed
+		})
 
 		if i == 0 {
 			env.complete(t, id, db.StatusDelivered, 0, "", "", c.Now())

@@ -21,7 +21,7 @@ export const roleLabels: Record<RoleID, string> = {
 
 export const roleDescriptions: Record<RoleID, string> = {
   [RoleID.Admin]: "Everything, including users.",
-  [RoleID.ReadOnly]: "Reads messages, cores and settings.",
+  [RoleID.ReadOnly]: "Reads messages, without their content, and settings.",
   [RoleID.NetworkManager]: "Sends messages and changes settings.",
   [RoleID.Submitter]:
     "Sends messages and reads only its own. For external platforms.",

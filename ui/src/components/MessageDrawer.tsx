@@ -26,6 +26,7 @@ import {
   getMessage,
   getMessageContent,
   listMessageAttempts,
+  listMessages,
   type Message,
   type StatusReport,
 } from "@/queries/messages";
@@ -41,6 +42,10 @@ import {
 } from "@/utils/labels";
 
 export const DETAIL_REFRESH_MS = 5000;
+
+// EARLIER_PER_PAGE is how many earlier pending messages to the same number the drawer reads, to find the one it waits
+// behind.
+const EARLIER_PER_PAGE = 100;
 
 const ATTEMPTS_PER_PAGE = 100;
 
@@ -237,6 +242,25 @@ function Attempts({ message }: { message: Message }) {
   const attempts = data?.pages.flatMap((p) => p.items) ?? [];
   const total = data?.pages[0]?.total_count;
 
+  // A pending message waits for the earlier pending messages to the same number, which are delivered first. The list
+  // ends just after this message, since the parts of a message share its time; the to filter matches by part, so the
+  // number is compared too.
+  const earlier = useQuery({
+    queryKey: ["messages", "earlier", message.id],
+    queryFn: () =>
+      listMessages({
+        to: message.to,
+        status: "pending",
+        end: new Date(new Date(message.created_at).getTime() + 1).toISOString(),
+        perPage: EARLIER_PER_PAGE,
+      }),
+    enabled: pending,
+    refetchInterval: pending ? DETAIL_REFRESH_MS : false,
+  });
+  const behind = pending
+    ? earlier.data?.items.find((m) => m.id < message.id && m.to === message.to)
+    : undefined;
+
   return (
     <Box component="section" aria-labelledby="attempts-title">
       <Typography
@@ -248,10 +272,15 @@ function Attempts({ message }: { message: Message }) {
         Delivery attempts{total !== undefined ? ` (${total})` : ""}
       </Typography>
       <QueryAlert query={query} subject="delivery attempts" />
+      {behind && (
+        <Typography color="text.secondary" sx={{ mb: 1 }}>
+          Waits behind message {behind.id} to the same number.
+        </Typography>
+      )}
       {!data && !error && <Skeleton variant="rounded" height={120} />}
       {data && attempts.length === 0 && (
         <Typography color="text.secondary">
-          No delivery attempts yet.
+          {pending ? "No delivery attempts yet." : "No delivery attempts."}
         </Typography>
       )}
       {attempts.length > 0 && (

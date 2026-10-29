@@ -45,3 +45,7 @@ export const hex = (n: number): string =>
 // tpStatusLabel names a TP-Status (TS 23.040 clause 9.2.3.15) with its value, such as "no response (0x22)".
 export const tpStatusLabel = (r: StatusReport): string =>
   `${r.tp_status_name.replaceAll("_", " ")} (${hex(r.tp_status)})`;
+
+// capitalized turns a lowercase code, such as a status, into a label: "pending" into "Pending".
+export const capitalized = (code: string): string =>
+  code.charAt(0).toUpperCase() + code.slice(1);

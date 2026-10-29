@@ -163,7 +163,7 @@ describe("Diameter", () => {
       "hss.epc.example.org",
       "epc.example.org",
       "10.0.0.5",
-      "open",
+      "Open",
       "yes",
       "S6c, SGd, 16777999",
       "2026-09-30 12:05:18",
@@ -172,7 +172,7 @@ describe("Diameter", () => {
       "—",
       "—",
       "10.0.0.6",
-      "connecting",
+      "Connecting",
       "no",
       "—",
       "2026-09-30 12:05:18",
@@ -313,7 +313,7 @@ describe("Diameter", () => {
         "dea1.ipx.example.net",
         "192.0.2.10:3868[2001:db8::10]:3868",
         "SGd → DefaultS6c → epc.example.org (priority 1)",
-        "open",
+        "Open",
         "yes",
         "",
       ]),
@@ -346,7 +346,7 @@ describe("Diameter", () => {
       await screen.findByRole("grid", {
         name: "Configured Peers",
       }),
-    ).findByText("down");
+    ).findByText("Down");
     fireEvent.mouseOver(chip);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "connection refused",

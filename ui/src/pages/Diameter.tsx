@@ -37,6 +37,7 @@ import SettingsTable from "@/components/SettingsTable";
 import { useAuth } from "@/contexts/AuthContext";
 import { errorMessage, useSnackbar } from "@/contexts/SnackbarContext";
 import { formatTimestamp } from "@/utils/dates";
+import { capitalized } from "@/utils/labels";
 
 export const DIAMETER_REFRESH_MS = 5000;
 
@@ -85,7 +86,7 @@ function PeerStateChip({ peer }: { peer: Peer }) {
 
   return (
     <Tooltip title={tooltip} arrow>
-      <Chip label={state} color={stateColor(state)} size="small" />
+      <Chip label={capitalized(state)} color={stateColor(state)} size="small" />
     </Tooltip>
   );
 }
@@ -121,7 +122,11 @@ const connectedColumns: GridColDef<ConnectedRow>[] = [
     flex: 0.4,
     minWidth: 110,
     renderCell: ({ row }) => (
-      <Chip label={row.state} color={stateColor(row.state)} size="small" />
+      <Chip
+        label={capitalized(row.state)}
+        color={stateColor(row.state)}
+        size="small"
+      />
     ),
   },
   {
@@ -189,7 +194,12 @@ const configuredColumns = (
       ) : (
         <Stack>
           {row.routes.map((r) => (
-            <span key={routeLabel(r)}>{routeLabel(r)}</span>
+            // A realm breaks at its dots, so that a narrow column wraps it rather than cuts it.
+            <span key={routeLabel(r)}>
+              {applicationLabel(r.application)} →{" "}
+              {r.default ? "Default" : <DomainName name={r.realm ?? ""} />}
+              {r.priority > 0 ? ` (priority ${r.priority})` : ""}
+            </span>
           ))}
         </Stack>
       ),
