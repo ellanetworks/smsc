@@ -226,3 +226,22 @@ func TestLoadSMPP(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadTelemetry(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validConfig+"telemetry:\n  enabled: true\n  otlp_endpoint: collector:4317\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := (Telemetry{Enabled: true, OTLPEndpoint: "collector:4317"}); cfg.Telemetry != want {
+		t.Fatalf("telemetry = %+v, want %+v", cfg.Telemetry, want)
+	}
+
+	if _, err := Load(writeConfig(t, validConfig+"telemetry:\n  otlp_endpoint: collector:4317\n")); err != nil {
+		t.Fatalf("Load with telemetry disabled: %v", err)
+	}
+
+	if _, err := Load(writeConfig(t, validConfig+"telemetry:\n  enabled: true\n")); err == nil {
+		t.Fatal("Load without telemetry.otlp_endpoint succeeded")
+	}
+}

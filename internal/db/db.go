@@ -85,6 +85,8 @@ var migrations = []string{
 		next_attempt_at INTEGER NOT NULL,
 		retries INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
+		-- The W3C traceparent of the request that created the message, which its deliveries link to.
+		traceparent TEXT,
 		CHECK (kind = 'message' AND report_for IS NULL AND report_status IS NULL
 			OR kind = 'status_report' AND report_for IS NOT NULL AND report_status IS NOT NULL),
 		CHECK (kind = 'message' OR status != 'replaced'),

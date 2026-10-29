@@ -19,6 +19,7 @@ import (
 	"github.com/ellanetworks/core/sctp"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var applications = []diameter.Application{
@@ -35,7 +36,9 @@ type nodeManager struct {
 	mux       *diameter.Mux
 	// metrics count and time the requests to the peers. They outlive the node.
 	metrics *peerMetrics
-	logger  *slog.Logger
+	// tracerProvider traces the Diameter requests.
+	tracerProvider trace.TracerProvider
+	logger         *slog.Logger
 
 	mu       sync.Mutex
 	node     *diameter.Node
@@ -156,6 +159,7 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator, pee
 		AcceptUnknownPeers:      true,
 		UnknownPeerApplications: applications,
 		OnPeerStateChange:       func(status diameter.PeerStatus) { m.peerStateChanged(operator, status) },
+		TracerProvider:          m.tracerProvider,
 		Logger:                  m.logger,
 	})
 	if err != nil {

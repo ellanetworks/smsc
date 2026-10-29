@@ -25,7 +25,8 @@ type Config struct {
 	API      API      `yaml:"api"`
 	Diameter Diameter `yaml:"diameter"`
 	// SMPP, when set, runs the SMPP 3.4 listener for ESMEs.
-	SMPP *SMPP `yaml:"smpp"`
+	SMPP      *SMPP     `yaml:"smpp"`
+	Telemetry Telemetry `yaml:"telemetry"`
 }
 
 type Logging struct {
@@ -59,6 +60,12 @@ type SMPP struct {
 	// TLS, when set, wraps each connection in TLS from its first octet. SMPP 3.4 runs over TCP/IP or X.25 (section
 	// 2.4): TLS is a convention outside it.
 	TLS *TLS `yaml:"tls"`
+}
+
+// Telemetry exports traces over OTLP/gRPC to OTLPEndpoint, a host:port, when Enabled.
+type Telemetry struct {
+	Enabled      bool   `yaml:"enabled"`
+	OTLPEndpoint string `yaml:"otlp_endpoint"`
 }
 
 // Diameter listens on Address, or on the addresses of the interface Name.
@@ -119,6 +126,8 @@ func (c Config) validate() error {
 		return errors.New("diameter.address must be a specific address, not 0.0.0.0 or ::, since it is advertised to peers")
 	case c.Diameter.Port < 1 || c.Diameter.Port > 65535:
 		return fmt.Errorf("diameter.port %d is out of range", c.Diameter.Port)
+	case c.Telemetry.Enabled && c.Telemetry.OTLPEndpoint == "":
+		return errors.New("telemetry.otlp_endpoint is required when telemetry.enabled is true")
 	}
 
 	if err := c.API.TLS.validate("api"); err != nil {

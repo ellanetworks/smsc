@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ellanetworks/smsc/internal/tracing"
 )
 
 type MessageStatus string
@@ -75,6 +77,8 @@ type Message struct {
 	NextAttemptAt time.Time
 	Retries       int
 	UpdatedAt     time.Time
+	// TraceParent is the W3C traceparent of the request that created the message, or "" when it was not traced.
+	TraceParent string
 }
 
 type NewMessage struct {
@@ -280,12 +284,12 @@ func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO messages (kind, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi,
 		msisdn, origin, submitted_by, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at,
-		time_stamp, expires_at, next_attempt_at, retries, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		time_stamp, expires_at, next_attempt_at, retries, updated_at, traceparent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.Origin,
 		sql.Null[int64]{V: m.SubmittedBy, Valid: m.SubmittedBy != 0}, m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, timeStamp,
-		expiresAt, next, at)
+		expiresAt, next, at, traceParent(ctx))
 	if err != nil {
 		return 0, err
 	}
@@ -325,11 +329,11 @@ func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewS
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO messages (kind, report_for, report_status, originator, originator_ton, originator_npi, recipient,
 		recipient_ton, recipient_npi, msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot,
-		submitted_at, time_stamp, expires_at, next_attempt_at, retries, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?, 0, ?)`,
+		submitted_at, time_stamp, expires_at, next_attempt_at, retries, updated_at, traceparent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?, 0, ?, ?)`,
 		KindStatusReport, messageID, r.Status, r.Originator.Digits, r.Originator.TypeOfNumber, r.Originator.NumberingPlan,
 		recipient.Digits, recipient.TypeOfNumber, recipient.NumberingPlan, recipient.Digits, OriginMobile, reference,
-		r.TPDU, StatusPending, at, submittedAt, expiresAt, next, at)
+		r.TPDU, StatusPending, at, submittedAt, expiresAt, next, at, traceParent(ctx))
 
 	return err
 }
@@ -440,7 +444,7 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 
 const messageColumns = `id, kind, report_for, report_status, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi, msisdn,
 	origin, submitted_by, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp, expires_at,
-	next_attempt_at, retries, updated_at`
+	next_attempt_at, retries, updated_at, traceparent`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -452,18 +456,19 @@ func scanMessage(row rowScanner) (Message, error) {
 		reportFor                                                   sql.Null[int64]
 		reportStatus                                                sql.Null[uint8]
 		submittedBy                                                 sql.Null[int64]
+		traceparent                                                 sql.Null[string]
 		submittedAt, timeStamp, expiresAt, nextAttemptAt, updatedAt int64
 	)
 
 	err := row.Scan(&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber, &m.Originator.NumberingPlan,
 		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN, &m.Origin, &submittedBy,
 		&m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status, &m.SingleShot,
-		&submittedAt, &timeStamp, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt)
+		&submittedAt, &timeStamp, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt, &traceparent)
 	if err != nil {
 		return Message{}, err
 	}
 
-	m.ReportFor, m.ReportStatus, m.SubmittedBy = reportFor.V, reportStatus.V, submittedBy.V
+	m.ReportFor, m.ReportStatus, m.SubmittedBy, m.TraceParent = reportFor.V, reportStatus.V, submittedBy.V, traceparent.V
 	m.SubmittedAt = time.Unix(0, submittedAt).UTC()
 	m.TimeStamp = time.Unix(0, timeStamp).UTC()
 	m.ExpiresAt = time.Unix(0, expiresAt).UTC()
@@ -961,4 +966,10 @@ func (d *DB) StatusReportsFor(ctx context.Context, messageIDs []int64) (_ map[in
 	}
 
 	return reports, nil
+}
+
+// traceParent is the traceparent to store with a message that ctx creates: NULL when ctx is not traced.
+func traceParent(ctx context.Context) sql.Null[string] {
+	tp := tracing.TraceParent(ctx)
+	return sql.Null[string]{V: tp, Valid: tp != ""}
 }

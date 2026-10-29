@@ -33,6 +33,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/numbering"
 	"github.com/ellanetworks/smsc/internal/server"
 	"github.com/ellanetworks/smsc/internal/settings"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -148,6 +149,13 @@ func newNamedFakeCore(t testing.TB, host string, subscribers ...subscriber) *fak
 
 func newRealmFakeCore(t testing.TB, host, originRealm string, subscribers ...subscriber) *fakeCore {
 	t.Helper()
+
+	return newTracedFakeCore(t, host, originRealm, nil, subscribers...)
+}
+
+// newTracedFakeCore returns a fake core that traces its requests with tp, or the global provider when nil.
+func newTracedFakeCore(t testing.TB, host, originRealm string, tp trace.TracerProvider, subscribers ...subscriber) *fakeCore {
+	t.Helper()
 	skipIfNoSCTP(t)
 
 	c := &fakeCore{
@@ -172,6 +180,7 @@ func newRealmFakeCore(t testing.TB, host, originRealm string, subscribers ...sub
 		},
 		Handler:           diameter.HandlerFunc(c.serve),
 		ReconnectInterval: 100 * time.Millisecond,
+		TracerProvider:    tp,
 		Logger:            discardLogger(),
 	})
 	if err != nil {
@@ -641,6 +650,8 @@ type smscConfig struct {
 	PurgeInterval time.Duration
 	// Logger is the SMSC's logger, which discards the logs when nil.
 	Logger *slog.Logger
+	// TracerProvider, when set, traces the SMSC.
+	TracerProvider trace.TracerProvider
 }
 
 func testConfig(t testing.TB, dbPath string) smscConfig {
@@ -693,6 +704,10 @@ func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 	srv := &server.Server{Config: cfg.Config, Logger: logger}
 	srv.SetAttemptTimeout(cfg.AttemptTimeout)
 	srv.SetBcryptCost(bcrypt.MinCost)
+
+	if cfg.TracerProvider != nil {
+		srv.SetTracerProvider(cfg.TracerProvider)
+	}
 
 	if cfg.PurgeNow != nil {
 		srv.SetPurgeClock(cfg.PurgeNow, cfg.PurgeInterval)

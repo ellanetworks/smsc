@@ -31,6 +31,9 @@ The operator and delivery settings are not in this file: they are in the databas
     - `tls` (object, optional): Wrap each connection in TLS, 1.2 or later, from its first octet. SMPP 3.4 has no TLS: this is a common convention, which the ESME must support. Default: plain TCP, for a private link or a lab only.
         - `cert` (string): The path to the PEM certificate chain, the server's certificate first.
         - `key` (string): The path to the PEM private key.
+- `telemetry` (object, optional): The [traces](observability.md#traces).
+    - `enabled` (boolean, optional): Export traces. Default `false`.
+    - `otlp_endpoint` (string): The `host:port` of an OTLP/gRPC collector, over plain gRPC. Required when `enabled` is `true`.
 
 ## Example
 
@@ -51,6 +54,9 @@ smpp:
   tls:
     cert: /etc/smsc/smpp.pem
     key: /etc/smsc/smpp.key
+telemetry:
+  enabled: true
+  otlp_endpoint: localhost:4317
 ```
 
 With the snap, the configuration file is `/var/snap/ella-smsc/common/smsc.yaml`.

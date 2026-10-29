@@ -27,9 +27,12 @@ import (
 	"github.com/ellanetworks/smsc/internal/settings"
 	smscsgd "github.com/ellanetworks/smsc/internal/sgd"
 	"github.com/ellanetworks/smsc/internal/submission"
+	"github.com/ellanetworks/smsc/internal/tracing"
 	"github.com/ellanetworks/smsc/smpp"
 	"github.com/ellanetworks/smsc/ui"
 	"github.com/ellanetworks/smsc/version"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 var ErrAlreadyStarted = errors.New("server: already started")
@@ -39,6 +42,10 @@ type Server struct {
 	Logger *slog.Logger
 
 	attemptTimeout time.Duration
+	// tracerProvider, when set, traces the SMSC in place of the one of the configuration.
+	tracerProvider trace.TracerProvider
+	// shutdownTracing exports the spans that are left, and stops the tracing.
+	shutdownTracing func(context.Context) error
 	// bcryptCost is the cost of the password hashes: bcrypt's default when zero.
 	bcryptCost int
 	// purgeNow and purgeInterval are the clock and the period of the message retention: time.Now and purgeInterval
@@ -73,7 +80,7 @@ const smppInboundWindow = 64
 // smppSystemID identifies the SMSC in bind responses (SMPP 3.4 section 5.2.1).
 const smppSystemID = "EllaSMSC"
 
-func (s *Server) Start(ctx context.Context) error {
+func (s *Server) Start(ctx context.Context) (err error) {
 	if s.nodes != nil {
 		return ErrAlreadyStarted
 	}
@@ -102,6 +109,17 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
+	tp, shutdownTracing, err := s.newTracerProvider(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			_ = shutdownTracing(context.WithoutCancel(ctx))
+		}
+	}()
+
 	database, err := db.Open(ctx, cfg.DB.Path)
 	if err != nil {
 		return err
@@ -125,11 +143,17 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := diameter.NewMux()
 
 	nodes := &nodeManager{
-		addresses: addresses,
-		port:      cfg.Diameter.Port,
-		mux:       mux,
-		metrics:   m.peers,
-		logger:    s.Logger,
+		addresses:      addresses,
+		port:           cfg.Diameter.Port,
+		mux:            mux,
+		metrics:        m.peers,
+		tracerProvider: tp,
+		logger:         s.Logger,
+	}
+
+	if tp == nil {
+		// The node would otherwise trace with the global provider.
+		nodes.tracerProvider = noop.NewTracerProvider()
 	}
 
 	hss := hssSender{nodes: nodes, settings: live}
@@ -148,21 +172,23 @@ func (s *Server) Start(ctx context.Context) error {
 		AttemptTimeout: cmp.Or(s.attemptTimeout, delivery.DefaultAttemptTimeout),
 		Concurrency:    delivery.DefaultConcurrency,
 		Metrics:        m.delivery,
+		TracerProvider: tp,
 		Now:            time.Now,
 		Logger:         s.Logger,
 	}
 
 	submitter := &submission.Submitter{Store: database, Settings: live.Get, Received: m.received, Now: time.Now}
 	esmes := &esme.Service{
-		Store:      database,
-		Submitter:  submitter,
-		Settings:   live.Get,
-		Notify:     deliverer.Notify,
-		Received:   m.received,
-		Metrics:    m.smpp,
-		BcryptCost: s.bcryptCost,
-		Now:        time.Now,
-		Logger:     s.Logger,
+		Store:          database,
+		Submitter:      submitter,
+		Settings:       live.Get,
+		Notify:         deliverer.Notify,
+		Received:       m.received,
+		Metrics:        m.smpp,
+		BcryptCost:     s.bcryptCost,
+		TracerProvider: tp,
+		Now:            time.Now,
+		Logger:         s.Logger,
 	}
 	deliverer.Completed = esmes.NotificationsQueued
 
@@ -220,9 +246,10 @@ func (s *Server) Start(ctx context.Context) error {
 			JWTSecret:  jwtSecret,
 			BcryptCost: s.bcryptCost,
 			// The cookie is Secure, and HSTS on, only over TLS: a browser would not send a Secure cookie over HTTP.
-			SecureCookie: tlsConfig != nil,
-			Now:          time.Now,
-			Logger:       s.Logger,
+			SecureCookie:   tlsConfig != nil,
+			TracerProvider: tp,
+			Now:            time.Now,
+			Logger:         s.Logger,
 		}),
 		ErrorLog:          slog.NewLogLogger(s.Logger.Handler(), slog.LevelWarn),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -283,6 +310,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	s.database = database
+	s.shutdownTracing = shutdownTracing
 	s.nodes = nodes
 	s.stopFollowing = stopFollowing
 	s.stopDelivery = stopDelivery
@@ -433,6 +461,30 @@ func (s *Server) Shutdown(ctx context.Context) {
 	if err := s.database.Close(); err != nil {
 		s.Logger.Error("failed to close the database", slog.Any("error", err))
 	}
+
+	if err := s.shutdownTracing(ctx); err != nil {
+		s.Logger.Warn("failed to export the last spans", slog.Any("error", err))
+	}
+}
+
+// newTracerProvider returns the provider that traces the SMSC, nil when telemetry is off, and the function that
+// stops it.
+func (s *Server) newTracerProvider(ctx context.Context) (trace.TracerProvider, func(context.Context) error, error) {
+	none := func(context.Context) error { return nil }
+
+	switch {
+	case s.tracerProvider != nil:
+		return s.tracerProvider, none, nil
+	case !s.Config.Telemetry.Enabled:
+		return nil, none, nil
+	}
+
+	tp, err := tracing.NewProvider(ctx, s.Config.Telemetry.OTLPEndpoint, version.Get().Version, s.Logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("start tracing: %w", err)
+	}
+
+	return tp, tp.Shutdown, nil
 }
 
 // ready is whether the API can serve: it is not once Shutdown starts, or while the database does not answer. The

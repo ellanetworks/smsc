@@ -25,6 +25,8 @@ import (
 	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/submission"
 	"github.com/ellanetworks/smsc/smpp"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -131,8 +133,10 @@ type Service struct {
 	// Accounts is the server's registry of sessions, which closes those of an account, binding ones included. It is
 	// set once the server exists.
 	Accounts interface{ CloseAccount(account string) int }
-	Now      func() time.Time
-	Logger   *slog.Logger
+	// TracerProvider traces the submit_sm and deliver_sm; none when nil.
+	TracerProvider trace.TracerProvider
+	Now            func() time.Time
+	Logger         *slog.Logger
 
 	initOnce  sync.Once
 	dummyOnce sync.Once
@@ -370,19 +374,38 @@ func (s *Service) ServeSMPP(ctx context.Context, ls *smpp.Session, req smpp.Requ
 		return smpp.Response{Status: smpp.StatusInvCmdID}
 	}
 
+	ctx, span := s.startSpan(ctx, trace.SpanKindServer, smpp.CmdSubmitSM, sess)
+
 	id, status := s.SubmitSM(ctx, sess, sm)
 	if status != smpp.StatusOK {
-		return smpp.Response{Status: status, Written: func(error) { s.Metrics.submitted(s.now().Sub(started)) }}
+		return smpp.Response{Status: status, Written: func(err error) {
+			s.Metrics.submitted(s.now().Sub(started))
+			endSubmitSpan(span, status, err)
+		}}
 	}
 
 	return smpp.Response{
 		Status: smpp.StatusOK,
 		PDU:    &smpp.SubmitSMResp{MessageID: id},
-		Written: func(error) {
+		Written: func(err error) {
 			s.Metrics.submitted(s.now().Sub(started))
+			endSubmitSpan(span, status, err)
 			// The message is stored whether or not the response reached the ESME.
 			s.Submitted()
 		},
+	}
+}
+
+// endSubmitSpan ends the span of a submit_sm once its response is written, or failed to be. Only a failure of the
+// SMSC is an error: a submit_sm that the SMSC refuses is the ESME's.
+func endSubmitSpan(span trace.Span, status smpp.CommandStatus, err error) {
+	switch {
+	case err != nil:
+		endSpan(span, &status, semconv.ErrorTypeOther.Value.AsString(), err)
+	case status == smpp.StatusSysErr:
+		endSpan(span, &status, status.String(), nil)
+	default:
+		endSpan(span, &status, "", nil)
 	}
 }
 

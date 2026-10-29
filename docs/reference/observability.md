@@ -4,7 +4,7 @@ description: Reference for observability features in Ella SMSC.
 
 # Observability
 
-Ella Core supports three observability pillars: Metrics, Logs, and Profiles.
+Ella SMSC supports four observability pillars: Metrics, Logs, Traces, and Profiles.
 
 ## Metrics
 
@@ -31,6 +31,18 @@ Ella SMSC exposes Prometheus metrics at [`GET /api/v1/metrics`](api/metrics.md).
 | `ellasmsc_database_storage_bytes` | Gauge | Size of the database on disk, by file: `main`, `wal`. |
 | `go_*` | Gauge, Counter, Summary | Go runtime: goroutines, heap, garbage-collection pauses. |
 | `process_*` | Gauge, Counter | Process: memory, CPU, open file descriptors, start time. |
+
+## Traces
+
+Ella SMSC exports [OpenTelemetry](https://opentelemetry.io/) traces over OTLP/gRPC when `telemetry.enabled` is set in the [configuration file](config_file.md). The `OTEL_*` environment variables of the OpenTelemetry SDK apply, such as `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER`. Spans carry no MSISDN, IMSI or message content.
+
+| Span | Kind | Description |
+| --- | --- | --- |
+| `{method} {route}` | Server | A request to the API. Links to the caller's `traceparent`, if any. |
+| `submit_sm` | Server | A `submit_sm` from an ESME. |
+| `deliver` | Consumer | A delivery attempt of a short message or status report. Starts a trace, linked to the request that created the message. `ella.sms.delivery.outcome` is `delivered`, `failed`, `expired`, `replaced`, `retry` or `interrupted`. |
+| `deliver_sm` | Client | A delivery receipt or SIM answer to an ESME. Starts a trace, linked to the request that created the message. |
+| `S6c/{command}`, `SGd/{command}` | Server, Client | A Diameter request received or sent. Continues the trace of a [configured peer](api/diameter.md), and links to that of another. |
 
 ## Profiles
 

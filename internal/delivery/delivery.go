@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +17,25 @@ import (
 	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/statusreport"
 	"github.com/ellanetworks/smsc/internal/tpdu"
+	"github.com/ellanetworks/smsc/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 const errorBackoff = time.Second
+
+const (
+	tracerName       = "github.com/ellanetworks/smsc/internal/delivery"
+	deliverOperation = "deliver"
+	// outcomeKey is the outcome of a delivery attempt: the status it gave the message, replaced when a later message
+	// replaced it meanwhile, or outcomeRetry or outcomeInterrupted when it stays pending.
+	outcomeKey         = attribute.Key("ella.sms.delivery.outcome")
+	outcomeRetry       = "retry"
+	outcomeInterrupted = "interrupted"
+)
 
 const (
 	DefaultAttemptTimeout = 30 * time.Second
@@ -62,6 +79,8 @@ type Deliverer struct {
 	Metrics        *Metrics
 	Now            func() time.Time
 	Logger         *slog.Logger
+	// TracerProvider traces the delivery attempts; none when nil.
+	TracerProvider trace.TracerProvider
 	// Completed, when set, is called after each message gets its final status, which may have queued SMPP
 	// notifications on it.
 	Completed func()
@@ -326,9 +345,8 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 	var s *session
 
 	for {
-		r, next := d.deliver(stop, m, d.Now(), s)
-
-		if err := d.settle(ctx, m, r); err != nil {
+		next, err := d.deliverAndSettle(stop, m, s)
+		if err != nil {
 			return err
 		}
 
@@ -345,6 +363,60 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 	}
 }
 
+// deliverAndSettle makes one delivery attempt of the message and stores its outcome, in a span of the attempt: a
+// messaging process span, which starts a trace of its own and links to the request that created the message, since
+// the attempts of a message can span days.
+func (d *Deliverer) deliverAndSettle(stop context.Context, m db.Message, s *session) (_ *session, err error) {
+	stop, span := d.tracer().Start(stop, deliverOperation,
+		trace.WithNewRoot(),
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithLinks(tracing.Links(m.TraceParent)...),
+		trace.WithAttributes(
+			semconv.MessagingSystemKey.String(tracing.MessagingSystem),
+			semconv.MessagingOperationName(deliverOperation),
+			semconv.MessagingOperationTypeProcess,
+			semconv.MessagingMessageID(strconv.FormatInt(m.ID, 10)),
+		),
+	)
+
+	defer func() {
+		if err != nil {
+			span.SetAttributes(semconv.ErrorTypeOther)
+			span.SetStatus(codes.Error, err.Error())
+		}
+
+		span.End()
+	}()
+
+	r, next := d.deliver(stop, m, d.Now(), s)
+
+	if err := d.settle(context.WithoutCancel(stop), m, r); err != nil {
+		return nil, err
+	}
+
+	return next, nil
+}
+
+func (d *Deliverer) tracer() trace.Tracer {
+	tp := d.TracerProvider
+	if tp == nil {
+		tp = noop.NewTracerProvider()
+	}
+
+	return tp.Tracer(tracerName, trace.WithSchemaURL(semconv.SchemaURL))
+}
+
+// settled sets the outcome of the delivery attempt on its span: an error when the message failed or expired.
+func settled(ctx context.Context, outcome string) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(outcomeKey.String(outcome))
+
+	if outcome == string(db.StatusFailed) || outcome == string(db.StatusExpired) {
+		span.SetAttributes(semconv.ErrorTypeKey.String(outcome))
+		span.SetStatus(codes.Error, "")
+	}
+}
+
 // settle stores the outcome of a delivery. A message that is to be retried holds its recipient's other messages until
 // the retry, so that they keep their order, unless the MS refused that message itself.
 func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
@@ -356,6 +428,7 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 	case permanent:
 		return d.complete(ctx, m, db.StatusFailed, r.status, d.Now())
 	case interrupted:
+		settled(ctx, outcomeInterrupted)
 		return nil
 	}
 
@@ -368,7 +441,13 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 
 	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
 
-	return d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold)
+	if err := d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold); err != nil {
+		return err
+	}
+
+	settled(ctx, outcomeRetry)
+
+	return nil
 }
 
 // complete sets the final status of a message, with the status report on it that its originator asked for, if any. It
@@ -385,6 +464,7 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 	if errors.Is(err, db.ErrNotPending) {
 		d.Logger.Debug("short message replaced during its delivery", slog.Int64("message_id", m.ID),
 			slog.String("status", string(status)))
+		settled(ctx, string(db.StatusReplaced))
 
 		return nil
 	}
@@ -392,6 +472,8 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 	if err != nil {
 		return err
 	}
+
+	settled(ctx, string(status))
 
 	if status == db.StatusDelivered {
 		d.Metrics.delivered(m, at)

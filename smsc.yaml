@@ -22,3 +22,7 @@ diameter:
 #   tls:
 #     cert: /path/to/smpp.pem
 #     key: /path/to/smpp.key
+# Optional: export traces to an OTLP/gRPC collector.
+# telemetry:
+#   enabled: true
+#   otlp_endpoint: localhost:4317

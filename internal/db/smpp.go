@@ -214,6 +214,7 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 		reportFor                sql.Null[int64]
 		reportStatus             sql.Null[uint8]
 		submittedBy              sql.Null[int64]
+		traceparent              sql.Null[string]
 		submitted, ts, exp, next int64
 		updated                  int64
 		m                        = &n.Message
@@ -224,7 +225,7 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 		&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber,
 		&m.Originator.NumberingPlan, &m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan,
 		&m.MSISDN, &m.Origin, &submittedBy, &m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status,
-		&m.SingleShot, &submitted, &ts, &exp, &next, &m.Retries, &updated)
+		&m.SingleShot, &submitted, &ts, &exp, &next, &m.Retries, &updated, &traceparent)
 	if err != nil {
 		return Notification{}, err
 	}
@@ -236,7 +237,7 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 		n.UserMessageReference = &reference.V
 	}
 
-	m.ReportFor, m.ReportStatus, m.SubmittedBy = reportFor.V, reportStatus.V, submittedBy.V
+	m.ReportFor, m.ReportStatus, m.SubmittedBy, m.TraceParent = reportFor.V, reportStatus.V, submittedBy.V, traceparent.V
 	m.SubmittedAt = time.Unix(0, submitted).UTC()
 	m.TimeStamp = time.Unix(0, ts).UTC()
 	m.ExpiresAt = time.Unix(0, exp).UTC()
