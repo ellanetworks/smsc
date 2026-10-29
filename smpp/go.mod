@@ -1,6 +1,6 @@
 module github.com/ellanetworks/smsc/smpp
 
-go 1.26.5
+go 1.27.3
 
 require github.com/linxGnu/gosmpp v0.3.1
 

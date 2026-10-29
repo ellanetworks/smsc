@@ -1,6 +1,6 @@
 module github.com/ellanetworks/smsc
 
-go 1.26.5
+go 1.27.3
 
 require (
 	github.com/ellanetworks/core/diameter v0.0.0-20261028142934-a0bd68b1ecf8

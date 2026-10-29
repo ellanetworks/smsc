@@ -31,7 +31,7 @@ Choose one of the installation methods below.
     Install the required dependencies:
 
     ```shell
-    sudo snap install go --channel=1.26/stable --classic
+    sudo snap install go --channel=1.27/stable --classic
     sudo snap install node --channel=24/stable --classic
     sudo apt update
     sudo apt -y install gcc
