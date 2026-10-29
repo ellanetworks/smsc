@@ -694,6 +694,24 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/pprof/goroutineleak:
+    get:
+      tags: [Profiling]
+      operationId: getPprofGoroutineLeak
+      summary: Get the goroutine leak profile
+      parameters:
+        - $ref: "#/components/parameters/PprofDebug"
+        - $ref: "#/components/parameters/PprofDelta"
+      responses:
+        "200":
+          $ref: "#/components/responses/PprofProfile"
+        "400":
+          $ref: "#/components/responses/PprofError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/pprof/heap:
     get:
       tags: [Profiling]

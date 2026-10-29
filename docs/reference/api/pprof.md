@@ -14,6 +14,7 @@ Ella SMSC exposes a [pprof](https://pkg.go.dev/net/http/pprof) compatible API fo
 | GET | `/api/v1/pprof/allocs` | A sampling of all past memory allocations. |
 | GET | `/api/v1/pprof/cmdline` | The command line invocation of the program. |
 | GET | `/api/v1/pprof/goroutine` | Stack traces of all current goroutines. |
+| GET | `/api/v1/pprof/goroutineleak` | Stack traces of all leaked goroutines. |
 | GET | `/api/v1/pprof/heap` | A sampling of memory allocations of live objects. |
 | GET | `/api/v1/pprof/profile` | A CPU profile, of 30 seconds by default. |
 | GET | `/api/v1/pprof/threadcreate` | Stack traces that led to the creation of new OS threads. |

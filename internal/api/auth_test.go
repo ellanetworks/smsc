@@ -212,6 +212,7 @@ func TestRoles(t *testing.T) {
 		"GET /api/v1/pprof/":                                   admin,
 		"GET /api/v1/pprof/allocs":                             admin,
 		"GET /api/v1/pprof/goroutine":                          admin,
+		"GET /api/v1/pprof/goroutineleak":                      admin,
 		"GET /api/v1/pprof/heap":                               admin,
 		"GET /api/v1/pprof/threadcreate":                       admin,
 		"GET /api/v1/pprof/cmdline":                            admin,

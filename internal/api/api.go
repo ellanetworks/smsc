@@ -182,6 +182,7 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/pprof/{$}", PermReadProfiles, http.HandlerFunc(pprof.Index)},
 		{"GET /api/v1/pprof/allocs", PermReadProfiles, pprof.Handler("allocs")},
 		{"GET /api/v1/pprof/goroutine", PermReadProfiles, pprof.Handler("goroutine")},
+		{"GET /api/v1/pprof/goroutineleak", PermReadProfiles, pprof.Handler("goroutineleak")},
 		{"GET /api/v1/pprof/heap", PermReadProfiles, pprof.Handler("heap")},
 		{"GET /api/v1/pprof/threadcreate", PermReadProfiles, pprof.Handler("threadcreate")},
 		{"GET /api/v1/pprof/cmdline", PermReadProfiles, http.HandlerFunc(pprof.Cmdline)},
