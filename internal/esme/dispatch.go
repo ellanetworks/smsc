@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
@@ -273,11 +274,23 @@ func endDeliverSpan(span trace.Span, status smpp.CommandStatus, err error) {
 		endSpan(span, nil, "session_closed", err)
 	case errors.Is(err, smpp.ErrResponseTimeout) || errors.Is(err, context.DeadlineExceeded):
 		endSpan(span, nil, "timeout", err)
+	case errors.Is(err, context.Canceled):
+		endSpan(span, nil, "canceled", err)
 	case err != nil:
 		endSpan(span, nil, semconv.ErrorTypeOther.Value.AsString(), err)
 	case status != smpp.StatusOK:
-		endSpan(span, &status, status.String(), nil)
+		endSpan(span, &status, statusErrorType(status), nil)
 	default:
 		endSpan(span, &status, "", nil)
 	}
+}
+
+// statusErrorType is the error.type of a command_status: its name, or _OTHER for one that SMPP 3.4 does not name,
+// which an ESME chooses.
+func statusErrorType(status smpp.CommandStatus) string {
+	if name := status.String(); strings.HasPrefix(name, "ESME_") {
+		return name
+	}
+
+	return semconv.ErrorTypeOther.Value.AsString()
 }

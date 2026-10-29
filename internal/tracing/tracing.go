@@ -24,8 +24,8 @@ const MessagingSystem = "ella_smsc"
 // Propagator is the only trace context the SMSC reads and writes: W3C Trace Context, without baggage.
 var Propagator = propagation.TraceContext{}
 
-// NewProvider returns a provider that exports to an OTLP/gRPC collector at endpoint, a host:port. The OTEL_*
-// environment variables of the SDK, such as OTEL_RESOURCE_ATTRIBUTES or OTEL_TRACES_SAMPLER, apply.
+// NewProvider returns a provider that exports to an OTLP/gRPC collector at endpoint, a host:port. It samples every
+// trace that a caller has not decided against.
 func NewProvider(ctx context.Context, endpoint, version string, logger *slog.Logger) (*sdktrace.TracerProvider, error) {
 	exp, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(endpoint), otlptracegrpc.WithInsecure())
 	if err != nil {
@@ -36,7 +36,6 @@ func NewProvider(ctx context.Context, endpoint, version string, logger *slog.Log
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
 		resource.WithAttributes(semconv.ServiceName(ServiceName), semconv.ServiceVersion(version)),
-		resource.WithFromEnv(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create resource: %w", err)
@@ -46,12 +45,21 @@ func NewProvider(ctx context.Context, endpoint, version string, logger *slog.Log
 		logger.Warn("OpenTelemetry error", slog.Any("error", err))
 	}))
 
-	return sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(res)), nil
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
+		sdktrace.WithBatcher(exp),
+		sdktrace.WithResource(res),
+	), nil
 }
 
 // TraceParent returns the W3C traceparent of the span in ctx, to store with a message that ctx creates, or "" when
-// ctx has no valid span.
+// that span is not recorded: when tracing is off, ctx can still carry a peer's trace context, which no span of the
+// SMSC would link to.
 func TraceParent(ctx context.Context) string {
+	if !trace.SpanFromContext(ctx).IsRecording() {
+		return ""
+	}
+
 	carrier := propagation.MapCarrier{}
 	Propagator.Inject(ctx, carrier)
 

@@ -373,6 +373,8 @@ func (d *Deliverer) deliverAndSettle(stop context.Context, m db.Message, s *sess
 		trace.WithLinks(tracing.Links(m.TraceParent)...),
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String(tracing.MessagingSystem),
+			// The SMSC has no destination but the recipient, which spans must not carry: the name identifies the SMSC.
+			semconv.MessagingDestinationName(d.Identity().OriginHost),
 			semconv.MessagingOperationName(deliverOperation),
 			semconv.MessagingOperationTypeProcess,
 			semconv.MessagingMessageID(strconv.FormatInt(m.ID, 10)),

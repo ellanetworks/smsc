@@ -5,25 +5,20 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-func tracedContext(t *testing.T, traceID, spanID string) (context.Context, string) {
+// tracedContext returns a context in a recorded span, and the span's traceparent.
+func tracedContext(t *testing.T) (context.Context, string) {
 	t.Helper()
 
-	tid, err := trace.TraceIDFromHex(traceID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, span := sdktrace.NewTracerProvider().Tracer("test").Start(context.Background(), "request")
 
-	sid, err := trace.SpanIDFromHex(spanID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { span.End() })
 
-	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid, TraceFlags: trace.FlagsSampled})
+	sc := span.SpanContext()
 
-	return trace.ContextWithSpanContext(context.Background(), sc), "00-" + traceID + "-" + spanID + "-01"
+	return ctx, "00-" + sc.TraceID().String() + "-" + sc.SpanID().String() + "-01"
 }
 
 // TestMessagesStoreTheirCreationContext checks that a message, and a status report, keep the trace context of the
@@ -32,7 +27,7 @@ func TestMessagesStoreTheirCreationContext(t *testing.T) {
 	d := openTestDB(t)
 	at := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 
-	submit, submitParent := tracedContext(t, "0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331")
+	submit, submitParent := tracedContext(t)
 
 	id, err := d.CreateMessage(submit, testMessage(7, false, []byte{0x01}, at))
 	if err != nil {
@@ -44,7 +39,7 @@ func TestMessagesStoreTheirCreationContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deliver, deliverParent := tracedContext(t, "4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7")
+	deliver, deliverParent := tracedContext(t)
 
 	if err := d.CompleteMessage(deliver, id, StatusDelivered, at.Add(time.Minute), testReport(at.Add(time.Minute)), 0); err != nil {
 		t.Fatal(err)

@@ -85,11 +85,12 @@ func TestDeliveryAttemptSpans(t *testing.T) {
 
 			attrs := attribute.NewSet(s.Attributes()...)
 			for key, want := range map[attribute.Key]string{
-				"messaging.system":          "ella_smsc",
-				"messaging.operation.name":  "deliver",
-				"messaging.operation.type":  "process",
-				"messaging.message.id":      "1",
-				"ella.sms.delivery.outcome": tc.outcome,
+				"messaging.system":           "ella_smsc",
+				"messaging.destination.name": "smsc.example.org",
+				"messaging.operation.name":   "deliver",
+				"messaging.operation.type":   "process",
+				"messaging.message.id":       "1",
+				"ella.sms.delivery.outcome":  tc.outcome,
 			} {
 				if v, _ := attrs.Value(key); v.AsString() != want {
 					t.Errorf("%s = %q, want %q", key, v.AsString(), want)

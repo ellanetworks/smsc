@@ -374,9 +374,25 @@ func (s *Service) ServeSMPP(ctx context.Context, ls *smpp.Session, req smpp.Requ
 		return smpp.Response{Status: smpp.StatusInvCmdID}
 	}
 
+	return s.serveSubmit(ctx, sess, sm, started)
+}
+
+// serveSubmit answers the submit_sm of a bound session, in a span that ends once the response is written. The session
+// answers ESME_RSYSERR to a panic, without calling Written, so the span then ends as that error.
+func (s *Service) serveSubmit(ctx context.Context, sess *Session, sm *smpp.SubmitSM, started time.Time) smpp.Response {
 	ctx, span := s.startSpan(ctx, trace.SpanKindServer, smpp.CmdSubmitSM, sess)
+	answered := false
+
+	defer func() {
+		if !answered {
+			status := smpp.StatusSysErr
+			endSpan(span, &status, status.String(), nil)
+		}
+	}()
 
 	id, status := s.SubmitSM(ctx, sess, sm)
+	answered = true
+
 	if status != smpp.StatusOK {
 		return smpp.Response{Status: status, Written: func(err error) {
 			s.Metrics.submitted(s.now().Sub(started))

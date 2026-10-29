@@ -4,7 +4,7 @@ description: RESTful API reference for the runtime profiles of Ella SMSC.
 
 # Pprof
 
-Ella SMSC exposes a [pprof](https://pkg.go.dev/net/http/pprof) compatible API for profiling analysis. These paths require Admin, and take an API token.
+These paths serve the [net/http/pprof](https://pkg.go.dev/net/http/pprof) API. They require Admin, and accept an API token.
 
 ## Profiling Endpoints
 

@@ -71,6 +71,9 @@ type Server struct {
 	smppDone     chan struct{}
 }
 
+// tracingShutdownTimeout bounds how long Shutdown waits to export the spans that are left.
+const tracingShutdownTimeout = 5 * time.Second
+
 // smppShutdownTimeout bounds how long Shutdown waits for the ESMEs to answer unbind (SMPP 3.4 section 4.2).
 const smppShutdownTimeout = 5 * time.Second
 
@@ -462,7 +465,11 @@ func (s *Server) Shutdown(ctx context.Context) {
 		s.Logger.Error("failed to close the database", slog.Any("error", err))
 	}
 
-	if err := s.shutdownTracing(ctx); err != nil {
+	// The spans of the shutdown are the last to export, once the other steps may have used up ctx.
+	tracingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tracingShutdownTimeout)
+	defer cancel()
+
+	if err := s.shutdownTracing(tracingCtx); err != nil {
 		s.Logger.Warn("failed to export the last spans", slog.Any("error", err))
 	}
 }

@@ -14,8 +14,8 @@ import (
 )
 
 // TestAPISpans checks that a request to the API has a server span named by its route, that links to the caller's
-// trace context rather than continue it, and that a message it creates keeps the span as its creation context. The UI
-// is not traced.
+// trace context rather than continue it, and that a message it creates keeps the span as its creation context. The UI,
+// probes, metrics and profiles are not traced.
 func TestAPISpans(t *testing.T) {
 	store := openStore(t)
 	rec := tracetest.NewSpanRecorder()
@@ -26,8 +26,8 @@ func TestAPISpans(t *testing.T) {
 	a := &testAPI{store: store, handler: api.NewHandler(cfg), now: testNow}
 	a.token = initialize(t, a.handler)
 
-	if rec := serve(a.handler, request(http.MethodGet, "/", "", "")); rec.Code != http.StatusOK {
-		t.Fatalf("GET / = %d", rec.Code)
+	for _, path := range []string{"/", "/api/v1/livez", "/api/v1/readyz", "/api/v1/metrics", "/api/v1/pprof/heap"} {
+		serve(a.handler, request(http.MethodGet, path, "", a.token))
 	}
 
 	before := len(rec.Ended())

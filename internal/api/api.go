@@ -239,8 +239,12 @@ func NewHandler(cfg Config) http.Handler {
 	return traced(cfg, securityHeaders(cfg, http.NewCrossOriginProtection().Handler(mux)))
 }
 
+// untraced are the API paths that are scraped periodically.
+var untraced = map[string]bool{"/api/v1/livez": true, "/api/v1/readyz": true, "/api/v1/metrics": true}
+
 // traced gives each request to the API a server span, named by its route. A caller's trace context is linked rather
-// than continued, since anyone can send one. The UI's static files are not traced.
+// than continued, since anyone can send one. The UI's static files are not traced, nor the probes, metrics and
+// profiles, which are scraped periodically.
 func traced(cfg Config, next http.Handler) http.Handler {
 	if cfg.TracerProvider == nil {
 		return next
@@ -258,7 +262,9 @@ func traced(cfg Config, next http.Handler) http.Handler {
 		otelhttp.WithTracerProvider(cfg.TracerProvider),
 		otelhttp.WithPropagators(tracing.Propagator),
 		otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return true }),
-		otelhttp.WithFilter(func(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/api/") }),
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			return strings.HasPrefix(r.URL.Path, "/api/") && !untraced[r.URL.Path] && !strings.HasPrefix(r.URL.Path, "/api/v1/pprof/")
+		}),
 	)
 }
 
