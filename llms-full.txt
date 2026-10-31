@@ -1,0 +1,3035 @@
+# Ella SMSC Documentation
+
+> An SMS Service Center for private 4G and 5G networks - easy to operate, reliable, and secure.
+
+An SMS Service Center for private 4G and 5G networks - easy to operate, reliable, and secure.
+
+# Home
+
+# Ella SMSC
+
+**Ella SMSC** lets private cellular network subscribers send and receive SMS messages. It is an SMS Service Center (SMSC) that integrates with 4G and 5G core networks.
+
+## Key features
+
+- **SMS over 4G and 5G**: phones send and receive SMS through the MME or SMSF of the core, over SGd, with routing from the HSS over S6c.
+- **SMS over IP**: phones registered with an IP-SM-GW, such as Ella IMS's, send and receive SMS through it.
+- **Store and forward**: messages wait while a phone is unreachable, are retried, and go out as soon as the HSS says it is back, within their validity period.
+- **3GPP compliant**: status reports, replace short message and reject duplicates, per TS 23.040 and TS 29.338.
+- **Application messages**: send text from the web UI or the HTTP API, from a number or a name such as `EllaSMSC`, and binary messages such as SIM OTA updates from the HTTP API.
+- **Delivery visibility**: every routing lookup and delivery attempt is recorded, with why it failed.
+- **Secure**: users with roles, API tokens, HTTPS, and audited reads of message content.
+- **Easy to operate**: a single binary with an embedded database and configurable retention, a web UI, an HTTP API, and Prometheus metrics. Install with snap, Docker or Kubernetes.
+
+## In this documentation
+
+- [**Tutorials**](https://docs.ellanetworks.com/smsc/tutorials/index.md)
+
+  ______________________________________________________________________
+
+  **Start here**: a hands-on introduction to Ella SMSC. Send your first SMS.
+
+- [**How-to Guides**](https://docs.ellanetworks.com/smsc/how_to/index.md)
+
+  ______________________________________________________________________
+
+  **Step-by-step guides** covering key operations and common tasks.
+
+- [**Reference**](https://docs.ellanetworks.com/smsc/reference/index.md)
+
+  ______________________________________________________________________
+
+  **Technical information** - API, configuration, metrics, and more.
+
+- [**Explanation**](https://docs.ellanetworks.com/smsc/explanation/index.md)
+
+  ______________________________________________________________________
+
+  **Discussion and clarification** of key topics.
+# Tutorials
+
+# Tutorials
+
+In this tutorial, we will add SMS to a private 5G network with Ella SMSC.
+
+| Tutorial                                                                               | Hardware Required                   | Installation Method | Duration |
+| -------------------------------------------------------------------------------------- | ----------------------------------- | ------------------- | -------- |
+| [Send Your First SMS](https://docs.ellanetworks.com/smsc/tutorials/first_sms/index.md) | An Ella Core 5G network, two phones | Snap                | ~15 min  |
+
+# Send Your First SMS
+
+In this tutorial, we will add Ella SMSC to a private 5G network running Ella Core, and send an SMS between two phones.
+
+You can expect to spend about 15 minutes completing this tutorial.
+
+## Pre-requisites
+
+To complete this tutorial, you will need:
+
+- A 5G network running Ella Core, as built in Ella Core's [Getting Started (5G Network with Radio Hardware)](https://docs.ellanetworks.com/core/tutorials/getting_started_hardware/) tutorial, with PLMN `00101`.
+- Two phones attached to the network, with SIM cards whose SMSC number you can set.
+
+## 1. Install Ella SMSC
+
+On the host running Ella Core, install and start the Ella SMSC snap:
+
+```
+sudo snap install ella-smsc
+sudo snap start --enable ella-smsc.smscd
+```
+
+## 2. Initialize Ella SMSC
+
+Open your browser at `http://<host-ip>:5010`. The **Initialize Ella SMSC** page opens.
+
+Enter an email and a password of at least 8 characters, and click **Create**.
+
+The **Diameter** page shows no connected peers yet.
+
+## 3. Connect Ella Core
+
+In the Ella Core UI, go to **Operator** and scroll to the **SMS** section.
+
+Click **Add Service Center** and set:
+
+- **Address**: `127.0.0.1`
+- **Numbers**: `+15550000000`
+- **Diameter Identity**: `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`
+
+Click **Add**. The service center shows **Connected**.
+
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**, Ella Core shows **open**, with **HSS** set to **yes**.
+
+## 4. Give the subscribers an MSISDN
+
+In the Ella Core UI, for each of the two subscribers:
+
+- Go to **Subscribers** and open the subscriber.
+- In **Provisioning**, click the edit icon next to **MSISDN**.
+- Enter `+15551230001` for the first subscriber and `+15551230002` for the second, and click **Update**.
+
+## 5. Set the SMSC number on the SIM cards
+
+On each SIM card, set the SMSC number to `+15550000000`.
+
+## 6. Send an SMS
+
+From the first phone, send `hello` to `+15551230002`. The second phone receives it.
+
+In the Ella SMSC UI, go to **Messages**. The message shows **delivered**. Click it to see its routing and delivery attempts.
+
+You have added SMS to your 5G network.
+
+## Next steps
+
+- [Integrate with Ella IMS](https://docs.ellanetworks.com/smsc/how_to/integrate_with_ella_ims/index.md) to deliver SMS over IP.
+- [Send messages from an application](https://docs.ellanetworks.com/smsc/how_to/send_messages_from_an_application/index.md).
+# How-to Guides
+
+# How-to Guides
+
+These how-to guides cover key operations and common tasks in Ella SMSC.
+
+- [Install](https://docs.ellanetworks.com/smsc/how_to/install/index.md)
+- [Back Up and Restore](https://docs.ellanetworks.com/smsc/how_to/back_up_and_restore/index.md)
+- [Integrate with Ella Core](https://docs.ellanetworks.com/smsc/how_to/integrate_with_ella_core/index.md)
+- [Integrate with Ella IMS](https://docs.ellanetworks.com/smsc/how_to/integrate_with_ella_ims/index.md)
+- [Integrate with a Third-Party Core](https://docs.ellanetworks.com/smsc/how_to/integrate_with_third_party_core/index.md)
+- [Connect through Diameter Agents](https://docs.ellanetworks.com/smsc/how_to/connect_through_diameter_agents/index.md)
+- [Send Messages from an Application](https://docs.ellanetworks.com/smsc/how_to/send_messages_from_an_application/index.md)
+- [Send (U)SIM Data Download Messages over the API](https://docs.ellanetworks.com/smsc/how_to/send_sim_data_download_messages_over_the_api/index.md)
+- [Send (U)SIM Data Download Messages over SMPP](https://docs.ellanetworks.com/smsc/how_to/send_sim_data_download_messages_over_smpp/index.md)
+
+# Back Up and Restore
+
+Ella SMSC keeps all its data, messages, users and settings, in one database file: `db.path` in the [configuration file](https://docs.ellanetworks.com/smsc/reference/config_file/index.md). The commands below use the snap's path, `/var/snap/ella-smsc/common/smsc.db`.
+
+The backup holds message content and user accounts. Store and transfer it encrypted.
+
+## Back up
+
+1. Stop Ella SMSC:
+
+   ```
+   sudo snap stop ella-smsc.smscd
+   ```
+
+1. Copy the database:
+
+   ```
+   sudo cp /var/snap/ella-smsc/common/smsc.db smsc-backup.db
+   ```
+
+1. Start Ella SMSC:
+
+   ```
+   sudo snap start ella-smsc.smscd
+   ```
+
+## Restore
+
+1. Stop Ella SMSC:
+
+   ```
+   sudo snap stop ella-smsc.smscd
+   ```
+
+1. Replace the database with the backup, and remove the files that go with the old one:
+
+   ```
+   sudo cp smsc-backup.db /var/snap/ella-smsc/common/smsc.db
+   sudo rm -f /var/snap/ella-smsc/common/smsc.db-wal /var/snap/ella-smsc/common/smsc.db-shm
+   ```
+
+1. Start Ella SMSC:
+
+   ```
+   sudo snap start ella-smsc.smscd
+   ```
+
+# Connect through Diameter Agents
+
+This guide connects Ella SMSC to an edge agent (DEA), to deliver short messages to roaming subscribers, and to a DRA in front of the HSS.
+
+## Prerequisites
+
+- **Ella SMSC**: integrated with its core, as in [Integrate with a Third-Party Core](https://docs.ellanetworks.com/smsc/how_to/integrate_with_third_party_core/index.md).
+- **A user** with the Network Manager or Admin role.
+- **The agents**: their Diameter hosts and SCTP addresses. Each has Ella SMSC's host, realm and Diameter address as a peer.
+- **The visited networks**: support SMS in MME (SGd), or an SMSF with a Diameter host and realm.
+
+The examples use these values:
+
+| Value                                                 | Role                    |
+| ----------------------------------------------------- | ----------------------- |
+| `dea1.ipx.example.net`, `192.0.2.10`, `198.51.100.10` | Edge agent              |
+| `dra1.example.net`, `10.3.0.20`                       | DRA in front of the HSS |
+| `epc.mnc001.mcc001.3gppnetwork.org`                   | Ella SMSC's realm       |
+
+## 1. Add the edge agent
+
+In the Ella SMSC UI, go to **Diameter** and click **Add Peer**:
+
+- **Host**: `dea1.ipx.example.net`
+- **Addresses**: `192.0.2.10, 198.51.100.10`, every SCTP address of the agent.
+- **Port**: `3868`
+
+Click **Add Route**, and keep **Application** set to **SGd** and **Destination** to **Default**. Click **Add**.
+
+To add a backup agent, repeat with its host and addresses, and set the route's **Priority** to `1`.
+
+## 2. Add the DRA
+
+Skip this step if the HSS connects to Ella SMSC.
+
+Click **Add Peer**:
+
+- **Host**: `dra1.example.net`
+- **Addresses**: `10.3.0.20`
+- **Port**: `3868`
+
+Click **Add Route**, and set:
+
+- **Application**: **S6c**
+- **Destination**: **Realm**
+- **Realm**: `epc.mnc001.mcc001.3gppnetwork.org`
+
+Click **Add**.
+
+## 3. Verify
+
+On the **Diameter** page, under **Configured Peers**:
+
+- Each agent shows **open**. Hover over another state to see why.
+- The DRA shows **HSS** set to **yes**.
+
+Send a short message to a roaming subscriber. On the **Messages** page, it shows **delivered**.
+
+# Install
+
+Choose one of the installation methods below.
+
+Install the Ella SMSC snap:
+
+```
+sudo snap install ella-smsc
+```
+
+Configure Ella SMSC:
+
+```
+sudo vim /var/snap/ella-smsc/common/smsc.yaml
+```
+
+Start Ella SMSC:
+
+```
+sudo snap start --enable ella-smsc.smscd
+```
+
+Install the required dependencies:
+
+```
+sudo snap install go --channel=1.27/stable --classic
+sudo snap install node --channel=24/stable --classic
+sudo apt update
+sudo apt -y install gcc
+```
+
+Clone the Ella SMSC repository:
+
+```
+git clone https://github.com/ellanetworks/smsc.git
+cd smsc
+```
+
+Build the frontend:
+
+```
+npm install --prefix ui
+npm run build --prefix ui
+```
+
+Build Ella SMSC:
+
+```
+go build -o smsc -ldflags "-s -w -X github.com/ellanetworks/smsc/version.GitCommit=$(git rev-parse HEAD)" ./cmd/smsc
+```
+
+Configure Ella SMSC:
+
+```
+vim smsc.yaml
+```
+
+Start Ella SMSC:
+
+```
+./smsc --config smsc.yaml
+```
+
+Create a new directory:
+
+```
+mkdir ella-smsc
+cd ella-smsc
+```
+
+Copy the following file into this directory:
+
+docker-compose.yaml
+
+```
+configs:
+  ella_smsc_config:
+    content: |
+      logging:
+        level: info
+      db:
+        path: /data/smsc.db
+      api:
+        address: 0.0.0.0
+        port: 5010
+      diameter:
+        address: 10.3.0.7
+
+services:
+  ella-smsc:
+    image: ghcr.io/ellanetworks/ella-smsc:latest
+    configs:
+      - source: ella_smsc_config
+        target: /smsc.yaml
+    entrypoint: /bin/smsc --config /smsc.yaml
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ella-smsc-data:/data
+
+volumes:
+  ella-smsc-data:
+```
+
+Set `diameter.address` to an address of the host that the core can reach.
+
+Start the Ella SMSC container:
+
+```
+docker compose up -d
+```
+
+Ensure your Kubernetes cluster is running with the [Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni) installed, and the `sctp` kernel module loaded on its nodes.
+
+Download the Ella SMSC manifests:
+
+```
+git clone --depth 1 https://github.com/ellanetworks/smsc.git
+```
+
+Edit `smsc/k8s/smsc-diameter-nad.yaml` to set `master` to the host interface that connects to your core, and set the Diameter address. Use the same address for `diameter.address` in `smsc/k8s/smsc-configmap.yaml`.
+
+Deploy Ella SMSC:
+
+```
+kubectl create namespace ella
+kubectl apply -k smsc/k8s
+```
+
+Ella SMSC's UI and API are on the `ella-smsc` NodePort Service.
+
+To enable SMPP, uncomment the `smpp` block in `smsc/k8s/smsc-configmap.yaml`, or `smsc/k8s/pod-network/smsc-configmap.yaml`. SMPP is on the pod network, port `2775` of the `ella-smsc` Service, in both variants. The Service has `externalTrafficPolicy: Local`, so the SMSC sees the ESMEs' own addresses, which their allowed networks are checked against. Terminate TLS in the SMSC pod, with `smpp.tls` and a Secret mounted in the pod: a load balancer, sidecar or ingress that terminates TLS hides the client address.
+
+Ella SMSC's UI and API are at `http://<host-ip>:5010`. Open the UI and create the first user.
+
+With an [`smpp` block](https://docs.ellanetworks.com/smsc/reference/config_file/index.md) in the configuration file, Ella SMSC listens for SMPP 3.4 ESMEs, such as OTA platforms, on port `2775`. See [SMPP](https://docs.ellanetworks.com/smsc/reference/smpp/index.md).
+
+See the [configuration reference](https://docs.ellanetworks.com/smsc/reference/config_file/index.md) for all options.
+
+# Integrate with Ella Core
+
+This guide connects Ella SMSC to Ella Core, with Ella Core as the HSS (S6c) and the MME or SMSF (SGd).
+
+## Prerequisites
+
+- **Ella SMSC**: installed and started, as in [Install](https://docs.ellanetworks.com/smsc/how_to/install/index.md).
+
+The examples use these values:
+
+| Value          | Role                               |
+| -------------- | ---------------------------------- |
+| `10.3.0.7`     | Ella SMSC's Diameter address       |
+| `001` / `01`   | Ella Core's MCC and MNC            |
+| `+15550000000` | Ella SMSC's service centre address |
+| `+15550001111` | Ella Core's SMS number             |
+
+## 1. Set the Diameter address
+
+In `smsc.yaml`, set the address Ella Core reaches Ella SMSC on, and restart Ella SMSC:
+
+```
+diameter:
+  address: 10.3.0.7
+```
+
+## 2. Set the operator
+
+In the Ella SMSC UI, go to the **Operator** page:
+
+- Click the edit icon next to **Operator ID (MCC/MNC)**, enter Ella Core's MCC and MNC, e.g. `001` / `01`, and click **Update**.
+- Click the edit icon next to **Service Centre Address**, enter `+15550000000`, and click **Update**.
+- Click the edit icon next to **Numbering**, enter your country code and prefixes, and click **Update**.
+
+Go to the **Diameter** page and note the **Host**, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`.
+
+## 3. Add Ella SMSC to Ella Core
+
+In the Ella Core UI, go to **Operator** and scroll to the **SMS** section:
+
+- Check that **SMS Number** is set, e.g. `+15550001111`, Ella Core's default.
+- Click **Add Service Center**, enter:
+  - **Address**: `10.3.0.7`
+  - **Numbers**: `+15550000000`
+  - **Diameter Identity**: the **Host** of step 2.
+- Click **Add**.
+
+The service center shows **Connected**.
+
+## 4. Give subscribers an MSISDN
+
+In the Ella Core UI, for each subscriber that sends or receives SMS, go to **Subscribers**, open the subscriber, click the edit icon next to **MSISDN**, enter its E.164 number, e.g. `+15551230001`, and click **Update**.
+
+## 5. Set the SMSC number on the SIM cards
+
+On each SIM card, set the SMSC number to `+15550000000`.
+
+## 6. Verify
+
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**, Ella Core shows **open**, with **HSS** set to **yes**.
+
+Send an SMS between two phones. On the **Messages** page, it shows **delivered**.
+
+# Integrate with Ella IMS
+
+This guide lets Ella SMSC deliver SMS to phones registered for SMS over IP with Ella IMS's IP-SM-GW. Phones send SMS over IP to Ella SMSC the same way.
+
+## Prerequisites
+
+- **Ella SMSC**: connected to Ella Core, as in [Integrate with Ella Core](https://docs.ellanetworks.com/smsc/how_to/integrate_with_ella_core/index.md).
+- **Ella IMS**: connected to Ella Core, as in Ella IMS's [Integrate with Ella Core](https://docs.ellanetworks.com/ims/how_to/integrate_with_ella_core/).
+
+The examples use `10.3.0.7` as Ella SMSC's Diameter address and `+15550000000` as its service centre address.
+
+## 1. Enable SMS over IP in Ella IMS
+
+Follow Ella IMS's [Enable SMS over IP](https://docs.ellanetworks.com/ims/how_to/enable_sms_over_ip/) guide. When you add the SMSC, enter:
+
+- **Address**: `10.3.0.7`
+- **Roles**: **SGd** only
+- **Service Centres**: `15550000000`
+- **Transport**: **SCTP**
+- **Host**: the **Host** of Ella SMSC's **Diameter** page, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`
+
+## 2. Verify
+
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**, Ella IMS shows **open**, with **Applications** set to **SGd** and **HSS** set to **no**.
+
+Send an SMS to a phone registered for SMS over IP. On the **Messages** page, click the message: its delivery attempt went to Ella IMS's host, marked **(IP-SM-GW)**.
+
+# Integrate with a Third-Party Core
+
+This guide connects Ella SMSC to a 4G or 5G core other than Ella Core, through its HSS (S6c) and its MMEs or SMSFs (SGd).
+
+## Prerequisites
+
+- **Ella SMSC**: installed and started, as in [Install](https://docs.ellanetworks.com/smsc/how_to/install/index.md).
+- **HSS**: supports S6c, in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` of the core's PLMN.
+- **MME or SMSF**: supports SGd, and gives the MSISDN of the phone in each short message it forwards. The HSS names it, in its routing answers, by the Diameter identity it connects to Ella SMSC with.
+
+The examples use `10.3.0.7` as Ella SMSC's Diameter address, `001` / `01` as the core's MCC and MNC, and `+15550000000` as Ella SMSC's service centre address.
+
+## 1. Set the Diameter address
+
+In `smsc.yaml`, set the address the core reaches Ella SMSC on, and restart Ella SMSC:
+
+```
+diameter:
+  address: 10.3.0.7
+```
+
+## 2. Set the operator
+
+In the Ella SMSC UI, go to the **Operator** page:
+
+- Click the edit icon next to **Operator ID (MCC/MNC)**, enter the core's MCC and MNC, e.g. `001` / `01`, and click **Update**.
+- Click the edit icon next to **Service Centre Address**, enter `+15550000000`, and click **Update**.
+- Click the edit icon next to **Numbering**, enter your country code and prefixes, and click **Update**.
+
+The **Diameter** page shows Ella SMSC's **Host** and **Realm**, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org` and `epc.mnc001.mcc001.3gppnetwork.org`.
+
+## 3. Add Ella SMSC to the core
+
+In the HSS, and in each MME or SMSF, add Ella SMSC as a Diameter peer:
+
+- **Address**: `10.3.0.7`
+- **Port**: `3868`
+- **Transport**: SCTP
+- **Host** and **Realm**: those of step 2.
+- **Application**: S6c in the HSS, SGd in the MME or SMSF.
+
+In each MME or SMSF, route the short messages of service centre address `+15550000000` to Ella SMSC.
+
+## 4. Provision the subscribers
+
+In the HSS, give each subscriber that sends or receives SMS an MSISDN. On each SIM card, set the SMSC number to `+15550000000`.
+
+## 5. Verify
+
+In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**:
+
+- The HSS shows **open**, with **HSS** set to **yes**. If it shows **no**, its realm differs from Ella SMSC's, or it does not support S6c.
+- Each MME or SMSF shows **open**, with **SGd** in **Applications**.
+
+Send an SMS between two phones. On the **Messages** page, it shows **delivered**.
+
+See [Connectivity](https://docs.ellanetworks.com/smsc/reference/connectivity/index.md) and [3GPP Compliance](https://docs.ellanetworks.com/smsc/reference/3gpp_compliance/index.md) for the interfaces Ella SMSC supports.
+
+# Send Messages from an Application
+
+This guide gives an application, such as an OTA platform, an API token to send messages with.
+
+## 1. Create a user for the application
+
+In the UI, go to **Users** and click **Create**. Set:
+
+- **Email**: an address for the application, such as `ota@example.com`
+- **Password**: any password of at least 8 characters
+- **Role**: **Submitter**
+
+Click **Create**.
+
+## 2. Create an API token
+
+Open the user, and in **API Tokens**, click **Create Token**. Name it after the application, check **No expiry**, and click **Create**.
+
+Copy the token. It is not shown again.
+
+## 3. Configure the application
+
+Send a message with the token:
+
+```
+curl http://<host-ip>:5010/api/v1/messages \
+  -H "Authorization: Bearer ellasmsc_..." \
+  -H "Content-Type: application/json" \
+  -d '{"from": "+15550001000", "to": "+15551230002", "text": "hello"}'
+```
+
+See the [Messages API](https://docs.ellanetworks.com/smsc/reference/api/messages/index.md).
+
+# Send (U)SIM Data Download Messages over SMPP
+
+This guide connects an OTA platform to Ella SMSC over SMPP 3.4 with TLS, sends a secured packet to a SIM with `submit_sm`, and receives the SIM's answer and a delivery receipt as `deliver_sm`.
+
+## Prerequisites
+
+- **Ella SMSC**: installed, as in [Install](https://docs.ellanetworks.com/smsc/how_to/install/index.md).
+- **A TLS certificate** for the SMSC, `smpp.pem`, with its chain, and its private key, `smpp.key`, in PEM.
+- **A user** with the Admin role, logged in to the UI.
+- **The OTA platform's network**: the IP prefix it connects from, such as `10.1.0.0/24`.
+- **The secured packet**, at most 140 octets with its user data header.
+
+The examples use `15550001000` as the source and `15551230002` as the MSISDN of the SIM.
+
+## 1. Enable the SMPP listener
+
+Copy the certificate and key:
+
+```
+sudo cp smpp.pem smpp.key /var/snap/ella-smsc/common/
+sudo chmod 600 /var/snap/ella-smsc/common/smpp.key
+```
+
+In `/var/snap/ella-smsc/common/smsc.yaml`, add:
+
+```
+smpp:
+  address: 0.0.0.0
+  port: 2775
+  tls:
+    cert: /var/snap/ella-smsc/common/smpp.pem
+    key: /var/snap/ella-smsc/common/smpp.key
+```
+
+Restart Ella SMSC:
+
+```
+sudo snap restart ella-smsc.smscd
+```
+
+## 2. Create a user for the OTA platform
+
+In the UI, go to **Users** and click **Create**. Set:
+
+- **Email**: `ota@example.com`
+- **Password**: any password of at least 8 characters
+- **Role**: **Submitter**
+
+Click **Create**.
+
+## 3. Add the ESME
+
+Go to **SMPP** and click **Add ESME**. Set:
+
+- **System ID**: `ota`
+- **User**: `ota@example.com`
+- **Password**: empty, to generate one
+- **Allowed networks**: `10.1.0.0/24`
+
+Click **Add**. Copy the generated password from the **ESME Password** dialog. It is not shown again.
+
+## 4. Bind the OTA platform
+
+Configure the OTA platform to bind as a transceiver, with:
+
+| Setting             | Value                         |
+| ------------------- | ----------------------------- |
+| Host, port          | `<host-ip>`, `2775`, over TLS |
+| `system_id`         | `ota`                         |
+| `password`          | The generated password        |
+| `interface_version` | `0x34`                        |
+
+On the **SMPP** page, the **Sessions** of `ota` show **Transceiver from** the platform's address.
+
+## 5. Submit the packet
+
+Send a `submit_sm` with:
+
+| Field                                                | Value                                                     |
+| ---------------------------------------------------- | --------------------------------------------------------- |
+| `source_addr_ton`, `source_addr_npi`, `source_addr`  | `1`, `1`, `15550001000`                                   |
+| `dest_addr_ton`, `dest_addr_npi`, `destination_addr` | `1`, `1`, `15551230002`                                   |
+| `esm_class`                                          | `0x40`, UDHI                                              |
+| `protocol_id`                                        | `0x7F`, (U)SIM data download                              |
+| `data_coding`                                        | `0xF6`, 8-bit data, message class 2                       |
+| `registered_delivery`                                | `0x09`: the SIM's answer and a delivery receipt           |
+| `short_message`                                      | The packet's user data header, then the packet: `027000…` |
+
+`submit_sm_resp` gives the `message_id`.
+
+## 6. Receive the SIM's answer
+
+The SMSC sends a `deliver_sm` with `esm_class` `0x50` and `receipted_message_id` set to the `message_id`. Its `short_message` is the SIM's Response Packet, `027100…`.
+
+Answer it with `deliver_sm_resp` `ESME_ROK`.
+
+## 7. Receive the delivery receipt
+
+The SMSC sends a `deliver_sm` with `esm_class` `0x04` and `receipted_message_id` set to the `message_id`. Its `short_message` is the receipt:
+
+```
+id:42 sub:001 dlvrd:001 submit date:2610281430 done date:2610281431 stat:DELIVRD err:000 text:
+```
+
+Answer it with `deliver_sm_resp` `ESME_ROK`.
+
+See the [SMPP reference](https://docs.ellanetworks.com/smsc/reference/smpp/index.md) for every field, outcome and refusal.
+
+# Send (U)SIM Data Download Messages over the API
+
+This guide sends a secured packet that an OTA platform built to a SIM, over the HTTP API, and reads the SIM's answer.
+
+## Prerequisites
+
+- **An API token** of a Submitter user, as in [Send Messages from an Application](https://docs.ellanetworks.com/smsc/how_to/send_messages_from_an_application/index.md).
+- **The secured packet**, at most 140 octets with its user data header, in hexadecimal.
+
+## 1. Send the packet
+
+Send the packet as a binary message, with:
+
+- `protocol_identifier`: `127`, (U)SIM data download
+- `data_coding_scheme`: `246`, 8-bit data, message class 2
+- `user_data_header`: the packet's user data header, such as `027000`
+- `user_data`: the packet after its header
+
+```
+curl http://<host-ip>:5010/api/v1/messages \
+  -H "Authorization: Bearer ellasmsc_..." \
+  -H "Content-Type: application/json" \
+  -d '{
+        "from": "+15550001000",
+        "to": "+15551230002",
+        "binary": {
+          "protocol_identifier": 127,
+          "data_coding_scheme": 246,
+          "user_data_header": "027000",
+          "user_data": "<packet>"
+        }
+      }'
+```
+
+Note the `id` of the message in the response.
+
+## 2. Wait for the delivery
+
+Get the message until its `status` is no longer `pending`:
+
+```
+curl http://<host-ip>:5010/api/v1/messages/<id> \
+  -H "Authorization: Bearer ellasmsc_..."
+```
+
+## 3. Read the SIM's answer
+
+Get the content of the message:
+
+```
+curl http://<host-ip>:5010/api/v1/messages/<id>/content \
+  -H "Authorization: Bearer ellasmsc_..."
+```
+
+The SIM's answer is the `user_data` of the last item of `deliver_reports`. See [Get the Content of a Message](https://docs.ellanetworks.com/smsc/reference/api/messages/#get-the-content-of-a-message).
+# Reference
+
+# Reference
+
+This section provides detailed reference material for Ella SMSC, from configuration options to complete API documentation.
+
+- [API](https://docs.ellanetworks.com/smsc/reference/api/index.md)
+- [Configuration File](https://docs.ellanetworks.com/smsc/reference/config_file/index.md)
+- [Observability](https://docs.ellanetworks.com/smsc/reference/observability/index.md)
+- [Connectivity](https://docs.ellanetworks.com/smsc/reference/connectivity/index.md)
+- [SMPP](https://docs.ellanetworks.com/smsc/reference/smpp/index.md)
+- [Performance](https://docs.ellanetworks.com/smsc/reference/performance/index.md)
+- [3GPP Compliance](https://docs.ellanetworks.com/smsc/reference/3gpp_compliance/index.md)
+
+# 3GPP Compliance
+
+Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter interfaces of TS 29.338.
+
+Note
+
+Open an [issue](https://github.com/ellanetworks/smsc/issues) if you notice a 3GPP-compliance gap or require a new capability for a production deployment.
+
+## Supported
+
+### Interfaces
+
+| Interface | Peer                      | Transport          |
+| --------- | ------------------------- | ------------------ |
+| S6c       | HSS                       | Diameter over SCTP |
+| SGd       | MME, SGSN, SMSF, IP-SM-GW | Diameter over SCTP |
+
+### SGd (TS 29.338)
+
+- **MO-Forward-Short-Message**, received: a phone's short message, from its MME, SMSF or IP-SM-GW.
+- **MT-Forward-Short-Message**, sent: a short message or a status report, to the phone's MME, SGSN, IP-SM-GW, or SMSF for 3GPP or non-3GPP access.
+
+### S6c (TS 29.338)
+
+- **Send-Routing-Info-for-SM**, sent: the serving nodes of the recipient, for a short message or a status report.
+- **Report-SM-Delivery-Status**, sent: the outcome of a delivery, which sets or clears the HSS's message waiting data.
+- **Alert-Service-Centre**, received: the recipient, or the Alert MSISDN of its subscription, can be reached again.
+
+### Diameter routing (RFC 6733, GSMA IR.88)
+
+- **Static peers.** Over SCTP, multi-homed.
+- **Realm routing.** Per realm and application, with a default route, and Destination-Host kept.
+- **Failover.** By priority, with load sharing, and the T flag on retransmission.
+
+### Short messages (TS 23.040)
+
+- **TPDUs.** SMS-SUBMIT received; SMS-DELIVER and SMS-STATUS-REPORT sent; SMS-SUBMIT-REPORT with the TP-Failure-Cause of a refused SMS-SUBMIT.
+- **Store and forward.** Messages to a phone are delivered in order, one at a time, and announce the next with TP-More-Messages-to-Send.
+- **Validity period.** Relative, absolute and enhanced formats, including single-shot messages.
+- **Status reports.** On the delivery, failure, expiry or replacement of a message whose sender set TP-Status-Report-Request.
+- **Reject duplicates.** TP-Reject-Duplicates.
+- **Replace short message.** Replace types 1 to 7 of TP-Protocol-Identifier, from phones, the API and SMPP. A message from the API or SMPP replaces only one of the same user or ESME.
+- **Binary messages from the API.** TP-Protocol-Identifier, TP-Data-Coding-Scheme, TP-User-Data-Header and TP-User-Data delivered unchanged, including (U)SIM data download.
+- **SMS-DELIVER-REPORT.** Kept from each delivery: in the SM-RP-UI of a successful MT-Forward-Short-Message answer, and in the SM-Diagnostic-Info of an SM Delivery Failure.
+- **(U)SIM data download error.** A message whose SMS-DELIVER-REPORT has the TP-Failure-Cause `usim_data_download_error` fails without another attempt.
+- **SC time stamps.** Distinct for the messages to a phone.
+- **Numbering.** International, national and unknown types of number, converted to international with the operator's numbering plan.
+
+## Not supported
+
+- **SMS-COMMAND.** Refused with the TP-Failure-Cause `command_unsupported`.
+- **Telematic interworking.** Refused with the TP-Failure-Cause `telematic_interworking_not_supported`.
+- **Device triggering from phones.** Refused with the TP-Failure-Cause `unspecified_tp_pid_error`.
+- **SMS-MI-Correlation-ID.** A short message that carries one is refused with DIAMETER_ERROR_FACILITY_NOT_SUPPORTED.
+- **Diameter over TCP.**
+- **Delivery to an MSC-Number.**
+- **Destination-Host in Report-SM-Delivery-Status.**
+- **MAP over SS7.**
+
+# Configuration File
+
+Ella SMSC is configured using a YAML file. Start Ella SMSC with the `--config` flag to specify its path. Unknown keys are rejected. Changes take effect on restart.
+
+The operator and delivery settings are not in this file: they are in the database, and set with the UI or the [API](https://docs.ellanetworks.com/smsc/reference/api/index.md).
+
+## Parameters
+
+- `logging` (object, optional): The logging configuration.
+  - `level` (string, optional): The log level: `debug`, `info`, `warn`, or `error`. Default `info`.
+- `db` (object): The database configuration.
+  - `path` (string): The path to the SQLite database file. Created if absent.
+- `api` (object): The HTTP API and UI.
+  - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
+  - `port` (int, optional): The TCP port to listen on. Default `5010`.
+  - `tls` (object, optional): Serve over HTTPS. Default: plain HTTP.
+    - `cert` (string): The path to the PEM certificate chain, the server's certificate first.
+    - `key` (string): The path to the PEM private key.
+  - `drain_delay` (duration, optional): How long Ella SMSC keeps serving after it is told to stop, with [`GET /api/v1/readyz`](https://docs.ellanetworks.com/smsc/reference/api/status/#check-readiness) failing. For example `5s`. Default `0s`.
+- `diameter` (object): Diameter, to the HSS, MMEs, SMSFs and IP-SM-GWs.
+  - `name` (string): The network interface to listen on, on all its addresses, advertised to peers. Either `name` or `address` must be set.
+  - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`. Either `name` or `address` must be set.
+  - `port` (int, optional): The SCTP port to listen on. Default `3868`.
+- `smpp` (object, optional): The [SMPP 3.4](https://docs.ellanetworks.com/smsc/reference/smpp/index.md) listener for ESMEs, such as OTA platforms. Without it, Ella SMSC does not listen for SMPP. The ESME accounts are in the database, managed with the [API](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md).
+  - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
+  - `port` (int, optional): The TCP port to listen on. Default `2775`. Not the API's port.
+  - `tls` (object, optional): Wrap each connection in TLS, 1.2 or later, from its first octet. SMPP 3.4 has no TLS: this is a common convention, which the ESME must support. Default: plain TCP, for a private link or a lab only.
+    - `cert` (string): The path to the PEM certificate chain, the server's certificate first.
+    - `key` (string): The path to the PEM private key.
+- `telemetry` (object, optional): The [traces](https://docs.ellanetworks.com/smsc/reference/observability/#traces).
+  - `enabled` (boolean, optional): Export traces. Default `false`.
+  - `otlp_endpoint` (string): The `host:port` of an OTLP/gRPC collector, over plain gRPC. Required when `enabled` is `true`.
+
+## Example
+
+```
+logging:
+  level: info
+db:
+  path: smsc.db
+api:
+  address: 0.0.0.0
+  port: 5010
+diameter:
+  address: 127.0.0.1
+  port: 3868
+smpp:
+  address: 0.0.0.0
+  port: 2775
+  tls:
+    cert: /etc/smsc/smpp.pem
+    key: /etc/smsc/smpp.key
+telemetry:
+  enabled: true
+  otlp_endpoint: localhost:4317
+```
+
+With the snap, the configuration file is `/var/snap/ella-smsc/common/smsc.yaml`.
+
+# Connectivity
+
+| Interface                                                              | Peer                                                                                                   | Transport                   | Address                                                 | Port                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------- | ------------------------------------------------------- | -------------------------- |
+| API and UI                                                             | Operators, applications, Prometheus                                                                    | TCP                         | `api.address`                                           | `api.port` (`5010`)        |
+| Diameter: S6c                                                          | HSS                                                                                                    | SCTP                        | `diameter.address`, or the addresses of `diameter.name` | `diameter.port` (`3868`)   |
+| Diameter: SGd                                                          | MME, SMSF, IP-SM-GW                                                                                    | SCTP                        | `diameter.address`, or the addresses of `diameter.name` | `diameter.port` (`3868`)   |
+| Diameter: S6c and SGd, outbound                                        | [Configured peers](https://docs.ellanetworks.com/smsc/reference/api/diameter/#create-a-peer): DEA, DRA | SCTP                        | The peer's `addresses`                                  | The peer's `port` (`3868`) |
+| [SMPP 3.4](https://docs.ellanetworks.com/smsc/reference/smpp/index.md) | ESMEs, such as OTA platforms                                                                           | TCP, or TLS with `smpp.tls` | `smpp.address`                                          | `smpp.port` (`2775`)       |
+
+Defaults are in parentheses. SMPP listens only when the configuration file has an `smpp` block.
+
+Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the configured peers, and reconnects after 1 to 30 seconds.
+
+# Observability
+
+Ella SMSC supports four observability pillars: Metrics, Logs, Traces, and Profiles.
+
+## Metrics
+
+Ella SMSC exposes Prometheus metrics at [`GET /api/v1/metrics`](https://docs.ellanetworks.com/smsc/reference/api/metrics/index.md).
+
+| Metric                                       | Type                    | Description                                                                                                                                                                                   |
+| -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ellasmsc_build_info`                        | Gauge                   | Always 1. The version and revision of the running build are in its labels.                                                                                                                    |
+| `ellasmsc_messages_received_total`           | Counter                 | Short messages received, one per part, by origin (`mobile`, `api`, `smpp`) and result (`accepted`, `rejected`, `error`). One per `submit_sm` for `smpp`.                                      |
+| `ellasmsc_messages_completed_total`          | Counter                 | Short messages and status reports that reached a final status, by type (`message`, `status_report`) and status (`delivered`, `failed`, `expired`, and `replaced` for a message).              |
+| `ellasmsc_messages_purged_total`             | Counter                 | Short messages deleted once their [retention](https://docs.ellanetworks.com/smsc/reference/api/retention/index.md) passed, with their status reports and delivery attempts.                   |
+| `ellasmsc_messages_pending`                  | Gauge                   | Short messages and status reports waiting for delivery, by type and state: `due`, to be delivered now or being delivered; `waiting`, for a retry or for the phone to be reachable.            |
+| `ellasmsc_message_delivery_duration_seconds` | Histogram               | Time from submission to delivery of the short messages delivered, the time the phone was unreachable included.                                                                                |
+| `ellasmsc_hss_peers`                         | Gauge                   | Open peers that serve S6c in the operator's realm: HSSs, or agents in front of them. At 0, messages to phones wait.                                                                           |
+| `ellasmsc_peer_requests_total`               | Counter                 | Requests to the HSS and to the MMEs, SMSFs and IP-SM-GWs, by interface (`s6c`, `sgd`) and result (`success`, `failure`, `absent_user`, `error`, `timeout`).                                   |
+| `ellasmsc_peer_request_duration_seconds`     | Histogram               | Duration of requests to the HSS and to the MMEs, SMSFs and IP-SM-GWs, by interface.                                                                                                           |
+| `ellasmsc_smpp_sessions`                     | Gauge                   | Bound SMPP sessions, by bind type (`transmitter`, `receiver`, `transceiver`).                                                                                                                 |
+| `ellasmsc_smpp_binds_total`                  | Counter                 | SMPP bind attempts, by result (`accepted`, `rejected`).                                                                                                                                       |
+| `ellasmsc_smpp_notifications_pending`        | Gauge                   | Delivery receipts and SIM answers not yet sent to an ESME and not expired, by type (`receipt`, `sim_answer`). A rise means no receiver of the ESME is bound, or it does not acknowledge them. |
+| `ellasmsc_smpp_notifications_sent_total`     | Counter                 | Delivery receipts and SIM answers that reached a final outcome, by type and result (`acknowledged`, `rejected`, `expired`, `no_user_data`).                                                   |
+| `ellasmsc_smpp_submit_duration_seconds`      | Histogram               | Time from a `submit_sm` read to its `submit_sm_resp` written.                                                                                                                                 |
+| `ellasmsc_database_query_duration_seconds`   | Histogram               | Duration of database calls, the wait for the connection included.                                                                                                                             |
+| `ellasmsc_database_query_errors_total`       | Counter                 | Failed database calls.                                                                                                                                                                        |
+| `ellasmsc_database_storage_bytes`            | Gauge                   | Size of the database on disk, by file: `main`, `wal`.                                                                                                                                         |
+| `go_*`                                       | Gauge, Counter, Summary | Go runtime: goroutines, heap, garbage-collection pauses.                                                                                                                                      |
+| `process_*`                                  | Gauge, Counter          | Process: memory, CPU, open file descriptors, start time.                                                                                                                                      |
+
+## Traces
+
+Ella SMSC exports [OpenTelemetry](https://opentelemetry.io/) traces when `telemetry.enabled` is set in the [configuration file](https://docs.ellanetworks.com/smsc/reference/config_file/index.md).
+
+| Property    | Value                                               |
+| ----------- | --------------------------------------------------- |
+| Export      | OTLP over gRPC, without TLS                         |
+| Sampling    | Parent-based, always on for a trace the SMSC starts |
+| Propagation | W3C Trace Context                                   |
+| Left out    | MSISDN, IMSI, message content                       |
+
+### Spans
+
+| Span                             | Kind           | Description                                                                                                                                  | `error.type`                                                                                                                                                                                                                                                          |
+| -------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{method} {route}`               | Server         | A request to the API, except `/api/v1/livez`, `/api/v1/readyz`, `/api/v1/metrics` and `/api/v1/pprof/`. Links to the caller's `traceparent`. | None. A 5xx response has the Error status.                                                                                                                                                                                                                            |
+| `submit_sm`                      | Server         | A `submit_sm` from an ESME.                                                                                                                  | `ESME_RSYSERR`, `_OTHER`                                                                                                                                                                                                                                              |
+| `deliver`                        | Consumer       | A delivery attempt of a short message or status report. Root span, linked to the span that created the message.                              | `failed`, `expired`, `_OTHER`                                                                                                                                                                                                                                         |
+| `deliver_sm`                     | Client         | A delivery receipt or SIM answer to an ESME. Root span, linked to the span that created the message.                                         | A `command_status` that SMPP 3.4 names, `session_closed`, `timeout`, `canceled`, `_OTHER`                                                                                                                                                                             |
+| `S6c/{command}`, `SGd/{command}` | Server, Client | A Diameter request. Child of the peer's trace context.                                                                                       | Client: a Result-Code from 3000, `closed`, `not_connected`, `unknown_peer`, `application_unsupported`, `unable_to_deliver`, `loop_detected`, `not_proxiable`, `timeout`, `canceled`, `_OTHER`. Server: `3001`, `3002`, `3004`, `5012`, `overloaded`, `shutting_down`. |
+
+### Attributes
+
+| Attribute                   | Span      | Values                                                               |
+| --------------------------- | --------- | -------------------------------------------------------------------- |
+| `ella.sms.delivery.outcome` | `deliver` | `delivered`, `failed`, `expired`, `replaced`, `retry`, `interrupted` |
+
+## Profiles
+
+Ella SMSC exposes the [net/http/pprof](https://pkg.go.dev/net/http/pprof) API at [`/api/v1/pprof/`](https://docs.ellanetworks.com/smsc/reference/api/pprof/index.md).
+
+## Logs
+
+Ella SMSC writes its logs to standard output, one JSON object per line, at the level of `logging.level` in the [configuration file](https://docs.ellanetworks.com/smsc/reference/config_file/index.md).
+
+| Field   | Description                         |
+| ------- | ----------------------------------- |
+| `ts`    | Time of the event.                  |
+| `level` | `debug`, `info`, `warn` or `error`. |
+| `msg`   | What happened.                      |
+
+Other fields depend on the event.
+
+### Audit events
+
+Audit events are logs at level `info` with `msg` set to `audit event`.
+
+| Field     | Description                                       |
+| --------- | ------------------------------------------------- |
+| `action`  | What was done, below.                             |
+| `actor`   | Email of the user who did it. Empty when unknown. |
+| `ip`      | Address the request came from.                    |
+| `details` | What was done, in words.                          |
+
+# Performance
+
+Measured short message capacity of Ella SMSC, with 10,000 subscribers on a 4 vCPU host.
+
+## Short Messages
+
+Submission time: from the MO-Forward-Short-Message request to its answer, the message accepted and stored. Delivery time: from the MO-Forward-Short-Message request to the MT-Forward-Short-Message request of its delivery to the recipient's MME (TS 29.338 §6.2).
+
+| Rate (/s) | Messages per hour | Submission success rate | Submission time, p99 | Delivery success rate | Delivery time, mean | Delivery time, p99 | CPU (cores) | Resident memory |
+| --------- | ----------------- | ----------------------- | -------------------- | --------------------- | ------------------- | ------------------ | ----------- | --------------- |
+| 100       | 360,000           | 100%                    | 15 ms                | 100%                  | 2 ms                | 19 ms              | 0.07        | 25 MiB          |
+| 400       | 1,440,000         | 100%                    | 17 ms                | 100%                  | 2 ms                | 19 ms              | 0.23        | 43 MiB          |
+| 800       | 2,880,000         | 100%                    | 18 ms                | 100%                  | 4 ms                | 20 ms              | 0.40        | 76 MiB          |
+| 1,200     | 4,320,000         | 100%                    | 20 ms                | 100%                  | 7 ms                | 23 ms              | 0.56        | 125 MiB         |
+| 1,600     | 5,760,000         | 100%                    | 21 ms                | 100%                  | 11 ms               | 40 ms              | 0.69        | 217 MiB         |
+| 2,000     | 7,200,000         | 100%                    | 23 ms                | 100%                  | 3.1 s               | 6.9 s              | 0.69        | 218 MiB         |
+
+Maximum rate with a delivery time p99 under 100 ms: 1,600 messages per second.
+
+## Storage
+
+| Item                      | Value                                   |
+| ------------------------- | --------------------------------------- |
+| Resident memory, idle     | 15 MiB                                  |
+| Database size per message | About 490 bytes                         |
+| Messages kept             | All: Ella SMSC does not delete messages |
+
+## Test Setup
+
+| Item            | Value                                                                        |
+| --------------- | ---------------------------------------------------------------------------- |
+| Version         | Ella SMSC built from source, after v0.0.1, default configuration             |
+| Host            | VM, 4 vCPU, 8 GB RAM, Ubuntu 26.04, Linux 7.0, on an Intel Core Ultra 7 265K |
+| Open-file limit | 524,288 (systemd default)                                                    |
+| Load generator  | Separate VM, 10 vCPU, 10 GB RAM                                              |
+| Core network    | Simulated MME and HSS, over SGd and S6c, over SCTP: answers at once          |
+| Subscribers     | 10,000, each sending to another at random, all reachable                     |
+| Short messages  | SMS-SUBMIT of 8-bit text, 20 to 30 octets, without status report requests    |
+| Rates           | Each held 30 s                                                               |
+
+# SMPP
+
+Ella SMSC is an SMPP 3.4 SMSC for External Short Message Entities (ESMEs), such as OTA platforms. An ESME submits short messages to phones with `submit_sm`, and receives delivery receipts and SIM answers as `deliver_sm`.
+
+The listener runs when the [configuration file](https://docs.ellanetworks.com/smsc/reference/config_file/index.md) has an `smpp` block. ESME accounts are managed with the [ESMEs API](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md) or the **SMPP** page of the UI.
+
+"§" without a TS number refers to SMPP v3.4, Issue 1.2. **Convention** marks a behaviour that SMPP 3.4 does not define. All conventions are listed under [Conventions](#conventions).
+
+## Transport
+
+| Item                | Value                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Transport           | TCP (§2.4), on `smpp.port`, default `2775`.                                                                 |
+| TLS                 | With `smpp.tls`: TLS 1.2 or later, from the first octet. A listener is either plain or TLS. **Convention**. |
+| Client address      | The address of the TCP connection. The PROXY protocol is not supported.                                     |
+| `interface_version` | `0x34`.                                                                                                     |
+| SMSC `system_id`    | `EllaSMSC`, in bind responses.                                                                              |
+| `command_length`    | 16 to 69,632 octets (68 KiB). **Convention**: SMPP 3.4 sets no maximum (§3.2.1).                            |
+| `sequence_number`   | `0x00000001` to `0x7FFFFFFF` (§5.1.4).                                                                      |
+
+## PDUs
+
+### Supported
+
+| PDU                                                     | Direction   | Session state       | Handling                                                                                                 |
+| ------------------------------------------------------- | ----------- | ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `bind_transmitter`, `bind_receiver`, `bind_transceiver` | ESME → SMSC | OPEN                | See [Binds](#binds).                                                                                     |
+| `submit_sm`                                             | ESME → SMSC | BOUND_TX, BOUND_TRX | One short message. See [`submit_sm`](#submit_sm).                                                        |
+| `deliver_sm`                                            | SMSC → ESME | BOUND_RX, BOUND_TRX | Delivery receipts and SIM answers. See [Notifications](#notifications).                                  |
+| `enquire_link`                                          | Both        | Bound               | Answered at once (§4.11).                                                                                |
+| `unbind`                                                | Both        | Bound               | See [Session end](#session-end).                                                                         |
+| `generic_nack`                                          | Both        | Any                 | Sent for a PDU that cannot be handled (§4.3). Received in answer to a `deliver_sm`: a temporary failure. |
+
+### Errors
+
+| PDU received                                                                                                                     | Response                                                 | Session  |
+| -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------- |
+| `command_length` under 16 or over 68 KiB                                                                                         | `generic_nack` `ESME_RINVCMDLEN`                         | Closed   |
+| `sequence_number` of `0` or over `0x7FFFFFFF`                                                                                    | `generic_nack` `ESME_RUNKNOWNERR`, `sequence_number` `0` | Stays up |
+| `query_sm`, `replace_sm`, `cancel_sm`, `submit_multi`, `data_sm`, `outbind`, `deliver_sm`, an undefined or reserved `command_id` | `generic_nack` `ESME_RINVCMDID`                          | Stays up |
+| `alert_notification`                                                                                                             | None: discarded (§4.12)                                  | Stays up |
+| A bind in a bound state                                                                                                          | Its response with `ESME_RALYBND`                         | Stays up |
+| Another request in a state that does not allow it (§2.3, Table 2-1)                                                              | Its response with `ESME_RINVBNDSTS`                      | Stays up |
+| A body on a PDU that has none, or a body shorter than its mandatory parameters                                                   | `generic_nack` `ESME_RINVCMDLEN`                         | Stays up |
+| A C-Octet String over its maximum length                                                                                         | Its response with `ESME_RINVPARLEN`                      | Stays up |
+| Optional parameters that do not decode as TLVs                                                                                   | Its response with `ESME_RINVOPTPARSTREAM`                | Stays up |
+| A response that matches no request                                                                                               | None: discarded                                          | Stays up |
+
+Unknown TLVs, and known TLVs not expected for the PDU, are ignored (§3.3). Responses may go out of order: they match their requests by `sequence_number` (§2.5.2).
+
+## Binds
+
+### Checks
+
+The SMSC checks a bind in this order:
+
+1. At most 20 binds per minute from the client address: per IPv4 address, or per IPv6 /64.
+
+1. `interface_version` is `0x34` or later.
+
+1. At most 100 wrong passwords per hour for the `system_id`, from inside its allowed networks. A successful bind resets the count. Wrong passwords from outside the allowed networks, and binds with an unknown `system_id`, are counted apart, with the same limit, and never lock out the account.
+
+1. `system_id` and `password` match an ESME account. A check against an unknown `system_id` takes as long as one against a known `system_id`.
+
+1. The client address is in the account's `allowed_networks`. An empty list allows no address.
+
+1. The role of the account's user allows the bind type:
+
+   | Bind        | Permissions                     | Roles                             |
+   | ----------- | ------------------------------- | --------------------------------- |
+   | Transmitter | Send messages                   | Admin, Network Manager, Submitter |
+   | Receiver    | Read messages and their content | Admin, Network Manager, Submitter |
+   | Transceiver | Both                            | Admin, Network Manager, Submitter |
+
+   See [Roles](https://docs.ellanetworks.com/smsc/reference/api/#roles).
+
+1. Fewer than 4 sessions of the account are bound.
+
+### Response
+
+| Outcome            | `command_status`                                             | Body                                                                   |
+| ------------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Accepted           | `ESME_ROK`                                                   | `system_id` `EllaSMSC`, and `sc_interface_version` `0x34` (§5.3.2.25). |
+| Refused, any check | `ESME_RBINDFAIL`, never `ESME_RINVSYSID` or `ESME_RINVPASWD` | None. `bind_transceiver_resp`: `system_id` `EllaSMSC` (Table 4-6).     |
+
+The log gives the reason of a refused bind, with the `system_id` and the client address, at level `info`.
+
+### Bind fields
+
+| Field                                                  | Handling                      |
+| ------------------------------------------------------ | ----------------------------- |
+| `system_id`                                            | Up to 15 characters (§4.1.1). |
+| `password`                                             | Up to 8 characters (§4.1.1).  |
+| `interface_version`                                    | See [Checks](#checks).        |
+| `system_type`, `addr_ton`, `addr_npi`, `address_range` | Ignored.                      |
+
+### Account changes
+
+Updating or deleting an ESME, or changing the role of or deleting its user, closes its sessions.
+
+## Sessions
+
+### Limits
+
+| Item              | Value                                                                                                                      |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Sessions per ESME | 4, of any bind types.                                                                                                      |
+| ESME accounts     | 50.                                                                                                                        |
+| Inbound window    | 64 requests handled at once per session. One more is answered `ESME_RTHROTTLED`. §2.5.2 recommends at most 10 outstanding. |
+| Outbound window   | 10 `deliver_sm` without a response per session (§2.6.2).                                                                   |
+
+### Timers
+
+The timers are fixed (§7.2).
+
+| Timer                | Value                       | Action                                                                                                |
+| -------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `session_init_timer` | 30 s                        | A connection that has not bound is closed.                                                            |
+| `enquire_link_timer` | 30 s without a PDU received | The SMSC sends `enquire_link`, and closes the session without a response within the `response_timer`. |
+| `inactivity_timer`   | 90 s without a PDU received | The session is closed.                                                                                |
+| `response_timer`     | 30 s                        | A `deliver_sm` without a response is a temporary failure.                                             |
+
+### Session end
+
+| Event                  | Handling                                                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `unbind` from the ESME | The SMSC finishes the `submit_sm` in progress, answers `unbind_resp`, waits up to 2 s for the ESME to close the connection, then closes it (§2.2, §4.2). A `submit_sm` received meanwhile is answered `ESME_RINVBNDSTS`. |
+| SMSC shutdown          | The SMSC sends `unbind` to each session, waits up to 5 s for `unbind_resp`, then closes.                                                                                                                                 |
+
+## `submit_sm`
+
+One `submit_sm` stores exactly one SMS-SUBMIT: one message of the [Messages API](https://docs.ellanetworks.com/smsc/reference/api/messages/index.md), owned by the ESME's user, delivered as a message from the API.
+
+`submit_sm_resp` carries `message_id`: the `id` of the message in the Messages API, in decimal. The SMSC answers once the message is stored.
+
+### Addressing
+
+The destination is a phone, routed through the HSS (§5.2.5, §5.2.6, §5.2.9; TS 23.040 §9.1.2.5):
+
+| `dest_addr_ton`                | `dest_addr_npi` | `destination_addr`                                                                                                                   |
+| ------------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `1`, international             | `0` or `1`      | The international number.                                                                                                            |
+| `0`, unknown, or `2`, national | `0` or `1`      | Converted to international with the operator's [numbering plan](https://docs.ellanetworks.com/smsc/reference/api/operator/index.md). |
+
+| Error                                                                              | `command_status`  |
+| ---------------------------------------------------------------------------------- | ----------------- |
+| Another `dest_addr_ton`                                                            | `ESME_RINVDSTTON` |
+| Another `dest_addr_npi`                                                            | `ESME_RINVDSTNPI` |
+| Not 1 to 20 digits, or not 1 to 15 digits without a leading `0` once international | `ESME_RINVDSTADR` |
+
+The source is shown to the recipient as the sender (§5.2.8):
+
+| `source_addr_ton`         | `source_addr_npi`                    | `source_addr`                                                           | Sent to the phone as  |
+| ------------------------- | ------------------------------------ | ----------------------------------------------------------------------- | --------------------- |
+| `1`, international        | `0` or `1`                           | 1 to 15 digits, no leading `0`                                          | TON 1, NPI 1          |
+| `5`, alphanumeric         | Any                                  | 1 to 11 letters and digits, single spaces between words, not all digits | TON 5                 |
+| `0`, `2`, `3`, `4` or `6` | `0`, `1`, `3`, `4`, `8`, `9` or `10` | 1 to 20 digits                                                          | The TON and NPI given |
+
+| Error                        | `command_status`                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Empty `source_addr`          | `ESME_RINVSRCADR`. The SMSC has no default source.                                                     |
+| A reserved `source_addr_ton` | `ESME_RINVSRCTON`                                                                                      |
+| Another `source_addr_npi`    | `ESME_RINVSRCNPI`. The NPIs accepted have the same value and meaning in §5.2.6 and TS 23.040 §9.1.2.5. |
+| Another `source_addr`        | `ESME_RINVSRCADR`                                                                                      |
+
+### `data_coding`
+
+`data_coding` (§5.2.19) is mapped to a TP-DCS (TS 23.038 §4):
+
+| `data_coding`                                                          | SMPP 3.4 meaning                  | TP-DCS and user data                                                                                                                                                       |
+| ---------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x00`                                                                 | SMSC default alphabet             | TP-DCS `0x00`. The octets are GSM 7-bit default alphabet septets, one per octet, `0x1B` for the extension table. An octet over `0x7F`: `ESME_RSUBMITFAIL`. **Convention**. |
+| `0x01`                                                                 | IA5 (ASCII)                       | Converted to GSM 7-bit, TP-DCS `0x00`, or to UCS2, TP-DCS `0x08`, when a character has no GSM 7-bit equivalent. An octet over `0x7F`: `ESME_RSUBMITFAIL`.                  |
+| `0x02`                                                                 | Octet unspecified                 | TP-DCS `0x04`, 8-bit.                                                                                                                                                      |
+| `0x03`                                                                 | Latin-1                           | Converted to GSM 7-bit, TP-DCS `0x00`, or to UCS2, TP-DCS `0x08`, when a character has no GSM 7-bit equivalent.                                                            |
+| `0x04`                                                                 | Octet unspecified                 | TP-DCS `0x04`, 8-bit.                                                                                                                                                      |
+| `0x08`                                                                 | UCS2                              | TP-DCS `0x08`, octets copied. An odd number of octets: `ESME_RSUBMITFAIL`.                                                                                                 |
+| `0xF0` to `0xF7`                                                       | GSM message class control         | Copied.                                                                                                                                                                    |
+| `0xC0` to `0xDF`                                                       | GSM message waiting indication    | `ESME_RSUBMITFAIL`.                                                                                                                                                        |
+| `0x05` to `0x07`, `0x09` to `0xBF`, `0xE0` to `0xEF`, `0xF8` to `0xFF` | Other character sets, or reserved | `ESME_RSUBMITFAIL`. SMPP 3.4 has no status for an invalid `data_coding`.                                                                                                   |
+
+With a GSM 7-bit TP-DCS, the SMSC packs the septets after the user data header, with fill bits (TS 23.040 §9.2.3.24).
+
+**`dest_addr_subunit`** (§5.3.2.1, §5.2.19 note e) sets the message class bits of TP-DCS:
+
+| `dest_addr_subunit`   | Class      |
+| --------------------- | ---------- |
+| `0`, `5` to `255`     | Unchanged. |
+| `1`, MS display       | Class 0    |
+| `2`, mobile equipment | Class 1    |
+| `3`, smart card       | Class 2    |
+| `4`, external unit    | Class 3    |
+
+A different class already in `data_coding`, or a TP-DCS without class bits: `ESME_RINVOPTPARAMVAL`.
+
+**(U)SIM data download.** With `protocol_id` `0x7F`, `data_coding` `0x02` or `0x04` and no `dest_addr_subunit`, TP-DCS is `0xF6`, 8-bit data, class 2. **Convention**: TS 23.040 §9.2.3.9 requires class 2 for (U)SIM data download.
+
+### `esm_class`
+
+| Bits (§5.2.12)      | Value                                 | Handling                                                                                                                                        |
+| ------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1-0, messaging mode | `00` default, `11` store and forward  | Store and forward.                                                                                                                              |
+| 1-0                 | `01` datagram, `10` transaction       | `ESME_RINVESMCLASS`                                                                                                                             |
+| 5-2, message type   | `0010`, `0100`, ESME acknowledgements | `ESME_RINVESMCLASS`                                                                                                                             |
+| 5-2                 | Other                                 | Normal message (§3.3).                                                                                                                          |
+| 6, UDHI             | `1`                                   | TP-UDHI = 1. The user data starts with the user data header, its length octet included. A header longer than the user data: `ESME_RSUBMITFAIL`. |
+| 7, reply path       | `1`                                   | `ESME_RINVESMCLASS`                                                                                                                             |
+
+### `protocol_id`
+
+Copied to TP-PID (§5.2.13; TS 23.040 §9.2.3.9):
+
+| `protocol_id`                                        | Handling                                                                                                                                                                            |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x20` to `0x3E`, telematic interworking             | `ESME_RSUBMITFAIL`                                                                                                                                                                  |
+| `0x41` to `0x47`, replace short message types 1 to 7 | Replaces the pending message of the same type, from the same source, submitted by the same ESME. A message from a phone, the API or another ESME is never replaced. **Convention**. |
+| `0x48`, device triggering                            | Needs an application port addressing information element, else `ESME_RSUBMITFAIL`.                                                                                                  |
+| `0x7C`, `0x7F`                                       | Need message class 2 after the `data_coding` mapping, else `ESME_RSUBMITFAIL`.                                                                                                      |
+| Other                                                | Copied.                                                                                                                                                                             |
+
+### `registered_delivery`
+
+`registered_delivery` (§5.2.17) asks for notifications to the ESME. It does not set TP-Status-Report-Request.
+
+| Bits | Value                                         | Handling                                                      |
+| ---- | --------------------------------------------- | ------------------------------------------------------------- |
+| 1-0  | `00`                                          | No receipt.                                                   |
+| 1-0  | `01`                                          | A [receipt](#delivery-receipts) on the final status.          |
+| 1-0  | `10`                                          | A receipt on failure only: `failed`, `expired` or `replaced`. |
+| 1-0  | `11`                                          | Reserved: no receipt (§3.3).                                  |
+| 3-2  | `10` or `11`, SME Manual/User Acknowledgement | The [SIM answer](#sim-answers).                               |
+| 3-2  | `01`, SME Delivery Acknowledgement            | Accepted, not honoured.                                       |
+| 4    | `1`, intermediate notification                | Accepted, not honoured.                                       |
+
+### Validity and scheduling
+
+| Field                    | Handling                                                                                                                                                                                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validity_period`        | Empty: the default validity of the [delivery settings](https://docs.ellanetworks.com/smsc/reference/api/delivery/index.md). Absolute or relative (§7.1.1): the end of the validity period. In the past or malformed: `ESME_RINVEXPIRY`. The SMS-DELIVER carries no validity period. |
+| `schedule_delivery_time` | Not empty: `ESME_RINVSCHED`.                                                                                                                                                                                                                                                        |
+
+A two-digit year is read within 49 years before and 50 years after the current year. **Convention**.
+
+### User data and optional parameters
+
+| Field                                                         | Handling                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `short_message` (§5.2.22), `message_payload` (§5.3.2.32)      | One or the other. Both: `ESME_ROPTPARNOTALLWD`.                                                                                                                                                                                                 |
+| `sm_length`                                                   | Must match `short_message`. `255`, or a mismatch: `ESME_RINVMSGLEN`.                                                                                                                                                                            |
+| User data                                                     | Must fit one TPDU once mapped: 140 octets, or 160 septets, the user data header included. Else `ESME_RINVMSGLEN`. The SMSC does not split user data.                                                                                            |
+| `sar_msg_ref_num`, `sar_total_segments`, `sar_segment_seqnum` | All three: a concatenation information element, `0x00` with a reference up to 255, else `0x08` (TS 23.040 §9.2.3.24.1, §9.2.3.24.8). Not all three: ignored. A total of 0, or a sequence number of 0 or over the total: `ESME_RINVOPTPARAMVAL`. |
+| `source_port`, `destination_port`                             | A 16-bit application port addressing information element, `0x05` (TS 23.040 §9.2.3.24.4). A missing one of the two is port 0. **Convention**.                                                                                                   |
+| `sar_*` or ports with UDHI set                                | `ESME_ROPTPARNOTALLWD` (§5.2.12).                                                                                                                                                                                                               |
+| `user_message_reference`                                      | Echoed in the receipt and the SIM answer.                                                                                                                                                                                                       |
+| `sm_default_msg_id`                                           | `1` to `254`: `ESME_RINVDFTMSGID`. The SMSC has no canned messages.                                                                                                                                                                             |
+| `replace_if_present_flag`                                     | `1`: `ESME_RINVSUBREP`. Other values: taken as `0`.                                                                                                                                                                                             |
+| `service_type`, `priority_flag`, other optional parameters    | Ignored.                                                                                                                                                                                                                                        |
+
+### Order of `submit_sm_resp` and `deliver_sm`
+
+The message is handed to delivery once `submit_sm_resp` is written. A notification on the message can still reach the ESME before its `submit_sm_resp` when another message to the same recipient is being delivered.
+
+## Notifications
+
+When a message from an ESME reaches its final status, the SMSC queues the SIM answer, then the receipt, that the `submit_sm` asked for, and sends them as `deliver_sm`.
+
+| Item                                                                                         | Handling                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Session                                                                                      | A receiver or transceiver session of the ESME that submitted the message, the one with the fewest `deliver_sm` in flight. **Convention**.                                                  |
+| No receiving session                                                                         | Notifications wait until the ESME binds as receiver or transceiver. They survive a restart.                                                                                                |
+| Order                                                                                        | Notifications on one message go one at a time: the receipt waits until the SIM answer is acknowledged, rejected or expired.                                                                |
+| `deliver_sm_resp` `ESME_ROK`                                                                 | Acknowledged.                                                                                                                                                                              |
+| `deliver_sm_resp` `ESME_RX_P_APPN` or `ESME_RX_R_APPN`                                       | Rejected. Not sent again.                                                                                                                                                                  |
+| `ESME_RX_T_APPN`, another status, `generic_nack`, or no response within the `response_timer` | Sent again after 1 minute, then doubling, at most every hour.                                                                                                                              |
+| Session closed or unbinding during the send                                                  | Sent again at once on another receiving session, or on the next bind.                                                                                                                      |
+| Expiry                                                                                       | The default validity of the [delivery settings](https://docs.ellanetworks.com/smsc/reference/api/delivery/index.md), from the message's final status. An expired notification is not sent. |
+| ESME deleted                                                                                 | Its notifications are dropped.                                                                                                                                                             |
+
+Notifications are delivered at least once. The SIM answer and the receipt of a message share its `receipted_message_id`, and differ by the message type of `esm_class`.
+
+### Delivery receipts
+
+A receipt is an SMSC Delivery Receipt (§2.11, §4.6.1, Appendix B):
+
+| Field                                                 | Value                                         |
+| ----------------------------------------------------- | --------------------------------------------- |
+| `source_addr_ton`, `source_addr_npi`, `source_addr`   | The destination of the message, as submitted. |
+| `dest_addr_ton`, `dest_addr_npi`, `destination_addr`  | The source of the message, as submitted.      |
+| `esm_class`                                           | `0x04`, SMSC Delivery Receipt.                |
+| `protocol_id`, `priority_flag`, `registered_delivery` | `0`.                                          |
+| `data_coding`                                         | `0x01`, IA5. **Convention**.                  |
+| `short_message`                                       | The receipt text.                             |
+| `receipted_message_id` (`0x001E`)                     | The `message_id`.                             |
+| `message_state` (`0x0427`)                            | See the table below.                          |
+| `user_message_reference` (`0x0204`)                   | That of the `submit_sm`, when present.        |
+
+The text follows the example format of Appendix B:
+
+```
+id:42 sub:001 dlvrd:001 submit date:2610281430 done date:2610281431 stat:DELIVRD err:000 text:
+```
+
+| Field         | Value                                                                                                                       |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | The `message_id`, not padded.                                                                                               |
+| `sub`         | `001`.                                                                                                                      |
+| `dlvrd`       | `001` for a delivered message, else `000`.                                                                                  |
+| `submit date` | When the SMSC received the message, `YYMMDDhhmm`, UTC.                                                                      |
+| `done date`   | When the message reached its final status, `YYMMDDhhmm`, UTC. For a replaced message, when it was replaced. **Convention**. |
+| `stat`, `err` | See the table below.                                                                                                        |
+| `text`        | Empty.                                                                                                                      |
+
+| Message status | `stat`    | `message_state` (§5.2.28) | `err`                                                         |
+| -------------- | --------- | ------------------------- | ------------------------------------------------------------- |
+| `delivered`    | `DELIVRD` | `2`                       | `000`                                                         |
+| `expired`      | `EXPIRED` | `3`                       | `070`, TP-Status `0x46`                                       |
+| `replaced`     | `DELETED` | `4`                       | `002`, TP-Status `0x02`                                       |
+| `failed`       | `UNDELIV` | `5`                       | The TP-Status of the failure, such as `066`, TP-Status `0x42` |
+
+`err` is the TP-Status (TS 23.040 §9.2.3.15), in decimal. **Convention**. `network_error_code` is not sent.
+
+### SIM answers
+
+The SIM answer is the TP-User-Data of the SMS-DELIVER-REPORT of the last delivery attempt (TS 23.040 §9.2.2.1a), from the RP-ACK, or from the RP-ERROR of an SM delivery failure. For a (U)SIM data download message, it is the SIM's Response Packet (TS 31.115 §4.4; TS 31.111 §7.1.1.1).
+
+It is sent when `registered_delivery` bits 3-2 are `10` or `11`, for any `protocol_id`, as an SME Manual/User Acknowledgement (§2.11). **Convention**.
+
+No SIM answer is sent for a replaced message, or when the SMS-DELIVER-REPORT has no TP-User-Data.
+
+| Field                    | Value                                                                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Addresses                | As in a receipt.                                                                                                                                           |
+| `esm_class` message type | `0100`, SME Manual/User Acknowledgement. **Convention**.                                                                                                   |
+| `esm_class` UDHI         | `1` when the report has TP-UDHI, or when the message's TP-PID is `0x7F` and the user data starts with a valid user data header (TS 31.115 §4.1). Else `0`. |
+| `esm_class`, typical     | `0x50`                                                                                                                                                     |
+| `protocol_id`            | The report's TP-PID, else the message's.                                                                                                                   |
+| `data_coding`            | See the table below.                                                                                                                                       |
+| `short_message`          | The TP-User-Data, its user data header included, such as `027100…`.                                                                                        |
+| `receipted_message_id`   | The `message_id`. **Convention**: §5.3.2.12 defines it for receipts.                                                                                       |
+| `message_state`          | Absent.                                                                                                                                                    |
+| `user_message_reference` | That of the `submit_sm`, when present.                                                                                                                     |
+
+| Report TP-DCS                                 | `data_coding`                                                                      | `short_message`         |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------- |
+| GSM 7-bit, or no TP-DCS (TS 23.040 §9.2.3.27) | `0x00`                                                                             | Septets, one per octet. |
+| UCS2                                          | `0x08`                                                                             | The octets.             |
+| 8-bit                                         | That of the `submit_sm` when it is `0x02`, `0x04` or `0xF4` to `0xF7`, else `0x04` | The octets.             |
+
+A SIM that rejects a (U)SIM data download message answers with an RP-ERROR whose TP-Failure-Cause is `0xD5`, (U)SIM data download error. The message fails at once with TP-Status `0x42`: the ESME gets the SIM answer, then the receipt `stat:UNDELIV err:066`.
+
+## `command_status` values
+
+Values the SMSC sends (§5.1.3):
+
+| `command_status`        | Value        | Sent in          | When                                                                                                         |
+| ----------------------- | ------------ | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| `ESME_ROK`              | `0x00000000` | Any response     | Success.                                                                                                     |
+| `ESME_RINVMSGLEN`       | `0x00000001` | `submit_sm_resp` | `sm_length`, or user data longer than one TPDU.                                                              |
+| `ESME_RINVCMDLEN`       | `0x00000002` | `generic_nack`   | `command_length`, or a body of the wrong length.                                                             |
+| `ESME_RINVCMDID`        | `0x00000003` | `generic_nack`   | Unsupported or undefined `command_id`.                                                                       |
+| `ESME_RINVBNDSTS`       | `0x00000004` | Response         | A request that the session state does not allow.                                                             |
+| `ESME_RALYBND`          | `0x00000005` | Bind response    | A bind in a bound state.                                                                                     |
+| `ESME_RSYSERR`          | `0x00000008` | `submit_sm_resp` | The message could not be stored or encoded.                                                                  |
+| `ESME_RINVSRCADR`       | `0x0000000A` | `submit_sm_resp` | `source_addr`.                                                                                               |
+| `ESME_RINVDSTADR`       | `0x0000000B` | `submit_sm_resp` | `destination_addr`.                                                                                          |
+| `ESME_RBINDFAIL`        | `0x0000000D` | Bind response    | Any refused bind.                                                                                            |
+| `ESME_RINVSUBREP`       | `0x00000042` | `submit_sm_resp` | `replace_if_present_flag` `1`.                                                                               |
+| `ESME_RINVESMCLASS`     | `0x00000043` | `submit_sm_resp` | `esm_class`.                                                                                                 |
+| `ESME_RSUBMITFAIL`      | `0x00000045` | `submit_sm_resp` | `data_coding`, `protocol_id`, the user data header, or GSM 7-bit, IA5 or UCS2 user data.                     |
+| `ESME_RINVSRCTON`       | `0x00000048` | `submit_sm_resp` | `source_addr_ton`.                                                                                           |
+| `ESME_RINVSRCNPI`       | `0x00000049` | `submit_sm_resp` | `source_addr_npi`.                                                                                           |
+| `ESME_RINVDSTTON`       | `0x00000050` | `submit_sm_resp` | `dest_addr_ton`.                                                                                             |
+| `ESME_RINVDSTNPI`       | `0x00000051` | `submit_sm_resp` | `dest_addr_npi`.                                                                                             |
+| `ESME_RTHROTTLED`       | `0x00000058` | `submit_sm_resp` | Inbound window full.                                                                                         |
+| `ESME_RINVSCHED`        | `0x00000061` | `submit_sm_resp` | `schedule_delivery_time`.                                                                                    |
+| `ESME_RINVEXPIRY`       | `0x00000062` | `submit_sm_resp` | `validity_period`.                                                                                           |
+| `ESME_RINVDFTMSGID`     | `0x00000063` | `submit_sm_resp` | `sm_default_msg_id`.                                                                                         |
+| `ESME_RINVOPTPARSTREAM` | `0x000000C0` | Response         | Optional parameters that do not decode.                                                                      |
+| `ESME_ROPTPARNOTALLWD`  | `0x000000C1` | `submit_sm_resp` | `short_message` with `message_payload`; `sar_*` or ports with UDHI.                                          |
+| `ESME_RINVPARLEN`       | `0x000000C2` | Response         | A field over its maximum length, or a TLV of the wrong length.                                               |
+| `ESME_RINVOPTPARAMVAL`  | `0x000000C4` | `submit_sm_resp` | `sar_*` values; `dest_addr_subunit` against `data_coding`; a TLV that should be a C-Octet String and is not. |
+| `ESME_RUNKNOWNERR`      | `0x000000FF` | `generic_nack`   | Invalid `sequence_number`.                                                                                   |
+
+An error response has no body (§4.1.2, §4.1.4, §4.4.2), except `bind_transceiver_resp`, which carries `system_id` (Table 4-6). The SMSC logs the reason of a refused `submit_sm` at level `debug`, with the `system_id`.
+
+Values the SMSC acts on in `deliver_sm_resp`: see [Notifications](#notifications).
+
+## Conventions
+
+Behaviours that SMPP 3.4 does not define:
+
+| Behaviour                                                                                | Where                                                                   |
+| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| TLS from the first octet.                                                                | [Transport](#transport)                                                 |
+| A maximum `command_length` of 68 KiB.                                                    | [Transport](#transport)                                                 |
+| `data_coding` `0x00` is the GSM 7-bit default alphabet, unpacked.                        | [`data_coding`](#data_coding)                                           |
+| `data_coding` `0x02` or `0x04` with `protocol_id` `0x7F` becomes TP-DCS `0xF6`, class 2. | [`data_coding`](#data_coding)                                           |
+| A replace type `protocol_id` replaces only messages of the same ESME.                    | [`protocol_id`](#protocol_id)                                           |
+| A two-digit year is within 49 years before and 50 years after the current year.          | [Validity and scheduling](#validity-and-scheduling)                     |
+| A missing `source_port` or `destination_port` is port 0.                                 | [User data and optional parameters](#user-data-and-optional-parameters) |
+| Notifications go to a receiving session of the ESME that submitted the message.          | [Notifications](#notifications)                                         |
+| Receipts use `data_coding` `0x01`.                                                       | [Delivery receipts](#delivery-receipts)                                 |
+| A replaced message's receipt is `DELETED`, with `done date` the replacement time.        | [Delivery receipts](#delivery-receipts)                                 |
+| Receipt `err` is the TP-Status in decimal.                                               | [Delivery receipts](#delivery-receipts)                                 |
+| The SIM's answer is an SME Manual/User Acknowledgement, with `receipted_message_id`.     | [SIM answers](#sim-answers)                                             |
+
+## Not supported
+
+- SMPP 3.3 and earlier, and SMPP 5.0.
+- `query_sm`, `replace_sm`, `cancel_sm`, `submit_multi`, `data_sm`, `alert_notification` and `outbind`.
+- Messages from phones to ESMEs, such as a Response Packet that the SIM sends in an SMS-SUBMIT (TS 31.115 §4.2).
+- Splitting user data longer than one TPDU.
+- Scheduled delivery, the datagram and transaction modes, SME delivery acknowledgements and intermediate notifications.
+- The PROXY protocol.
+
+# API
+
+## Authentication
+
+Requests send a token in the `Authorization` header:
+
+```
+Authorization: Bearer <token>
+```
+
+The token is either:
+
+- an access token, from [log in](https://docs.ellanetworks.com/smsc/reference/api/auth/#log-in) or [refresh the access token](https://docs.ellanetworks.com/smsc/reference/api/auth/#refresh-the-access-token), valid for 15 minutes;
+- an [API token](https://docs.ellanetworks.com/smsc/reference/api/users/#create-an-api-token), which starts with `ellasmsc_`.
+
+These paths take no token: `GET /api/v1/livez`, `GET /api/v1/readyz`, `GET /api/v1/status`, `GET /api/v1/metrics`, `GET /api/v1/openapi.yaml`, `POST /api/v1/init`, and `POST /api/v1/auth/login`, `/refresh` and `/logout`.
+
+### Roles
+
+| Role            | `role_id` | Allows                                                                                                                                      |
+| --------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admin           | `1`       | Everything.                                                                                                                                 |
+| Read Only       | `2`       | Reading messages without their content, Diameter, operator, delivery and retention settings, and ESMEs.                                     |
+| Network Manager | `3`       | Read Only, plus reading message content, sending messages, updating operator, delivery and retention settings, and managing Diameter peers. |
+| Submitter       | `4`       | Sending messages, and reading the messages it sent, their content included.                                                                 |
+
+An API token has the role of its user, but cannot create API tokens, change a password, or manage users or [ESMEs](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md).
+
+Only an Admin manages ESMEs. An [ESME](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md) binds over SMPP with the role of its user.
+
+## Responses
+
+Ella SMSC's API responses are JSON objects. A successful response carries a `result`:
+
+```
+{
+    "result": "Result content"
+}
+```
+
+A failed response carries an `error`:
+
+```
+{
+    "error": "Error message"
+}
+```
+
+`GET /api/v1/livez` and `GET /api/v1/readyz` answer 204 with no body when they succeed. `GET /api/v1/metrics` returns text in the [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details), `GET /api/v1/openapi.yaml` returns YAML, and unknown paths and methods answer in plain text.
+
+Times are RFC 3339, in UTC.
+
+## OpenAPI Specification
+
+The full API is described by an [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) specification embedded in the binary. Fetch it from any running Ella SMSC instance:
+
+```
+GET /api/v1/openapi.yaml
+```
+
+## Status codes
+
+- 200 - Success.
+- 201 - Created.
+- 204 - No content.
+- 400 - Bad request.
+- 401 - Missing, invalid or expired token.
+- 403 - Not allowed for the role or the token.
+- 404 - Not found.
+- 405 - Method not allowed.
+- 409 - Conflict.
+- 429 - Too many requests. `Retry-After` is the seconds to wait.
+- 500 - Internal server error.
+- 503 - Not ready. See [Check readiness](https://docs.ellanetworks.com/smsc/reference/api/status/#check-readiness).
+
+# Authentication
+
+## Log In
+
+This path returns an access token, and sets the session cookie, `smsc_session`, or `__Host-smsc_session` over TLS. The session lasts 30 days, and a user has at most 10.
+
+| Method | Path                 |
+| ------ | -------------------- |
+| POST   | `/api/v1/auth/login` |
+
+### Request Body
+
+| Field      | Type   | Required | Description                 |
+| ---------- | ------ | -------- | --------------------------- |
+| `email`    | string | Yes      | Email address, in any case. |
+| `password` | string | Yes      | Password.                   |
+
+### Response Codes
+
+| Code  | Description                                                                                                                              |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `401` | Wrong email or password.                                                                                                                 |
+| `429` | More than 20 attempts in a minute from the client address, or its IPv6 /64; or more than 100 wrong passwords in an hour for the account. |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "message": "Login successful",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+}
+```
+
+## Refresh the Access Token
+
+This path returns a new access token for the session of the cookie.
+
+| Method | Path                   |
+| ------ | ---------------------- |
+| POST   | `/api/v1/auth/refresh` |
+
+### Response Codes
+
+| Code  | Description                                                       |
+| ----- | ----------------------------------------------------------------- |
+| `401` | No session, or the session ended. The response clears the cookie. |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+}
+```
+
+## Log Out
+
+This path ends the session of the cookie, and its access tokens, and clears the cookie.
+
+| Method | Path                  |
+| ------ | --------------------- |
+| POST   | `/api/v1/auth/logout` |
+
+### Response Codes
+
+| Code  | Description                |
+| ----- | -------------------------- |
+| `204` | Logged out, or no session. |
+
+# Delivery
+
+The delivery settings set how long the SMSC attempts delivery of a message, and when it retries a failed delivery. The [retention](https://docs.ellanetworks.com/smsc/reference/api/retention/index.md) sets how long it keeps a message afterwards.
+
+## Get the Delivery Settings
+
+This path returns the delivery settings.
+
+| Method | Path               |
+| ------ | ------------------ |
+| GET    | `/api/v1/delivery` |
+
+### Response Fields
+
+| Field                      | Type  | Description                                                                                                                  |
+| -------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `default_validity_seconds` | int   | How long delivery of a message without its own validity period is attempted, in seconds. The same applies to status reports. |
+| `retry_intervals_seconds`  | array | Wait before each retry, in seconds. The last interval repeats. Empty: a failed delivery is not retried.                      |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "default_validity_seconds": 604800,
+        "retry_intervals_seconds": [60, 300, 900, 3600]
+    }
+}
+```
+
+## Update the Delivery Settings
+
+This path replaces the delivery settings. The new validity applies to the messages received afterwards; the new intervals, to the next retries.
+
+| Method | Path               |
+| ------ | ------------------ |
+| PUT    | `/api/v1/delivery` |
+
+### Request Body
+
+| Field                      | Type  | Required | Description                    |
+| -------------------------- | ----- | -------- | ------------------------------ |
+| `default_validity_seconds` | int   | Yes      | `1` to `315360000` (10 years). |
+| `retry_intervals_seconds`  | array | Yes      | Each at least 1.               |
+
+### Sample Request
+
+```
+{
+    "default_validity_seconds": 86400,
+    "retry_intervals_seconds": [60, 300]
+}
+```
+
+### Sample Response
+
+```
+{
+    "result": {
+        "default_validity_seconds": 86400,
+        "retry_intervals_seconds": [60, 300]
+    }
+}
+```
+
+# Diameter
+
+Configured peers are the Diameter agents that the SMSC connects to, and their routes. Creating, updating and deleting them requires Network Manager or Admin.
+
+## Get the Diameter Status
+
+This path returns the Diameter identity of the SMSC, its peers, and its routes.
+
+| Method | Path               |
+| ------ | ------------------ |
+| GET    | `/api/v1/diameter` |
+
+### Response Fields
+
+| Field                  | Type    | Description                                                                               |
+| ---------------------- | ------- | ----------------------------------------------------------------------------------------- |
+| `host`                 | string  | Origin-Host of the SMSC.                                                                  |
+| `realm`                | string  | Origin-Realm of the SMSC.                                                                 |
+| `peers`                | array   | Connected and configured peers.                                                           |
+| `peers[].id`           | int     | ID of a configured peer.                                                                  |
+| `peers[].configured`   | boolean | Whether the peer is configured.                                                           |
+| `peers[].host`         | string  | Origin-Host of the peer.                                                                  |
+| `peers[].realm`        | string  | Origin-Realm of the peer.                                                                 |
+| `peers[].address`      | string  | Remote address of the connection.                                                         |
+| `peers[].state`        | string  | `down`, `connecting`, `open`, `suspect`, `reopen` or `closing`.                           |
+| `peers[].applications` | array   | Applications the peer supports: `s6c`, `sgd`.                                             |
+| `peers[].since`        | string  | Time of the last state change.                                                            |
+| `peers[].error`        | string  | Last connection error of a configured peer.                                               |
+| `routes`               | array   | The `s6c` route to the HSS, then the routes of the configured peers, default routes last. |
+| `routes[].realm`       | string  | Destination-Realm. Empty for a default route.                                             |
+| `routes[].default`     | boolean | Whether the route is a default route.                                                     |
+| `routes[].application` | string  | `s6c` or `sgd`.                                                                           |
+| `routes[].peers`       | array   | Hosts of the open peers of the route.                                                     |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "host": "smsc.node.epc.mnc001.mcc001.3gppnetwork.org",
+        "realm": "epc.mnc001.mcc001.3gppnetwork.org",
+        "peers": [
+            {
+                "configured": false,
+                "host": "core.example.org",
+                "realm": "epc.mnc001.mcc001.3gppnetwork.org",
+                "address": "127.0.0.1",
+                "state": "open",
+                "applications": ["sgd", "s6c"],
+                "since": "2026-10-27T18:46:07.330Z"
+            },
+            {
+                "id": 1,
+                "configured": true,
+                "host": "dea1.ipx.example.net",
+                "realm": "ipx.example.net",
+                "address": "192.0.2.10",
+                "state": "open",
+                "applications": ["sgd", "s6c"],
+                "since": "2026-10-27T18:47:12.004Z"
+            }
+        ],
+        "routes": [
+            {
+                "realm": "epc.mnc001.mcc001.3gppnetwork.org",
+                "default": false,
+                "application": "s6c",
+                "peers": ["core.example.org"]
+            },
+            {
+                "realm": "",
+                "default": true,
+                "application": "sgd",
+                "peers": ["dea1.ipx.example.net"]
+            }
+        ]
+    }
+}
+```
+
+## List Peers
+
+| Method | Path                     |
+| ------ | ------------------------ |
+| GET    | `/api/v1/diameter/peers` |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "items": [
+            {
+                "id": 1,
+                "host": "dea1.ipx.example.net",
+                "addresses": ["192.0.2.10", "198.51.100.10"],
+                "port": 3868,
+                "routes": [
+                    { "default": true, "application": "sgd", "priority": 0 }
+                ],
+                "status": {
+                    "state": "open",
+                    "host": "dea1.ipx.example.net",
+                    "realm": "ipx.example.net",
+                    "since": "2026-10-27T18:47:12.004Z"
+                }
+            }
+        ]
+    }
+}
+```
+
+## Create a Peer
+
+| Method | Path                     |
+| ------ | ------------------------ |
+| POST   | `/api/v1/diameter/peers` |
+
+### Request Body
+
+| Field                  | Type    | Required         | Description                                                                                           |
+| ---------------------- | ------- | ---------------- | ----------------------------------------------------------------------------------------------------- |
+| `host`                 | string  | No               | Origin-Host the peer must give. Empty accepts any.                                                    |
+| `addresses`            | array   | Yes              | IP addresses of the peer. A peer with a `host` must connect from one of them.                         |
+| `port`                 | int     | No               | Default `3868`.                                                                                       |
+| `routes`               | array   | No               | Routes of the peer.                                                                                   |
+| `routes[].realm`       | string  | Unless `default` | Destination-Realm, e.g. `epc.mnc002.mcc208.3gppnetwork.org`.                                          |
+| `routes[].default`     | boolean | No               | Default route: every realm without another route, except the SMSC's own. `sgd` only, without `realm`. |
+| `routes[].application` | string  | Yes              | `sgd` or `s6c`. An `s6c` route takes the SMSC's own realm.                                            |
+| `routes[].priority`    | int     | No               | Lowest first; equal priorities share the load. Default `0`.                                           |
+
+### Sample Request
+
+```
+{
+    "host": "dea1.ipx.example.net",
+    "addresses": ["192.0.2.10", "198.51.100.10"],
+    "routes": [
+        { "default": true, "application": "sgd" },
+        { "realm": "epc.mnc001.mcc001.3gppnetwork.org", "application": "s6c" }
+    ]
+}
+```
+
+### Response Codes
+
+| Code  | Description                                                                             |
+| ----- | --------------------------------------------------------------------------------------- |
+| `201` | The peer, with its `id`.                                                                |
+| `400` | Invalid peer.                                                                           |
+| `409` | `host` is another peer's or the SMSC's, or two peers without a `host` share an address. |
+
+## Get a Peer
+
+| Method | Path                          |
+| ------ | ----------------------------- |
+| GET    | `/api/v1/diameter/peers/{id}` |
+
+### Response Fields
+
+The fields of the request body, plus:
+
+| Field          | Type   | Description                                                                                                  |
+| -------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| `id`           | int    | ID of the peer.                                                                                              |
+| `status`       | object | Connection to the peer. Absent until the SMSC applies the peer, and from the responses to create and update. |
+| `status.state` | string | `down`, `connecting`, `open`, `suspect`, `reopen` or `closing`.                                              |
+| `status.host`  | string | Origin-Host the peer gave.                                                                                   |
+| `status.realm` | string | Origin-Realm the peer gave.                                                                                  |
+| `status.since` | string | Time of the last state change.                                                                               |
+| `status.error` | string | Last connection error.                                                                                       |
+
+## Update a Peer
+
+The request body is that of [Create a Peer](#create-a-peer). A change of `host`, `addresses` or `port` reconnects.
+
+| Method | Path                          |
+| ------ | ----------------------------- |
+| PUT    | `/api/v1/diameter/peers/{id}` |
+
+## Delete a Peer
+
+| Method | Path                          |
+| ------ | ----------------------------- |
+| DELETE | `/api/v1/diameter/peers/{id}` |
+
+# ESMEs
+
+An ESME account is what an External Short Message Entity, such as an OTA platform, binds to the [SMPP listener](https://docs.ellanetworks.com/smsc/reference/smpp/index.md) with, with at most 4 sessions at once. It acts as its user: the messages it submits are the user's, and the user's role decides which binds it may make. See [Binds](https://docs.ellanetworks.com/smsc/reference/smpp/#binds).
+
+Reading ESMEs requires Admin, Read Only or Network Manager. Creating, updating and deleting them requires Admin, and an access token: an API token gets `403`.
+
+## List ESMEs
+
+| Method | Path            |
+| ------ | --------------- |
+| GET    | `/api/v1/esmes` |
+
+### Response Fields
+
+| Field                       | Type   | Description                                 |
+| --------------------------- | ------ | ------------------------------------------- |
+| `system_id`                 | string | The `system_id` the ESME binds with.        |
+| `user`                      | string | Email of the user the ESME acts as.         |
+| `allowed_networks`          | array  | IP prefixes the ESME may bind from.         |
+| `created_at`                | string | Time the ESME was created.                  |
+| `sessions`                  | array  | Bound sessions, oldest first.               |
+| `sessions[].bind_type`      | string | `transmitter`, `receiver` or `transceiver`. |
+| `sessions[].remote_address` | string | Address and port of the client.             |
+| `sessions[].bound_at`       | string | Time of the bind.                           |
+
+The password is never returned.
+
+### Sample Response
+
+```
+{
+    "result": {
+        "items": [
+            {
+                "system_id": "ota",
+                "user": "ota@example.com",
+                "allowed_networks": ["10.1.0.0/24"],
+                "created_at": "2026-10-27T18:40:02.118Z",
+                "sessions": [
+                    {
+                        "bind_type": "transceiver",
+                        "remote_address": "10.1.0.5:40312",
+                        "bound_at": "2026-10-27T18:41:55.906Z"
+                    }
+                ]
+            }
+        ]
+    }
+}
+```
+
+## Create an ESME
+
+At most 50 ESMEs. Without a `password`, the SMSC generates one of 8 letters and digits, and returns it as `password` in this response only.
+
+| Method | Path            |
+| ------ | --------------- |
+| POST   | `/api/v1/esmes` |
+
+### Request Body
+
+| Field              | Type   | Required | Description                                                                                                |
+| ------------------ | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `system_id`        | string | Yes      | 1 to 15 printable ASCII characters (SMPP 3.4 §4.1.1).                                                      |
+| `user`             | string | Yes      | Email of an existing user, the user the ESME acts as.                                                      |
+| `password`         | string | No       | 1 to 8 printable ASCII characters (SMPP 3.4 §4.1.1). Default: generated.                                   |
+| `allowed_networks` | array  | No       | IP prefixes, such as `10.1.0.0/24` or `2001:db8::/64`, at most 50. Default: none, which allows no address. |
+
+### Sample Request
+
+```
+{
+    "system_id": "ota",
+    "user": "ota@example.com",
+    "allowed_networks": ["10.1.0.0/24"]
+}
+```
+
+### Sample Response
+
+```
+{
+    "result": {
+        "system_id": "ota",
+        "user": "ota@example.com",
+        "allowed_networks": ["10.1.0.0/24"],
+        "created_at": "2026-10-27T18:40:02.118Z",
+        "sessions": [],
+        "password": "q7Rk2LxW"
+    }
+}
+```
+
+### Response Codes
+
+| Code  | Description                                                  |
+| ----- | ------------------------------------------------------------ |
+| `201` | The ESME, with the generated `password` when none was given. |
+| `400` | Invalid field, no user with the email, or 50 ESMEs exist.    |
+| `409` | An ESME has the `system_id`.                                 |
+
+## Get an ESME
+
+| Method | Path                        |
+| ------ | --------------------------- |
+| GET    | `/api/v1/esmes/{system_id}` |
+
+### Path Parameters
+
+| Name        | Type   | Description                               |
+| ----------- | ------ | ----------------------------------------- |
+| `system_id` | string | The `system_id` of the ESME, URL-encoded. |
+
+### Response Codes
+
+| Code  | Description                   |
+| ----- | ----------------------------- |
+| `404` | No ESME has this `system_id`. |
+
+## Update an ESME
+
+This path replaces the allowed networks of an ESME, and its password when one is given, and closes its sessions, which bind again under the new settings. The `system_id` and the user cannot be changed.
+
+| Method | Path                        |
+| ------ | --------------------------- |
+| PUT    | `/api/v1/esmes/{system_id}` |
+
+### Request Body
+
+| Field              | Type   | Required | Description                                                        |
+| ------------------ | ------ | -------- | ------------------------------------------------------------------ |
+| `password`         | string | No       | 1 to 8 printable ASCII characters. Without it, the password stays. |
+| `allowed_networks` | array  | Yes      | As in [Create an ESME](#create-an-esme).                           |
+
+### Response Codes
+
+| Code  | Description                   |
+| ----- | ----------------------------- |
+| `200` | The ESME.                     |
+| `400` | Invalid field.                |
+| `404` | No ESME has this `system_id`. |
+
+## Delete an ESME
+
+This path deletes an ESME, closes its sessions, and drops the receipts and SIM answers not yet sent to it. Its messages stay, as its user's. Deleting the user deletes its ESMEs.
+
+| Method | Path                        |
+| ------ | --------------------------- |
+| DELETE | `/api/v1/esmes/{system_id}` |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "message": "ESME deleted successfully"
+    }
+}
+```
+
+# Initialize
+
+## Initialize Ella SMSC
+
+This path creates the first user, an Admin, and logs it in.
+
+| Method | Path           |
+| ------ | -------------- |
+| POST   | `/api/v1/init` |
+
+### Request Body
+
+| Field      | Type   | Required | Description    |
+| ---------- | ------ | -------- | -------------- |
+| `email`    | string | Yes      | Email address. |
+| `password` | string | Yes      | 8 to 72 bytes. |
+
+### Response Codes
+
+| Code  | Description                                |
+| ----- | ------------------------------------------ |
+| `201` | Created.                                   |
+| `403` | A user exists.                             |
+| `429` | Too many attempts from the client address. |
+
+### Sample Request
+
+```
+{
+    "email": "admin@example.com",
+    "password": "correct horse"
+}
+```
+
+### Sample Response
+
+```
+{
+    "result": {
+        "message": "System initialized successfully",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+}
+```
+
+# Messages
+
+A message is a short message the SMSC received, from a phone, from the API, or from an ESME over [SMPP](https://docs.ellanetworks.com/smsc/reference/smpp/index.md), with its delivery status and the status reports the SMSC returned to the phone that sent it. A text longer than one short message is split into parts, one message each.
+
+Responses carry no content. [Get the content of a message](#get-the-content-of-a-message) returns it, and logs an audit event.
+
+## Create a Message
+
+This path submits a text message, or a binary message, to a phone. It returns one message per part.
+
+| Method | Path               |
+| ------ | ------------------ |
+| POST   | `/api/v1/messages` |
+
+### Request Body
+
+| Field                        | Type   | Required                   | Description                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------- | ------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`                       | string | Yes                        | Shown to the recipient as the sender. An E.164 number with `+`, or a name of 1 to 11 ASCII letters and digits, with single spaces between words, that is not all digits, such as `EllaSMSC`. A value without `+` is a name, delivered as given.                                                                                                                                        |
+| `to`                         | string | Yes                        | E.164 number with `+` of the recipient.                                                                                                                                                                                                                                                                                                                                                |
+| `text`                       | string | One of `text` and `binary` | Not empty. GSM-7 if every character is in the GSM 7-bit default alphabet or its extension table, else UCS-2. Up to 255 parts.                                                                                                                                                                                                                                                          |
+| `binary`                     | object | One of `text` and `binary` | TPDU parameters of one short message, delivered unchanged.                                                                                                                                                                                                                                                                                                                             |
+| `binary.protocol_identifier` | int    | No                         | TP-PID (TS 23.040 §9.2.3.9), `0` to `255`. Default `0`. Not `32` to `62`, telematic interworking. `65` to `71`, replace types 1 to 7, replace the pending message of the same type from the same `from`, submitted by the same user; never a message from a phone or an ESME. `72`, device triggering, needs an application port addressing information element in `user_data_header`. |
+| `binary.data_coding_scheme`  | int    | Yes                        | TP-DCS (TS 23.038 §4), `0` to `255`. Not a GSM 7-bit, UCS2 or reserved coding. Message class 2 when `protocol_identifier` is `124`, ANSI-136 R-DATA, or `127`, (U)SIM data download.                                                                                                                                                                                                   |
+| `binary.user_data_header`    | string | No                         | TP-UDH (TS 23.040 §9.2.3.24) in hexadecimal, its length octet included.                                                                                                                                                                                                                                                                                                                |
+| `binary.user_data`           | string | Yes                        | TP-UD after the header, in hexadecimal. May be empty. At most 140 octets with `user_data_header`. Not split into parts.                                                                                                                                                                                                                                                                |
+| `validity_seconds`           | int    | No                         | How long delivery is attempted, `1` to `315360000` (10 years). Default: the default validity of the [delivery settings](https://docs.ellanetworks.com/smsc/reference/api/delivery/index.md).                                                                                                                                                                                           |
+
+A message from the API never asks for status reports.
+
+### Response Codes
+
+| Code  | Description                                                                                                                                            |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `400` | A field is missing or invalid, both or neither of `text` and `binary`, the text needs more than 255 parts, or the binary user data is over 140 octets. |
+
+### Sample Request
+
+```
+{
+    "from": "+15550001000",
+    "to": "+15551230002",
+    "text": "Your code is 1234"
+}
+```
+
+### Sample Request (Binary)
+
+```
+{
+    "from": "+15550001000",
+    "to": "+15551230002",
+    "binary": {
+        "protocol_identifier": 127,
+        "data_coding_scheme": 246,
+        "user_data_header": "027000",
+        "user_data": "0011223344"
+    }
+}
+```
+
+### Sample Response
+
+```
+{
+    "result": {
+        "items": [
+            {
+                "id": 1,
+                "from": "+15550001000",
+                "to": "+15551230002",
+                "encoding": "gsm7",
+                "status": "pending",
+                "created_at": "2026-10-27T18:44:19.436Z",
+                "updated_at": "2026-10-27T18:44:19.436Z",
+                "expires_at": "2026-11-03T18:44:19.436Z",
+                "next_attempt_at": "2026-10-27T18:44:19.436Z",
+                "status_report": {
+                    "requested": false,
+                    "reports": []
+                }
+            }
+        ]
+    }
+}
+```
+
+## List Messages
+
+This path returns the list of messages, most recent first. For a Submitter, only the messages it sent.
+
+| Method | Path               |
+| ------ | ------------------ |
+| GET    | `/api/v1/messages` |
+
+### Query Parameters
+
+| Name       | In    | Type | Default | Allowed                                                                                      | Description                                                                                                          |
+| ---------- | ----- | ---- | ------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `to`       | query | str  |         | 1 to 15 digits, after an optional `+`                                                        | Recipient: the numbers that contain these digits. `+1555123` and `1555123` match `+15551230002`, and so does `0002`. |
+| `from`     | query | str  |         | 1 to 15 digits, after an optional `+`, or a name as in [Create a Message](#create-a-message) | Sender: the numbers that contain these digits, or the name, in any case.                                             |
+| `status`   | query | str  |         | `pending`, `delivered`, `failed`, `expired`, `replaced`                                      | Status.                                                                                                              |
+| `start`    | query | str  |         | RFC 3339 time                                                                                | Created at or after.                                                                                                 |
+| `end`      | query | str  |         | RFC 3339 time, not before `start`                                                            | Created before.                                                                                                      |
+| `page`     | query | int  | `1`     | `>= 1`                                                                                       | 1-based page index.                                                                                                  |
+| `per_page` | query | int  | `25`    | `1…100`                                                                                      | Number of items per page.                                                                                            |
+
+### Response Fields
+
+| Field                                     | Type    | Description                                                                                                                                                                                             |
+| ----------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                      | int     | Message identifier.                                                                                                                                                                                     |
+| `from`                                    | string  | Sender: the MSISDN of the phone, an E.164 number with `+`, the `from` of the API request, or the `source_addr` of the `submit_sm`, with `+` when international.                                         |
+| `to`                                      | string  | Recipient, an E.164 number with `+`.                                                                                                                                                                    |
+| `encoding`                                | string  | `gsm7`, `ucs2` or `binary`.                                                                                                                                                                             |
+| `concatenation`                           | object  | Present for a part of a longer message.                                                                                                                                                                 |
+| `concatenation.reference`                 | int     | Reference shared by the parts of the message.                                                                                                                                                           |
+| `concatenation.part`                      | int     | Number of this part, from 1.                                                                                                                                                                            |
+| `concatenation.total`                     | int     | Number of parts.                                                                                                                                                                                        |
+| `status`                                  | string  | `pending`; `delivered`; `failed`; `expired`, when its validity period ended before its delivery; or `replaced`, by a later message from the same sender, of the same replace type, before its delivery. |
+| `created_at`                              | string  | Time the SMSC received the message.                                                                                                                                                                     |
+| `updated_at`                              | string  | Time of the last change.                                                                                                                                                                                |
+| `expires_at`                              | string  | End of the validity period.                                                                                                                                                                             |
+| `next_attempt_at`                         | string  | Time of the next delivery attempt. Present while `pending`.                                                                                                                                             |
+| `status_report`                           | object  | Status reports on the message.                                                                                                                                                                          |
+| `status_report.requested`                 | boolean | Whether the phone that sent the message asked for status reports.                                                                                                                                       |
+| `status_report.reports`                   | array   | Status reports the SMSC returned to that phone, oldest first.                                                                                                                                           |
+| `status_report.reports[].id`              | int     | Status report identifier.                                                                                                                                                                               |
+| `status_report.reports[].tp_status`       | int     | TP-Status the report gives (TS 23.040 §9.2.3.15).                                                                                                                                                       |
+| `status_report.reports[].tp_status_name`  | string  | Meaning of `tp_status`, e.g. `received`, `replaced`, `no_response`, `validity_period_expired`.                                                                                                          |
+| `status_report.reports[].status`          | string  | Delivery of the report to the phone: `pending`, `delivered`, `failed` or `expired`.                                                                                                                     |
+| `status_report.reports[].created_at`      | string  | Time the SMSC made the report.                                                                                                                                                                          |
+| `status_report.reports[].updated_at`      | string  | Time of the last change.                                                                                                                                                                                |
+| `status_report.reports[].expires_at`      | string  | End of the report's validity period.                                                                                                                                                                    |
+| `status_report.reports[].next_attempt_at` | string  | Time of the next delivery attempt of the report. Present while `pending`.                                                                                                                               |
+| `submitted_by`                            | string  | Email of the user that sent the message over the API, or of the user of the ESME that sent it over SMPP. Absent for a message from a phone.                                                             |
+| `system_id`                               | string  | `system_id` of the [ESME](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md) that sent the message over SMPP. Absent for other messages, and once the ESME is deleted.                    |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "items": [
+            {
+                "id": 4,
+                "from": "+15550001000",
+                "to": "+15551230001",
+                "encoding": "gsm7",
+                "concatenation": {
+                    "reference": 74,
+                    "part": 2,
+                    "total": 2
+                },
+                "status": "pending",
+                "created_at": "2026-10-27T18:53:37.120Z",
+                "updated_at": "2026-10-27T18:54:07.151Z",
+                "expires_at": "2026-11-03T18:53:37.120Z",
+                "next_attempt_at": "2026-10-27T18:55:07.151Z",
+                "status_report": {
+                    "requested": false,
+                    "reports": []
+                }
+            }
+        ],
+        "page": 1,
+        "per_page": 1,
+        "total_count": 3
+    }
+}
+```
+
+## Get a Message
+
+This path returns a specific message. For a Submitter, a message it did not send is not found.
+
+| Method | Path                    |
+| ------ | ----------------------- |
+| GET    | `/api/v1/messages/{id}` |
+
+### Path Parameters
+
+| Name | Type | Description         |
+| ---- | ---- | ------------------- |
+| `id` | int  | Message identifier. |
+
+### Response Codes
+
+| Code  | Description                     |
+| ----- | ------------------------------- |
+| `404` | No message has this identifier. |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "id": 1,
+        "from": "+15551230001",
+        "to": "+15551230002",
+        "encoding": "gsm7",
+        "status": "delivered",
+        "created_at": "2026-10-27T18:46:07.350Z",
+        "updated_at": "2026-10-27T18:46:10.355Z",
+        "expires_at": "2026-11-03T18:46:07.350Z",
+        "status_report": {
+            "requested": true,
+            "reports": [
+                {
+                    "id": 2,
+                    "tp_status": 0,
+                    "tp_status_name": "received",
+                    "status": "delivered",
+                    "created_at": "2026-10-27T18:46:10.355Z",
+                    "updated_at": "2026-10-27T18:46:10.356Z",
+                    "expires_at": "2026-11-03T18:46:10.355Z"
+                }
+            ]
+        }
+    }
+}
+```
+
+## Get the Content of a Message
+
+This path returns the content of a message, and logs an audit event `read_message_content` with the email of the caller. For a Submitter, a message it did not send is not found. A Read Only user cannot read content.
+
+| Method | Path                            |
+| ------ | ------------------------------- |
+| GET    | `/api/v1/messages/{id}/content` |
+
+### Path Parameters
+
+| Name | Type | Description         |
+| ---- | ---- | ------------------- |
+| `id` | int  | Message identifier. |
+
+### Response Fields
+
+| Field                                   | Type   | Description                                                                                                                     |
+| --------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `text`                                  | string | Text of the part. Absent for a binary message.                                                                                  |
+| `binary`                                | object | TPDU parameters of a binary message.                                                                                            |
+| `binary.protocol_identifier`            | int    | TP-PID.                                                                                                                         |
+| `binary.data_coding_scheme`             | int    | TP-DCS.                                                                                                                         |
+| `binary.user_data_header`               | string | TP-UDH in hexadecimal, its length octet included. Absent when there is none.                                                    |
+| `binary.user_data`                      | string | TP-UD after the header, in hexadecimal.                                                                                         |
+| `deliver_reports`                       | array  | SMS-DELIVER-REPORTs (TS 23.040 §9.2.2.1a) the serving nodes passed on, oldest first. Absent when there are none.                |
+| `deliver_reports[].attempt_id`          | int    | [Delivery attempt](#list-delivery-attempts) of the report: in the RP-ACK when its `outcome` is `success`, else in the RP-ERROR. |
+| `deliver_reports[].tpdu`                | string | The report in hexadecimal. The other `deliver_reports[]` fields are absent when it does not decode.                             |
+| `deliver_reports[].protocol_identifier` | int    | TP-PID, when present.                                                                                                           |
+| `deliver_reports[].data_coding_scheme`  | int    | TP-DCS, when present.                                                                                                           |
+| `deliver_reports[].user_data_header`    | string | TP-UDH in hexadecimal, when present.                                                                                            |
+| `deliver_reports[].user_data`           | string | TP-UD after the header, in hexadecimal, when present.                                                                           |
+
+### Response Codes
+
+| Code  | Description                     |
+| ----- | ------------------------------- |
+| `404` | No message has this identifier. |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "text": "Your code is 1234"
+    }
+}
+```
+
+### Sample Response (Binary)
+
+```
+{
+    "result": {
+        "binary": {
+            "protocol_identifier": 127,
+            "data_coding_scheme": 246,
+            "user_data_header": "027000",
+            "user_data": "0011223344"
+        },
+        "deliver_reports": [
+            {
+                "attempt_id": 2,
+                "tpdu": "00077ff602cafe",
+                "protocol_identifier": 127,
+                "data_coding_scheme": 246,
+                "user_data": "cafe"
+            }
+        ]
+    }
+}
+```
+
+## List Delivery Attempts
+
+This path returns the routing and delivery attempts of a message, oldest first. For a Submitter, a message it did not send is not found.
+
+| Method | Path                             |
+| ------ | -------------------------------- |
+| GET    | `/api/v1/messages/{id}/attempts` |
+
+### Path Parameters
+
+| Name | Type | Description         |
+| ---- | ---- | ------------------- |
+| `id` | int  | Message identifier. |
+
+### Query Parameters
+
+| Name       | In    | Type | Default | Allowed | Description               |
+| ---------- | ----- | ---- | ------- | ------- | ------------------------- |
+| `page`     | query | int  | `1`     | `>= 1`  | 1-based page index.       |
+| `per_page` | query | int  | `25`    | `1…100` | Number of items per page. |
+
+### Response Fields
+
+| Field                     | Type   | Description                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                      | int    | Attempt identifier.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `started_at`              | string | Start of the attempt.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `completed_at`            | string | End of the attempt.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `step`                    | string | `routing`: a routing lookup at the HSS, over S6c. `delivery`: a delivery to a serving node, over SGd.                                                                                                                                                                                                                                                                                                      |
+| `node`                    | string | Host of the HSS that answered the routing lookup, or of the serving node.                                                                                                                                                                                                                                                                                                                                  |
+| `node_type`               | string | Type of the serving node: `mme`, `sgsn`, `ip_sm_gw`, `smsf_3gpp` or `smsf_non_3gpp`.                                                                                                                                                                                                                                                                                                                       |
+| `outcome`                 | string | `success`; `no_hss`, no HSS connected; `unreachable`, the serving node not connected; `timeout`, no answer in time; the error the node gave: `user_unknown`, `absent_user`, `user_busy_for_mt_sms`, `facility_not_supported`, `illegal_user`, `illegal_equipment`, `sm_delivery_failure`, `service_not_subscribed`, `service_barred`, `mwd_list_full`; `diameter_error`, another error answer; or `error`. |
+| `result_code`             | int    | Result-Code or Experimental-Result-Code of the answer.                                                                                                                                                                                                                                                                                                                                                     |
+| `vendor_id`               | int    | Vendor-Id of an Experimental-Result-Code.                                                                                                                                                                                                                                                                                                                                                                  |
+| `failure_cause`           | string | SM-Delivery-Failure-Cause of an `sm_delivery_failure`.                                                                                                                                                                                                                                                                                                                                                     |
+| `tp_failure_cause`        | string | TP-Failure-Cause the phone gave.                                                                                                                                                                                                                                                                                                                                                                           |
+| `absent_user_diagnostics` | object | Why the phone is unreachable, by node: `mme`, `msc`, `sgsn`, `ip_sm_gw`, `smsf_3gpp`, `smsf_non_3gpp`.                                                                                                                                                                                                                                                                                                     |
+
+A value the SMSC did not observe is absent.
+
+### Response Codes
+
+| Code  | Description                     |
+| ----- | ------------------------------- |
+| `404` | No message has this identifier. |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "items": [
+            {
+                "id": 1,
+                "started_at": "2026-10-27T18:46:07.351Z",
+                "completed_at": "2026-10-27T18:46:07.351Z",
+                "step": "routing",
+                "node": "core.example.org",
+                "outcome": "absent_user",
+                "result_code": 5550,
+                "vendor_id": 10415,
+                "absent_user_diagnostics": {
+                    "mme": "imsi_detached"
+                }
+            },
+            {
+                "id": 2,
+                "started_at": "2026-10-27T18:46:10.354Z",
+                "completed_at": "2026-10-27T18:46:10.355Z",
+                "step": "routing",
+                "node": "core.example.org",
+                "outcome": "success",
+                "result_code": 2001
+            },
+            {
+                "id": 3,
+                "started_at": "2026-10-27T18:46:10.355Z",
+                "completed_at": "2026-10-27T18:46:10.355Z",
+                "step": "delivery",
+                "node": "core.example.org",
+                "node_type": "mme",
+                "outcome": "success",
+                "result_code": 2001
+            }
+        ],
+        "page": 1,
+        "per_page": 25,
+        "total_count": 3
+    }
+}
+```
+
+# Metrics
+
+## Get Metrics
+
+This path returns the metrics of the SMSC in the [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details), negotiated from the request's `Accept` header. See [Observability](https://docs.ellanetworks.com/smsc/reference/observability/#metrics) for the list.
+
+| Method | Path              |
+| ------ | ----------------- |
+| GET    | `/api/v1/metrics` |
+
+### Sample Response
+
+```
+# HELP ellasmsc_hss_peers Open Diameter peers in the operator's realm that serve S6c, which the SMSC asks to route messages. At 0, messages to phones wait.
+# TYPE ellasmsc_hss_peers gauge
+ellasmsc_hss_peers 0
+# HELP ellasmsc_messages_pending Short messages and status reports waiting for delivery, by type (message, status_report) and state: due (to be delivered now, or being delivered) or waiting (for a retry or for the phone to be reachable). Due messages that stay due mean the deliverer is falling behind.
+# TYPE ellasmsc_messages_pending gauge
+ellasmsc_messages_pending{state="due",type="message"} 0
+ellasmsc_messages_pending{state="due",type="status_report"} 0
+ellasmsc_messages_pending{state="waiting",type="message"} 2
+ellasmsc_messages_pending{state="waiting",type="status_report"} 0
+# HELP ellasmsc_messages_received_total Short messages received, one per TPDU, by origin (mobile, api) and result (accepted, rejected, error).
+# TYPE ellasmsc_messages_received_total counter
+ellasmsc_messages_received_total{origin="api",result="accepted"} 2
+ellasmsc_messages_received_total{origin="api",result="error"} 0
+ellasmsc_messages_received_total{origin="mobile",result="accepted"} 0
+ellasmsc_messages_received_total{origin="mobile",result="error"} 0
+ellasmsc_messages_received_total{origin="mobile",result="rejected"} 0
+```
+
+# Operator
+
+The operator is the PLMN of the SMSC, from which its Diameter identity derives, its service centre address, and the numbering plan that converts the numbers phones send to E.164 numbers.
+
+## Get the Operator
+
+This path returns the operator settings.
+
+| Method | Path               |
+| ------ | ------------------ |
+| GET    | `/api/v1/operator` |
+
+### Response Fields
+
+| Field                            | Type   | Description                                                                                                |
+| -------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
+| `mcc`                            | string | Mobile Country Code.                                                                                       |
+| `mnc`                            | string | Mobile Network Code.                                                                                       |
+| `service_centre_address`         | string | E.164 number of the SMSC, which phones have as SMSC number.                                                |
+| `numbering`                      | object | Conversion of the numbers phones send to E.164 numbers.                                                    |
+| `numbering.country_code`         | string | Country code, added to the numbers phones send in national format.                                         |
+| `numbering.national_prefix`      | string | Prefix that phones dial before a national number, removed before the country code is added. Empty if none. |
+| `numbering.international_prefix` | string | Prefix that phones dial before an international number, removed. Empty if none.                            |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "mcc": "001",
+        "mnc": "01",
+        "service_centre_address": "+15550000000",
+        "numbering": {
+            "country_code": "1",
+            "national_prefix": "1",
+            "international_prefix": "011"
+        }
+    }
+}
+```
+
+## Update the Operator
+
+This path replaces the operator settings. A change of MCC or MNC changes the Diameter host and realm: the SMSC restarts Diameter, and its peers reconnect.
+
+| Method | Path               |
+| ------ | ------------------ |
+| PUT    | `/api/v1/operator` |
+
+### Request Body
+
+| Field                            | Type   | Required | Description                                                       |
+| -------------------------------- | ------ | -------- | ----------------------------------------------------------------- |
+| `mcc`                            | string | Yes      | 3 digits.                                                         |
+| `mnc`                            | string | Yes      | 2 or 3 digits.                                                    |
+| `service_centre_address`         | string | Yes      | E.164 number with `+`, e.g. `+15550000000`.                       |
+| `numbering`                      | object | Yes      |                                                                   |
+| `numbering.country_code`         | string | Yes      | 1 to 3 digits, not starting with 0.                               |
+| `numbering.national_prefix`      | string | Yes      | Up to 4 digits. Differs from `international_prefix` unless empty. |
+| `numbering.international_prefix` | string | Yes      | Up to 4 digits.                                                   |
+
+### Sample Request
+
+```
+{
+    "mcc": "001",
+    "mnc": "01",
+    "service_centre_address": "+15550000000",
+    "numbering": {
+        "country_code": "1",
+        "national_prefix": "1",
+        "international_prefix": "011"
+    }
+}
+```
+
+### Sample Response
+
+```
+{
+    "result": {
+        "mcc": "001",
+        "mnc": "01",
+        "service_centre_address": "+15550000000",
+        "numbering": {
+            "country_code": "1",
+            "national_prefix": "1",
+            "international_prefix": "011"
+        }
+    }
+}
+```
+
+# Pprof
+
+These paths serve the [net/http/pprof](https://pkg.go.dev/net/http/pprof) API. They require Admin, and accept an API token.
+
+## Profiling Endpoints
+
+| Method    | Path                          | Description                                              |
+| --------- | ----------------------------- | -------------------------------------------------------- |
+| GET       | `/api/v1/pprof/`              | An HTML page listing the available profiles.             |
+| GET       | `/api/v1/pprof/allocs`        | A sampling of all past memory allocations.               |
+| GET       | `/api/v1/pprof/cmdline`       | The command line invocation of the program.              |
+| GET       | `/api/v1/pprof/goroutine`     | Stack traces of all current goroutines.                  |
+| GET       | `/api/v1/pprof/goroutineleak` | Stack traces of all leaked goroutines.                   |
+| GET       | `/api/v1/pprof/heap`          | A sampling of memory allocations of live objects.        |
+| GET       | `/api/v1/pprof/profile`       | A CPU profile, of 30 seconds by default.                 |
+| GET       | `/api/v1/pprof/threadcreate`  | Stack traces that led to the creation of new OS threads. |
+| GET       | `/api/v1/pprof/trace`         | An execution trace, of 1 second by default.              |
+| GET, POST | `/api/v1/pprof/symbol`        | Function names of program counters.                      |
+
+### Query Parameters
+
+| Parameter | Paths                                         | Description                                                                         |
+| --------- | --------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `seconds` | `profile`, `trace`                            | Duration of the capture.                                                            |
+| `seconds` | `allocs`, `goroutine`, `heap`                 | Returns the difference of the profile over this duration.                           |
+| `debug`   | `allocs`, `goroutine`, `heap`, `threadcreate` | `0`: protobuf. `1`: text. `2` (`goroutine`): stack traces in the format of a panic. |
+| `gc`      | `heap`                                        | `1`: runs a garbage collection first.                                               |
+
+# Retention
+
+The retention sets how long the SMSC keeps a message once it has its final status: `delivered`, `failed`, `expired` or `replaced`. The SMSC then deletes it, with its status reports and delivery attempts, within the hour. It keeps a message until its status reports, too, have had their final status for that long.
+
+## Get the Retention
+
+This path returns the retention.
+
+| Method | Path                         |
+| ------ | ---------------------------- |
+| GET    | `/api/v1/messages/retention` |
+
+### Response Fields
+
+| Field  | Type | Description                                                         |
+| ------ | ---- | ------------------------------------------------------------------- |
+| `days` | int  | Days a message is kept once it has its final status. Default: `30`. |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "days": 30
+    }
+}
+```
+
+## Update the Retention
+
+This path replaces the retention. It applies from the next deletion, within the hour.
+
+| Method | Path                         |
+| ------ | ---------------------------- |
+| PUT    | `/api/v1/messages/retention` |
+
+### Request Body
+
+| Field  | Type | Required | Description |
+| ------ | ---- | -------- | ----------- |
+| `days` | int  | Yes      | At least 1. |
+
+### Sample Request
+
+```
+{
+    "days": 7
+}
+```
+
+### Sample Response
+
+```
+{
+    "result": {
+        "days": 7
+    }
+}
+```
+
+# Status
+
+## Get the Status
+
+This path returns the version of the SMSC, and whether it is initialized.
+
+| Method | Path             |
+| ------ | ---------------- |
+| GET    | `/api/v1/status` |
+
+### Response Fields
+
+| Field         | Type    | Description                                                                                                            |
+| ------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `version`     | string  | Version.                                                                                                               |
+| `revision`    | string  | Git commit of the build. Empty in development builds.                                                                  |
+| `initialized` | boolean | Whether the first user exists. See [Initialize](https://docs.ellanetworks.com/smsc/reference/api/initialize/index.md). |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "version": "v0.0.1",
+        "revision": "79194832364de9583e8e659ba700c2fa9ba1e351",
+        "initialized": true
+    }
+}
+```
+
+## Check Liveness
+
+This path answers while the process serves HTTP.
+
+| Method | Path            |
+| ------ | --------------- |
+| GET    | `/api/v1/livez` |
+
+It answers `204 No Content`.
+
+## Check Readiness
+
+This path returns whether the SMSC can serve requests: its database answers, and it is not shutting down.
+
+| Method | Path             |
+| ------ | ---------------- |
+| GET    | `/api/v1/readyz` |
+
+It answers `204 No Content` when ready, and `503 Service Unavailable` otherwise:
+
+```
+{
+    "error": "Not ready"
+}
+```
+
+# Users
+
+Paths under `/api/v1/users/me` act on the user of the token. The others require Admin, and an access token: an API token gets `403`.
+
+## Get My User
+
+| Method | Path               |
+| ------ | ------------------ |
+| GET    | `/api/v1/users/me` |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "email": "admin@example.com",
+        "role_id": 1
+    }
+}
+```
+
+## Update My Password
+
+This path ends the user's other sessions. It requires an access token.
+
+| Method | Path                        |
+| ------ | --------------------------- |
+| PUT    | `/api/v1/users/me/password` |
+
+### Request Body
+
+| Field              | Type   | Required | Description                  |
+| ------------------ | ------ | -------- | ---------------------------- |
+| `current_password` | string | Yes      | Current password.            |
+| `password`         | string | Yes      | New password, 8 to 72 bytes. |
+
+### Response Codes
+
+| Code  | Description                                                                       |
+| ----- | --------------------------------------------------------------------------------- |
+| `400` | Wrong current password, or invalid new password.                                  |
+| `429` | More than 100 wrong passwords in an hour for the account, counting failed logins. |
+
+## List Users
+
+| Method | Path            |
+| ------ | --------------- |
+| GET    | `/api/v1/users` |
+
+### Query Parameters
+
+| Name       | In    | Type | Default | Allowed | Description               |
+| ---------- | ----- | ---- | ------- | ------- | ------------------------- |
+| `page`     | query | int  | `1`     | `>= 1`  | 1-based page index.       |
+| `per_page` | query | int  | `25`    | `1…100` | Number of items per page. |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "items": [
+            {
+                "email": "admin@example.com",
+                "role_id": 1
+            },
+            {
+                "email": "ota@example.com",
+                "role_id": 4
+            }
+        ],
+        "page": 1,
+        "per_page": 25,
+        "total_count": 2
+    }
+}
+```
+
+## Create a User
+
+At most 50 users.
+
+| Method | Path            |
+| ------ | --------------- |
+| POST   | `/api/v1/users` |
+
+### Request Body
+
+| Field      | Type   | Required | Description                                                                       |
+| ---------- | ------ | -------- | --------------------------------------------------------------------------------- |
+| `email`    | string | Yes      | Email address. Stored in lower case.                                              |
+| `password` | string | Yes      | 8 to 72 bytes.                                                                    |
+| `role_id`  | int    | Yes      | `1` to `4`. See [roles](https://docs.ellanetworks.com/smsc/reference/api/#roles). |
+
+### Response Codes
+
+| Code  | Description                        |
+| ----- | ---------------------------------- |
+| `201` | Created.                           |
+| `400` | Invalid field, or 50 users exist.  |
+| `409` | A user has the email, in any case. |
+
+## Get a User
+
+| Method | Path                    |
+| ------ | ----------------------- |
+| GET    | `/api/v1/users/{email}` |
+
+## Update a User
+
+This path changes the role of a user, and ends its sessions and the SMPP sessions of its [ESMEs](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md). An Admin cannot change its own role.
+
+| Method | Path                    |
+| ------ | ----------------------- |
+| PUT    | `/api/v1/users/{email}` |
+
+### Request Body
+
+| Field     | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `role_id` | int  | Yes      | `1` to `4`. |
+
+## Update a User's Password
+
+This path ends the user's sessions. An Admin cannot update its own password here.
+
+| Method | Path                             |
+| ------ | -------------------------------- |
+| PUT    | `/api/v1/users/{email}/password` |
+
+### Request Body
+
+| Field      | Type   | Required | Description    |
+| ---------- | ------ | -------- | -------------- |
+| `password` | string | Yes      | 8 to 72 bytes. |
+
+## Delete a User
+
+This path deletes the user with its sessions, API tokens and [ESMEs](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md). An Admin cannot delete itself.
+
+| Method | Path                    |
+| ------ | ----------------------- |
+| DELETE | `/api/v1/users/{email}` |
+
+## Create an API Token
+
+This path returns the token, the only time it is shown. At most 12 per user. Requires an access token.
+
+| Method | Path                               |
+| ------ | ---------------------------------- |
+| POST   | `/api/v1/users/me/api-tokens`      |
+| POST   | `/api/v1/users/{email}/api-tokens` |
+
+### Request Body
+
+| Field        | Type   | Required | Description                                                         |
+| ------------ | ------ | -------- | ------------------------------------------------------------------- |
+| `name`       | string | Yes      | 3 to 50 characters, unique among the user's tokens.                 |
+| `expires_at` | string | No       | RFC 3339 time in the future. Without it, the token does not expire. |
+
+### Response Codes
+
+| Code  | Description                        |
+| ----- | ---------------------------------- |
+| `201` | Created.                           |
+| `400` | Invalid field, or 12 tokens exist. |
+| `409` | The user has a token of that name. |
+
+### Sample Request
+
+```
+{
+    "name": "OTA platform",
+    "expires_at": "2027-10-27T00:00:00Z"
+}
+```
+
+### Sample Response
+
+```
+{
+    "result": {
+        "token": "ellasmsc_aB3dE5fG7hJ9_KQ4ZN2X7WJ5R3TQY6PLM2VA4CF"
+    }
+}
+```
+
+## List API Tokens
+
+| Method | Path                               |
+| ------ | ---------------------------------- |
+| GET    | `/api/v1/users/me/api-tokens`      |
+| GET    | `/api/v1/users/{email}/api-tokens` |
+
+### Query Parameters
+
+| Name       | In    | Type | Default | Allowed | Description               |
+| ---------- | ----- | ---- | ------- | ------- | ------------------------- |
+| `page`     | query | int  | `1`     | `>= 1`  | 1-based page index.       |
+| `per_page` | query | int  | `25`    | `1…100` | Number of items per page. |
+
+### Response Fields
+
+| Field          | Type   | Description                                                                   |
+| -------------- | ------ | ----------------------------------------------------------------------------- |
+| `id`           | string | Token identifier: the part of the token between `ellasmsc_` and the next `_`. |
+| `name`         | string | Name.                                                                         |
+| `created_at`   | string | Creation time.                                                                |
+| `expires_at`   | string | Expiry time. Absent for a token that does not expire.                         |
+| `last_used_at` | string | Time of the last use, to the minute. Absent for a token never used.           |
+
+### Sample Response
+
+```
+{
+    "result": {
+        "items": [
+            {
+                "id": "aB3dE5fG7hJ9",
+                "name": "OTA platform",
+                "created_at": "2026-10-27T18:44:19.436Z",
+                "expires_at": "2027-10-27T00:00:00.000Z",
+                "last_used_at": "2026-10-27T19:02:00.000Z"
+            }
+        ],
+        "page": 1,
+        "per_page": 25,
+        "total_count": 1
+    }
+}
+```
+
+## Delete an API Token
+
+| Method | Path                                    |
+| ------ | --------------------------------------- |
+| DELETE | `/api/v1/users/me/api-tokens/{id}`      |
+| DELETE | `/api/v1/users/{email}/api-tokens/{id}` |
+# Explanation
+
+# Explanation
+
+These explanations provide context on how Ella SMSC works.
+
+- [Architecture](https://docs.ellanetworks.com/smsc/explanation/architecture/index.md)
+- [Security](https://docs.ellanetworks.com/smsc/explanation/security/index.md)
+
+# Architecture
+
+A Short Message Service Centre (SMSC) stores the short messages phones send, and forwards them to their recipients. Ella SMSC is a single process, with one SQLite database, one UI, one API and, when configured, an SMPP listener.
+
+## Where Ella SMSC sits
+
+Ella SMSC has no radio access and stores no subscribers. It relies on the core network, over Diameter:
+
+- **The HSS**, over S6c, says where a recipient is served, and alerts the SMSC when an unreachable recipient is back.
+- **The MME or SMSF**, over SGd, carries messages between the phones and the SMSC, in NAS signalling.
+- **An IP-SM-GW**, over SGd, carries them for phones registered for SMS over IP.
+
+Ella Core provides the HSS, the MME and the SMSF. For how it works with an SMSC, see Ella Core's [SMS Integration](https://docs.ellanetworks.com/core/explanation/sms_integration/).
+
+Ella SMSC's Diameter host and realm derive from the operator's MCC and MNC: `smsc.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`. Its peers connect to it, and it asks the HSSs of that realm for routing.
+
+## Reaching other networks
+
+A subscriber roaming on another network is served by a visited MME or SMSF that never connects to Ella SMSC. Ella SMSC reaches it through a Diameter agent it connects to, such as the edge agent of the operator or of an IPX provider. An HSS behind a DRA is reached the same way.
+
+Each agent has routes: the realms it reaches. A default route takes every other realm, except Ella SMSC's own, so a home MME that is briefly disconnected is retried rather than sent out to the IPX. An agent is asked only for the requests of its routes: an HSS added as an agent needs an S6c route to Ella SMSC's realm.
+
+When an agent fails with a short message in flight, Ella SMSC sends it through the next one, and the subscriber may receive it twice.
+
+## Receiving
+
+A phone's message reaches Ella SMSC when the SMSC number on its SIM card is Ella SMSC's service centre address. The MME, SMSF or IP-SM-GW gives the phone's MSISDN, which is the sender. Ella SMSC converts the recipient to an international number with the operator's numbering plan, stores the message, and acknowledges it.
+
+Applications send messages to phones with the [Messages API](https://docs.ellanetworks.com/smsc/reference/api/messages/index.md), or over [SMPP](#esmes-over-smpp).
+
+## Delivering
+
+For each message, Ella SMSC asks the HSS for the serving nodes of the recipient, then tries them in turn until one takes the message. Messages to a phone go one at a time, in order. When more wait, the serving node that took one takes the next, without another routing lookup.
+
+Each lookup and delivery is recorded as an attempt, shown in the UI and the API.
+
+## When a phone is unreachable
+
+When no serving node takes a message, Ella SMSC makes sure the HSS records that a message waits. The message and the recipient's other messages wait for a retry, after the [retry intervals](https://docs.ellanetworks.com/smsc/reference/api/delivery/index.md). When the phone can receive messages again, the HSS alerts Ella SMSC, which delivers them right away.
+
+A message ends:
+
+- **delivered**, when a serving node takes it;
+- **failed**, when the recipient is unknown, not allowed SMS, or has no serving node that supports SGd, when the SIM refuses a (U)SIM data download message, or when an attempt fails and the message is single-shot or retries are off;
+- **expired**, when its validity period ends first;
+- **replaced**, when a later message from the same sender replaces it. A message from the Messages API or an ESME is replaced only by one from the same user or ESME.
+
+## Status reports
+
+When a phone asks for status reports, Ella SMSC returns one to it when the message ends. It delivers the report as it does a message.
+
+## ESMEs over SMPP
+
+Platforms built for SMSCs, such as OTA platforms, connect as External Short Message Entities (ESMEs), over SMPP 3.4:
+
+```
+OTA platform (ESME) ──SMPP over TCP or TLS, 2775──▶ SMPP listener ──▶ submission ──▶ database ──▶ delivery ──▶ HSS, MME, SMSF
+        ▲                                                                                       │
+        └──────────────── deliver_sm: receipts, SIM answers ◀── notifications ◀─────────────────┘
+```
+
+- **The SMPP listener** accepts the ESMEs' connections, checks each bind against the ESME accounts, and keeps the sessions. An ESME account acts as a user: the messages it submits are that user's, and the user's role decides what it may do.
+- **Submission.** Each `submit_sm` becomes one short message, through the same path as the [Messages API](https://docs.ellanetworks.com/smsc/reference/api/messages/index.md), so the same parameters give the same message. Ella SMSC answers once the message is stored, then delivers it as any other.
+- **Notifications.** When a message from an ESME ends, Ella SMSC queues the delivery receipt and the SIM's answer that the ESME asked for. It sends them as `deliver_sm` to a receiving session of that ESME, the answer first, and keeps them until the ESME acknowledges them, binds again, or they expire. They survive a restart.
+
+See the [SMPP reference](https://docs.ellanetworks.com/smsc/reference/smpp/index.md).
+
+## Binary messages
+
+Applications can send binary messages, such as the (U)SIM data download messages that an OTA platform sends to update SIM cards: the phone passes them to the SIM instead of showing them. Ella SMSC delivers their parameters and user data unchanged, and keeps the phone's answer to each delivery attempt, which can carry the SIM's response.
+
+# Security
+
+## Users and roles
+
+Everyone who uses the UI or the API is a user with a role: Admin, Read Only, Network Manager or Submitter. The role decides what the user can see and do, from reading settings to managing other users. See [Roles](https://docs.ellanetworks.com/smsc/reference/api/#roles).
+
+The first user, an Admin, is created when Ella SMSC is initialized. Admins create the others.
+
+Ella SMSC limits login attempts, from each address and for each account, to slow down password guessing.
+
+## Applications
+
+Applications, such as an OTA platform, use an API token rather than a password. A token belongs to a user and has that user's role, but it cannot create API tokens, change a password, or manage users. Tokens can expire, and an Admin or the token's user can delete one at any time.
+
+Give each application its own Submitter user: it can send messages, and read only the messages it sent.
+
+## ESMEs
+
+An ESME, such as an OTA platform, binds to the [SMPP listener](https://docs.ellanetworks.com/smsc/reference/smpp/index.md) with a `system_id` and a password. SMPP 3.4 limits that password to 8 characters, so Ella SMSC adds other checks:
+
+- Each ESME acts as a user, whose role decides whether it may submit or receive.
+- An ESME binds only from the networks in its allow-list. An empty list allows no address.
+- Passwords are stored as bcrypt hashes. A password the SMSC generates has 8 random letters and digits.
+- Binds are limited from each address, and wrong passwords for each ESME. Every refused bind gets the same answer, so a client cannot tell which check failed.
+- Only an Admin, logged in rather than with an API token, creates, changes or deletes ESMEs.
+
+SMPP 3.4 has no encryption: the password and the messages cross the network in clear. TLS, with `smpp.tls`, is a common convention outside SMPP 3.4, which the ESME must support. Use plain TCP only over a private link, such as an IPsec VPN, or in a lab.
+
+The allow-list checks the address of the TCP connection. Terminate TLS in Ella SMSC itself, not in a proxy or load balancer, which would hide the ESME's address. On Kubernetes, the Service keeps it with `externalTrafficPolicy: Local`.
+
+## Message content
+
+Messages carry personal content. Reading it is a permission of its own: a Read Only user sees that messages were sent and delivered, but not what they say. Every read of the content is recorded in an [audit event](https://docs.ellanetworks.com/smsc/reference/observability/#audit-events), with who read it and from where.
+
+## HTTPS
+
+Ella SMSC serves the UI and the API over plain HTTP unless it is given a certificate in `api.tls` (see the [configuration file](https://docs.ellanetworks.com/smsc/reference/config_file/index.md)). Use HTTPS whenever the UI or the API is reachable over a network you do not control.
+
+## Diameter peers
+
+Ella SMSC accepts any Diameter peer that connects and supports S6c or SGd, and its Diameter connections are not encrypted. Keep its Diameter address on a network that only the core network can reach.
+
+Through an edge agent, other networks can send short messages to Ella SMSC, which does not filter them by realm. Have the edge agent accept only the operator's roaming partners.

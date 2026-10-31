@@ -1,0 +1,57 @@
+# Ella SMSC Documentation
+
+> An SMS Service Center for private 4G and 5G networks - easy to operate, reliable, and secure.
+
+An SMS Service Center for private 4G and 5G networks - easy to operate, reliable, and secure.
+
+## Home
+
+- [Home](https://docs.ellanetworks.com/smsc/index.md)
+
+## Tutorials
+
+- [Tutorials](https://docs.ellanetworks.com/smsc/tutorials/index.md)
+- [Send Your First SMS](https://docs.ellanetworks.com/smsc/tutorials/first_sms/index.md)
+
+## How-to Guides
+
+- [How-to Guides](https://docs.ellanetworks.com/smsc/how_to/index.md)
+- [Back Up and Restore](https://docs.ellanetworks.com/smsc/how_to/back_up_and_restore/index.md)
+- [Connect through Diameter Agents](https://docs.ellanetworks.com/smsc/how_to/connect_through_diameter_agents/index.md)
+- [Install](https://docs.ellanetworks.com/smsc/how_to/install/index.md)
+- [Integrate with Ella Core](https://docs.ellanetworks.com/smsc/how_to/integrate_with_ella_core/index.md)
+- [Integrate with Ella IMS](https://docs.ellanetworks.com/smsc/how_to/integrate_with_ella_ims/index.md)
+- [Integrate with a Third-Party Core](https://docs.ellanetworks.com/smsc/how_to/integrate_with_third_party_core/index.md)
+- [Send Messages from an Application](https://docs.ellanetworks.com/smsc/how_to/send_messages_from_an_application/index.md)
+- [Send (U)SIM Data Download Messages over SMPP](https://docs.ellanetworks.com/smsc/how_to/send_sim_data_download_messages_over_smpp/index.md)
+- [Send (U)SIM Data Download Messages over the API](https://docs.ellanetworks.com/smsc/how_to/send_sim_data_download_messages_over_the_api/index.md)
+
+## Reference
+
+- [Reference](https://docs.ellanetworks.com/smsc/reference/index.md)
+- [3GPP Compliance](https://docs.ellanetworks.com/smsc/reference/3gpp_compliance/index.md)
+- [Configuration File](https://docs.ellanetworks.com/smsc/reference/config_file/index.md)
+- [Connectivity](https://docs.ellanetworks.com/smsc/reference/connectivity/index.md)
+- [Observability](https://docs.ellanetworks.com/smsc/reference/observability/index.md)
+- [Performance](https://docs.ellanetworks.com/smsc/reference/performance/index.md)
+- [SMPP](https://docs.ellanetworks.com/smsc/reference/smpp/index.md)
+- [API](https://docs.ellanetworks.com/smsc/reference/api/index.md)
+- [Authentication](https://docs.ellanetworks.com/smsc/reference/api/auth/index.md)
+- [Delivery](https://docs.ellanetworks.com/smsc/reference/api/delivery/index.md)
+- [Diameter](https://docs.ellanetworks.com/smsc/reference/api/diameter/index.md)
+- [ESMEs](https://docs.ellanetworks.com/smsc/reference/api/esmes/index.md)
+- [Initialize](https://docs.ellanetworks.com/smsc/reference/api/initialize/index.md)
+- [Messages](https://docs.ellanetworks.com/smsc/reference/api/messages/index.md)
+- [Metrics](https://docs.ellanetworks.com/smsc/reference/api/metrics/index.md)
+- [Operator](https://docs.ellanetworks.com/smsc/reference/api/operator/index.md)
+- [Pprof](https://docs.ellanetworks.com/smsc/reference/api/pprof/index.md)
+- [Retention](https://docs.ellanetworks.com/smsc/reference/api/retention/index.md)
+- [Status](https://docs.ellanetworks.com/smsc/reference/api/status/index.md)
+- [Users](https://docs.ellanetworks.com/smsc/reference/api/users/index.md)
+
+## Explanation
+
+- [Explanation](https://docs.ellanetworks.com/smsc/explanation/index.md)
+- [Architecture](https://docs.ellanetworks.com/smsc/explanation/architecture/index.md)
+- [Security](https://docs.ellanetworks.com/smsc/explanation/security/index.md)
+
