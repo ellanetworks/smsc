@@ -1,0 +1,3687 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Reference of the SMPP 3.4 interface of Ella SMSC for ESMEs, such as OTA platforms.">
+      
+      
+      
+        <link rel="canonical" href="https://docs.ellanetworks.com/smsc/reference/smpp/">
+      
+      
+        <link rel="prev" href="../connectivity/">
+      
+      
+        <link rel="next" href="../performance/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>SMPP - Ella SMSC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Code+Pro:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Source Code Pro";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  
+<meta property="og:type" content="website">
+<meta property="og:title" content="SMPP - Ella SMSC Documentation">
+<meta property="og:description" content="Reference of the SMPP 3.4 interface of Ella SMSC for ESMEs, such as OTA platforms.">
+<meta property="og:image" content="https://docs.ellanetworks.com/smsc/assets/images/social/reference/smpp.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://docs.ellanetworks.com/smsc/reference/smpp/">
+<meta property="twitter:card" content="summary_large_image">
+<meta property="twitter:title" content="SMPP - Ella SMSC Documentation">
+<meta property="twitter:description" content="Reference of the SMPP 3.4 interface of Ella SMSC for ESMEs, such as OTA platforms.">
+<meta property="twitter:image" content="https://docs.ellanetworks.com/smsc/assets/images/social/reference/smpp.png">
+<link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#smpp" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+        <aside class="md-banner">
+          <div class="md-banner__inner md-grid md-typeset">
+            
+            
+<div class="alert alert-info" role="alert">
+    <a href="https://www.ellanetworks.com/pricing" class="alert-link">
+        <strong>Get a production license</strong>.
+    </a>
+</div>
+
+          </div>
+          
+        </aside>
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Ella SMSC Documentation" class="md-header__button md-logo" aria-label="Ella SMSC Documentation" data-md-component="logo">
+      
+  <img src="../../images/logo-mark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Ella SMSC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              SMPP
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required="">
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix="">
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ellanetworks/smsc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    ellanetworks/smsc
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Ella SMSC Documentation" class="md-nav__button md-logo" aria-label="Ella SMSC Documentation" data-md-component="logo">
+      
+  <img src="../../images/logo-mark.svg" alt="logo">
+
+    </a>
+    Ella SMSC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ellanetworks/smsc" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    ellanetworks/smsc
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix="">
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tutorials/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/first_sms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Send Your First SMS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../how_to/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to Guides
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/back_up_and_restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Back Up and Restore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/integrate_with_ella_core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrate with Ella Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/integrate_with_ella_ims/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrate with Ella IMS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/integrate_with_third_party_core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrate with a Third-Party Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/connect_through_diameter_agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect through Diameter Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/send_messages_from_an_application/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Send Messages from an Application
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/send_sim_data_download_messages_over_the_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Send (U)SIM Data Download Messages over the API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/send_sim_data_download_messages_over_smpp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Send (U)SIM Data Download Messages over SMPP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked="">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/initialize/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Initialize
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Users
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/messages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Messages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/diameter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diameter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/esmes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ESMEs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/operator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/delivery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Delivery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/pprof/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pprof
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config_file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration File
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connectivity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectivity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SMPP
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SMPP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#transport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transport
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pdus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PDUs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PDUs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binds
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Binds">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bind-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bind fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#account-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sessions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sessions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-end" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session end
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#submit_sm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        submit_sm
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="submit_sm">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#addressing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Addressing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data_coding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        data_coding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#esm_class" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        esm_class
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#protocol_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        protocol_id
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registered_delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        registered_delivery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validity-and-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validity and scheduling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-data-and-optional-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User data and optional parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#order-of-submit_sm_resp-and-deliver_sm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order of submit_sm_resp and deliver_sm
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notifications
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Notifications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-receipts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery receipts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sim-answers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SIM answers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command_status-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        command_status values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not supported
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../3gpp_compliance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3GPP Compliance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../explanation/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanation
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#transport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transport
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pdus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PDUs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PDUs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binds
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Binds">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bind-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bind fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#account-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sessions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sessions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-end" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session end
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#submit_sm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        submit_sm
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="submit_sm">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#addressing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Addressing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data_coding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        data_coding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#esm_class" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        esm_class
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#protocol_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        protocol_id
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registered_delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        registered_delivery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validity-and-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validity and scheduling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-data-and-optional-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User data and optional parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#order-of-submit_sm_resp-and-deliver_sm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order of submit_sm_resp and deliver_sm
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notifications
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Notifications">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-receipts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery receipts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sim-answers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SIM answers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command_status-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        command_status values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not supported
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="smpp">SMPP<a class="headerlink" href="#smpp" title="Permanent link">¶</a></h1>
+<p>Ella SMSC is an SMPP 3.4 SMSC for External Short Message Entities (ESMEs), such as OTA platforms. An ESME submits short messages to phones with <code>submit_sm</code>, and receives delivery receipts and SIM answers as <code>deliver_sm</code>.</p>
+<p>The listener runs when the <a href="../config_file/">configuration file</a> has an <code>smpp</code> block. ESME accounts are managed with the <a href="../api/esmes/">ESMEs API</a> or the <strong>SMPP</strong> page of the UI.</p>
+<p>"§" without a TS number refers to SMPP v3.4, Issue 1.2. <strong>Convention</strong> marks a behaviour that SMPP 3.4 does not define. All conventions are listed under <a href="#conventions">Conventions</a>.</p>
+<h2 id="transport">Transport<a class="headerlink" href="#transport" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transport</td>
+<td>TCP (§2.4), on <code>smpp.port</code>, default <code>2775</code>.</td>
+</tr>
+<tr>
+<td>TLS</td>
+<td>With <code>smpp.tls</code>: TLS 1.2 or later, from the first octet. A listener is either plain or TLS. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td>Client address</td>
+<td>The address of the TCP connection. The PROXY protocol is not supported.</td>
+</tr>
+<tr>
+<td><code>interface_version</code></td>
+<td><code>0x34</code>.</td>
+</tr>
+<tr>
+<td>SMSC <code>system_id</code></td>
+<td><code>EllaSMSC</code>, in bind responses.</td>
+</tr>
+<tr>
+<td><code>command_length</code></td>
+<td>16 to 69,632 octets (68 KiB). <strong>Convention</strong>: SMPP 3.4 sets no maximum (§3.2.1).</td>
+</tr>
+<tr>
+<td><code>sequence_number</code></td>
+<td><code>0x00000001</code> to <code>0x7FFFFFFF</code> (§5.1.4).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="pdus">PDUs<a class="headerlink" href="#pdus" title="Permanent link">¶</a></h2>
+<h3 id="supported">Supported<a class="headerlink" href="#supported" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>PDU</th>
+<th>Direction</th>
+<th>Session state</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bind_transmitter</code>, <code>bind_receiver</code>, <code>bind_transceiver</code></td>
+<td>ESME → SMSC</td>
+<td>OPEN</td>
+<td>See <a href="#binds">Binds</a>.</td>
+</tr>
+<tr>
+<td><code>submit_sm</code></td>
+<td>ESME → SMSC</td>
+<td>BOUND_TX, BOUND_TRX</td>
+<td>One short message. See <a href="#submit_sm"><code>submit_sm</code></a>.</td>
+</tr>
+<tr>
+<td><code>deliver_sm</code></td>
+<td>SMSC → ESME</td>
+<td>BOUND_RX, BOUND_TRX</td>
+<td>Delivery receipts and SIM answers. See <a href="#notifications">Notifications</a>.</td>
+</tr>
+<tr>
+<td><code>enquire_link</code></td>
+<td>Both</td>
+<td>Bound</td>
+<td>Answered at once (§4.11).</td>
+</tr>
+<tr>
+<td><code>unbind</code></td>
+<td>Both</td>
+<td>Bound</td>
+<td>See <a href="#session-end">Session end</a>.</td>
+</tr>
+<tr>
+<td><code>generic_nack</code></td>
+<td>Both</td>
+<td>Any</td>
+<td>Sent for a PDU that cannot be handled (§4.3). Received in answer to a <code>deliver_sm</code>: a temporary failure.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>PDU received</th>
+<th>Response</th>
+<th>Session</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>command_length</code> under 16 or over 68 KiB</td>
+<td><code>generic_nack</code> <code>ESME_RINVCMDLEN</code></td>
+<td>Closed</td>
+</tr>
+<tr>
+<td><code>sequence_number</code> of <code>0</code> or over <code>0x7FFFFFFF</code></td>
+<td><code>generic_nack</code> <code>ESME_RUNKNOWNERR</code>, <code>sequence_number</code> <code>0</code></td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td><code>query_sm</code>, <code>replace_sm</code>, <code>cancel_sm</code>, <code>submit_multi</code>, <code>data_sm</code>, <code>outbind</code>, <code>deliver_sm</code>, an undefined or reserved <code>command_id</code></td>
+<td><code>generic_nack</code> <code>ESME_RINVCMDID</code></td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td><code>alert_notification</code></td>
+<td>None: discarded (§4.12)</td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td>A bind in a bound state</td>
+<td>Its response with <code>ESME_RALYBND</code></td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td>Another request in a state that does not allow it (§2.3, Table 2-1)</td>
+<td>Its response with <code>ESME_RINVBNDSTS</code></td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td>A body on a PDU that has none, or a body shorter than its mandatory parameters</td>
+<td><code>generic_nack</code> <code>ESME_RINVCMDLEN</code></td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td>A C-Octet String over its maximum length</td>
+<td>Its response with <code>ESME_RINVPARLEN</code></td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td>Optional parameters that do not decode as TLVs</td>
+<td>Its response with <code>ESME_RINVOPTPARSTREAM</code></td>
+<td>Stays up</td>
+</tr>
+<tr>
+<td>A response that matches no request</td>
+<td>None: discarded</td>
+<td>Stays up</td>
+</tr>
+</tbody>
+</table>
+<p>Unknown TLVs, and known TLVs not expected for the PDU, are ignored (§3.3). Responses may go out of order: they match their requests by <code>sequence_number</code> (§2.5.2).</p>
+<h2 id="binds">Binds<a class="headerlink" href="#binds" title="Permanent link">¶</a></h2>
+<h3 id="checks">Checks<a class="headerlink" href="#checks" title="Permanent link">¶</a></h3>
+<p>The SMSC checks a bind in this order:</p>
+<ol>
+<li>At most 20 binds per minute from the client address: per IPv4 address, or per IPv6 /64.</li>
+<li><code>interface_version</code> is <code>0x34</code> or later.</li>
+<li>At most 100 wrong passwords per hour for the <code>system_id</code>, from inside its allowed networks. A successful bind resets the count. Wrong passwords from outside the allowed networks, and binds with an unknown <code>system_id</code>, are counted apart, with the same limit, and never lock out the account.</li>
+<li><code>system_id</code> and <code>password</code> match an ESME account. A check against an unknown <code>system_id</code> takes as long as one against a known <code>system_id</code>.</li>
+<li>The client address is in the account's <code>allowed_networks</code>. An empty list allows no address.</li>
+<li>
+<p>The role of the account's user allows the bind type:</p>
+<table>
+<thead>
+<tr>
+<th>Bind</th>
+<th>Permissions</th>
+<th>Roles</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transmitter</td>
+<td>Send messages</td>
+<td>Admin, Network Manager, Submitter</td>
+</tr>
+<tr>
+<td>Receiver</td>
+<td>Read messages and their content</td>
+<td>Admin, Network Manager, Submitter</td>
+</tr>
+<tr>
+<td>Transceiver</td>
+<td>Both</td>
+<td>Admin, Network Manager, Submitter</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../api/#roles">Roles</a>.</p>
+</li>
+<li>
+<p>Fewer than 4 sessions of the account are bound.</p>
+</li>
+</ol>
+<h3 id="response">Response<a class="headerlink" href="#response" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Outcome</th>
+<th><code>command_status</code></th>
+<th>Body</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Accepted</td>
+<td><code>ESME_ROK</code></td>
+<td><code>system_id</code> <code>EllaSMSC</code>, and <code>sc_interface_version</code> <code>0x34</code> (§5.3.2.25).</td>
+</tr>
+<tr>
+<td>Refused, any check</td>
+<td><code>ESME_RBINDFAIL</code>, never <code>ESME_RINVSYSID</code> or <code>ESME_RINVPASWD</code></td>
+<td>None. <code>bind_transceiver_resp</code>: <code>system_id</code> <code>EllaSMSC</code> (Table 4-6).</td>
+</tr>
+</tbody>
+</table>
+<p>The log gives the reason of a refused bind, with the <code>system_id</code> and the client address, at level <code>info</code>.</p>
+<h3 id="bind-fields">Bind fields<a class="headerlink" href="#bind-fields" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>system_id</code></td>
+<td>Up to 15 characters (§4.1.1).</td>
+</tr>
+<tr>
+<td><code>password</code></td>
+<td>Up to 8 characters (§4.1.1).</td>
+</tr>
+<tr>
+<td><code>interface_version</code></td>
+<td>See <a href="#checks">Checks</a>.</td>
+</tr>
+<tr>
+<td><code>system_type</code>, <code>addr_ton</code>, <code>addr_npi</code>, <code>address_range</code></td>
+<td>Ignored.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="account-changes">Account changes<a class="headerlink" href="#account-changes" title="Permanent link">¶</a></h3>
+<p>Updating or deleting an ESME, or changing the role of or deleting its user, closes its sessions.</p>
+<h2 id="sessions">Sessions<a class="headerlink" href="#sessions" title="Permanent link">¶</a></h2>
+<h3 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sessions per ESME</td>
+<td>4, of any bind types.</td>
+</tr>
+<tr>
+<td>ESME accounts</td>
+<td>50.</td>
+</tr>
+<tr>
+<td>Inbound window</td>
+<td>64 requests handled at once per session. One more is answered <code>ESME_RTHROTTLED</code>. §2.5.2 recommends at most 10 outstanding.</td>
+</tr>
+<tr>
+<td>Outbound window</td>
+<td>10 <code>deliver_sm</code> without a response per session (§2.6.2).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="timers">Timers<a class="headerlink" href="#timers" title="Permanent link">¶</a></h3>
+<p>The timers are fixed (§7.2).</p>
+<table>
+<thead>
+<tr>
+<th>Timer</th>
+<th>Value</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>session_init_timer</code></td>
+<td>30 s</td>
+<td>A connection that has not bound is closed.</td>
+</tr>
+<tr>
+<td><code>enquire_link_timer</code></td>
+<td>30 s without a PDU received</td>
+<td>The SMSC sends <code>enquire_link</code>, and closes the session without a response within the <code>response_timer</code>.</td>
+</tr>
+<tr>
+<td><code>inactivity_timer</code></td>
+<td>90 s without a PDU received</td>
+<td>The session is closed.</td>
+</tr>
+<tr>
+<td><code>response_timer</code></td>
+<td>30 s</td>
+<td>A <code>deliver_sm</code> without a response is a temporary failure.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="session-end">Session end<a class="headerlink" href="#session-end" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>unbind</code> from the ESME</td>
+<td>The SMSC finishes the <code>submit_sm</code> in progress, answers <code>unbind_resp</code>, waits up to 2 s for the ESME to close the connection, then closes it (§2.2, §4.2). A <code>submit_sm</code> received meanwhile is answered <code>ESME_RINVBNDSTS</code>.</td>
+</tr>
+<tr>
+<td>SMSC shutdown</td>
+<td>The SMSC sends <code>unbind</code> to each session, waits up to 5 s for <code>unbind_resp</code>, then closes.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="submit_sm"><code>submit_sm</code><a class="headerlink" href="#submit_sm" title="Permanent link">¶</a></h2>
+<p>One <code>submit_sm</code> stores exactly one SMS-SUBMIT: one message of the <a href="../api/messages/">Messages API</a>, owned by the ESME's user, delivered as a message from the API.</p>
+<p><code>submit_sm_resp</code> carries <code>message_id</code>: the <code>id</code> of the message in the Messages API, in decimal. The SMSC answers once the message is stored.</p>
+<h3 id="addressing">Addressing<a class="headerlink" href="#addressing" title="Permanent link">¶</a></h3>
+<p>The destination is a phone, routed through the HSS (§5.2.5, §5.2.6, §5.2.9; TS 23.040 §9.1.2.5):</p>
+<table>
+<thead>
+<tr>
+<th><code>dest_addr_ton</code></th>
+<th><code>dest_addr_npi</code></th>
+<th><code>destination_addr</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1</code>, international</td>
+<td><code>0</code> or <code>1</code></td>
+<td>The international number.</td>
+</tr>
+<tr>
+<td><code>0</code>, unknown, or <code>2</code>, national</td>
+<td><code>0</code> or <code>1</code></td>
+<td>Converted to international with the operator's <a href="../api/operator/">numbering plan</a>.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Error</th>
+<th><code>command_status</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Another <code>dest_addr_ton</code></td>
+<td><code>ESME_RINVDSTTON</code></td>
+</tr>
+<tr>
+<td>Another <code>dest_addr_npi</code></td>
+<td><code>ESME_RINVDSTNPI</code></td>
+</tr>
+<tr>
+<td>Not 1 to 20 digits, or not 1 to 15 digits without a leading <code>0</code> once international</td>
+<td><code>ESME_RINVDSTADR</code></td>
+</tr>
+</tbody>
+</table>
+<p>The source is shown to the recipient as the sender (§5.2.8):</p>
+<table>
+<thead>
+<tr>
+<th><code>source_addr_ton</code></th>
+<th><code>source_addr_npi</code></th>
+<th><code>source_addr</code></th>
+<th>Sent to the phone as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1</code>, international</td>
+<td><code>0</code> or <code>1</code></td>
+<td>1 to 15 digits, no leading <code>0</code></td>
+<td>TON 1, NPI 1</td>
+</tr>
+<tr>
+<td><code>5</code>, alphanumeric</td>
+<td>Any</td>
+<td>1 to 11 letters and digits, single spaces between words, not all digits</td>
+<td>TON 5</td>
+</tr>
+<tr>
+<td><code>0</code>, <code>2</code>, <code>3</code>, <code>4</code> or <code>6</code></td>
+<td><code>0</code>, <code>1</code>, <code>3</code>, <code>4</code>, <code>8</code>, <code>9</code> or <code>10</code></td>
+<td>1 to 20 digits</td>
+<td>The TON and NPI given</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Error</th>
+<th><code>command_status</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Empty <code>source_addr</code></td>
+<td><code>ESME_RINVSRCADR</code>. The SMSC has no default source.</td>
+</tr>
+<tr>
+<td>A reserved <code>source_addr_ton</code></td>
+<td><code>ESME_RINVSRCTON</code></td>
+</tr>
+<tr>
+<td>Another <code>source_addr_npi</code></td>
+<td><code>ESME_RINVSRCNPI</code>. The NPIs accepted have the same value and meaning in §5.2.6 and TS 23.040 §9.1.2.5.</td>
+</tr>
+<tr>
+<td>Another <code>source_addr</code></td>
+<td><code>ESME_RINVSRCADR</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="data_coding"><code>data_coding</code><a class="headerlink" href="#data_coding" title="Permanent link">¶</a></h3>
+<p><code>data_coding</code> (§5.2.19) is mapped to a TP-DCS (TS 23.038 §4):</p>
+<table>
+<thead>
+<tr>
+<th><code>data_coding</code></th>
+<th>SMPP 3.4 meaning</th>
+<th>TP-DCS and user data</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0x00</code></td>
+<td>SMSC default alphabet</td>
+<td>TP-DCS <code>0x00</code>. The octets are GSM 7-bit default alphabet septets, one per octet, <code>0x1B</code> for the extension table. An octet over <code>0x7F</code>: <code>ESME_RSUBMITFAIL</code>. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td><code>0x01</code></td>
+<td>IA5 (ASCII)</td>
+<td>Converted to GSM 7-bit, TP-DCS <code>0x00</code>, or to UCS2, TP-DCS <code>0x08</code>, when a character has no GSM 7-bit equivalent. An octet over <code>0x7F</code>: <code>ESME_RSUBMITFAIL</code>.</td>
+</tr>
+<tr>
+<td><code>0x02</code></td>
+<td>Octet unspecified</td>
+<td>TP-DCS <code>0x04</code>, 8-bit.</td>
+</tr>
+<tr>
+<td><code>0x03</code></td>
+<td>Latin-1</td>
+<td>Converted to GSM 7-bit, TP-DCS <code>0x00</code>, or to UCS2, TP-DCS <code>0x08</code>, when a character has no GSM 7-bit equivalent.</td>
+</tr>
+<tr>
+<td><code>0x04</code></td>
+<td>Octet unspecified</td>
+<td>TP-DCS <code>0x04</code>, 8-bit.</td>
+</tr>
+<tr>
+<td><code>0x08</code></td>
+<td>UCS2</td>
+<td>TP-DCS <code>0x08</code>, octets copied. An odd number of octets: <code>ESME_RSUBMITFAIL</code>.</td>
+</tr>
+<tr>
+<td><code>0xF0</code> to <code>0xF7</code></td>
+<td>GSM message class control</td>
+<td>Copied.</td>
+</tr>
+<tr>
+<td><code>0xC0</code> to <code>0xDF</code></td>
+<td>GSM message waiting indication</td>
+<td><code>ESME_RSUBMITFAIL</code>.</td>
+</tr>
+<tr>
+<td><code>0x05</code> to <code>0x07</code>, <code>0x09</code> to <code>0xBF</code>, <code>0xE0</code> to <code>0xEF</code>, <code>0xF8</code> to <code>0xFF</code></td>
+<td>Other character sets, or reserved</td>
+<td><code>ESME_RSUBMITFAIL</code>. SMPP 3.4 has no status for an invalid <code>data_coding</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>With a GSM 7-bit TP-DCS, the SMSC packs the septets after the user data header, with fill bits (TS 23.040 §9.2.3.24).</p>
+<p><strong><code>dest_addr_subunit</code></strong> (§5.3.2.1, §5.2.19 note e) sets the message class bits of TP-DCS:</p>
+<table>
+<thead>
+<tr>
+<th><code>dest_addr_subunit</code></th>
+<th>Class</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code>, <code>5</code> to <code>255</code></td>
+<td>Unchanged.</td>
+</tr>
+<tr>
+<td><code>1</code>, MS display</td>
+<td>Class 0</td>
+</tr>
+<tr>
+<td><code>2</code>, mobile equipment</td>
+<td>Class 1</td>
+</tr>
+<tr>
+<td><code>3</code>, smart card</td>
+<td>Class 2</td>
+</tr>
+<tr>
+<td><code>4</code>, external unit</td>
+<td>Class 3</td>
+</tr>
+</tbody>
+</table>
+<p>A different class already in <code>data_coding</code>, or a TP-DCS without class bits: <code>ESME_RINVOPTPARAMVAL</code>.</p>
+<p><strong>(U)SIM data download.</strong> With <code>protocol_id</code> <code>0x7F</code>, <code>data_coding</code> <code>0x02</code> or <code>0x04</code> and no <code>dest_addr_subunit</code>, TP-DCS is <code>0xF6</code>, 8-bit data, class 2. <strong>Convention</strong>: TS 23.040 §9.2.3.9 requires class 2 for (U)SIM data download.</p>
+<h3 id="esm_class"><code>esm_class</code><a class="headerlink" href="#esm_class" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Bits (§5.2.12)</th>
+<th>Value</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-0, messaging mode</td>
+<td><code>00</code> default, <code>11</code> store and forward</td>
+<td>Store and forward.</td>
+</tr>
+<tr>
+<td>1-0</td>
+<td><code>01</code> datagram, <code>10</code> transaction</td>
+<td><code>ESME_RINVESMCLASS</code></td>
+</tr>
+<tr>
+<td>5-2, message type</td>
+<td><code>0010</code>, <code>0100</code>, ESME acknowledgements</td>
+<td><code>ESME_RINVESMCLASS</code></td>
+</tr>
+<tr>
+<td>5-2</td>
+<td>Other</td>
+<td>Normal message (§3.3).</td>
+</tr>
+<tr>
+<td>6, UDHI</td>
+<td><code>1</code></td>
+<td>TP-UDHI = 1. The user data starts with the user data header, its length octet included. A header longer than the user data: <code>ESME_RSUBMITFAIL</code>.</td>
+</tr>
+<tr>
+<td>7, reply path</td>
+<td><code>1</code></td>
+<td><code>ESME_RINVESMCLASS</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="protocol_id"><code>protocol_id</code><a class="headerlink" href="#protocol_id" title="Permanent link">¶</a></h3>
+<p>Copied to TP-PID (§5.2.13; TS 23.040 §9.2.3.9):</p>
+<table>
+<thead>
+<tr>
+<th><code>protocol_id</code></th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0x20</code> to <code>0x3E</code>, telematic interworking</td>
+<td><code>ESME_RSUBMITFAIL</code></td>
+</tr>
+<tr>
+<td><code>0x41</code> to <code>0x47</code>, replace short message types 1 to 7</td>
+<td>Replaces the pending message of the same type, from the same source, submitted by the same ESME. A message from a phone, the API or another ESME is never replaced. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td><code>0x48</code>, device triggering</td>
+<td>Needs an application port addressing information element, else <code>ESME_RSUBMITFAIL</code>.</td>
+</tr>
+<tr>
+<td><code>0x7C</code>, <code>0x7F</code></td>
+<td>Need message class 2 after the <code>data_coding</code> mapping, else <code>ESME_RSUBMITFAIL</code>.</td>
+</tr>
+<tr>
+<td>Other</td>
+<td>Copied.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="registered_delivery"><code>registered_delivery</code><a class="headerlink" href="#registered_delivery" title="Permanent link">¶</a></h3>
+<p><code>registered_delivery</code> (§5.2.17) asks for notifications to the ESME. It does not set TP-Status-Report-Request.</p>
+<table>
+<thead>
+<tr>
+<th>Bits</th>
+<th>Value</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1-0</td>
+<td><code>00</code></td>
+<td>No receipt.</td>
+</tr>
+<tr>
+<td>1-0</td>
+<td><code>01</code></td>
+<td>A <a href="#delivery-receipts">receipt</a> on the final status.</td>
+</tr>
+<tr>
+<td>1-0</td>
+<td><code>10</code></td>
+<td>A receipt on failure only: <code>failed</code>, <code>expired</code> or <code>replaced</code>.</td>
+</tr>
+<tr>
+<td>1-0</td>
+<td><code>11</code></td>
+<td>Reserved: no receipt (§3.3).</td>
+</tr>
+<tr>
+<td>3-2</td>
+<td><code>10</code> or <code>11</code>, SME Manual/User Acknowledgement</td>
+<td>The <a href="#sim-answers">SIM answer</a>.</td>
+</tr>
+<tr>
+<td>3-2</td>
+<td><code>01</code>, SME Delivery Acknowledgement</td>
+<td>Accepted, not honoured.</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>1</code>, intermediate notification</td>
+<td>Accepted, not honoured.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="validity-and-scheduling">Validity and scheduling<a class="headerlink" href="#validity-and-scheduling" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>validity_period</code></td>
+<td>Empty: the default validity of the <a href="../api/delivery/">delivery settings</a>. Absolute or relative (§7.1.1): the end of the validity period. In the past or malformed: <code>ESME_RINVEXPIRY</code>. The SMS-DELIVER carries no validity period.</td>
+</tr>
+<tr>
+<td><code>schedule_delivery_time</code></td>
+<td>Not empty: <code>ESME_RINVSCHED</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>A two-digit year is read within 49 years before and 50 years after the current year. <strong>Convention</strong>.</p>
+<h3 id="user-data-and-optional-parameters">User data and optional parameters<a class="headerlink" href="#user-data-and-optional-parameters" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>short_message</code> (§5.2.22), <code>message_payload</code> (§5.3.2.32)</td>
+<td>One or the other. Both: <code>ESME_ROPTPARNOTALLWD</code>.</td>
+</tr>
+<tr>
+<td><code>sm_length</code></td>
+<td>Must match <code>short_message</code>. <code>255</code>, or a mismatch: <code>ESME_RINVMSGLEN</code>.</td>
+</tr>
+<tr>
+<td>User data</td>
+<td>Must fit one TPDU once mapped: 140 octets, or 160 septets, the user data header included. Else <code>ESME_RINVMSGLEN</code>. The SMSC does not split user data.</td>
+</tr>
+<tr>
+<td><code>sar_msg_ref_num</code>, <code>sar_total_segments</code>, <code>sar_segment_seqnum</code></td>
+<td>All three: a concatenation information element, <code>0x00</code> with a reference up to 255, else <code>0x08</code> (TS 23.040 §9.2.3.24.1, §9.2.3.24.8). Not all three: ignored. A total of 0, or a sequence number of 0 or over the total: <code>ESME_RINVOPTPARAMVAL</code>.</td>
+</tr>
+<tr>
+<td><code>source_port</code>, <code>destination_port</code></td>
+<td>A 16-bit application port addressing information element, <code>0x05</code> (TS 23.040 §9.2.3.24.4). A missing one of the two is port 0. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td><code>sar_*</code> or ports with UDHI set</td>
+<td><code>ESME_ROPTPARNOTALLWD</code> (§5.2.12).</td>
+</tr>
+<tr>
+<td><code>user_message_reference</code></td>
+<td>Echoed in the receipt and the SIM answer.</td>
+</tr>
+<tr>
+<td><code>sm_default_msg_id</code></td>
+<td><code>1</code> to <code>254</code>: <code>ESME_RINVDFTMSGID</code>. The SMSC has no canned messages.</td>
+</tr>
+<tr>
+<td><code>replace_if_present_flag</code></td>
+<td><code>1</code>: <code>ESME_RINVSUBREP</code>. Other values: taken as <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>service_type</code>, <code>priority_flag</code>, other optional parameters</td>
+<td>Ignored.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="order-of-submit_sm_resp-and-deliver_sm">Order of <code>submit_sm_resp</code> and <code>deliver_sm</code><a class="headerlink" href="#order-of-submit_sm_resp-and-deliver_sm" title="Permanent link">¶</a></h3>
+<p>The message is handed to delivery once <code>submit_sm_resp</code> is written. A notification on the message can still reach the ESME before its <code>submit_sm_resp</code> when another message to the same recipient is being delivered.</p>
+<h2 id="notifications">Notifications<a class="headerlink" href="#notifications" title="Permanent link">¶</a></h2>
+<p>When a message from an ESME reaches its final status, the SMSC queues the SIM answer, then the receipt, that the <code>submit_sm</code> asked for, and sends them as <code>deliver_sm</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Session</td>
+<td>A receiver or transceiver session of the ESME that submitted the message, the one with the fewest <code>deliver_sm</code> in flight. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td>No receiving session</td>
+<td>Notifications wait until the ESME binds as receiver or transceiver. They survive a restart.</td>
+</tr>
+<tr>
+<td>Order</td>
+<td>Notifications on one message go one at a time: the receipt waits until the SIM answer is acknowledged, rejected or expired.</td>
+</tr>
+<tr>
+<td><code>deliver_sm_resp</code> <code>ESME_ROK</code></td>
+<td>Acknowledged.</td>
+</tr>
+<tr>
+<td><code>deliver_sm_resp</code> <code>ESME_RX_P_APPN</code> or <code>ESME_RX_R_APPN</code></td>
+<td>Rejected. Not sent again.</td>
+</tr>
+<tr>
+<td><code>ESME_RX_T_APPN</code>, another status, <code>generic_nack</code>, or no response within the <code>response_timer</code></td>
+<td>Sent again after 1 minute, then doubling, at most every hour.</td>
+</tr>
+<tr>
+<td>Session closed or unbinding during the send</td>
+<td>Sent again at once on another receiving session, or on the next bind.</td>
+</tr>
+<tr>
+<td>Expiry</td>
+<td>The default validity of the <a href="../api/delivery/">delivery settings</a>, from the message's final status. An expired notification is not sent.</td>
+</tr>
+<tr>
+<td>ESME deleted</td>
+<td>Its notifications are dropped.</td>
+</tr>
+</tbody>
+</table>
+<p>Notifications are delivered at least once. The SIM answer and the receipt of a message share its <code>receipted_message_id</code>, and differ by the message type of <code>esm_class</code>.</p>
+<h3 id="delivery-receipts">Delivery receipts<a class="headerlink" href="#delivery-receipts" title="Permanent link">¶</a></h3>
+<p>A receipt is an SMSC Delivery Receipt (§2.11, §4.6.1, Appendix B):</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>source_addr_ton</code>, <code>source_addr_npi</code>, <code>source_addr</code></td>
+<td>The destination of the message, as submitted.</td>
+</tr>
+<tr>
+<td><code>dest_addr_ton</code>, <code>dest_addr_npi</code>, <code>destination_addr</code></td>
+<td>The source of the message, as submitted.</td>
+</tr>
+<tr>
+<td><code>esm_class</code></td>
+<td><code>0x04</code>, SMSC Delivery Receipt.</td>
+</tr>
+<tr>
+<td><code>protocol_id</code>, <code>priority_flag</code>, <code>registered_delivery</code></td>
+<td><code>0</code>.</td>
+</tr>
+<tr>
+<td><code>data_coding</code></td>
+<td><code>0x01</code>, IA5. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td><code>short_message</code></td>
+<td>The receipt text.</td>
+</tr>
+<tr>
+<td><code>receipted_message_id</code> (<code>0x001E</code>)</td>
+<td>The <code>message_id</code>.</td>
+</tr>
+<tr>
+<td><code>message_state</code> (<code>0x0427</code>)</td>
+<td>See the table below.</td>
+</tr>
+<tr>
+<td><code>user_message_reference</code> (<code>0x0204</code>)</td>
+<td>That of the <code>submit_sm</code>, when present.</td>
+</tr>
+</tbody>
+</table>
+<p>The text follows the example format of Appendix B:</p>
+<div class="highlight"><pre><span></span><code>id:42 sub:001 dlvrd:001 submit date:2610281430 done date:2610281431 stat:DELIVRD err:000 text:
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>The <code>message_id</code>, not padded.</td>
+</tr>
+<tr>
+<td><code>sub</code></td>
+<td><code>001</code>.</td>
+</tr>
+<tr>
+<td><code>dlvrd</code></td>
+<td><code>001</code> for a delivered message, else <code>000</code>.</td>
+</tr>
+<tr>
+<td><code>submit date</code></td>
+<td>When the SMSC received the message, <code>YYMMDDhhmm</code>, UTC.</td>
+</tr>
+<tr>
+<td><code>done date</code></td>
+<td>When the message reached its final status, <code>YYMMDDhhmm</code>, UTC. For a replaced message, when it was replaced. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td><code>stat</code>, <code>err</code></td>
+<td>See the table below.</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>Empty.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Message status</th>
+<th><code>stat</code></th>
+<th><code>message_state</code> (§5.2.28)</th>
+<th><code>err</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>delivered</code></td>
+<td><code>DELIVRD</code></td>
+<td><code>2</code></td>
+<td><code>000</code></td>
+</tr>
+<tr>
+<td><code>expired</code></td>
+<td><code>EXPIRED</code></td>
+<td><code>3</code></td>
+<td><code>070</code>, TP-Status <code>0x46</code></td>
+</tr>
+<tr>
+<td><code>replaced</code></td>
+<td><code>DELETED</code></td>
+<td><code>4</code></td>
+<td><code>002</code>, TP-Status <code>0x02</code></td>
+</tr>
+<tr>
+<td><code>failed</code></td>
+<td><code>UNDELIV</code></td>
+<td><code>5</code></td>
+<td>The TP-Status of the failure, such as <code>066</code>, TP-Status <code>0x42</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>err</code> is the TP-Status (TS 23.040 §9.2.3.15), in decimal. <strong>Convention</strong>. <code>network_error_code</code> is not sent.</p>
+<h3 id="sim-answers">SIM answers<a class="headerlink" href="#sim-answers" title="Permanent link">¶</a></h3>
+<p>The SIM answer is the TP-User-Data of the SMS-DELIVER-REPORT of the last delivery attempt (TS 23.040 §9.2.2.1a), from the RP-ACK, or from the RP-ERROR of an SM delivery failure. For a (U)SIM data download message, it is the SIM's Response Packet (TS 31.115 §4.4; TS 31.111 §7.1.1.1).</p>
+<p>It is sent when <code>registered_delivery</code> bits 3-2 are <code>10</code> or <code>11</code>, for any <code>protocol_id</code>, as an SME Manual/User Acknowledgement (§2.11). <strong>Convention</strong>.</p>
+<p>No SIM answer is sent for a replaced message, or when the SMS-DELIVER-REPORT has no TP-User-Data.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Addresses</td>
+<td>As in a receipt.</td>
+</tr>
+<tr>
+<td><code>esm_class</code> message type</td>
+<td><code>0100</code>, SME Manual/User Acknowledgement. <strong>Convention</strong>.</td>
+</tr>
+<tr>
+<td><code>esm_class</code> UDHI</td>
+<td><code>1</code> when the report has TP-UDHI, or when the message's TP-PID is <code>0x7F</code> and the user data starts with a valid user data header (TS 31.115 §4.1). Else <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>esm_class</code>, typical</td>
+<td><code>0x50</code></td>
+</tr>
+<tr>
+<td><code>protocol_id</code></td>
+<td>The report's TP-PID, else the message's.</td>
+</tr>
+<tr>
+<td><code>data_coding</code></td>
+<td>See the table below.</td>
+</tr>
+<tr>
+<td><code>short_message</code></td>
+<td>The TP-User-Data, its user data header included, such as <code>027100…</code>.</td>
+</tr>
+<tr>
+<td><code>receipted_message_id</code></td>
+<td>The <code>message_id</code>. <strong>Convention</strong>: §5.3.2.12 defines it for receipts.</td>
+</tr>
+<tr>
+<td><code>message_state</code></td>
+<td>Absent.</td>
+</tr>
+<tr>
+<td><code>user_message_reference</code></td>
+<td>That of the <code>submit_sm</code>, when present.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Report TP-DCS</th>
+<th><code>data_coding</code></th>
+<th><code>short_message</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GSM 7-bit, or no TP-DCS (TS 23.040 §9.2.3.27)</td>
+<td><code>0x00</code></td>
+<td>Septets, one per octet.</td>
+</tr>
+<tr>
+<td>UCS2</td>
+<td><code>0x08</code></td>
+<td>The octets.</td>
+</tr>
+<tr>
+<td>8-bit</td>
+<td>That of the <code>submit_sm</code> when it is <code>0x02</code>, <code>0x04</code> or <code>0xF4</code> to <code>0xF7</code>, else <code>0x04</code></td>
+<td>The octets.</td>
+</tr>
+</tbody>
+</table>
+<p>A SIM that rejects a (U)SIM data download message answers with an RP-ERROR whose TP-Failure-Cause is <code>0xD5</code>, (U)SIM data download error. The message fails at once with TP-Status <code>0x42</code>: the ESME gets the SIM answer, then the receipt <code>stat:UNDELIV err:066</code>.</p>
+<h2 id="command_status-values"><code>command_status</code> values<a class="headerlink" href="#command_status-values" title="Permanent link">¶</a></h2>
+<p>Values the SMSC sends (§5.1.3):</p>
+<table>
+<thead>
+<tr>
+<th><code>command_status</code></th>
+<th>Value</th>
+<th>Sent in</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ESME_ROK</code></td>
+<td><code>0x00000000</code></td>
+<td>Any response</td>
+<td>Success.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVMSGLEN</code></td>
+<td><code>0x00000001</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>sm_length</code>, or user data longer than one TPDU.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVCMDLEN</code></td>
+<td><code>0x00000002</code></td>
+<td><code>generic_nack</code></td>
+<td><code>command_length</code>, or a body of the wrong length.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVCMDID</code></td>
+<td><code>0x00000003</code></td>
+<td><code>generic_nack</code></td>
+<td>Unsupported or undefined <code>command_id</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVBNDSTS</code></td>
+<td><code>0x00000004</code></td>
+<td>Response</td>
+<td>A request that the session state does not allow.</td>
+</tr>
+<tr>
+<td><code>ESME_RALYBND</code></td>
+<td><code>0x00000005</code></td>
+<td>Bind response</td>
+<td>A bind in a bound state.</td>
+</tr>
+<tr>
+<td><code>ESME_RSYSERR</code></td>
+<td><code>0x00000008</code></td>
+<td><code>submit_sm_resp</code></td>
+<td>The message could not be stored or encoded.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVSRCADR</code></td>
+<td><code>0x0000000A</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>source_addr</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVDSTADR</code></td>
+<td><code>0x0000000B</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>destination_addr</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RBINDFAIL</code></td>
+<td><code>0x0000000D</code></td>
+<td>Bind response</td>
+<td>Any refused bind.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVSUBREP</code></td>
+<td><code>0x00000042</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>replace_if_present_flag</code> <code>1</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVESMCLASS</code></td>
+<td><code>0x00000043</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>esm_class</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RSUBMITFAIL</code></td>
+<td><code>0x00000045</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>data_coding</code>, <code>protocol_id</code>, the user data header, or GSM 7-bit, IA5 or UCS2 user data.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVSRCTON</code></td>
+<td><code>0x00000048</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>source_addr_ton</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVSRCNPI</code></td>
+<td><code>0x00000049</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>source_addr_npi</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVDSTTON</code></td>
+<td><code>0x00000050</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>dest_addr_ton</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVDSTNPI</code></td>
+<td><code>0x00000051</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>dest_addr_npi</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RTHROTTLED</code></td>
+<td><code>0x00000058</code></td>
+<td><code>submit_sm_resp</code></td>
+<td>Inbound window full.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVSCHED</code></td>
+<td><code>0x00000061</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>schedule_delivery_time</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVEXPIRY</code></td>
+<td><code>0x00000062</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>validity_period</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVDFTMSGID</code></td>
+<td><code>0x00000063</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>sm_default_msg_id</code>.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVOPTPARSTREAM</code></td>
+<td><code>0x000000C0</code></td>
+<td>Response</td>
+<td>Optional parameters that do not decode.</td>
+</tr>
+<tr>
+<td><code>ESME_ROPTPARNOTALLWD</code></td>
+<td><code>0x000000C1</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>short_message</code> with <code>message_payload</code>; <code>sar_*</code> or ports with UDHI.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVPARLEN</code></td>
+<td><code>0x000000C2</code></td>
+<td>Response</td>
+<td>A field over its maximum length, or a TLV of the wrong length.</td>
+</tr>
+<tr>
+<td><code>ESME_RINVOPTPARAMVAL</code></td>
+<td><code>0x000000C4</code></td>
+<td><code>submit_sm_resp</code></td>
+<td><code>sar_*</code> values; <code>dest_addr_subunit</code> against <code>data_coding</code>; a TLV that should be a C-Octet String and is not.</td>
+</tr>
+<tr>
+<td><code>ESME_RUNKNOWNERR</code></td>
+<td><code>0x000000FF</code></td>
+<td><code>generic_nack</code></td>
+<td>Invalid <code>sequence_number</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>An error response has no body (§4.1.2, §4.1.4, §4.4.2), except <code>bind_transceiver_resp</code>, which carries <code>system_id</code> (Table 4-6). The SMSC logs the reason of a refused <code>submit_sm</code> at level <code>debug</code>, with the <code>system_id</code>.</p>
+<p>Values the SMSC acts on in <code>deliver_sm_resp</code>: see <a href="#notifications">Notifications</a>.</p>
+<h2 id="conventions">Conventions<a class="headerlink" href="#conventions" title="Permanent link">¶</a></h2>
+<p>Behaviours that SMPP 3.4 does not define:</p>
+<table>
+<thead>
+<tr>
+<th>Behaviour</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TLS from the first octet.</td>
+<td><a href="#transport">Transport</a></td>
+</tr>
+<tr>
+<td>A maximum <code>command_length</code> of 68 KiB.</td>
+<td><a href="#transport">Transport</a></td>
+</tr>
+<tr>
+<td><code>data_coding</code> <code>0x00</code> is the GSM 7-bit default alphabet, unpacked.</td>
+<td><a href="#data_coding"><code>data_coding</code></a></td>
+</tr>
+<tr>
+<td><code>data_coding</code> <code>0x02</code> or <code>0x04</code> with <code>protocol_id</code> <code>0x7F</code> becomes TP-DCS <code>0xF6</code>, class 2.</td>
+<td><a href="#data_coding"><code>data_coding</code></a></td>
+</tr>
+<tr>
+<td>A replace type <code>protocol_id</code> replaces only messages of the same ESME.</td>
+<td><a href="#protocol_id"><code>protocol_id</code></a></td>
+</tr>
+<tr>
+<td>A two-digit year is within 49 years before and 50 years after the current year.</td>
+<td><a href="#validity-and-scheduling">Validity and scheduling</a></td>
+</tr>
+<tr>
+<td>A missing <code>source_port</code> or <code>destination_port</code> is port 0.</td>
+<td><a href="#user-data-and-optional-parameters">User data and optional parameters</a></td>
+</tr>
+<tr>
+<td>Notifications go to a receiving session of the ESME that submitted the message.</td>
+<td><a href="#notifications">Notifications</a></td>
+</tr>
+<tr>
+<td>Receipts use <code>data_coding</code> <code>0x01</code>.</td>
+<td><a href="#delivery-receipts">Delivery receipts</a></td>
+</tr>
+<tr>
+<td>A replaced message's receipt is <code>DELETED</code>, with <code>done date</code> the replacement time.</td>
+<td><a href="#delivery-receipts">Delivery receipts</a></td>
+</tr>
+<tr>
+<td>Receipt <code>err</code> is the TP-Status in decimal.</td>
+<td><a href="#delivery-receipts">Delivery receipts</a></td>
+</tr>
+<tr>
+<td>The SIM's answer is an SME Manual/User Acknowledgement, with <code>receipted_message_id</code>.</td>
+<td><a href="#sim-answers">SIM answers</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="not-supported">Not supported<a class="headerlink" href="#not-supported" title="Permanent link">¶</a></h2>
+<ul>
+<li>SMPP 3.3 and earlier, and SMPP 5.0.</li>
+<li><code>query_sm</code>, <code>replace_sm</code>, <code>cancel_sm</code>, <code>submit_multi</code>, <code>data_sm</code>, <code>alert_notification</code> and <code>outbind</code>.</li>
+<li>Messages from phones to ESMEs, such as a Response Packet that the SIM sends in an SMS-SUBMIT (TS 31.115 §4.2).</li>
+<li>Splitting user data longer than one TPDU.</li>
+<li>Scheduled delivery, the datagram and transaction modes, SME delivery acknowledgements and intermediate notifications.</li>
+<li>The PROXY protocol.</li>
+</ul>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer">
+        
+          
+          <a href="../connectivity/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Connectivity">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Connectivity
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../performance/" class="md-footer__link md-footer__link--next" aria-label="Next: Performance">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Performance
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"></path></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © 2026 Ella Networks
+    </div>
+  
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://www.ellanetworks.com" target="_blank" rel="noopener" title="Ella Networks website" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M351.9 280H161c2.9 64.5 17.2 123.9 37.5 167.4 11.4 24.5 23.7 41.8 35.1 52.4 11.2 10.5 18.9 12.2 22.9 12.2s11.7-1.7 22.9-12.2c11.4-10.6 23.7-28 35.1-52.4 20.3-43.5 34.6-102.9 37.5-167.4zm-191-48h190.9c-2.8-64.5-17.1-123.9-37.4-167.4-11.4-24.4-23.7-41.8-35.1-52.4C268.1 1.7 260.4 0 256.4 0s-11.7 1.7-22.9 12.2c-11.4 10.6-23.7 28-35.1 52.4-20.3 43.5-34.6 102.9-37.5 167.4m-48 0c3.5-85.6 25.6-165.1 57.9-217.3C78.7 47.3 10.9 131.2 1.5 232zM1.5 280c9.4 100.8 77.2 184.7 169.3 217.3-32.3-52.2-54.4-131.7-57.9-217.3zm398.4 0c-3.5 85.6-25.6 165.1-57.9 217.3 92.1-32.7 159.9-116.5 169.3-217.3zm111.4-48C501.9 131.2 434.1 47.3 342 14.7c32.3 52.2 54.4 131.7 57.9 217.3z"></path></svg>
+    </a>
+  
+    
+    
+    
+    
+    <a href="https://www.youtube.com/@ellanetworks" target="_blank" rel="noopener" title="Ella Networks on YouTube" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M549.7 124.1c-6.2-23.7-24.8-42.3-48.3-48.6C458.9 64 288.1 64 288.1 64S117.3 64 74.7 75.5c-23.5 6.3-42 24.9-48.3 48.6C15 167 15 256.4 15 256.4s0 89.4 11.4 132.3c6.3 23.6 24.8 41.5 48.3 47.8C117.3 448 288.1 448 288.1 448s170.8 0 213.4-11.5c23.5-6.3 42-24.2 48.3-47.8 11.4-42.9 11.4-132.3 11.4-132.3s0-89.4-11.4-132.3zM232.2 337.6V175.2l142.7 81.2z"></path></svg>
+    </a>
+  
+    
+    
+    
+    
+    <a href="https://www.linkedin.com/company/ellanetworks" target="_blank" rel="noopener" title="Ella Networks on LinkedIn" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M416 32H31.9C14.3 32 0 46.5 0 64.3v383.4C0 465.5 14.3 480 31.9 480H416c17.6 0 32-14.5 32-32.3V64.3c0-17.8-14.4-32.3-32-32.3M135.4 416H69V202.2h66.5V416zM102.2 96a38.5 38.5 0 1 1 0 77 38.5 38.5 0 1 1 0-77m282.1 320h-66.4V312c0-24.8-.5-56.7-34.5-56.7-34.6 0-39.9 27-39.9 54.9V416h-66.4V202.2h63.7v29.2h.9c8.9-16.8 30.6-34.5 62.9-34.5 67.2 0 79.7 44.3 79.7 101.9z"></path></svg>
+    </a>
+  
+    
+    
+    
+    
+    <a href="https://www.github.com/ellanetworks/smsc" target="_blank" rel="noopener" title="Ella Networks on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.footer", "navigation.indexes", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>
