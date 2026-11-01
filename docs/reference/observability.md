@@ -45,13 +45,13 @@ Ella SMSC exports [OpenTelemetry](https://opentelemetry.io/) traces when `teleme
 
 ### Spans
 
-| Span | Kind | Description | `error.type` |
-| --- | --- | --- | --- |
-| `{method} {route}` | Server | A request to the API, except `/api/v1/livez`, `/api/v1/readyz`, `/api/v1/metrics` and `/api/v1/pprof/`. Links to the caller's `traceparent`. | None. A 5xx response has the Error status. |
-| `submit_sm` | Server | A `submit_sm` from an ESME. | `ESME_RSYSERR`, `_OTHER` |
-| `deliver {origin_host}` | Consumer | A delivery attempt of a short message or status report, named after the Diameter Origin-Host of the SMSC. Root span, linked to the span that created the message. | `failed`, `expired`, `_OTHER` |
-| `deliver_sm` | Client | A delivery receipt or SIM answer to an ESME. Root span, linked to the span that created the message. | A `command_status` that SMPP 3.4 names, `session_closed`, `timeout`, `canceled`, `_OTHER` |
-| `S6c/{command}`, `SGd/{command}` | Server, Client | A Diameter request. Child of the peer's trace context. | Client: a Result-Code from 3000, `closed`, `not_connected`, `unknown_peer`, `application_unsupported`, `unable_to_deliver`, `loop_detected`, `not_proxiable`, `timeout`, `canceled`, `_OTHER`. Server: `3001`, `3002`, `3004`, `5012`, `overloaded`, `shutting_down`. |
+| Span | Kind | Description |
+| --- | --- | --- |
+| `{method} {route}` | Server | A request to the API, except `/api/v1/livez`, `/api/v1/readyz`, `/api/v1/metrics` and `/api/v1/pprof/`. Links to the caller's `traceparent`. |
+| `submit_sm` | Server | A `submit_sm` from an ESME. |
+| `deliver {origin_host}` | Consumer | A delivery attempt of a short message or status report, named after the Diameter Origin-Host of the SMSC. A new trace, linked to the span that created the message. |
+| `deliver_sm` | Client | A delivery receipt or SIM answer to an ESME. A new trace, linked to the span that created the message. |
+| `S6c/{command}`, `SGd/{command}` | Server, Client | A Diameter request. |
 
 ### Attributes
 
