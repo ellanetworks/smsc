@@ -244,7 +244,7 @@ func (d *Deliverer) Run(ctx context.Context) {
 
 			switch {
 			case err != nil:
-				d.Logger.Error("delivery worker failed", slog.Any("error", err))
+				d.Logger.ErrorContext(ctx, "delivery worker failed", slog.Any("error", err))
 
 				wait = errorBackoff
 			case ok:
@@ -253,9 +253,7 @@ func (d *Deliverer) Run(ctx context.Context) {
 				running++
 
 				go func() {
-					if err := d.process(ctx, m); err != nil {
-						d.Logger.Error("failed to record delivery outcome", slog.Int64("message_id", m.ID), slog.Any("error", err))
-					}
+					_ = d.process(ctx, m) // It logs its failure.
 
 					done <- m.MSISDN
 				}()
@@ -264,7 +262,7 @@ func (d *Deliverer) Run(ctx context.Context) {
 			default:
 				at, ok, err := d.Store.NextWakeup(ctx, d.busyRecipients())
 				if err != nil {
-					d.Logger.Error("delivery worker failed to read the next wakeup", slog.Any("error", err))
+					d.Logger.ErrorContext(ctx, "delivery worker failed to read the next wakeup", slog.Any("error", err))
 
 					wait = errorBackoff
 				} else if ok {
@@ -333,12 +331,13 @@ func (d *Deliverer) finish(ctx context.Context, msisdn string) {
 	}
 
 	if _, err := d.Store.AlertRecipient(ctx, msisdn, d.Now()); err != nil {
-		d.Logger.Error("failed to apply a service centre alert", slog.String("msisdn", msisdn), slog.Any("error", err))
+		d.Logger.ErrorContext(ctx, "failed to apply a service centre alert", slog.String("msisdn", msisdn), slog.Any("error", err))
 	}
 }
 
 // process delivers the message, then the recipient's next messages for as long as each delivery announced the next.
 // The recipient stays busy throughout, so it never has more than one SMS-DELIVER outstanding (TS 23.040 clause 6.2).
+// It logs the failure that stops it, and returns it.
 func (d *Deliverer) process(stop context.Context, m db.Message) error {
 	ctx := context.WithoutCancel(stop)
 
@@ -355,8 +354,15 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 		}
 
 		n, ok, err := d.Store.NextDueFor(ctx, m.MSISDN, m.ID, d.Now())
-		if err != nil || !ok {
+		if err != nil {
+			d.Logger.ErrorContext(ctx, "failed to read the next message to the recipient of a short message",
+				slog.Int64("message_id", m.ID), slog.Any("error", err))
+
 			return err
+		}
+
+		if !ok {
+			return nil
 		}
 
 		m, s = n, next
@@ -386,6 +392,7 @@ func (d *Deliverer) deliverAndSettle(stop context.Context, m db.Message, s *sess
 
 	defer func() {
 		if err != nil {
+			d.Logger.ErrorContext(stop, "failed to record delivery outcome", slog.Int64("message_id", m.ID), slog.Any("error", err))
 			span.SetAttributes(semconv.ErrorTypeOther)
 			span.SetStatus(codes.Error, err.Error())
 		}
@@ -461,13 +468,13 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, reported tpdu.Status, at time.Time) error {
 	report, err := statusreport.For(m, reported, at, d.Settings())
 	if err != nil {
-		d.Logger.Error("failed to make the status report on a short message", slog.Int64("message_id", m.ID),
+		d.Logger.ErrorContext(ctx, "failed to make the status report on a short message", slog.Int64("message_id", m.ID),
 			slog.Any("error", err))
 	}
 
 	err = d.Store.CompleteMessage(ctx, m.ID, status, at, report, uint8(reported))
 	if errors.Is(err, db.ErrNotPending) {
-		d.Logger.Debug("short message replaced during its delivery", slog.Int64("message_id", m.ID),
+		d.Logger.DebugContext(ctx, "short message replaced during its delivery", slog.Int64("message_id", m.ID),
 			slog.String("status", string(status)))
 		settled(ctx, string(db.StatusReplaced))
 
@@ -499,7 +506,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 	log := d.Logger.With(slog.Int64("message_id", m.ID))
 
 	if !now.Before(m.ExpiresAt) {
-		log.Debug("short message expired before delivery")
+		log.DebugContext(ctx, "short message expired before delivery")
 		return result{outcome: expired, status: tpdu.StatusValidityPeriodExpired}, nil
 	}
 
@@ -519,12 +526,12 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 			err error
 		)
 
-		routing, hss, err = d.Router.SendRoutingInfoForSM(sri, d.routingRequest(log, m))
+		routing, hss, err = d.Router.SendRoutingInfoForSM(sri, d.routingRequest(ctx, log, m))
 
 		cancel()
 
 		if err != nil && stop.Err() != nil {
-			log.Debug("short message routing lookup interrupted by shutdown")
+			log.DebugContext(ctx, "short message routing lookup interrupted by shutdown")
 			return result{outcome: interrupted}, nil
 		}
 
@@ -534,7 +541,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		d.record(ctx, log, m.ID, routingAttempt)
 
 		if err != nil {
-			log.Debug("routing lookup for short message failed", slog.Any("error", err))
+			log.DebugContext(ctx, "routing lookup for short message failed", slog.Any("error", err))
 
 			return d.routingFailed(ctx, m, err), nil
 		}
@@ -546,25 +553,25 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 
 	deliver, err := buildDeliver(m)
 	if err != nil {
-		log.Error("stored short message cannot be turned into a TPDU to deliver", slog.Any("error", err))
+		log.ErrorContext(ctx, "stored short message cannot be turned into a TPDU to deliver", slog.Any("error", err))
 		return result{outcome: permanent, status: tpdu.StatusRemoteProcedureError}, nil
 	}
 
 	if len(targets) == 0 {
-		log.Debug("no serving node reachable over SGd for the recipient")
+		log.DebugContext(ctx, "no serving node reachable over SGd for the recipient")
 		return result{outcome: permanent, status: tpdu.StatusNoInterworking}, nil
 	}
 
 	// More messages are to send when another one is due now, which the SC sends right after this one.
 	_, more, err := d.Store.NextDueFor(ctx, m.MSISDN, m.ID, d.Now())
 	if err != nil {
-		log.Error("failed to look for more messages to the recipient", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to look for more messages to the recipient", slog.Any("error", err))
 	}
 
 	a := d.attempt(stop, log, m, routing.IMSI, targets, deliver, more)
 
 	if a.outcome == interrupted {
-		log.Debug("short message delivery interrupted by shutdown")
+		log.DebugContext(ctx, "short message delivery interrupted by shutdown")
 		return result{outcome: interrupted}, nil
 	}
 
@@ -600,7 +607,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		return result{outcome: temporary, hold: true, status: a.status}, nil
 	}
 
-	log.Debug("retrying delivery via the serving nodes the HSS reported")
+	log.DebugContext(ctx, "retrying delivery via the serving nodes the HSS reported")
 
 	retry := d.attempt(stop, log, m, routing.IMSI, retryTargets, deliver, more)
 
@@ -662,11 +669,11 @@ func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) 
 
 // routingRequest returns the routing lookup for the delivery of a message or a status report, which the HSS tells
 // apart by SM-RP-MTI (TS 29.338 clause 5.3.3.2).
-func (d *Deliverer) routingRequest(log *slog.Logger, m db.Message) s6c.RoutingRequest {
+func (d *Deliverer) routingRequest(ctx context.Context, log *slog.Logger, m db.Message) s6c.RoutingRequest {
 	req := s6c.RoutingRequest{
 		MSISDN:        m.MSISDN,
 		MTI:           s6c.SMRPMTIDeliver,
-		SMEA:          d.originatingSME(log, m),
+		SMEA:          d.originatingSME(ctx, log, m),
 		SingleAttempt: m.SingleShot,
 	}
 
@@ -680,14 +687,14 @@ func (d *Deliverer) routingRequest(log *slog.Logger, m db.Message) s6c.RoutingRe
 // originatingSME returns the SM-RP-SMEA of the routing lookup: the TP-OA of the SMS-DELIVER (TS 23.040 clause 9.3.2.2).
 // The SC asks the HSS for both an MME and an SGSN, so it must send it (TS 29.338 clause 5.2.1.1). An SMS-STATUS-REPORT
 // has no TP-OA: its originator is the SC, whose address the report's message holds.
-func (d *Deliverer) originatingSME(log *slog.Logger, m db.Message) []byte {
+func (d *Deliverer) originatingSME(ctx context.Context, log *slog.Logger, m db.Message) []byte {
 	smea, err := tpdu.Address{
 		TypeOfNumber:  m.Originator.TypeOfNumber,
 		NumberingPlan: m.Originator.NumberingPlan,
 		Digits:        m.Originator.Digits,
 	}.Encode()
 	if err != nil {
-		log.Error("cannot encode the originator for the routing lookup", slog.Any("error", err))
+		log.ErrorContext(ctx, "cannot encode the originator for the routing lookup", slog.Any("error", err))
 		return nil
 	}
 
@@ -696,7 +703,7 @@ func (d *Deliverer) originatingSME(log *slog.Logger, m db.Message) []byte {
 
 func (d *Deliverer) setAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string) {
 	if err := d.Store.SetAlertMSISDN(ctx, msisdn, alertMSISDN, d.Now()); err != nil {
-		d.Logger.Error("failed to record the Alert MSISDN", slog.String("msisdn", msisdn), slog.Any("error", err))
+		d.Logger.ErrorContext(ctx, "failed to record the Alert MSISDN", slog.String("msisdn", msisdn), slog.Any("error", err))
 	}
 }
 
@@ -902,7 +909,7 @@ func (d *Deliverer) report(stop context.Context, log *slog.Logger, m db.Message,
 
 	res, err := d.Router.ReportSMDeliveryStatus(rdr, rep)
 	if err != nil {
-		log.Debug("failed to report delivery status to the HSS", slog.Any("error", err))
+		log.DebugContext(ctx, "failed to report delivery status to the HSS", slog.Any("error", err))
 		return s6c.ReportResult{}, false
 	}
 

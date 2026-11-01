@@ -72,6 +72,9 @@ Ella SMSC writes its logs to standard output, one JSON object per line, at the l
 | `ts` | Time of the event. |
 | `level` | `debug`, `info`, `warn` or `error`. |
 | `msg` | What happened. |
+| `trace_id` | Trace ID of the span the event happened in, as 32 hex digits. Absent outside a span. |
+| `span_id` | Span ID of the span the event happened in, as 16 hex digits. Absent outside a span. |
+| `trace_flags` | W3C trace flags of that span, as 2 hex digits: `01` when sampled. Absent outside a span. |
 
 Other fields depend on the event.
 

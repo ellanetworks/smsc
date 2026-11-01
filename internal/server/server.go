@@ -328,7 +328,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		smppAddr = s.smppListener.Addr().String()
 	}
 
-	s.Logger.Info("smsc started", "version", v.Version, "revision", v.Revision, "db", cfg.DB.Path,
+	s.Logger.InfoContext(ctx, "smsc started", "version", v.Version, "revision", v.Revision, "db", cfg.DB.Path,
 		"diameter", nodes.Addr().String(), "api", apiLn.Addr().String(), "tls", tlsConfig != nil, "smpp", smppAddr,
 		"smpp_tls", smppTLS != nil)
 
@@ -409,7 +409,7 @@ func (s *Server) Shutdown(ctx context.Context) {
 		return
 	}
 
-	s.Logger.Info("smsc stopping")
+	s.Logger.InfoContext(ctx, "smsc stopping")
 
 	s.draining.Store(true)
 
@@ -420,7 +420,7 @@ func (s *Server) Shutdown(ctx context.Context) {
 	s.stopPurging()
 
 	if d := s.Config.API.DrainDelay; d > 0 {
-		s.Logger.Info("draining the API", slog.Duration("delay", d))
+		s.Logger.InfoContext(ctx, "draining the API", slog.Duration("delay", d))
 
 		select {
 		case <-time.After(d):
@@ -435,7 +435,7 @@ func (s *Server) Shutdown(ctx context.Context) {
 	if s.smppServer != nil {
 		smppCtx, cancel := context.WithTimeout(ctx, smppShutdownTimeout)
 		if err := s.smppServer.Shutdown(smppCtx); err != nil {
-			s.Logger.Warn("SMPP sessions closed without unbind", slog.Any("error", err))
+			s.Logger.WarnContext(ctx, "SMPP sessions closed without unbind", slog.Any("error", err))
 		}
 
 		cancel()
@@ -448,13 +448,13 @@ func (s *Server) Shutdown(ctx context.Context) {
 	}
 
 	if err := s.apiServer.Shutdown(ctx); err != nil {
-		s.Logger.Warn("failed to stop the API cleanly", slog.Any("error", err))
+		s.Logger.WarnContext(ctx, "failed to stop the API cleanly", slog.Any("error", err))
 	}
 
 	select {
 	case <-s.deliveryDone:
 	case <-ctx.Done():
-		s.Logger.Warn("shutting down with short message deliveries still in flight")
+		s.Logger.WarnContext(ctx, "shutting down with short message deliveries still in flight")
 	}
 
 	select {
@@ -465,7 +465,7 @@ func (s *Server) Shutdown(ctx context.Context) {
 	s.nodes.shutdown(ctx)
 
 	if err := s.database.Close(); err != nil {
-		s.Logger.Error("failed to close the database", slog.Any("error", err))
+		s.Logger.ErrorContext(ctx, "failed to close the database", slog.Any("error", err))
 	}
 
 	// The spans of the shutdown are the last to export, once the other steps may have used up ctx.
@@ -473,7 +473,7 @@ func (s *Server) Shutdown(ctx context.Context) {
 	defer cancel()
 
 	if err := s.shutdownTracing(tracingCtx); err != nil {
-		s.Logger.Warn("failed to export the last spans", slog.Any("error", err))
+		s.Logger.WarnContext(ctx, "failed to export the last spans", slog.Any("error", err))
 	}
 }
 

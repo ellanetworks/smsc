@@ -192,32 +192,32 @@ func CreateMessage(cfg Config) http.Handler {
 		var params CreateMessageParams
 
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			writeError(w, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
 			return
 		}
 
-		originator, ok := originatorOf(w, params.From, cfg)
+		originator, ok := originatorOf(w, r, params.From, cfg)
 		if !ok {
 			return
 		}
 
 		to, ok := e164Digits(params.To)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "to must be an E.164 number such as +15551230002", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "to must be an E.164 number such as +15551230002", nil, cfg.Logger)
 			return
 		}
 
 		switch {
 		case params.Text != "" && params.Binary != nil:
-			writeError(w, http.StatusBadRequest, "text and binary are mutually exclusive", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "text and binary are mutually exclusive", nil, cfg.Logger)
 			return
 		case params.Text == "" && params.Binary == nil:
-			writeError(w, http.StatusBadRequest, "text or binary is required", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "text or binary is required", nil, cfg.Logger)
 			return
 		}
 
 		if params.ValiditySeconds != nil && !validValidity(*params.ValiditySeconds) {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("validity_seconds must be between 1 and %d", maxValiditySeconds), nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("validity_seconds must be between 1 and %d", maxValiditySeconds), nil, cfg.Logger)
 			return
 		}
 
@@ -234,7 +234,7 @@ func CreateMessage(cfg Config) http.Handler {
 		if params.Binary != nil {
 			data, msg := binaryUserData(*params.Binary)
 			if msg != "" {
-				writeError(w, http.StatusBadRequest, msg, nil, cfg.Logger)
+				writeError(w, r, http.StatusBadRequest, msg, nil, cfg.Logger)
 				return
 			}
 
@@ -250,7 +250,7 @@ func CreateMessage(cfg Config) http.Handler {
 		ids, err := cfg.Submitter.Submit(r.Context(), req)
 		if err != nil {
 			status, msg := submitError(err)
-			writeError(w, status, msg, err, cfg.Logger)
+			writeError(w, r, status, msg, err, cfg.Logger)
 
 			return
 		}
@@ -262,7 +262,7 @@ func CreateMessage(cfg Config) http.Handler {
 		for _, id := range ids {
 			m, err := cfg.Store.GetMessage(r.Context(), id)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
+				writeError(w, r, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
 				return
 			}
 
@@ -271,11 +271,11 @@ func CreateMessage(cfg Config) http.Handler {
 
 		items, err := messagesOf(r.Context(), cfg, stored)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
 			return
 		}
 
-		writeResponse(w, CreateMessageResponse{Items: items}, http.StatusCreated, cfg.Logger)
+		writeResponse(w, r, CreateMessageResponse{Items: items}, http.StatusCreated, cfg.Logger)
 	})
 }
 
@@ -343,11 +343,11 @@ func GetMessage(cfg Config) http.Handler {
 
 		items, err := messagesOf(r.Context(), cfg, []db.Message{m})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
 			return
 		}
 
-		writeResponse(w, items[0], http.StatusOK, cfg.Logger)
+		writeResponse(w, r, items[0], http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -363,7 +363,7 @@ func GetMessageContent(cfg Config, a *auth) http.Handler {
 
 		attempts, err := cfg.Store.ListDeliverReports(r.Context(), m.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
 			return
 		}
 
@@ -374,7 +374,7 @@ func GetMessageContent(cfg Config, a *auth) http.Handler {
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "read_message_content", p.Email, fmt.Sprintf("Content of message %d read", m.ID))
 
-		writeResponse(w, out, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, out, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -449,7 +449,7 @@ func ListMessageAttempts(cfg Config) http.Handler {
 
 		attempts, total, err := cfg.Store.ListDeliveryAttempts(r.Context(), m.ID, page, perPage)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to list delivery attempts", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to list delivery attempts", err, cfg.Logger)
 			return
 		}
 
@@ -459,7 +459,7 @@ func ListMessageAttempts(cfg Config) http.Handler {
 			resp.Items = append(resp.Items, attemptOf(a))
 		}
 
-		writeResponse(w, resp, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, resp, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -485,18 +485,18 @@ func visible(ctx context.Context, m db.Message) bool {
 func lookupMessage(w http.ResponseWriter, r *http.Request, cfg Config) (db.Message, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid message ID", err, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, "Invalid message ID", err, cfg.Logger)
 		return db.Message{}, false
 	}
 
 	m, err := cfg.Store.GetMessage(r.Context(), id)
 	if errors.Is(err, db.ErrNotFound) || err == nil && (m.Kind != db.KindMessage || !visible(r.Context(), m)) {
-		writeError(w, http.StatusNotFound, "Message not found", err, cfg.Logger)
+		writeError(w, r, http.StatusNotFound, "Message not found", err, cfg.Logger)
 		return db.Message{}, false
 	}
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to retrieve message", err, cfg.Logger)
 		return db.Message{}, false
 	}
 
@@ -508,13 +508,13 @@ func pagination(w http.ResponseWriter, r *http.Request, cfg Config) (int, int, b
 
 	page, ok := atoiDefault(q.Get("page"), 1)
 	if !ok || page < 1 {
-		writeError(w, http.StatusBadRequest, "page must be an integer >= 1", nil, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, "page must be an integer >= 1", nil, cfg.Logger)
 		return 0, 0, false
 	}
 
 	perPage, ok := atoiDefault(q.Get("per_page"), defaultPerPage)
 	if !ok || perPage < 1 || perPage > maxPerPage {
-		writeError(w, http.StatusBadRequest, "per_page must be an integer between 1 and 100", nil, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, "per_page must be an integer between 1 and 100", nil, cfg.Logger)
 		return 0, 0, false
 	}
 
@@ -552,7 +552,7 @@ func ListMessages(cfg Config) http.Handler {
 
 		if to := q.Get("to"); to != "" {
 			if filter.MSISDN, ok = partialNumber(to); !ok {
-				writeError(w, http.StatusBadRequest, "to must be all or part of an E.164 number, such as +1555123 or 1230002", nil,
+				writeError(w, r, http.StatusBadRequest, "to must be all or part of an E.164 number, such as +1555123 or 1230002", nil,
 					cfg.Logger)
 
 				return
@@ -568,7 +568,7 @@ func ListMessages(cfg Config) http.Handler {
 				ton := uint8(tpdu.TypeOfNumberAlphanumeric)
 				filter.Originator, filter.OriginatorTON = from, &ton
 			} else {
-				writeError(w, http.StatusBadRequest,
+				writeError(w, r, http.StatusBadRequest,
 					"from must be all or part of an E.164 number, such as +1555123 or 1230001, or a name of 1 to 11 letters and digits, with single spaces between words",
 					nil, cfg.Logger)
 
@@ -581,39 +581,39 @@ func ListMessages(cfg Config) http.Handler {
 			case db.StatusPending, db.StatusDelivered, db.StatusFailed, db.StatusExpired, db.StatusReplaced:
 				filter.Status = status
 			default:
-				writeError(w, http.StatusBadRequest, "status must be one of pending, delivered, failed, expired, replaced", nil,
+				writeError(w, r, http.StatusBadRequest, "status must be one of pending, delivered, failed, expired, replaced", nil,
 					cfg.Logger)
 
 				return
 			}
 		}
 
-		if filter.Start, ok = timeParam(w, q.Get("start"), "start", cfg); !ok {
+		if filter.Start, ok = timeParam(w, r, q.Get("start"), "start", cfg); !ok {
 			return
 		}
 
-		if filter.End, ok = timeParam(w, q.Get("end"), "end", cfg); !ok {
+		if filter.End, ok = timeParam(w, r, q.Get("end"), "end", cfg); !ok {
 			return
 		}
 
 		if !filter.Start.IsZero() && !filter.End.IsZero() && filter.End.Before(filter.Start) {
-			writeError(w, http.StatusBadRequest, "end must not be before start", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "end must not be before start", nil, cfg.Logger)
 			return
 		}
 
 		messages, total, err := cfg.Store.ListMessages(r.Context(), filter, page, perPage)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to list messages", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to list messages", err, cfg.Logger)
 			return
 		}
 
 		items, err := messagesOf(r.Context(), cfg, messages)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to list messages", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to list messages", err, cfg.Logger)
 			return
 		}
 
-		writeResponse(w, ListMessagesResponse{Items: items, Page: page, PerPage: perPage, TotalCount: total}, http.StatusOK,
+		writeResponse(w, r, ListMessagesResponse{Items: items, Page: page, PerPage: perPage, TotalCount: total}, http.StatusOK,
 			cfg.Logger)
 	})
 }
@@ -735,7 +735,7 @@ func formatAddress(a db.Address) string {
 }
 
 // timeParam parses the query parameter name, an RFC 3339 time, and returns the zero time when it is absent.
-func timeParam(w http.ResponseWriter, value, name string, cfg Config) (time.Time, bool) {
+func timeParam(w http.ResponseWriter, r *http.Request, value, name string, cfg Config) (time.Time, bool) {
 	if value == "" {
 		return time.Time{}, true
 	}
@@ -747,7 +747,7 @@ func timeParam(w http.ResponseWriter, value, name string, cfg Config) (time.Time
 	}
 
 	if err != nil {
-		writeError(w, http.StatusBadRequest, name+" must be an RFC 3339 time such as 2026-10-01T12:00:00Z", nil, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, name+" must be an RFC 3339 time such as 2026-10-01T12:00:00Z", nil, cfg.Logger)
 		return time.Time{}, false
 	}
 
@@ -760,11 +760,11 @@ func formatTime(t time.Time) string {
 
 // originatorOf returns the originator a from value names: an E.164 number when it starts with '+', and an
 // alphanumeric name (TS 23.040 clause 9.1.2.5) otherwise.
-func originatorOf(w http.ResponseWriter, from string, cfg Config) (db.Address, bool) {
+func originatorOf(w http.ResponseWriter, r *http.Request, from string, cfg Config) (db.Address, bool) {
 	if strings.HasPrefix(from, "+") {
 		digits, ok := e164Digits(from)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "from must be an E.164 number such as +15551230001", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "from must be an E.164 number such as +15551230001", nil, cfg.Logger)
 			return db.Address{}, false
 		}
 
@@ -772,7 +772,7 @@ func originatorOf(w http.ResponseWriter, from string, cfg Config) (db.Address, b
 	}
 
 	if !submission.IsOriginatorName(from) {
-		writeError(w, http.StatusBadRequest,
+		writeError(w, r, http.StatusBadRequest,
 			"from must be an E.164 number such as +15551230001, or a name of 1 to 11 letters and digits, with single spaces between words", nil, cfg.Logger)
 
 		return db.Address{}, false

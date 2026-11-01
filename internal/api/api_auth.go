@@ -56,18 +56,18 @@ func Login(a *auth) http.Handler {
 		}
 
 		if params.Email == "" || params.Password == "" {
-			writeError(w, http.StatusBadRequest, "email and password are required", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "email and password are required", nil, cfg.Logger)
 			return
 		}
 
 		account := strings.ToLower(params.Email)
-		if !a.allowAccount(w, account) {
+		if !a.allowAccount(w, r, account) {
 			return
 		}
 
 		u, err := cfg.Auth.GetUser(r.Context(), params.Email)
 		if err != nil && !errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusInternalServerError, "Failed to log in", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to log in", err, cfg.Logger)
 			return
 		}
 
@@ -78,14 +78,14 @@ func Login(a *auth) http.Handler {
 
 		ok, checkErr := a.checkPassword(r.Context(), hash, params.Password)
 		if checkErr != nil {
-			writeError(w, http.StatusServiceUnavailable, "Failed to log in", checkErr, cfg.Logger)
+			writeError(w, r, http.StatusServiceUnavailable, "Failed to log in", checkErr, cfg.Logger)
 			return
 		}
 
 		if !ok || err != nil {
 			a.failures.Allow(account)
 			a.audit(r, "auth_login", params.Email, "User failed to log in")
-			writeError(w, http.StatusUnauthorized, "The email or password is incorrect. Try again.", nil, cfg.Logger)
+			writeError(w, r, http.StatusUnauthorized, "The email or password is incorrect. Try again.", nil, cfg.Logger)
 
 			return
 		}
@@ -93,7 +93,7 @@ func Login(a *auth) http.Handler {
 		a.failures.Reset(account)
 
 		if err := cfg.Auth.DeleteExpiredSessions(r.Context(), cfg.Now()); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to log in", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to log in", err, cfg.Logger)
 			return
 		}
 
@@ -103,7 +103,7 @@ func Login(a *auth) http.Handler {
 		}
 
 		a.audit(r, "auth_login", u.Email, "User logged in successfully")
-		writeResponse(w, LoginResponse{Message: "Login successful", Token: token}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, LoginResponse{Message: "Login successful", Token: token}, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -115,19 +115,19 @@ func (a *auth) allowLogin(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	w.Header().Set("Retry-After", strconv.Itoa(int(LoginRateWindow.Seconds())))
-	writeError(w, http.StatusTooManyRequests, "Too many login attempts. Please try again later.", nil, a.cfg.Logger)
+	writeError(w, r, http.StatusTooManyRequests, "Too many login attempts. Please try again later.", nil, a.cfg.Logger)
 
 	return false
 }
 
 // allowAccount writes 429 when an account has had too many wrong passwords, from whatever clients.
-func (a *auth) allowAccount(w http.ResponseWriter, account string) bool {
+func (a *auth) allowAccount(w http.ResponseWriter, r *http.Request, account string) bool {
 	if !a.failures.Exceeded(account) {
 		return true
 	}
 
 	w.Header().Set("Retry-After", strconv.Itoa(int(AccountFailureWindow.Seconds())))
-	writeError(w, http.StatusTooManyRequests, "Too many failed attempts for this account. Please try again later.", nil,
+	writeError(w, r, http.StatusTooManyRequests, "Too many failed attempts for this account. Please try again later.", nil,
 		a.cfg.Logger)
 
 	return false
@@ -137,13 +137,13 @@ func (a *auth) allowAccount(w http.ResponseWriter, account string) bool {
 func (a *auth) logIn(w http.ResponseWriter, r *http.Request, u db.User) (string, bool) {
 	sessionID, err := a.startSession(w, r, u)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to start a session", err, a.cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to start a session", err, a.cfg.Logger)
 		return "", false
 	}
 
 	token, err := a.accessToken(u, sessionID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to issue an access token", err, a.cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to issue an access token", err, a.cfg.Logger)
 		return "", false
 	}
 
@@ -157,7 +157,7 @@ func Refresh(a *auth) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		unauthorized := func(message string, err error) {
 			a.clearSessionCookie(w)
-			writeError(w, http.StatusUnauthorized, message, err, cfg.Logger)
+			writeError(w, r, http.StatusUnauthorized, message, err, cfg.Logger)
 		}
 
 		hash := a.sessionHash(r)
@@ -173,13 +173,13 @@ func Refresh(a *auth) http.Handler {
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to refresh the session", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to refresh the session", err, cfg.Logger)
 			return
 		}
 
 		if !cfg.Now().Before(s.ExpiresAt) {
 			if err := cfg.Auth.DeleteSessionByTokenHash(r.Context(), hash); err != nil {
-				cfg.Logger.Warn("failed to delete an expired session", "error", err)
+				cfg.Logger.WarnContext(r.Context(), "failed to delete an expired session", "error", err)
 			}
 
 			unauthorized("Session expired", nil)
@@ -194,17 +194,17 @@ func Refresh(a *auth) http.Handler {
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to refresh the session", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to refresh the session", err, cfg.Logger)
 			return
 		}
 
 		token, err := a.accessToken(u, s.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to issue an access token", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to issue an access token", err, cfg.Logger)
 			return
 		}
 
-		writeResponse(w, RefreshResponse{Token: token}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, RefreshResponse{Token: token}, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -221,7 +221,7 @@ func Logout(a *auth) http.Handler {
 			}
 
 			if err := cfg.Auth.DeleteSessionByTokenHash(r.Context(), hash); err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to log out", err, cfg.Logger)
+				writeError(w, r, http.StatusInternalServerError, "Failed to log out", err, cfg.Logger)
 				return
 			}
 		}
@@ -244,12 +244,12 @@ func Initialize(a *auth) http.Handler {
 		initialized := func() bool {
 			n, err := cfg.Auth.CountUsers(r.Context())
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to initialize", err, cfg.Logger)
+				writeError(w, r, http.StatusInternalServerError, "Failed to initialize", err, cfg.Logger)
 				return true
 			}
 
 			if n > 0 {
-				writeError(w, http.StatusForbidden, "System already initialized", nil, cfg.Logger)
+				writeError(w, r, http.StatusForbidden, "System already initialized", nil, cfg.Logger)
 				return true
 			}
 
@@ -267,18 +267,18 @@ func Initialize(a *auth) http.Handler {
 
 		email, ok := normalEmail(params.Email)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "Invalid email format", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "Invalid email format", nil, cfg.Logger)
 			return
 		}
 
 		if msg, ok := validPassword(params.Password); !ok {
-			writeError(w, http.StatusBadRequest, msg, nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, msg, nil, cfg.Logger)
 			return
 		}
 
 		hash, err := a.hashPassword(r.Context(), params.Password)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to hash password", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to hash password", err, cfg.Logger)
 			return
 		}
 
@@ -296,7 +296,7 @@ func Initialize(a *auth) http.Handler {
 			Email: u.Email, Role: u.Role,
 			PasswordHash: u.PasswordHash,
 		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create the first user", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to create the first user", err, cfg.Logger)
 			return
 		}
 
@@ -307,7 +307,7 @@ func Initialize(a *auth) http.Handler {
 			return
 		}
 
-		writeResponse(w, LoginResponse{Message: "System initialized successfully", Token: token}, http.StatusCreated,
+		writeResponse(w, r, LoginResponse{Message: "System initialized successfully", Token: token}, http.StatusCreated,
 			cfg.Logger)
 	})
 }
@@ -318,7 +318,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any, cfg Config) bool 
 	dec.DisallowUnknownFields()
 
 	if err := dec.Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
 		return false
 	}
 

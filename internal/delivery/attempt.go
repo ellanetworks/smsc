@@ -97,10 +97,10 @@ func (d *Deliverer) record(ctx context.Context, log *slog.Logger, messageID int6
 	a.MessageID, a.CompletedAt = messageID, d.Now()
 
 	if _, err := d.Store.CreateDeliveryAttempt(ctx, a); err != nil {
-		log.Error("failed to record delivery attempt", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to record delivery attempt", slog.Any("error", err))
 	}
 
-	log.Debug("short message delivery attempt", slog.String("step", string(a.Step)), slog.String("node", a.Node),
+	log.DebugContext(ctx, "short message delivery attempt", slog.String("step", string(a.Step)), slog.String("node", a.Node),
 		slog.String("outcome", a.Outcome))
 }
 

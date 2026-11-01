@@ -17,8 +17,8 @@ func Readyz(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Ready != nil {
 			if err := cfg.Ready(r.Context()); err != nil {
-				cfg.Logger.Warn("not ready", "error", err)
-				writeJSON(w, ErrorResponse{Error: "Not ready"}, http.StatusServiceUnavailable, cfg.Logger)
+				cfg.Logger.WarnContext(r.Context(), "not ready", "error", err)
+				writeJSON(w, r, ErrorResponse{Error: "Not ready"}, http.StatusServiceUnavailable, cfg.Logger)
 
 				return
 			}

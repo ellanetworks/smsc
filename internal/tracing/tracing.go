@@ -42,7 +42,7 @@ func NewProvider(ctx context.Context, endpoint, version string, logger *slog.Log
 	}
 
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-		logger.Warn("OpenTelemetry error", slog.Any("error", err))
+		logger.WarnContext(context.Background(), "OpenTelemetry error", slog.Any("error", err))
 	}))
 
 	return sdktrace.NewTracerProvider(

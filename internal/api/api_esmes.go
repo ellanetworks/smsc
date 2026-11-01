@@ -61,7 +61,7 @@ func ListESMEs(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		esmes, err := cfg.ESMEs.ListESMEs(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to list ESMEs", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to list ESMEs", err, cfg.Logger)
 			return
 		}
 
@@ -73,7 +73,7 @@ func ListESMEs(cfg Config) http.Handler {
 			if !ok {
 				u, err := cfg.Auth.GetUserByID(r.Context(), e.UserID)
 				if err != nil {
-					writeError(w, http.StatusInternalServerError, "Failed to list ESMEs", err, cfg.Logger)
+					writeError(w, r, http.StatusInternalServerError, "Failed to list ESMEs", err, cfg.Logger)
 					return
 				}
 
@@ -83,7 +83,7 @@ func ListESMEs(cfg Config) http.Handler {
 			resp.Items = append(resp.Items, esmeResponse(cfg, e, email))
 		}
 
-		writeResponse(w, resp, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, resp, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -96,11 +96,11 @@ func GetESME(cfg Config) http.Handler {
 
 		u, err := cfg.Auth.GetUserByID(r.Context(), e.UserID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to retrieve ESME", err, cfg.Logger)
 			return
 		}
 
-		writeResponse(w, esmeResponse(cfg, e, u.Email), http.StatusOK, cfg.Logger)
+		writeResponse(w, r, esmeResponse(cfg, e, u.Email), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -115,7 +115,7 @@ func CreateESME(a *auth) http.Handler {
 		}
 
 		if !validSystemID(params.SystemID) {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("system_id must be 1 to %d printable ASCII characters", maxSystemID),
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("system_id must be 1 to %d printable ASCII characters", maxSystemID),
 				nil, cfg.Logger)
 
 			return
@@ -123,24 +123,24 @@ func CreateESME(a *auth) http.Handler {
 
 		email, ok := normalEmail(params.User)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "user must be the email of a user", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "user must be the email of a user", nil, cfg.Logger)
 			return
 		}
 
 		u, err := cfg.Auth.GetUser(r.Context(), email)
 		if errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusBadRequest, "user must be the email of a user", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "user must be the email of a user", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
 			return
 		}
 
 		e := db.ESME{SystemID: params.SystemID, UserID: u.ID, CreatedAt: cfg.Now()}
 
-		if !validESME(w, &e, params.AllowedNetworks, cfg) {
+		if !validESME(w, r, &e, params.AllowedNetworks, cfg) {
 			return
 		}
 
@@ -153,7 +153,7 @@ func CreateESME(a *auth) http.Handler {
 		}
 
 		if !validSMPPPassword(*password) {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("password must be 1 to %d printable ASCII characters", maxSMPPPassword),
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("password must be 1 to %d printable ASCII characters", maxSMPPPassword),
 				nil, cfg.Logger)
 
 			return
@@ -161,30 +161,30 @@ func CreateESME(a *auth) http.Handler {
 
 		n, err := cfg.ESMEs.CountESMEs(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
 			return
 		}
 
 		if n >= MaxNumESMEs {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("There are already %d ESMEs, the most there can be", MaxNumESMEs),
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("There are already %d ESMEs, the most there can be", MaxNumESMEs),
 				nil, cfg.Logger)
 
 			return
 		}
 
 		if e.PasswordHash, err = a.hashPassword(r.Context(), *password); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
 			return
 		}
 
 		e.ID, err = cfg.ESMEs.CreateESME(r.Context(), e)
 		if errors.Is(err, db.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "An ESME with this system_id already exists", nil, cfg.Logger)
+			writeError(w, r, http.StatusConflict, "An ESME with this system_id already exists", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
 			return
 		}
 
@@ -194,7 +194,7 @@ func CreateESME(a *auth) http.Handler {
 		resp := esmeResponse(cfg, e, u.Email)
 		resp.Password = generated
 
-		writeResponse(w, resp, http.StatusCreated, cfg.Logger)
+		writeResponse(w, r, resp, http.StatusCreated, cfg.Logger)
 	})
 }
 
@@ -214,7 +214,7 @@ func UpdateESME(a *auth) http.Handler {
 			return
 		}
 
-		if !validESME(w, &e, params.AllowedNetworks, cfg) {
+		if !validESME(w, r, &e, params.AllowedNetworks, cfg) {
 			return
 		}
 
@@ -222,7 +222,7 @@ func UpdateESME(a *auth) http.Handler {
 
 		if params.Password != nil {
 			if !validSMPPPassword(*params.Password) {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("password must be 1 to %d printable ASCII characters", maxSMPPPassword),
+				writeError(w, r, http.StatusBadRequest, fmt.Sprintf("password must be 1 to %d printable ASCII characters", maxSMPPPassword),
 					nil, cfg.Logger)
 
 				return
@@ -230,7 +230,7 @@ func UpdateESME(a *auth) http.Handler {
 
 			hash, err := a.hashPassword(r.Context(), *params.Password)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to update ESME", err, cfg.Logger)
+				writeError(w, r, http.StatusInternalServerError, "Failed to update ESME", err, cfg.Logger)
 				return
 			}
 
@@ -239,12 +239,12 @@ func UpdateESME(a *auth) http.Handler {
 
 		err := cfg.ESMEs.UpdateESME(r.Context(), e)
 		if errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "ESME not found", nil, cfg.Logger)
+			writeError(w, r, http.StatusNotFound, "ESME not found", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to update ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to update ESME", err, cfg.Logger)
 			return
 		}
 
@@ -255,11 +255,11 @@ func UpdateESME(a *auth) http.Handler {
 
 		u, err := cfg.Auth.GetUserByID(r.Context(), e.UserID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to retrieve ESME", err, cfg.Logger)
 			return
 		}
 
-		writeResponse(w, esmeResponse(cfg, e, u.Email), http.StatusOK, cfg.Logger)
+		writeResponse(w, r, esmeResponse(cfg, e, u.Email), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -275,12 +275,12 @@ func DeleteESME(a *auth) http.Handler {
 
 		err := cfg.ESMEs.DeleteESME(r.Context(), e.ID)
 		if errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "ESME not found", nil, cfg.Logger)
+			writeError(w, r, http.StatusNotFound, "ESME not found", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to delete ESME", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to delete ESME", err, cfg.Logger)
 			return
 		}
 
@@ -288,19 +288,19 @@ func DeleteESME(a *auth) http.Handler {
 
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "delete_esme", p.Email, fmt.Sprintf("ESME %q deleted", e.SystemID))
-		writeResponse(w, SuccessResponse{Message: "ESME deleted successfully"}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "ESME deleted successfully"}, http.StatusOK, cfg.Logger)
 	})
 }
 
 func lookupESME(w http.ResponseWriter, r *http.Request, cfg Config) (db.ESME, bool) {
 	e, err := cfg.ESMEs.GetESMEBySystemID(r.Context(), r.PathValue("system_id"))
 	if errors.Is(err, db.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "ESME not found", nil, cfg.Logger)
+		writeError(w, r, http.StatusNotFound, "ESME not found", nil, cfg.Logger)
 		return db.ESME{}, false
 	}
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to retrieve ESME", err, cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to retrieve ESME", err, cfg.Logger)
 		return db.ESME{}, false
 	}
 
@@ -308,9 +308,9 @@ func lookupESME(w http.ResponseWriter, r *http.Request, cfg Config) (db.ESME, bo
 }
 
 // validESME checks the networks of an ESME and sets them, or writes the error.
-func validESME(w http.ResponseWriter, e *db.ESME, networks []string, cfg Config) bool {
+func validESME(w http.ResponseWriter, r *http.Request, e *db.ESME, networks []string, cfg Config) bool {
 	if len(networks) > maxAllowedNetworks {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("allowed_networks must have at most %d networks", maxAllowedNetworks),
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf("allowed_networks must have at most %d networks", maxAllowedNetworks),
 			nil, cfg.Logger)
 
 		return false
@@ -322,7 +322,7 @@ func validESME(w http.ResponseWriter, e *db.ESME, networks []string, cfg Config)
 	for _, s := range networks {
 		p, err := netip.ParsePrefix(s)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("allowed network %q must be a prefix such as 10.1.0.0/24", s),
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("allowed network %q must be a prefix such as 10.1.0.0/24", s),
 				nil, cfg.Logger)
 
 			return false

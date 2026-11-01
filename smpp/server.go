@@ -269,7 +269,7 @@ func (s *Server) bind(ctx context.Context, sess *Session, b *Bind, isTLS bool) b
 	}
 
 	if out.MaxSessions > 0 && len(s.accounts[account]) >= out.MaxSessions {
-		s.log.Info("SMPP bind refused: too many sessions", slog.String("account", account),
+		s.log.InfoContext(ctx, "SMPP bind refused: too many sessions", slog.String("account", account),
 			slog.Int("max_sessions", out.MaxSessions))
 
 		return bindDecision{status: StatusBindFail}

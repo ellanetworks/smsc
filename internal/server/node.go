@@ -218,13 +218,13 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 		current := live.Get()
 
 		if operator := current.Operator; operator.Host() != m.Identity().OriginHost {
-			m.logger.Info("restarting Diameter for the new identity; cores reconnect",
+			m.logger.InfoContext(ctx, "restarting Diameter for the new identity; cores reconnect",
 				slog.String("host", operator.Host()), slog.String("realm", operator.Realm()))
 
 			m.shutdown(ctx)
 
 			if err := m.start(ctx, operator, current.Peers); err != nil {
-				m.logger.Error("failed to restart Diameter", slog.String("host", operator.Host()), slog.Any("error", err))
+				m.logger.ErrorContext(ctx, "failed to restart Diameter", slog.String("host", operator.Host()), slog.Any("error", err))
 			}
 		} else if !slices.EqualFunc(current.Peers, m.configuredPeers(), settings.Peer.Equal) {
 			m.setPeers(m.Node(), current.Peers)

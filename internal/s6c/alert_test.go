@@ -3,7 +3,6 @@ package s6c
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -35,7 +34,7 @@ func newAlertHandler(a *alerts) *AlertHandler {
 			return settings.Settings{Operator: settings.Operator{ServiceCentreAddress: "15550000000"}}
 		},
 		Alert:  a.alert,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger: slog.New(slog.DiscardHandler),
 	}
 }
 

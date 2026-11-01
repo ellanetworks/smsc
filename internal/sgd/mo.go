@@ -87,29 +87,29 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 
 	submit, err := tpdu.DecodeSubmit(smRPUI.Data)
 	if err != nil {
-		return h.submitRejected(req, submitFailureCause(smRPUI.Data, err), receivedAt)
+		return h.submitRejected(ctx, req, submitFailureCause(smRPUI.Data, err), receivedAt)
 	}
 
 	if submit.Destination.Digits == "" {
-		return h.submitRejected(req, tpdu.FailureInvalidSMEAddress, receivedAt)
+		return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
 
 	recipient, err := current.Operator.Numbering.International(submit.Destination.TypeOfNumber, submit.Destination.Digits)
 	if err != nil {
-		return h.submitRejected(req, tpdu.FailureInvalidSMEAddress, receivedAt)
+		return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
 
 	if tpdu.RequestsTelematicInterworking(submit.ProtocolIdentifier) {
-		return h.submitRejected(req, tpdu.FailureTelematicInterworkingNotSupported, receivedAt)
+		return h.submitRejected(ctx, req, tpdu.FailureTelematicInterworkingNotSupported, receivedAt)
 	}
 
 	if tpdu.IsDeviceTrigger(submit.ProtocolIdentifier) {
-		return h.submitRejected(req, tpdu.FailureUnspecifiedTPPID, receivedAt)
+		return h.submitRejected(ctx, req, tpdu.FailureUnspecifiedTPPID, receivedAt)
 	}
 
 	expiresAt, hasValidity, err := submit.Expiry(receivedAt)
 	if err != nil {
-		return h.submitRejected(req, tpdu.FailureValidityPeriodNotSupported, receivedAt)
+		return h.submitRejected(ctx, req, tpdu.FailureValidityPeriodNotSupported, receivedAt)
 	}
 
 	if !hasValidity {
@@ -138,19 +138,19 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		SubmittedAt:        receivedAt,
 		ExpiresAt:          expiresAt,
 		ReportReplaced: func(replaced db.Message) (*db.NewStatusReport, error) {
-			return h.replacedReport(replaced, receivedAt, current), nil
+			return h.replacedReport(ctx, replaced, receivedAt, current), nil
 		},
 	})
 	if errors.Is(err, db.ErrDuplicate) {
-		return h.submitRejected(req, tpdu.FailureRejectedDuplicate, receivedAt)
+		return h.submitRejected(ctx, req, tpdu.FailureRejectedDuplicate, receivedAt)
 	}
 
 	if err != nil {
 		result = intake.Error
 
-		h.Logger.Error("failed to store mobile-originated short message", slog.Any("error", err))
+		h.Logger.ErrorContext(ctx, "failed to store mobile-originated short message", slog.Any("error", err))
 
-		return h.deliveryFailure(req, sgd.CauseSCCongestion, h.submitReport(tpdu.FailureSCSystemFailure, receivedAt))
+		return h.deliveryFailure(req, sgd.CauseSCCongestion, h.submitReport(ctx, tpdu.FailureSCSystemFailure, receivedAt))
 	}
 
 	result = intake.Accepted
@@ -159,7 +159,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		h.Stored()
 	}
 
-	h.Logger.Debug("accepted mobile-originated short message",
+	h.Logger.DebugContext(ctx, "accepted mobile-originated short message",
 		slog.Int64("message_id", id), slog.String("originator", originator), slog.String("recipient", recipient))
 
 	return h.answer(req, diameter.ResultSuccess)
@@ -167,10 +167,10 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 
 // replacedReport returns the status report on a message that the new one replaced, if its originator asked for one. A
 // report that cannot be made does not stop the new message.
-func (h *Handler) replacedReport(replaced db.Message, at time.Time, current settings.Settings) *db.NewStatusReport {
+func (h *Handler) replacedReport(ctx context.Context, replaced db.Message, at time.Time, current settings.Settings) *db.NewStatusReport {
 	report, err := statusreport.For(replaced, tpdu.StatusReplaced, at, current)
 	if err != nil {
-		h.Logger.Error("failed to make the status report on a replaced short message",
+		h.Logger.ErrorContext(ctx, "failed to make the status report on a replaced short message",
 			slog.Int64("message_id", replaced.ID), slog.Any("error", err))
 	}
 
@@ -194,14 +194,14 @@ func submitFailureCause(b []byte, err error) byte {
 	}
 }
 
-func (h *Handler) submitRejected(req *diameter.Message, failureCause byte, receivedAt time.Time) *diameter.Message {
-	return h.deliveryFailure(req, sgd.CauseInvalidSMEAddress, h.submitReport(failureCause, receivedAt))
+func (h *Handler) submitRejected(ctx context.Context, req *diameter.Message, failureCause byte, receivedAt time.Time) *diameter.Message {
+	return h.deliveryFailure(req, sgd.CauseInvalidSMEAddress, h.submitReport(ctx, failureCause, receivedAt))
 }
 
-func (h *Handler) submitReport(failureCause byte, receivedAt time.Time) []byte {
+func (h *Handler) submitReport(ctx context.Context, failureCause byte, receivedAt time.Time) []byte {
 	report, err := tpdu.EncodeSubmitReportError(failureCause, receivedAt)
 	if err != nil {
-		h.Logger.Error("failed to encode SMS-SUBMIT-REPORT", slog.Any("error", err))
+		h.Logger.ErrorContext(ctx, "failed to encode SMS-SUBMIT-REPORT", slog.Any("error", err))
 		return nil
 	}
 

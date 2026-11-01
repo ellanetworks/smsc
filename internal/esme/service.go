@@ -191,9 +191,9 @@ func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.B
 
 	switch {
 	case err != nil:
-		log.Error("failed to check an SMPP bind", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to check an SMPP bind", slog.Any("error", err))
 	case reason != "":
-		log.Info("SMPP bind refused", slog.String("reason", reason))
+		log.InfoContext(ctx, "SMPP bind refused", slog.String("reason", reason))
 	default:
 		s.Metrics.bind(true)
 
@@ -569,14 +569,14 @@ func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM
 	req, rej := m.request(&sm.Message)
 	if rej != nil {
 		s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
-		log.Debug("submit_sm refused", slog.String("reason", rej.reason), slog.String("status", rej.status.String()))
+		log.DebugContext(ctx, "submit_sm refused", slog.String("reason", rej.reason), slog.String("status", rej.status.String()))
 
 		return "", rej.status
 	}
 
 	ids, err := s.Submitter.Submit(ctx, req)
 	if err != nil {
-		return "", s.submitFailed(log, err)
+		return "", s.submitFailed(ctx, log, err)
 	}
 
 	return strconv.FormatInt(ids[0], 10), smpp.StatusOK
@@ -584,18 +584,18 @@ func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM
 
 // submitFailed counts and logs a submit_sm that the Submitter did not store, and returns its command_status. The
 // Submitter counts the store failures itself.
-func (s *Service) submitFailed(log *slog.Logger, err error) smpp.CommandStatus {
+func (s *Service) submitFailed(ctx context.Context, log *slog.Logger, err error) smpp.CommandStatus {
 	status := submissionStatus(err)
 
 	switch {
 	case status != smpp.StatusSysErr:
 		s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
-		log.Debug("submit_sm refused", slog.Any("reason", err), slog.String("status", status.String()))
+		log.DebugContext(ctx, "submit_sm refused", slog.Any("reason", err), slog.String("status", status.String()))
 	case errors.Is(err, submission.ErrStore):
-		log.Error("failed to store a submit_sm", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to store a submit_sm", slog.Any("error", err))
 	default:
 		s.Received.Add(intake.OriginSMPP, intake.Error, 1)
-		log.Error("failed to encode a submit_sm", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to encode a submit_sm", slog.Any("error", err))
 	}
 
 	return status

@@ -24,22 +24,22 @@ func (h *AlertHandler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req 
 	}
 
 	if alert.ServiceCentreAddress != h.Settings().Operator.ServiceCentreAddress {
-		h.Logger.Warn("ignoring alert for another service centre", slog.String("sc_address", alert.ServiceCentreAddress))
+		h.Logger.WarnContext(ctx, "ignoring alert for another service centre", slog.String("sc_address", alert.ServiceCentreAddress))
 		return h.answer(req, diameter.ResultSuccess)
 	}
 
 	msisdn := alert.User.MSISDN
 	if msisdn == "" {
-		h.Logger.Debug("ignoring alert without an MSISDN")
+		h.Logger.DebugContext(ctx, "ignoring alert without an MSISDN")
 		return h.answer(req, diameter.ResultSuccess)
 	}
 
 	if err := h.Alert(ctx, msisdn); err != nil {
-		h.Logger.Error("failed to act on service centre alert", slog.String("msisdn", msisdn), slog.Any("error", err))
+		h.Logger.ErrorContext(ctx, "failed to act on service centre alert", slog.String("msisdn", msisdn), slog.Any("error", err))
 		return h.answer(req, diameter.ResultUnableToComply)
 	}
 
-	h.Logger.Debug("recipient alerted", slog.String("msisdn", msisdn))
+	h.Logger.DebugContext(ctx, "recipient alerted", slog.String("msisdn", msisdn))
 
 	return h.answer(req, diameter.ResultSuccess)
 }
