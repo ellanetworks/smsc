@@ -76,7 +76,7 @@ type ListAPITokensResponse struct {
 func GetMyUser(a *auth) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := PrincipalFrom(r.Context())
-		writeResponse(w, User{Email: p.Email, RoleID: p.Role}, http.StatusOK, a.cfg.Logger)
+		writeResponse(w, r, User{Email: p.Email, RoleID: p.Role}, http.StatusOK, a.cfg.Logger)
 	})
 }
 
@@ -94,27 +94,27 @@ func UpdateMyPassword(a *auth) http.Handler {
 
 		u, err := cfg.Auth.GetUserByID(r.Context(), p.UserID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve user", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to retrieve user", err, cfg.Logger)
 			return
 		}
 
 		// The wrong current passwords count with the failed logins of the account, so that a stolen access token cannot
 		// guess the password here instead.
 		account := strings.ToLower(u.Email)
-		if !a.allowAccount(w, account) {
+		if !a.allowAccount(w, r, account) {
 			return
 		}
 
 		ok, err := a.checkPassword(r.Context(), []byte(u.PasswordHash), params.CurrentPassword)
 		if err != nil {
-			writeError(w, http.StatusServiceUnavailable, "Failed to check the password", err, cfg.Logger)
+			writeError(w, r, http.StatusServiceUnavailable, "Failed to check the password", err, cfg.Logger)
 			return
 		}
 
 		// Not 401, which tells the UI that its session is over.
 		if !ok {
 			a.failures.Allow(account)
-			writeError(w, http.StatusBadRequest, "Current password is incorrect", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "Current password is incorrect", nil, cfg.Logger)
 
 			return
 		}
@@ -123,31 +123,31 @@ func UpdateMyPassword(a *auth) http.Handler {
 			return
 		}
 
-		writeResponse(w, SuccessResponse{Message: "Password updated successfully"}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "Password updated successfully"}, http.StatusOK, cfg.Logger)
 	})
 }
 
 // setPassword stores the new password of a user and ends its sessions but keepSession, or writes the error.
 func (a *auth) setPassword(w http.ResponseWriter, r *http.Request, u db.User, password string, keepSession []byte) bool {
 	if msg, ok := validPassword(password); !ok {
-		writeError(w, http.StatusBadRequest, msg, nil, a.cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, msg, nil, a.cfg.Logger)
 		return false
 	}
 
 	hash, err := a.hashPassword(r.Context(), password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to hash password", err, a.cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to hash password", err, a.cfg.Logger)
 		return false
 	}
 
 	err = a.cfg.Auth.UpdateUserPassword(r.Context(), u.ID, hash, keepSession)
 	if errors.Is(err, db.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "User not found", nil, a.cfg.Logger)
+		writeError(w, r, http.StatusNotFound, "User not found", nil, a.cfg.Logger)
 		return false
 	}
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to update password", err, a.cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to update password", err, a.cfg.Logger)
 		return false
 	}
 
@@ -168,7 +168,7 @@ func ListUsers(a *auth) http.Handler {
 
 		users, total, err := cfg.Auth.ListUsers(r.Context(), page, perPage)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to list users", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to list users", err, cfg.Logger)
 			return
 		}
 
@@ -177,7 +177,7 @@ func ListUsers(a *auth) http.Handler {
 			resp.Items = append(resp.Items, User{Email: u.Email, RoleID: u.Role})
 		}
 
-		writeResponse(w, resp, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, resp, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -192,28 +192,28 @@ func CreateUser(a *auth) http.Handler {
 
 		email, ok := normalEmail(params.Email)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "Invalid email format", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "Invalid email format", nil, cfg.Logger)
 			return
 		}
 
 		if !validRole(params.RoleID) {
-			writeError(w, http.StatusBadRequest, "Invalid role ID", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "Invalid role ID", nil, cfg.Logger)
 			return
 		}
 
 		if msg, ok := validPassword(params.Password); !ok {
-			writeError(w, http.StatusBadRequest, msg, nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, msg, nil, cfg.Logger)
 			return
 		}
 
 		n, err := cfg.Auth.CountUsers(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to count users", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to count users", err, cfg.Logger)
 			return
 		}
 
 		if n >= MaxNumUsers {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("Maximum number of users reached (%d)", MaxNumUsers), nil,
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("Maximum number of users reached (%d)", MaxNumUsers), nil,
 				cfg.Logger)
 
 			return
@@ -221,31 +221,31 @@ func CreateUser(a *auth) http.Handler {
 
 		hash, err := a.hashPassword(r.Context(), params.Password)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to hash password", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to hash password", err, cfg.Logger)
 			return
 		}
 
 		_, err = cfg.Auth.CreateUser(r.Context(), db.NewUser{Email: email, Role: params.RoleID, PasswordHash: hash})
 		if errors.Is(err, db.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "User already exists", nil, cfg.Logger)
+			writeError(w, r, http.StatusConflict, "User already exists", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create user", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to create user", err, cfg.Logger)
 			return
 		}
 
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "create_user", p.Email, fmt.Sprintf("User %s created with role %d", email, params.RoleID))
-		writeResponse(w, SuccessResponse{Message: "User created successfully"}, http.StatusCreated, cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "User created successfully"}, http.StatusCreated, cfg.Logger)
 	})
 }
 
 func GetUser(a *auth) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, ok := lookupUser(w, r, a.cfg); ok {
-			writeResponse(w, User{Email: u.Email, RoleID: u.Role}, http.StatusOK, a.cfg.Logger)
+			writeResponse(w, r, User{Email: u.Email, RoleID: u.Role}, http.StatusOK, a.cfg.Logger)
 		}
 	})
 }
@@ -262,7 +262,7 @@ func UpdateUser(a *auth) http.Handler {
 		}
 
 		if !validRole(params.RoleID) {
-			writeError(w, http.StatusBadRequest, "Invalid role ID", nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "Invalid role ID", nil, cfg.Logger)
 			return
 		}
 
@@ -273,28 +273,28 @@ func UpdateUser(a *auth) http.Handler {
 
 		p, _ := PrincipalFrom(r.Context())
 		if u.ID == p.UserID {
-			writeError(w, http.StatusForbidden, "Cannot modify your own account", nil, cfg.Logger)
+			writeError(w, r, http.StatusForbidden, "Cannot modify your own account", nil, cfg.Logger)
 			return
 		}
 
 		err := cfg.Auth.UpdateUserRole(r.Context(), u.ID, params.RoleID)
 		if errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "User not found", nil, cfg.Logger)
+			writeError(w, r, http.StatusNotFound, "User not found", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to update user", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to update user", err, cfg.Logger)
 			return
 		}
 
 		// The user's ESMEs bind again, under the checks of the new role.
 		if err := cfg.SMPP.CloseUser(r.Context(), u.ID); err != nil {
-			cfg.Logger.Error("failed to close the SMPP sessions of a user", slog.String("email", u.Email), slog.Any("error", err))
+			cfg.Logger.ErrorContext(r.Context(), "failed to close the SMPP sessions of a user", slog.String("email", u.Email), slog.Any("error", err))
 		}
 
 		a.audit(r, "update_user", p.Email, fmt.Sprintf("Role of %s set to %d", u.Email, params.RoleID))
-		writeResponse(w, SuccessResponse{Message: "User updated successfully"}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "User updated successfully"}, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -313,7 +313,7 @@ func UpdateUserPassword(a *auth) http.Handler {
 		}
 
 		if p, _ := PrincipalFrom(r.Context()); u.ID == p.UserID {
-			writeError(w, http.StatusForbidden, "Change your own password with PUT /api/v1/users/me/password", nil,
+			writeError(w, r, http.StatusForbidden, "Change your own password with PUT /api/v1/users/me/password", nil,
 				a.cfg.Logger)
 
 			return
@@ -323,7 +323,7 @@ func UpdateUserPassword(a *auth) http.Handler {
 			return
 		}
 
-		writeResponse(w, SuccessResponse{Message: "Password updated successfully"}, http.StatusOK, a.cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "Password updated successfully"}, http.StatusOK, a.cfg.Logger)
 	})
 }
 
@@ -339,25 +339,25 @@ func DeleteUser(a *auth) http.Handler {
 
 		p, _ := PrincipalFrom(r.Context())
 		if u.ID == p.UserID {
-			writeError(w, http.StatusForbidden, "Cannot delete your own account", nil, cfg.Logger)
+			writeError(w, r, http.StatusForbidden, "Cannot delete your own account", nil, cfg.Logger)
 			return
 		}
 
 		// Deleting the user deletes its ESMEs, so they are listed before, to close their sessions after.
 		esmes, err := cfg.ESMEs.ListESMEsOfUser(r.Context(), u.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to delete user", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to delete user", err, cfg.Logger)
 			return
 		}
 
 		err = cfg.Auth.DeleteUser(r.Context(), u.ID)
 		if errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "User not found", nil, cfg.Logger)
+			writeError(w, r, http.StatusNotFound, "User not found", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to delete user", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to delete user", err, cfg.Logger)
 			return
 		}
 
@@ -366,7 +366,7 @@ func DeleteUser(a *auth) http.Handler {
 		}
 
 		a.audit(r, "delete_user", p.Email, "User "+u.Email+" deleted")
-		writeResponse(w, SuccessResponse{Message: "User deleted successfully"}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "User deleted successfully"}, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -380,7 +380,7 @@ func myself(cfg Config) tokenOwner {
 
 		u, err := cfg.Auth.GetUserByID(r.Context(), p.UserID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to retrieve user", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to retrieve user", err, cfg.Logger)
 			return db.User{}, false
 		}
 
@@ -410,7 +410,7 @@ func ListAPITokens(a *auth, owner tokenOwner) http.Handler {
 
 		tokens, total, err := cfg.Auth.ListAPITokens(r.Context(), u.ID, page, perPage)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to list API tokens", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to list API tokens", err, cfg.Logger)
 			return
 		}
 
@@ -422,7 +422,7 @@ func ListAPITokens(a *auth, owner tokenOwner) http.Handler {
 			resp.Items = append(resp.Items, apiTokenOf(t))
 		}
 
-		writeResponse(w, resp, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, resp, http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -437,7 +437,7 @@ func CreateAPIToken(a *auth, owner tokenOwner) http.Handler {
 		}
 
 		if n := len([]rune(params.Name)); n < minTokenNameLength || n > maxTokenNameLength {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("Token name must be between %d and %d characters",
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("Token name must be between %d and %d characters",
 				minTokenNameLength, maxTokenNameLength), nil, cfg.Logger)
 
 			return
@@ -450,12 +450,12 @@ func CreateAPIToken(a *auth, owner tokenOwner) http.Handler {
 		if params.ExpiresAt != "" {
 			var err error
 			if expiresAt, err = time.Parse(time.RFC3339, params.ExpiresAt); err != nil {
-				writeError(w, http.StatusBadRequest, "expires_at must be an RFC 3339 time", err, cfg.Logger)
+				writeError(w, r, http.StatusBadRequest, "expires_at must be an RFC 3339 time", err, cfg.Logger)
 				return
 			}
 
 			if !expiresAt.After(now) {
-				writeError(w, http.StatusBadRequest, "expires_at must be in the future", nil, cfg.Logger)
+				writeError(w, r, http.StatusBadRequest, "expires_at must be in the future", nil, cfg.Logger)
 				return
 			}
 		}
@@ -467,12 +467,12 @@ func CreateAPIToken(a *auth, owner tokenOwner) http.Handler {
 
 		n, err := cfg.Auth.CountAPITokens(r.Context(), u.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to count API tokens", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to count API tokens", err, cfg.Logger)
 			return
 		}
 
 		if n >= MaxNumAPITokens {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("Maximum number of API tokens reached (%d)", MaxNumAPITokens),
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("Maximum number of API tokens reached (%d)", MaxNumAPITokens),
 				nil, cfg.Logger)
 
 			return
@@ -485,19 +485,19 @@ func CreateAPIToken(a *auth, owner tokenOwner) http.Handler {
 			UserID: u.ID, CreatedAt: now, ExpiresAt: expiresAt,
 		})
 		if errors.Is(err, db.ErrAlreadyExists) {
-			writeError(w, http.StatusConflict, "API token already exists", nil, cfg.Logger)
+			writeError(w, r, http.StatusConflict, "API token already exists", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create API token", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to create API token", err, cfg.Logger)
 			return
 		}
 
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "create_api_token", p.Email, fmt.Sprintf("API token %s (%s) created for %s", tokenID, params.Name,
 			u.Email))
-		writeResponse(w, CreateAPITokenResponse{Token: token}, http.StatusCreated, cfg.Logger)
+		writeResponse(w, r, CreateAPITokenResponse{Token: token}, http.StatusCreated, cfg.Logger)
 	})
 }
 
@@ -514,30 +514,30 @@ func DeleteAPIToken(a *auth, owner tokenOwner) http.Handler {
 
 		err := cfg.Auth.DeleteAPIToken(r.Context(), u.ID, tokenID)
 		if errors.Is(err, db.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "API token not found", nil, cfg.Logger)
+			writeError(w, r, http.StatusNotFound, "API token not found", nil, cfg.Logger)
 			return
 		}
 
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to delete API token", err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to delete API token", err, cfg.Logger)
 			return
 		}
 
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "delete_api_token", p.Email, fmt.Sprintf("API token %s of %s deleted", tokenID, u.Email))
-		writeResponse(w, SuccessResponse{Message: "API token deleted successfully"}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "API token deleted successfully"}, http.StatusOK, cfg.Logger)
 	})
 }
 
 func lookupUser(w http.ResponseWriter, r *http.Request, cfg Config) (db.User, bool) {
 	u, err := cfg.Auth.GetUser(r.Context(), r.PathValue("email"))
 	if errors.Is(err, db.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "User not found", nil, cfg.Logger)
+		writeError(w, r, http.StatusNotFound, "User not found", nil, cfg.Logger)
 		return db.User{}, false
 	}
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to retrieve user", err, cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to retrieve user", err, cfg.Logger)
 		return db.User{}, false
 	}
 

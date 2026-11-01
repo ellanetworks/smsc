@@ -38,7 +38,7 @@ type DiameterStatus struct {
 }
 
 func GetDiameterStatus(cfg Config) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := cfg.Diameter.Identity()
 
 		resp := DiameterStatus{
@@ -86,7 +86,7 @@ func GetDiameterStatus(cfg Config) http.Handler {
 			resp.Peers = append(resp.Peers, peer)
 		}
 
-		writeResponse(w, resp, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, resp, http.StatusOK, cfg.Logger)
 	})
 }
 

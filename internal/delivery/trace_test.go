@@ -7,6 +7,7 @@ import (
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/tgpp"
+	"github.com/ellanetworks/smsc/internal/logging/logtest"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -157,5 +158,74 @@ func TestDeliveryAttemptSpansPerMessage(t *testing.T) {
 
 	if spans[0].SpanContext().TraceID() == spans[1].SpanContext().TraceID() {
 		t.Error("the messages share a trace")
+	}
+}
+
+// TestDeliveryAttemptLogs checks that the logs of a delivery attempt carry its span's trace context, down to the
+// failure to store its outcome, so that a log leads to the attempt's trace.
+func TestDeliveryAttemptLogs(t *testing.T) {
+	tests := map[string]struct {
+		store   func(*fakeStore) Store
+		message string
+	}{
+		"delivered": {
+			store:   func(s *fakeStore) Store { return s },
+			message: "short message delivery attempt",
+		},
+		"outcome not stored": {
+			store:   func(s *fakeStore) Store { return statusFailingStore{s} },
+			message: "failed to record delivery outcome",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var logs logtest.Recorder
+
+			rec := tracetest.NewSpanRecorder()
+			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+
+			d := newDeliverer(tc.store(newFakeStore(pendingMessage(t))), &fakeRouter{routing: mmeRouting()}, sender)
+			d.TracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+			d.Logger = logs.Logger()
+
+			m, _, _ := d.Store.NextDue(context.Background(), d.Now(), nil)
+			_ = d.process(context.Background(), m)
+
+			spans := rec.Ended()
+			if len(spans) != 1 {
+				t.Fatalf("ended %d spans, want 1", len(spans))
+			}
+
+			got := logs.Messages(t, tc.message)
+			if len(got) == 0 {
+				t.Fatalf("no log %q in %v", tc.message, logs.Records(t))
+			}
+
+			for _, r := range logs.Records(t) {
+				logtest.InSpan(t, r, spans[0].SpanContext())
+			}
+		})
+	}
+}
+
+// TestDeliveryLogsWithoutTracing checks that the logs of a delivery carry no trace context when tracing is off.
+func TestDeliveryLogsWithoutTracing(t *testing.T) {
+	var logs logtest.Recorder
+
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+
+	d := newDeliverer(newFakeStore(pendingMessage(t)), &fakeRouter{routing: mmeRouting()}, sender)
+	d.Logger = logs.Logger()
+
+	process(t, d)
+
+	records := logs.Records(t)
+	if len(records) == 0 {
+		t.Fatal("no logs")
+	}
+
+	for _, r := range records {
+		logtest.NoSpan(t, r)
 	}
 }

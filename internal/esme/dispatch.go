@@ -76,7 +76,7 @@ func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done ch
 
 	expired, err := s.Store.ExpireNotifications(ctx, now)
 	if err != nil {
-		s.Logger.Error("failed to expire SMPP notifications", slog.Any("error", err))
+		s.Logger.ErrorContext(ctx, "failed to expire SMPP notifications", slog.Any("error", err))
 		return dispatchBackoff
 	}
 
@@ -100,7 +100,7 @@ func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done ch
 		if free > 0 {
 			due, err := s.Store.DueNotifications(ctx, esmeID, now, exclude, free)
 			if err != nil {
-				s.Logger.Error("failed to read the due SMPP notifications", slog.Any("error", err))
+				s.Logger.ErrorContext(ctx, "failed to read the due SMPP notifications", slog.Any("error", err))
 				return dispatchBackoff
 			}
 
@@ -125,7 +125,7 @@ func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done ch
 		// that ends.
 		next, ok, err := s.Store.NextNotificationAt(ctx, esmeID, now)
 		if err != nil {
-			s.Logger.Error("failed to read the next SMPP notification", slog.Any("error", err))
+			s.Logger.ErrorContext(ctx, "failed to read the next SMPP notification", slog.Any("error", err))
 			return dispatchBackoff
 		}
 
@@ -205,7 +205,7 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 	}
 
 	if err != nil {
-		log.Error("failed to make an SMPP notification", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to make an SMPP notification", slog.Any("error", err))
 		s.retry(ctx, log, n)
 
 		return
@@ -215,8 +215,10 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 	conn := sess.conn
 	s.mu.Unlock()
 
-	spanCtx, span := s.startSpan(ctx, trace.SpanKindClient, smpp.CmdDeliverSM, sess, tracing.Links(n.Message.TraceParent)...)
-	status, err := conn.Deliver(spanCtx, d)
+	// The span times the deliver_sm alone, but its context goes on to the logs and the store of its outcome, which
+	// then carry its trace context.
+	ctx, span := s.startSpan(ctx, trace.SpanKindClient, smpp.CmdDeliverSM, sess, tracing.Links(n.Message.TraceParent)...)
+	status, err := conn.Deliver(ctx, d)
 
 	endDeliverSpan(span, status, err)
 
@@ -225,21 +227,21 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 	switch {
 	case errors.Is(err, smpp.ErrClosed) || errors.As(err, &stateErr):
 		// The session ended or is unbinding: no other notification goes to it, before the server unregisters it.
-		log.Debug("deliver_sm on a session that ended", slog.Any("error", err))
+		log.DebugContext(ctx, "deliver_sm on a session that ended", slog.Any("error", err))
 
 		s.mu.Lock()
 		sess.closed = true
 		s.mu.Unlock()
 	case err != nil:
-		log.Debug("deliver_sm failed", slog.Any("error", err))
+		log.DebugContext(ctx, "deliver_sm failed", slog.Any("error", err))
 		s.retry(ctx, log, n)
 	case status == smpp.StatusOK:
 		s.close(ctx, log, n, db.NotificationAcknowledged)
 	case status == smpp.StatusXPAppn || status == smpp.StatusXRAppn:
-		log.Info("deliver_sm rejected", slog.String("status", status.String()))
+		log.InfoContext(ctx, "deliver_sm rejected", slog.String("status", status.String()))
 		s.close(ctx, log, n, db.NotificationRejected)
 	default:
-		log.Debug("deliver_sm refused for now", slog.String("status", status.String()))
+		log.DebugContext(ctx, "deliver_sm refused for now", slog.String("status", status.String()))
 		s.retry(ctx, log, n)
 	}
 }
@@ -252,7 +254,7 @@ func (s *Service) close(ctx context.Context, log *slog.Logger, n db.Notification
 	}
 
 	if err != nil {
-		log.Error("failed to store the outcome of an SMPP notification", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to store the outcome of an SMPP notification", slog.Any("error", err))
 		return
 	}
 
@@ -261,7 +263,7 @@ func (s *Service) close(ctx context.Context, log *slog.Logger, n db.Notification
 
 func (s *Service) retry(ctx context.Context, log *slog.Logger, n db.Notification) {
 	if err := s.Store.RetryNotification(ctx, n.ID, s.Now().Add(retryDelay(n.Attempts))); err != nil {
-		log.Error("failed to schedule an SMPP notification again", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to schedule an SMPP notification again", slog.Any("error", err))
 	}
 }
 

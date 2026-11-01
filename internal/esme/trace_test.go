@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/logging/logtest"
 	"github.com/ellanetworks/smsc/smpp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -192,4 +193,77 @@ func TestSubmitSMSpans(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDeliverSMLogs checks that the logs of a deliver_sm's outcome, made once its span ended, carry its trace context.
+func TestDeliverSMLogs(t *testing.T) {
+	var logs logtest.Recorder
+
+	env := newTestEnv(t, nil)
+	rec := tracetest.NewSpanRecorder()
+	env.service.TracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	env.service.Logger = logs.Logger()
+	c := env.run(t)
+
+	conn := newFakeConn()
+	conn.answer = func(*smpp.DeliverSM) (smpp.CommandStatus, error) { return smpp.StatusXPAppn, nil }
+	env.service.attach(&Session{
+		ID: 1, ESME: env.esme, UserID: env.esme.UserID, BindType: Receiver,
+		Remote: netip.MustParseAddrPort("192.0.2.7:40000"),
+	}, conn)
+
+	id, status := env.service.SubmitSM(context.Background(), env.session(Transceiver), &smpp.SubmitSM{
+		Message: with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.RegisteredDelivery = 0x01 }),
+	})
+	if status != smpp.StatusOK {
+		t.Fatalf("submit_sm = %s", status)
+	}
+
+	n, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env.complete(t, n, db.StatusDelivered, 0, "", "", c.Now())
+	conn.next(t)
+
+	var got []map[string]any
+
+	for deadline := time.Now().Add(5 * time.Second); len(got) == 0 && time.Now().Before(deadline); {
+		got = logs.Messages(t, "deliver_sm rejected")
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	spans := rec.Ended()
+	if len(got) != 1 || len(spans) != 1 {
+		t.Fatalf("%d logs of the rejection and %d spans, want 1 and 1", len(got), len(spans))
+	}
+
+	logtest.InSpan(t, got[0], spans[0].SpanContext())
+}
+
+// TestSubmitSMLogs checks that the log of a refused submit_sm carries its span's trace context.
+func TestSubmitSMLogs(t *testing.T) {
+	var logs logtest.Recorder
+
+	env := newTestEnv(t, nil)
+	rec := tracetest.NewSpanRecorder()
+	env.service.TracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	env.service.Logger = logs.Logger()
+
+	sess := env.session(Transceiver)
+	sess.Remote = netip.MustParseAddrPort("192.0.2.7:40000")
+
+	refused := with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.Destination.Addr = "x" })
+	env.service.serveSubmit(context.Background(), sess, &smpp.SubmitSM{Message: refused}, testNow).Written(nil)
+
+	spans := rec.Ended()
+	got := logs.Messages(t, "submit_sm refused")
+
+	if len(got) != 1 || len(spans) != 1 {
+		t.Fatalf("%d logs of the refusal and %d spans, want 1 and 1", len(got), len(spans))
+	}
+
+	logtest.InSpan(t, got[0], spans[0].SpanContext())
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -85,7 +84,7 @@ func testConfig(t *testing.T, store *db.DB) api.Config {
 		JWTSecret:  testJWTSecret,
 		BcryptCost: bcrypt.MinCost,
 		Now:        func() time.Time { return testNow },
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:     slog.New(slog.DiscardHandler),
 	}
 }
 

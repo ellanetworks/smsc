@@ -54,21 +54,21 @@ type ListPeersResponse struct {
 }
 
 func ListPeers(cfg Config) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ListPeersResponse{Items: []Peer{}}
 
 		for _, p := range cfg.Settings.Get().Peers {
 			resp.Items = append(resp.Items, withStatus(cfg, peerResponse(p)))
 		}
 
-		writeResponse(w, resp, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, resp, http.StatusOK, cfg.Logger)
 	})
 }
 
 func GetPeer(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p, ok := lookupPeer(w, r, cfg); ok {
-			writeResponse(w, withStatus(cfg, peerResponse(p)), http.StatusOK, cfg.Logger)
+			writeResponse(w, r, withStatus(cfg, peerResponse(p)), http.StatusOK, cfg.Logger)
 		}
 	})
 }
@@ -83,13 +83,13 @@ func CreatePeer(a *auth) http.Handler {
 		}
 
 		p, err := cfg.Settings.CreatePeer(r.Context(), p)
-		if !peerSaved(w, err, cfg, "create") {
+		if !peerSaved(w, r, err, cfg, "create") {
 			return
 		}
 
 		principal, _ := PrincipalFrom(r.Context())
 		a.audit(r, "create_diameter_peer", principal.Email, fmt.Sprintf("Diameter peer %d created", p.ID))
-		writeResponse(w, peerResponse(p), http.StatusCreated, cfg.Logger)
+		writeResponse(w, r, peerResponse(p), http.StatusCreated, cfg.Logger)
 	})
 }
 
@@ -109,7 +109,7 @@ func UpdatePeer(a *auth) http.Handler {
 
 		p.ID = id
 
-		if !peerSaved(w, cfg.Settings.UpdatePeer(r.Context(), p), cfg, "update") {
+		if !peerSaved(w, r, cfg.Settings.UpdatePeer(r.Context(), p), cfg, "update") {
 			return
 		}
 
@@ -121,7 +121,7 @@ func UpdatePeer(a *auth) http.Handler {
 			p = stored
 		}
 
-		writeResponse(w, peerResponse(p), http.StatusOK, cfg.Logger)
+		writeResponse(w, r, peerResponse(p), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -134,20 +134,20 @@ func DeletePeer(a *auth) http.Handler {
 			return
 		}
 
-		if !peerSaved(w, cfg.Settings.DeletePeer(r.Context(), id), cfg, "delete") {
+		if !peerSaved(w, r, cfg.Settings.DeletePeer(r.Context(), id), cfg, "delete") {
 			return
 		}
 
 		principal, _ := PrincipalFrom(r.Context())
 		a.audit(r, "delete_diameter_peer", principal.Email, fmt.Sprintf("Diameter peer %d deleted", id))
-		writeResponse(w, SuccessResponse{Message: "Peer deleted successfully"}, http.StatusOK, cfg.Logger)
+		writeResponse(w, r, SuccessResponse{Message: "Peer deleted successfully"}, http.StatusOK, cfg.Logger)
 	})
 }
 
 func peerID(w http.ResponseWriter, r *http.Request, cfg Config) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid peer ID", err, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, "Invalid peer ID", err, cfg.Logger)
 		return 0, false
 	}
 
@@ -162,7 +162,7 @@ func lookupPeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 
 	p, ok := findPeer(cfg, id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "Peer not found", nil, cfg.Logger)
+		writeError(w, r, http.StatusNotFound, "Peer not found", nil, cfg.Logger)
 	}
 
 	return p, ok
@@ -186,7 +186,7 @@ func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 	dec.DisallowUnknownFields()
 
 	if err := dec.Decode(&params); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
 		return settings.Peer{}, false
 	}
 
@@ -198,7 +198,7 @@ func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 	for _, s := range params.Addresses {
 		a, err := netip.ParseAddr(s)
 		if err != nil || a.Zone() != "" {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("address %q must be an IP address", s), nil, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("address %q must be an IP address", s), nil, cfg.Logger)
 			return settings.Peer{}, false
 		}
 
@@ -215,7 +215,7 @@ func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 	}
 
 	if err := p.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), nil, cfg.Logger)
+		writeError(w, r, http.StatusBadRequest, err.Error(), nil, cfg.Logger)
 		return settings.Peer{}, false
 	}
 
@@ -223,16 +223,16 @@ func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 }
 
 // peerSaved reports whether a change of peer succeeded, or writes its error.
-func peerSaved(w http.ResponseWriter, err error, cfg Config, action string) bool {
+func peerSaved(w http.ResponseWriter, r *http.Request, err error, cfg Config, action string) bool {
 	switch {
 	case err == nil:
 		return true
 	case errors.Is(err, settings.ErrNotFound):
-		writeError(w, http.StatusNotFound, "Peer not found", nil, cfg.Logger)
+		writeError(w, r, http.StatusNotFound, "Peer not found", nil, cfg.Logger)
 	case errors.Is(err, settings.ErrConflict):
-		writeError(w, http.StatusConflict, err.Error(), nil, cfg.Logger)
+		writeError(w, r, http.StatusConflict, err.Error(), nil, cfg.Logger)
 	default:
-		writeError(w, http.StatusInternalServerError, "Failed to "+action+" peer", err, cfg.Logger)
+		writeError(w, r, http.StatusInternalServerError, "Failed to "+action+" peer", err, cfg.Logger)
 	}
 
 	return false

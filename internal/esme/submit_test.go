@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/netip"
 	"path/filepath"
@@ -98,7 +97,7 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 			Received:   received,
 			BcryptCost: bcrypt.MinCost,
 			Now:        now,
-			Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Logger:     slog.New(slog.DiscardHandler),
 		},
 		received: received,
 		esme:     e,
@@ -521,7 +520,7 @@ func TestSubmitFailuresAreCounted(t *testing.T) {
 			env := newTestEnv(t, nil)
 			env.service.init()
 
-			if got := env.service.submitFailed(env.service.Logger, tc.err); got != tc.status {
+			if got := env.service.submitFailed(t.Context(), env.service.Logger, tc.err); got != tc.status {
 				t.Fatalf("status = %s, want %s", got, tc.status)
 			}
 

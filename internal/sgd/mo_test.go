@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -55,7 +54,7 @@ func newTestHandler(store *fakeStore) *Handler {
 		},
 		Store:  store,
 		Now:    func() time.Time { return testNow },
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger: slog.New(slog.DiscardHandler),
 	}
 }
 

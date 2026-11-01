@@ -46,8 +46,8 @@ type RetentionSettings struct {
 const day = 24 * time.Hour
 
 func GetOperator(cfg Config) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeResponse(w, operatorResponse(cfg.Settings.Get().Operator), http.StatusOK, cfg.Logger)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeResponse(w, r, operatorResponse(cfg.Settings.Get().Operator), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -78,8 +78,8 @@ func UpdateOperator(cfg Config) http.Handler {
 }
 
 func GetDelivery(cfg Config) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeResponse(w, deliveryResponse(cfg.Settings.Get().Delivery), http.StatusOK, cfg.Logger)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeResponse(w, r, deliveryResponse(cfg.Settings.Get().Delivery), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -107,8 +107,8 @@ func UpdateDelivery(cfg Config) http.Handler {
 }
 
 func GetRetention(cfg Config) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeResponse(w, retentionResponse(cfg.Settings.Get().Retention), http.StatusOK, cfg.Logger)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeResponse(w, r, retentionResponse(cfg.Settings.Get().Retention), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -140,27 +140,27 @@ func updateHandler[P any](cfg Config, subject string, apply func(context.Context
 		dec.DisallowUnknownFields()
 
 		if err := dec.Decode(&params); err != nil {
-			writeError(w, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
+			writeError(w, r, http.StatusBadRequest, "Invalid request data", err, cfg.Logger)
 			return
 		}
 
 		if err := apply(r.Context(), params); err != nil {
 			if bad := (invalidError{}); errors.As(err, &bad) {
-				writeError(w, http.StatusBadRequest, bad.Error(), nil, cfg.Logger)
+				writeError(w, r, http.StatusBadRequest, bad.Error(), nil, cfg.Logger)
 				return
 			}
 
 			if errors.Is(err, settings.ErrConflict) {
-				writeError(w, http.StatusConflict, err.Error(), nil, cfg.Logger)
+				writeError(w, r, http.StatusConflict, err.Error(), nil, cfg.Logger)
 				return
 			}
 
-			writeError(w, http.StatusInternalServerError, "Failed to update "+subject, err, cfg.Logger)
+			writeError(w, r, http.StatusInternalServerError, "Failed to update "+subject, err, cfg.Logger)
 
 			return
 		}
 
-		writeResponse(w, respond(cfg.Settings.Get()), http.StatusOK, cfg.Logger)
+		writeResponse(w, r, respond(cfg.Settings.Get()), http.StatusOK, cfg.Logger)
 	})
 }
 

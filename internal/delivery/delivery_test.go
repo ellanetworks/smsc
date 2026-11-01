@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log/slog"
 	"path/filepath"
 	"reflect"
@@ -356,7 +355,7 @@ func newDeliverer(store Store, router Router, sender Sender) *Deliverer {
 		},
 		AttemptTimeout: 30 * time.Second,
 		Now:            func() time.Time { return testNow },
-		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:         slog.New(slog.DiscardHandler),
 	}
 }
 

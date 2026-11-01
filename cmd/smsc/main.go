@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/delivery"
+	"github.com/ellanetworks/smsc/internal/logging"
 	"github.com/ellanetworks/smsc/internal/server"
 )
 
@@ -24,35 +24,16 @@ func main() {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		newLogger(slog.LevelInfo).Error("smsc stopped", "error", err)
+		logging.New(os.Stdout, slog.LevelInfo).Error("smsc stopped", "error", err)
 		os.Exit(1)
 	}
 
-	logger := newLogger(cfg.Logging.Level)
+	logger := logging.New(os.Stdout, cfg.Logging.Level)
 
 	if err := run(cfg, logger); err != nil {
 		logger.Error("smsc stopped", "error", err)
 		os.Exit(1)
 	}
-}
-
-// JSON with Ella Core's ts and lowercase level, and durations as "1.5s".
-func newLogger(level slog.Level) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: level,
-		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			switch {
-			case a.Key == slog.TimeKey:
-				a.Key = "ts"
-			case a.Key == slog.LevelKey:
-				a.Value = slog.StringValue(strings.ToLower(a.Value.String()))
-			case a.Value.Kind() == slog.KindDuration:
-				a.Value = slog.StringValue(a.Value.Duration().String())
-			}
-
-			return a
-		},
-	}))
 }
 
 func run(cfg config.Config, logger *slog.Logger) error {

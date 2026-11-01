@@ -7,6 +7,7 @@ import (
 	"testing/fstest"
 
 	"github.com/ellanetworks/smsc/internal/api"
+	"github.com/ellanetworks/smsc/internal/logging/logtest"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -76,5 +77,66 @@ func TestAPISpans(t *testing.T) {
 	sc := s.SpanContext()
 	if want := "00-" + sc.TraceID().String() + "-" + sc.SpanID().String() + "-01"; m.TraceParent != want {
 		t.Errorf("message traceparent = %q, want the span's %q", m.TraceParent, want)
+	}
+}
+
+// TestAPILogs checks that the logs of a request, its audit events included, carry the trace context of the request's
+// span, not the caller's, and none when tracing is off.
+func TestAPILogs(t *testing.T) {
+	const callerTraceID = "0af7651916cd43dd8448eb211c80319c"
+
+	for _, traced := range []bool{true, false} {
+		t.Run(map[bool]string{true: "traced", false: "untraced"}[traced], func(t *testing.T) {
+			var logs logtest.Recorder
+
+			store := openStore(t)
+			rec := tracetest.NewSpanRecorder()
+
+			cfg := testConfig(t, store)
+			if traced {
+				cfg.TracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+			}
+
+			cfg.Logger = logs.Logger()
+			a := &testAPI{store: store, handler: api.NewHandler(cfg), now: testNow}
+			a.token = initialize(t, a.handler)
+
+			for _, req := range []*http.Request{
+				request(http.MethodPost, "/api/v1/messages", `{"to": 1}`, a.token),
+				request(http.MethodGet, "/api/v1/messages", "", "not-a-token"),
+			} {
+				req.Header.Set("traceparent", "00-"+callerTraceID+"-b7ad6b7169203331-01")
+				serve(a.handler, req)
+			}
+
+			spans := map[string]trace.SpanContext{}
+			for _, s := range rec.Ended() {
+				spans[s.Name()] = s.SpanContext()
+			}
+
+			for msg, span := range map[string]string{
+				"Invalid request data": "POST /api/v1/messages",
+				"audit event":          "GET /api/v1/messages",
+			} {
+				got := logs.Messages(t, msg)
+				if len(got) == 0 {
+					t.Fatalf("no log %q", msg)
+				}
+
+				r := got[len(got)-1]
+
+				if !traced {
+					logtest.NoSpan(t, r)
+					continue
+				}
+
+				sc, ok := spans[span]
+				if !ok {
+					t.Fatalf("no span %q", span)
+				}
+
+				logtest.InSpan(t, r, sc)
+			}
+		})
 	}
 }

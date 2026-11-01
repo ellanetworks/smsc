@@ -59,7 +59,7 @@ func (p *purger) pass(ctx context.Context) {
 
 		if err != nil {
 			if ctx.Err() == nil {
-				p.logger.Error("failed to purge messages", slog.Int("count", purged), slog.Time("cutoff", cutoff),
+				p.logger.ErrorContext(ctx, "failed to purge messages", slog.Int("count", purged), slog.Time("cutoff", cutoff),
 					slog.Any("error", err))
 			}
 
@@ -78,7 +78,7 @@ func (p *purger) pass(ctx context.Context) {
 	}
 
 	if purged > 0 {
-		p.logger.Info("purged messages", slog.Int("count", purged), slog.Time("cutoff", cutoff),
+		p.logger.InfoContext(ctx, "purged messages", slog.Int("count", purged), slog.Time("cutoff", cutoff),
 			slog.Duration("duration", time.Since(start)))
 	}
 }

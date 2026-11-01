@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net/netip"
 	"slices"
@@ -16,7 +15,7 @@ func TestFailedSetPeersKeepsThePeersTheNodeHas(t *testing.T) {
 	node, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org", ProductName: "smsc"},
 		Handler:  diameter.NewMux(),
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:   slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +23,7 @@ func TestFailedSetPeersKeepsThePeersTheNodeHas(t *testing.T) {
 
 	t.Cleanup(func() { _ = node.Shutdown(context.Background()) })
 
-	m := &nodeManager{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	m := &nodeManager{logger: slog.New(slog.DiscardHandler)}
 
 	good := []settings.Peer{{ID: 1, Addresses: []netip.Addr{netip.MustParseAddr("192.0.2.10")}, Port: 3868}}
 	m.setPeers(node, good)

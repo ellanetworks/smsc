@@ -10,12 +10,17 @@ linters:
     - nakedret
     - noctx
     - predeclared
+    - sloglint
     - staticcheck
     - unconvert
     - unparam
     - whitespace
     - govet
     - wsl_v5
+  settings:
+    sloglint:
+      # A log made where a context is in scope takes it, so that it carries the trace context of its span.
+      context: scope
 issues:
   new-from-rev: ""
   new: false
