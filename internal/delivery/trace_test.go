@@ -79,7 +79,7 @@ func TestDeliveryAttemptSpans(t *testing.T) {
 			}
 
 			s := spans[0]
-			if s.Name() != "deliver" || s.SpanKind() != trace.SpanKindConsumer || s.Parent().IsValid() {
+			if s.Name() != "deliver smsc.example.org" || s.SpanKind() != trace.SpanKindConsumer || s.Parent().IsValid() {
 				t.Fatalf("span %q kind %v parent %v, want a deliver consumer span without a parent", s.Name(), s.SpanKind(), s.Parent())
 			}
 

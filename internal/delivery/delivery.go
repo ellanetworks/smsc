@@ -367,14 +367,17 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 // messaging process span, which starts a trace of its own and links to the request that created the message, since
 // the attempts of a message can span days.
 func (d *Deliverer) deliverAndSettle(stop context.Context, m db.Message, s *session) (_ *session, err error) {
-	stop, span := d.tracer().Start(stop, deliverOperation,
+	destination := d.Identity().OriginHost
+
+	// The span name is {messaging.operation.name} {messaging.destination.name}, as messaging spans name theirs.
+	stop, span := d.tracer().Start(stop, deliverOperation+" "+destination,
 		trace.WithNewRoot(),
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithLinks(tracing.Links(m.TraceParent)...),
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String(tracing.MessagingSystem),
 			// The SMSC has no destination but the recipient, which spans must not carry: the name identifies the SMSC.
-			semconv.MessagingDestinationName(d.Identity().OriginHost),
+			semconv.MessagingDestinationName(destination),
 			semconv.MessagingOperationName(deliverOperation),
 			semconv.MessagingOperationTypeProcess,
 			semconv.MessagingMessageID(strconv.FormatInt(m.ID, 10)),

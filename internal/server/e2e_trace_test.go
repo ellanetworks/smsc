@@ -49,7 +49,7 @@ func TestMobileOriginatedMessageIsTraced(t *testing.T) {
 	var deliver []sdktrace.ReadOnlySpan
 
 	eventually(t, "the delivery span", func() bool {
-		deliver = spanNamed(smscSpans.Ended(), "deliver", trace.SpanKindConsumer)
+		deliver = spanNamed(smscSpans.Ended(), "deliver "+smscHost, trace.SpanKindConsumer)
 		return len(deliver) == 1
 	})
 
@@ -114,7 +114,7 @@ func TestSMPPMessageIsTraced(t *testing.T) {
 	eventually(t, "the spans", func() bool {
 		spans := rec.Ended()
 		submit = spanNamed(spans, "submit_sm", trace.SpanKindServer)
-		deliver = spanNamed(spans, "deliver", trace.SpanKindConsumer)
+		deliver = spanNamed(spans, "deliver "+smscHost, trace.SpanKindConsumer)
 		receipt = spanNamed(spans, "deliver_sm", trace.SpanKindClient)
 
 		return len(submit) == 1 && len(deliver) == 1 && len(receipt) == 1
