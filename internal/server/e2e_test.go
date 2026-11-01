@@ -1684,3 +1684,60 @@ func TestShutdownDrainsTheAPI(t *testing.T) {
 	s.server = nil
 	_ = s.store.Close()
 }
+
+// Shutdown starts no delivery, even while the API drains: a message stored then waits, pending, for the next start.
+// The deliveries in flight, which it lets finish, so have the whole shutdown to end in rather than what the drain and
+// the SMPP unbind leave of it.
+func TestShutdownStartsNoDelivery(t *testing.T) {
+	core := newFakeCore(t, alice, bob)
+	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
+	cfg.API.DrainDelay = time.Second
+	s := startSMSC(t, cfg)
+
+	core.connect(s)
+
+	srv := s.server
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		srv.Shutdown(context.Background())
+	}()
+
+	eventually(t, "the drain", func() bool {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.url+"/api/v1/readyz", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_ = resp.Body.Close()
+
+		return resp.StatusCode == http.StatusServiceUnavailable
+	})
+
+	// The Diameter interfaces still serve while the API drains.
+	if rc := core.submit(alice, bob, "during the drain"); rc != diameter.ResultSuccess {
+		t.Fatalf("OFA result = %d", rc)
+	}
+
+	<-done
+
+	s.server = nil
+
+	if routings := core.routingRequests(); len(routings) != 0 {
+		t.Fatalf("routing requests during shutdown = %v", routings)
+	}
+
+	m, err := s.store.GetMessage(t.Context(), 1)
+	if err != nil || m.Status != db.StatusPending {
+		t.Fatalf("message = %s, %v; want pending", m.Status, err)
+	}
+
+	_ = s.store.Close()
+}

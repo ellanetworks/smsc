@@ -41,7 +41,7 @@ Ella SMSC exports [OpenTelemetry](https://opentelemetry.io/) traces when `teleme
 | Export | OTLP over gRPC, without TLS |
 | Sampling | Parent-based, always on for a trace the SMSC starts |
 | Propagation | W3C Trace Context |
-| Left out | MSISDN, IMSI, message content |
+| Delivery, SMPP and Diameter spans | No MSISDN, IMSI or message content |
 
 ### Spans
 
