@@ -72,6 +72,9 @@ type ServerConfig struct {
 type Server struct {
 	cfg ServerConfig
 	log *slog.Logger
+	// ctx ends when the server stops, which ends the TLS handshakes under way.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu        sync.Mutex
 	closing   bool
@@ -103,8 +106,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		cfg.Session.Logger = cfg.Logger
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Server{
-		cfg: cfg, log: cfg.Logger, listeners: map[net.Listener]struct{}{}, sessions: map[uint64]*Session{},
+		cfg: cfg, log: cfg.Logger, ctx: ctx, cancel: cancel, listeners: map[net.Listener]struct{}{}, sessions: map[uint64]*Session{},
 		accounts: map[string]map[uint64]*Session{}, reserved: map[uint64]string{},
 	}, nil
 }
@@ -188,12 +193,18 @@ func (s *Server) serveConn(c net.Conn) {
 			timeout = DefaultSessionInitTimeout
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(s.ctx, timeout)
 		err := tc.HandshakeContext(ctx)
 
 		cancel()
 
 		if err != nil {
+			if s.ctx.Err() != nil {
+				_ = c.Close()
+
+				return
+			}
+
 			s.log.Info("SMPP TLS handshake failed", slog.String("remote", c.RemoteAddr().String()), slog.Any("error", err))
 
 			_ = c.Close()
@@ -431,6 +442,7 @@ func (s *Server) stop() []*Session {
 	defer s.mu.Unlock()
 
 	s.closing = true
+	s.cancel()
 
 	for l := range s.listeners {
 		_ = l.Close()

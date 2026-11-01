@@ -413,6 +413,12 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.draining.Store(true)
 
+	// No delivery starts once the SMSC is told to stop, and the ones in flight finish meanwhile: the drain is for the
+	// API's clients, and a delivery started late would have only what the drain and the SMPP unbind leave of ctx to
+	// end in. A message stored meanwhile stays pending for the next start.
+	s.stopDelivery()
+	s.stopPurging()
+
 	if d := s.Config.API.DrainDelay; d > 0 {
 		s.Logger.Info("draining the API", slog.Duration("delay", d))
 
@@ -444,9 +450,6 @@ func (s *Server) Shutdown(ctx context.Context) {
 	if err := s.apiServer.Shutdown(ctx); err != nil {
 		s.Logger.Warn("failed to stop the API cleanly", slog.Any("error", err))
 	}
-
-	s.stopDelivery()
-	s.stopPurging()
 
 	select {
 	case <-s.deliveryDone:

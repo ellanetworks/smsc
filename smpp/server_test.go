@@ -703,3 +703,54 @@ func TestBackoffAfterShortSession(t *testing.T) {
 		t.Fatalf("waits %v: the backoff did not grow", waits)
 	}
 }
+
+// A connection that stalls in its TLS handshake does not hold up Shutdown or Close: the handshake ends with the
+// server, not only at the session_init_timer.
+func TestStopDuringTLSHandshake(t *testing.T) {
+	cert := selfSigned(t)
+
+	for _, stop := range []struct {
+		name string
+		stop func(*Server) error
+	}{
+		{"Shutdown", func(s *Server) error { return s.Shutdown(context.Background()) }},
+		{"Close", (*Server).Close},
+	} {
+		t.Run(stop.name, func(t *testing.T) {
+			ts := newTestServer(t, func(cfg *ServerConfig) {
+				cfg.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+				cfg.Session.SessionInitTimeout = time.Minute
+			})
+
+			// A TCP connection that never sends its ClientHello.
+			conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", ts.addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			t.Cleanup(func() { _ = conn.Close() })
+
+			waitFor(t, "the connection to be accepted", func() bool {
+				ts.mu.Lock()
+				defer ts.mu.Unlock()
+
+				return len(ts.listeners) == 1
+			})
+			// Let the server start the handshake.
+			time.Sleep(50 * time.Millisecond)
+
+			done := make(chan error, 1)
+
+			go func() { done <- stop.stop(ts.Server) }()
+
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("%s = %v", stop.name, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s waited for the stalled TLS handshake", stop.name)
+			}
+		})
+	}
+}

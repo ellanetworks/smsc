@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
@@ -37,7 +36,7 @@ func newMetrics(database *db.DB) *metrics {
 		delivery: delivery.NewMetrics(),
 		peers:    newPeerMetrics(),
 	}
-	m.smpp = esme.NewMetrics(database, slog.Default())
+	m.smpp = esme.NewMetrics(database)
 
 	// The build's labels are those of Prometheus's own build_info, with the SMSC's version and, when the build sets
 	// it, its revision.

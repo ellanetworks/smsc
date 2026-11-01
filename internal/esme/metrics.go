@@ -2,7 +2,6 @@ package esme
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
@@ -14,6 +13,9 @@ type PendingCounter interface {
 	CountPendingNotifications(ctx context.Context, now time.Time) (map[db.NotificationType]int, error)
 }
 
+// pendingTimeout bounds the count of the pending notifications, so that a scrape does not wait on a busy database.
+const pendingTimeout = 2 * time.Second
+
 // Metrics are the SMPP listener's metrics. A nil Metrics counts nothing.
 type Metrics struct {
 	sessions *prometheus.GaugeVec
@@ -24,7 +26,7 @@ type Metrics struct {
 }
 
 // NewMetrics returns the metrics, with the pending notifications that store counts when they are collected.
-func NewMetrics(store PendingCounter, logger *slog.Logger) *Metrics {
+func NewMetrics(store PendingCounter) *Metrics {
 	m := &Metrics{
 		sessions: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "ellasmsc_smpp_sessions",
@@ -45,8 +47,7 @@ func NewMetrics(store PendingCounter, logger *slog.Logger) *Metrics {
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
 		}),
 		pending: &pendingCollector{
-			store:  store,
-			logger: logger,
+			store: store,
 			desc: prometheus.NewDesc("ellasmsc_smpp_notifications_pending",
 				"SMPP notifications not yet sent and not expired, by type (receipt, sim_answer).", []string{"type"}, nil),
 		},
@@ -106,19 +107,22 @@ func (m *Metrics) submitted(d time.Duration) {
 	}
 }
 
-// pendingCollector reads the pending notifications from the database when it is collected.
+// pendingCollector reads the pending notifications from the database when it is collected. A failed count is an
+// invalid metric, which the scrape leaves out and logs.
 type pendingCollector struct {
-	store  PendingCounter
-	logger *slog.Logger
-	desc   *prometheus.Desc
+	store PendingCounter
+	desc  *prometheus.Desc
 }
 
 func (c *pendingCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
 
 func (c *pendingCollector) Collect(ch chan<- prometheus.Metric) {
-	counts, err := c.store.CountPendingNotifications(context.Background(), time.Now())
+	ctx, cancel := context.WithTimeout(context.Background(), pendingTimeout)
+	defer cancel()
+
+	counts, err := c.store.CountPendingNotifications(ctx, time.Now())
 	if err != nil {
-		c.logger.Error("failed to count the pending SMPP notifications", slog.Any("error", err))
+		ch <- prometheus.NewInvalidMetric(c.desc, err)
 		return
 	}
 
