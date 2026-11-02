@@ -13,7 +13,6 @@ import (
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
-// reportingSubmitTPDU is submitTPDU with TP-SRR set.
 const reportingSubmitTPDU = "31" + "07" + "0b91" + "5155210300f2" + "00" + "00" + "aa" + "05" + "e8329bfd06"
 
 func reportingMessage(t *testing.T) db.Message {
@@ -206,7 +205,6 @@ func TestDeliverStatusReport(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// The SC originates the report (TS 29.338 clause 5.2.1.1).
 			if req := router.requests[0]; req.MSISDN != "15551230001" || req.MTI != s6c.SMRPMTIStatusReport ||
 				!bytes.Equal(req.SMEA, mustHex(t, "0b91"+"5155000000f0")) {
 				t.Fatalf("routing request = %+v", req)

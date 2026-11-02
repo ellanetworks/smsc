@@ -35,7 +35,6 @@ const outcomeColor = (outcome: string): ChipProps["color"] => {
   }
 };
 
-// outcomeLabels spells the outcomes whose acronyms the default label, the outcome with spaces, would hide.
 const outcomeLabels: Record<string, string> = {
   no_hss: "No HSS connected",
   diameter_error: "Diameter error",

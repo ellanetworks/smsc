@@ -41,20 +41,14 @@ type Server struct {
 	Config config.Config
 	Logger *slog.Logger
 
-	attemptTimeout time.Duration
-	// tracerProvider, when set, traces the SMSC in place of the one of the configuration.
-	tracerProvider trace.TracerProvider
-	// shutdownTracing exports the spans that are left, and stops the tracing.
+	attemptTimeout  time.Duration
+	tracerProvider  trace.TracerProvider
 	shutdownTracing func(context.Context) error
-	// bcryptCost is the cost of the password hashes: bcrypt's default when zero.
-	bcryptCost int
-	// purgeNow and purgeInterval are the clock and the period of the message retention: time.Now and purgeInterval
-	// when zero.
-	purgeNow      func() time.Time
-	purgeInterval time.Duration
+	bcryptCost      int
+	purgeNow        func() time.Time
+	purgeInterval   time.Duration
 
-	database *db.DB
-	// draining is set once Shutdown starts, and makes the API unready.
+	database      *db.DB
 	draining      atomic.Bool
 	nodes         *nodeManager
 	stopFollowing context.CancelFunc
@@ -64,23 +58,18 @@ type Server struct {
 	deliveryDone  chan struct{}
 	stopPurging   context.CancelFunc
 	purgeDone     chan struct{}
-	// smppServer is the SMPP listener, nil when the configuration has none, and smppDone ends with its dispatcher.
-	smppServer   *smpp.Server
-	smppListener net.Listener
-	stopSMPP     context.CancelFunc
-	smppDone     chan struct{}
+	smppServer    *smpp.Server
+	smppListener  net.Listener
+	stopSMPP      context.CancelFunc
+	smppDone      chan struct{}
 }
 
-// tracingShutdownTimeout bounds how long Shutdown waits to export the spans that are left.
 const tracingShutdownTimeout = 5 * time.Second
 
-// smppShutdownTimeout bounds how long Shutdown waits for the ESMEs to answer unbind (SMPP 3.4 section 4.2).
 const smppShutdownTimeout = 5 * time.Second
 
-// smppInboundWindow is the most submit_sm outstanding on a session; one more is answered ESME_RTHROTTLED.
 const smppInboundWindow = 64
 
-// smppSystemID identifies the SMSC in bind responses (SMPP 3.4 section 5.2.1).
 const smppSystemID = "EllaSMSC"
 
 func (s *Server) Start(ctx context.Context) (err error) {
@@ -155,7 +144,6 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	}
 
 	if tp == nil {
-		// The node would otherwise trace with the global provider.
 		nodes.tracerProvider = noop.NewTracerProvider()
 	}
 
@@ -199,7 +187,6 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		Identity: nodes.Identity,
 		Settings: live.Get,
 		Store:    database,
-		// A replace type message from an MS can replace an SMPP message, which queues its DELETED receipt.
 		Stored: func() {
 			deliverer.Notify()
 			esmes.NotificationsQueued()
@@ -234,21 +221,20 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	s.apiListener = apiLn
 	s.apiServer = &http.Server{
 		Handler: api.NewHandler(api.Config{
-			Store:      database,
-			Diameter:   diameterStatus{nodes: nodes, hss: hss},
-			Frontend:   ui.FS(),
-			Settings:   live,
-			Submitter:  submitter,
-			Notify:     deliverer.Notify,
-			ESMEs:      database,
-			SMPP:       smppSessions{esmes},
-			Ready:      func(ctx context.Context) error { return s.ready(ctx, database) },
-			Received:   m.received,
-			Metrics:    m.registry,
-			Auth:       database,
-			JWTSecret:  jwtSecret,
-			BcryptCost: s.bcryptCost,
-			// The cookie is Secure, and HSTS on, only over TLS: a browser would not send a Secure cookie over HTTP.
+			Store:          database,
+			Diameter:       diameterStatus{nodes: nodes, hss: hss},
+			Frontend:       ui.FS(),
+			Settings:       live,
+			Submitter:      submitter,
+			Notify:         deliverer.Notify,
+			ESMEs:          database,
+			SMPP:           smppSessions{esmes},
+			Ready:          func(ctx context.Context) error { return s.ready(ctx, database) },
+			Received:       m.received,
+			Metrics:        m.registry,
+			Auth:           database,
+			JWTSecret:      jwtSecret,
+			BcryptCost:     s.bcryptCost,
 			SecureCookie:   tlsConfig != nil,
 			TracerProvider: tp,
 			Now:            time.Now,
@@ -335,7 +321,6 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	return nil
 }
 
-// startSMPP starts the SMPP listener and its dispatcher of notifications.
 func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsConfig *tls.Config) error {
 	srv, err := smpp.NewServer(smpp.ServerConfig{
 		SystemID:      smppSystemID,
@@ -345,11 +330,8 @@ func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsCo
 		OnBound:       esmes.OnBound,
 		OnClosed:      esmes.OnClosed,
 		OnDecodeError: esmes.OnDecodeError,
-		// Up to 64 submit_sm per session at once: SMPP 3.4 leaves the window to the SMSC and suggests 10 (sections
-		// 2.5.2 and 2.6.2, notes). The database serializes the writes, so the window only overlaps parsing and I/O.
-		// The outbound window is the default, 10, which the dispatcher fills.
-		Session: smpp.SessionConfig{InboundWindow: smppInboundWindow},
-		Logger:  s.Logger,
+		Session:       smpp.SessionConfig{InboundWindow: smppInboundWindow},
+		Logger:        s.Logger,
 	})
 	if err != nil {
 		return err
@@ -379,7 +361,6 @@ func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsCo
 	return nil
 }
 
-// SMPPAddr is the address of the SMPP listener, or nil when there is none.
 func (s *Server) SMPPAddr() net.Addr {
 	if s.smppListener == nil {
 		return nil
@@ -413,9 +394,6 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.draining.Store(true)
 
-	// No delivery starts once the SMSC is told to stop, and the ones in flight finish meanwhile: the drain is for the
-	// API's clients, and a delivery started late would have only what the drain and the SMPP unbind leave of ctx to
-	// end in. A message stored meanwhile stays pending for the next start.
 	s.stopDelivery()
 	s.stopPurging()
 
@@ -430,8 +408,6 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.stopFollowing()
 
-	// The SMPP listener stops first: the ESMEs are told to unbind, and the notifications they have not acknowledged
-	// stay in the database for when they bind again.
 	if s.smppServer != nil {
 		smppCtx, cancel := context.WithTimeout(ctx, smppShutdownTimeout)
 		if err := s.smppServer.Shutdown(smppCtx); err != nil {
@@ -468,7 +444,6 @@ func (s *Server) Shutdown(ctx context.Context) {
 		s.Logger.ErrorContext(ctx, "failed to close the database", slog.Any("error", err))
 	}
 
-	// The spans of the shutdown are the last to export, once the other steps may have used up ctx.
 	tracingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tracingShutdownTimeout)
 	defer cancel()
 
@@ -477,8 +452,6 @@ func (s *Server) Shutdown(ctx context.Context) {
 	}
 }
 
-// newTracerProvider returns the provider that traces the SMSC, nil when telemetry is off, and the function that
-// stops it.
 func (s *Server) newTracerProvider(ctx context.Context) (trace.TracerProvider, func(context.Context) error, error) {
 	none := func(context.Context) error { return nil }
 
@@ -497,9 +470,6 @@ func (s *Server) newTracerProvider(ctx context.Context) (trace.TracerProvider, f
 	return tp, tp.Shutdown, nil
 }
 
-// ready is whether the API can serve: it is not once Shutdown starts, or while the database does not answer. The
-// Diameter peers do not count: the Diameter Service selects the same pods, so an SMSC unready without its peers
-// could not get them back.
 func (s *Server) ready(ctx context.Context, database *db.DB) error {
 	if s.draining.Load() {
 		return errors.New("shutting down")
@@ -554,8 +524,6 @@ func (h hssSender) hosts() []string {
 	return h.hostsOf(node.Routes(), servingPeers(node))
 }
 
-// hostsOf returns the hosts of the routes' peers that serve S6c in the
-// operator's realm.
 func (h hssSender) hostsOf(routes []diameter.RouteStatus, serving func(diameter.RoutePeerStatus, uint32) bool) []string {
 	var hosts []string
 
@@ -578,8 +546,6 @@ func (h hssSender) hostsOf(routes []diameter.RouteStatus, serving func(diameter.
 	return hosts
 }
 
-// servingPeers returns whether a peer of a route can take its requests: it is
-// open, and negotiated the application, as the node checks before it sends.
 func servingPeers(node *diameter.Node) func(diameter.RoutePeerStatus, uint32) bool {
 	apps := make(map[string][]diameter.Application)
 
@@ -594,7 +560,6 @@ func servingPeers(node *diameter.Node) func(diameter.RoutePeerStatus, uint32) bo
 			return false
 		}
 
-		// An accepted peer is a route of an application only when it supports it.
 		if p.Implicit {
 			return true
 		}
@@ -614,9 +579,6 @@ func (d diameterStatus) Peers() []diameter.PeerStatus { return d.nodes.Node().Pe
 
 func (d diameterStatus) Peer(id string) (diameter.PeerStatus, bool) { return d.nodes.Node().Peer(id) }
 
-// Routes are the route to the HSS, then the routes of the configured peers, with
-// the default routes last. The route to the HSS takes the configured peers of
-// its realm, and the connected HSSs.
 func (d diameterStatus) Routes() []api.Route {
 	node := d.nodes.Node()
 	table, serving := node.Routes(), servingPeers(node)
@@ -659,7 +621,6 @@ func (d diameterStatus) Routes() []api.Route {
 
 func (h hssSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
 
-// smppSessions is the SMPP listener as the API sees it.
 type smppSessions struct{ esmes *esme.Service }
 
 func (s smppSessions) CloseESME(id int64) { s.esmes.CloseESME(id) }
@@ -696,11 +657,9 @@ func (h hostSender) PeerRealm(host string) (string, bool) {
 
 func (h hostSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
 
-// apiTLS returns the TLS configuration of the API or of the SMPP listener, or nil for none. Go's defaults choose the cipher suites and key
-// exchanges, which keeps the post-quantum hybrid key exchange that a list of curves would turn off.
 func apiTLS(c *config.TLS, what string) (*tls.Config, error) {
 	if c == nil {
-		return nil, nil //nolint:nilnil // No TLS is not an error.
+		return nil, nil //nolint:nilnil
 	}
 
 	cert, err := tls.LoadX509KeyPair(c.Cert, c.Key)

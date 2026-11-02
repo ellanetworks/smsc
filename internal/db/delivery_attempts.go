@@ -39,9 +39,7 @@ type DeliveryAttempt struct {
 	FailureCause          string
 	TPFailureCause        string
 	AbsentUserDiagnostics AbsentUserDiagnostics
-	// DeliverReport is the SMS-DELIVER-REPORT that the MS answered with, in the RP-ACK when the attempt succeeded and in
-	// the RP-ERROR otherwise, when the serving node passed it on.
-	DeliverReport []byte
+	DeliverReport         []byte
 }
 
 type AbsentUserDiagnostics struct {
@@ -99,7 +97,6 @@ func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, pe
 	return attempts, total, nil
 }
 
-// ListDeliverReports returns the delivery attempts on a message that carry a deliver report, oldest first.
 func (d *DB) ListDeliverReports(ctx context.Context, messageID int64) (_ []DeliveryAttempt, err error) {
 	defer d.observe(&err)()
 
@@ -111,7 +108,6 @@ func (d *DB) ListDeliverReports(ctx context.Context, messageID int64) (_ []Deliv
 	return attempts, nil
 }
 
-// queryDeliveryAttempts returns the delivery attempts that the WHERE clause where selects, never nil.
 func (d *DB) queryDeliveryAttempts(ctx context.Context, where string, args ...any) ([]DeliveryAttempt, error) {
 	rows, err := d.conn.QueryContext(ctx, `SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE `+where, args...)
 	if err != nil {

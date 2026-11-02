@@ -123,7 +123,6 @@ describe("Operator", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Edit Operator ID (MCC/MNC)" }),
     );
-    // The operator ID makes the Diameter identity: the dialog says so.
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Diameter host and realm change",
     );

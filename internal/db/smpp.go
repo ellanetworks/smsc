@@ -9,32 +9,23 @@ import (
 	"time"
 )
 
-// NotificationType is what an SMPP notification carries to the ESME that submitted a message.
 type NotificationType string
 
 const (
-	// NotificationReceipt is an SMSC Delivery Receipt (SMPP 3.4 section 2.11, Appendix B).
-	NotificationReceipt NotificationType = "receipt"
-	// NotificationSIMAnswer is the TP-User-Data of the recipient's SMS-DELIVER-REPORT, such as the Response Packet of
-	// a (U)SIM (TS 31.115 clause 4.4).
+	NotificationReceipt   NotificationType = "receipt"
 	NotificationSIMAnswer NotificationType = "sim_answer"
 )
 
-// NotificationResult is the final outcome of an SMPP notification.
 type NotificationResult string
 
 const (
-	// NotificationAcknowledged is a deliver_sm that the ESME answered with ESME_ROK.
 	NotificationAcknowledged NotificationResult = "acknowledged"
-	// NotificationRejected is a deliver_sm that the ESME refused permanently.
-	NotificationRejected NotificationResult = "rejected"
-	// NotificationExpired is a notification that no bound receiver took before it expired.
-	NotificationExpired NotificationResult = "expired"
-	// NotificationNoUserData is a SIM answer whose SMS-DELIVER-REPORT has no TP-User-Data (TS 23.040 clause 9.2.3.27).
-	NotificationNoUserData NotificationResult = "no_user_data"
+	NotificationRejected     NotificationResult = "rejected"
+	NotificationExpired      NotificationResult = "expired"
+	NotificationNoUserData   NotificationResult = "no_user_data"
 )
 
-// The message states of SMPP 3.4 section 5.2.28, Table 5-6, that a receipt reports.
+// SMPP 3.4 section 5.2.28 table 5-6
 const (
 	messageStateDelivered     = 2
 	messageStateExpired       = 3
@@ -42,7 +33,7 @@ const (
 	messageStateUndeliverable = 5
 )
 
-// messageState returns the message_state of a final status (SMPP 3.4 section 5.2.28).
+// SMPP 3.4 section 5.2.28
 func messageState(status MessageStatus) uint8 {
 	switch status {
 	case StatusDelivered:
@@ -56,9 +47,6 @@ func messageState(status MessageStatus) uint8 {
 	}
 }
 
-// queueNotifications queues the notifications that the ESME of a message asked for, now that the message has its
-// final status: the SIM answer first, then the receipt, so that a receiver gets them in that order. A notification
-// expires after the default validity period. A message from another origin has none.
 func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status MessageStatus, tpStatus uint8,
 	at int64,
 ) error {
@@ -84,7 +72,6 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 
 	expiresAt := at + validity
 
-	// The answer is the one to the last attempt: the attempt that ended the delivery.
 	if simAnswer && status != StatusReplaced {
 		var (
 			attemptID int64
@@ -106,7 +93,6 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 		}
 	}
 
-	// registered_delivery bits 1-0: 01 asks for the final outcome, 10 for a failure only (SMPP 3.4 section 5.2.17).
 	if receipt == ReceiptFinal || receipt == ReceiptFailure && status != StatusDelivered {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_notifications (message_id, type, tp_status, expires_at,
 			next_attempt_at, attempts) VALUES (?, ?, ?, ?, ?, 0)`,
@@ -118,32 +104,24 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 	return nil
 }
 
-// Notification is an SMPP notification to send, with what its deliver_sm is made of.
 type Notification struct {
-	ID       int64
-	ESMEID   int64
-	Type     NotificationType
-	Attempts int
-	// MessageState and TPStatus are a receipt's: MessageState is that of the message's final status.
-	MessageState uint8
-	TPStatus     uint8
-	// Message is the message that the notification is on.
-	Message Message
-	// SourceNPI is the submit_sm's source_addr_npi.
+	ID                   int64
+	ESMEID               int64
+	Type                 NotificationType
+	Attempts             int
+	MessageState         uint8
+	TPStatus             uint8
+	Message              Message
 	SourceNPI            uint8
 	DataCoding           uint8
 	UserMessageReference *uint16
-	// DeliverReport is a SIM answer's SMS-DELIVER-REPORT, for RP-ACK when Ack is set and RP-ERROR otherwise.
-	DeliverReport []byte
-	Ack           bool
+	DeliverReport        []byte
+	Ack                  bool
 }
 
 const notificationColumns = `n.id, s.esme_id, n.type, n.attempts, n.tp_status, s.source_npi,
 	s.data_coding, s.user_message_reference, a.deliver_report, a.outcome`
 
-// DueNotifications returns up to limit notifications to an ESME that are due and unexpired at now, oldest first,
-// leaving out those of exclude, which are in flight. A notification waits for the older ones on its message, so that
-// the ESME gets the SIM answer before the receipt.
 func (d *DB) DueNotifications(ctx context.Context, esmeID int64, now time.Time, exclude []int64, limit int,
 ) (_ []Notification, err error) {
 	defer d.observe(&err)()
@@ -195,7 +173,6 @@ func (d *DB) DueNotifications(ctx context.Context, esmeID int64, now time.Time, 
 	return out, nil
 }
 
-// prefixed qualifies each column of a list with a table alias.
 func prefixed(alias, columns string) string {
 	parts := strings.Split(columns, ",")
 	for i, p := range parts {
@@ -251,8 +228,6 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 	return n, nil
 }
 
-// CloseNotification gives a notification its final result. It returns ErrNotFound when the notification no longer
-// exists or already has a result.
 func (d *DB) CloseNotification(ctx context.Context, id int64, result NotificationResult) (err error) {
 	defer d.observe(&err)()
 
@@ -271,7 +246,6 @@ func (d *DB) CloseNotification(ctx context.Context, id int64, result Notificatio
 	return nil
 }
 
-// RetryNotification counts a failed attempt to send a notification, and schedules the next one.
 func (d *DB) RetryNotification(ctx context.Context, id int64, next time.Time) (err error) {
 	defer d.observe(&err)()
 
@@ -284,8 +258,6 @@ func (d *DB) RetryNotification(ctx context.Context, id int64, next time.Time) (e
 	return nil
 }
 
-// ExpireNotifications closes as expired the notifications that are still to send at now but expired, and returns how
-// many of each type it closed.
 func (d *DB) ExpireNotifications(ctx context.Context, now time.Time) (_ map[NotificationType]int, err error) {
 	defer d.observe(&err)()
 
@@ -317,7 +289,6 @@ func (d *DB) ExpireNotifications(ctx context.Context, now time.Time) (_ map[Noti
 	return out, nil
 }
 
-// CountPendingNotifications returns how many notifications of each type are still to send and unexpired at now.
 func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ map[NotificationType]int, err error) {
 	defer d.observe(&err)()
 
@@ -351,9 +322,6 @@ func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ ma
 	return out, nil
 }
 
-// NextNotificationAt returns when, after now, the next notification to an ESME is due or expires, if any is still to
-// send. A notification already due is left out: it is in flight, or waits for an older one or a free slot, whose end
-// wakes the dispatcher.
 func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (_ time.Time, _ bool, err error) {
 	defer d.observe(&err)()
 
@@ -373,7 +341,6 @@ func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time
 	return time.Unix(0, at.V).UTC(), true, nil
 }
 
-// SystemIDsFor returns the system_id of the ESME that submitted each of the messages that an ESME submitted.
 func (d *DB) SystemIDsFor(ctx context.Context, messageIDs []int64) (_ map[int64]string, err error) {
 	defer d.observe(&err)()
 

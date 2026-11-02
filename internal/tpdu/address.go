@@ -16,17 +16,15 @@ var ErrUnsupportedAddress = errors.New("unsupported address type")
 type Address struct {
 	TypeOfNumber  uint8
 	NumberingPlan uint8
-	// Digits holds the characters of the address, not digits, when TypeOfNumber is TypeOfNumberAlphanumeric.
-	Digits string
+	Digits        string
 }
 
 const bcdDigits = "0123456789*#abc"
 
-// maxAddressDigits is the most digits of an address field (TS 23.040 clause 9.1.2.5).
+// TS 23.040 clause 9.1.2.5
 const maxAddressDigits = 20
 
-// maxAlphanumericChars is the most characters of an alphanumeric address: the 12-octet address field leaves 10
-// Address-Value octets (TS 23.040 clause 9.1.2.5).
+// TS 23.040 clause 9.1.2.5
 const maxAlphanumericChars = 11
 
 func decodeAddress(b []byte) (Address, int, error) {
@@ -72,7 +70,7 @@ func decodeAddress(b []byte) (Address, int, error) {
 	return addr, 2 + valueOctets, nil
 }
 
-// Encode returns the address field of TS 23.040 clause 9.1.2.5.
+// TS 23.040 clause 9.1.2.5
 func (a Address) Encode() ([]byte, error) {
 	if a.TypeOfNumber == TypeOfNumberAlphanumeric {
 		return a.encodeAlphanumeric()
@@ -121,8 +119,8 @@ func semiOctet(c byte) (byte, error) {
 	return 0, fmt.Errorf("address: invalid digit %q", c)
 }
 
-// encodeAlphanumeric returns the address field of TS 23.040 clause 9.1.2.5 for Type-of-number 101: the characters of
-// the default alphabet packed as in TS 23.038 clause 6.1.2.1.1, with Address-Length in useful semi-octets.
+// TS 23.040 clause 9.1.2.5
+// TS 23.038 clause 6.1.2.1.1
 func (a Address) encodeAlphanumeric() ([]byte, error) {
 	if a.NumberingPlan != 0 {
 		return nil, fmt.Errorf("address: invalid type of address %d/%d", a.TypeOfNumber, a.NumberingPlan)
@@ -148,9 +146,6 @@ func (a Address) encodeAlphanumeric() ([]byte, error) {
 	return append([]byte{byte((7*len(septets) + 3) / 4), 0x80 | TypeOfNumberAlphanumeric<<4}, value...), nil
 }
 
-// decodeAlphanumeric returns the characters of an alphanumeric Address-Value of length useful semi-octets. The count
-// comes from the length, not the octets, so that fill bits are not read as '@'. An escape is read as the basic
-// character at its index.
 func decodeAlphanumeric(value []byte, length int) string {
 	runes := make([]rune, length*4/7)
 	for i := range runes {

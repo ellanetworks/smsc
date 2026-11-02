@@ -18,8 +18,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// TestDeliverSMSpans checks that each deliver_sm has a client span, in a trace of its own that links to the
-// submit_sm of its message, and that only an acknowledged one is no error.
 func TestDeliverSMSpans(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -118,8 +116,6 @@ func (panickingStore) CreateMessages(context.Context, []db.NewMessage) ([]int64,
 	panic("store bug")
 }
 
-// TestSubmitSMSpans checks that a submit_sm's span ends once its response is written, and that only a failure of the
-// SMSC is an error, a panic included, which the session answers without writing through the Response.
 func TestSubmitSMSpans(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -195,7 +191,6 @@ func TestSubmitSMSpans(t *testing.T) {
 	}
 }
 
-// TestDeliverSMLogs checks that the logs of a deliver_sm's outcome, made once its span ended, carry its trace context.
 func TestDeliverSMLogs(t *testing.T) {
 	var logs logtest.Recorder
 
@@ -243,7 +238,6 @@ func TestDeliverSMLogs(t *testing.T) {
 	logtest.InSpan(t, got[0], spans[0].SpanContext())
 }
 
-// TestSubmitSMLogs checks that the log of a refused submit_sm carries its span's trace context.
 func TestSubmitSMLogs(t *testing.T) {
 	var logs logtest.Recorder
 

@@ -27,8 +27,6 @@ func (p Plan) International(typeOfNumber uint8, digits string) (string, error) {
 	case typeNational:
 		return p.CountryCode + digits, nil
 	case typeUnknown:
-		// Digits follow the dialling plan, so they may start with a prefix. When
-		// both prefixes match, the longer one is the one that was dialled.
 		international := p.InternationalPrefix != "" && strings.HasPrefix(digits, p.InternationalPrefix)
 		national := p.NationalPrefix != "" && strings.HasPrefix(digits, p.NationalPrefix)
 

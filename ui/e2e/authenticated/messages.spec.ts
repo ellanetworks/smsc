@@ -7,8 +7,6 @@ import {
 import { adminToken, json } from "../api";
 import { ROLES } from "../roles";
 
-// send submits a message to a number of its own, so that tests running at the same time find their row, and returns
-// that number. With no core connected, the message stays pending.
 const send = async (
   request: APIRequestContext,
   text: string,
@@ -46,7 +44,6 @@ test("the message panel opens under the app bar, and closes", async ({
     .boundingBox();
   expect(heading!.y).toBeGreaterThanOrEqual(bar!.y + bar!.height);
 
-  // A click fails when another element, such as the app bar, covers its target.
   await panel.getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("complementary")).toHaveCount(0);
 });
@@ -69,7 +66,6 @@ test("the time range filters the messages on the server", async ({
   await page.getByLabel("To", { exact: true }).fill(to);
   await expect(page.getByRole("gridcell", { name: to })).toBeVisible();
 
-  // The picker's From and To are in its popover, apart from the page's filters of the same names.
   await page.getByRole("button", { name: /^Time range:/ }).click();
   const picker = page.locator(".MuiPopover-paper");
   await picker.getByLabel("From", { exact: true }).fill("2020-01-01T00:00");

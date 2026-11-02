@@ -6,8 +6,6 @@ import { RoleID } from "@/queries/users";
 import { makeToken } from "@/test/jwt";
 import { json, renderWithClient, stubApi } from "@/test/render";
 
-// serve answers as an SMSC with a session of a user of role, until a logout, or without a session when role is
-// null.
 const serve = (role: RoleID | null = RoleID.Admin) => {
   let session = role;
   vi.stubGlobal(

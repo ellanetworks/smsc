@@ -25,7 +25,6 @@ type Handler struct {
 	Settings func() settings.Settings
 	Store    MessageStore
 	Stored   func()
-	// Received counts the messages that phones send.
 	Received *intake.Received
 	Now      func() time.Time
 	Logger   *slog.Logger
@@ -40,7 +39,6 @@ func (h *Handler) ServeDiameter(ctx context.Context, _ *diameter.Conn, req *diam
 }
 
 func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Message) *diameter.Message {
-	// Every answer but those that store the message, or fail to, refuses it.
 	result := intake.Rejected
 
 	defer func() { h.Received.Add(intake.OriginMobile, result, 1) }()
@@ -165,8 +163,6 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 	return h.answer(req, diameter.ResultSuccess)
 }
 
-// replacedReport returns the status report on a message that the new one replaced, if its originator asked for one. A
-// report that cannot be made does not stop the new message.
 func (h *Handler) replacedReport(ctx context.Context, replaced db.Message, at time.Time, current settings.Settings) *db.NewStatusReport {
 	report, err := statusreport.For(replaced, tpdu.StatusReplaced, at, current)
 	if err != nil {

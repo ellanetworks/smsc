@@ -24,14 +24,13 @@ import {
 
 const LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 
-// isDiameterIdentity is the server's rule for a host or a realm: an FQDN (RFC 6733 clause 4.3.1).
+// RFC 6733 section 4.3.1
 export const isDiameterIdentity = (s: string): boolean =>
   s.length > 0 && s.length <= 253 && s.split(".").every((l) => LABEL.test(l));
 
 const IPV4 =
   /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
-// isIPAddress accepts an IPv4 address, or what looks like an IPv6 one: the server has the last word.
 const isIPAddress = (s: string): boolean =>
   IPV4.test(s) || (s.includes(":") && /^[0-9A-Fa-f:.]+$/.test(s));
 
@@ -41,7 +40,6 @@ const splitAddresses = (s: string): string[] =>
     .map((a) => a.trim())
     .filter(Boolean);
 
-// RouteDraft is a route as edited: its realm is kept while it is a default route, in case it goes back.
 interface RouteDraft {
   key: number;
   application: PeerApplication;
@@ -56,7 +54,6 @@ interface RouteErrors {
   priority?: string;
 }
 
-// routeErrors are why a route is not valid. A realm not typed yet is invalid, but not shown as an error.
 const routeErrors = (r: RouteDraft, routes: RouteDraft[]) => {
   const errors: RouteErrors = {};
   let valid = true;
@@ -100,7 +97,6 @@ export default function PeerDialog({
   peer,
   onClose,
 }: {
-  // peer is the peer to edit, or undefined to add one.
   peer?: Peer;
   onClose: () => void;
 }) {
@@ -261,7 +257,6 @@ export default function PeerDialog({
                     value={r.application}
                     onChange={(e) => {
                       const application = e.target.value as PeerApplication;
-                      // Only SGd takes a default route: S6c goes to this SMSC's own realm.
                       update(r.key, {
                         application,
                         isDefault: application === "sgd" && r.isDefault,

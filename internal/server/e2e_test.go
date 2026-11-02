@@ -97,23 +97,19 @@ type fakeCore struct {
 	busy    atomic.Bool
 	dropSRR *atomic.Bool
 	busied  atomic.Int32
-	// delay is how long, in nanoseconds, the core takes to answer each request.
-	delay atomic.Int64
+	delay   atomic.Int64
 
-	mu          sync.Mutex
-	subscribers map[string]subscriber
-	absent      map[string]bool
-	mwdStatus   map[string]uint32
-	// ipSMGW is the host of the IP-SM-GW that the routing answers name, if any, without its realm.
-	ipSMGW string
-	// servingMME and servingRealm are the MME that the routing answers name, when it is not the core itself.
+	mu                       sync.Mutex
+	subscribers              map[string]subscriber
+	absent                   map[string]bool
+	mwdStatus                map[string]uint32
+	ipSMGW                   string
 	servingMME, servingRealm string
 	answerMT                 func(imsi string) *diameter.Message
 	routings                 []routingRequest
 	delivered                []mtMessage
-	// forwarded are the SMS-DELIVERs of every MT Forward Short Message, whatever the answer.
-	forwarded []mtMessage
-	reports   []deliveryReport
+	forwarded                []mtMessage
+	reports                  []deliveryReport
 }
 
 func skipIfNoSCTP(t testing.TB) {
@@ -153,7 +149,6 @@ func newRealmFakeCore(t testing.TB, host, originRealm string, subscribers ...sub
 	return newTracedFakeCore(t, host, originRealm, nil, subscribers...)
 }
 
-// newTracedFakeCore returns a fake core that traces its requests with tp, or the global provider when nil.
 func newTracedFakeCore(t testing.TB, host, originRealm string, tp trace.TracerProvider, subscribers ...subscriber) *fakeCore {
 	t.Helper()
 	skipIfNoSCTP(t)
@@ -634,9 +629,7 @@ func eventually(t testing.TB, what string, cond func() bool) {
 type smsc struct {
 	server *server.Server
 	store  *db.DB
-	// token is the access token of the admin, which api sends.
-	token string
-	// client calls the API at url: over TLS, it trusts the API's certificate.
+	token  string
 	client *http.Client
 	url    string
 }
@@ -645,12 +638,9 @@ type smscConfig struct {
 	config.Config
 	Settings       settings.Settings
 	AttemptTimeout time.Duration
-	// PurgeNow and PurgeInterval, when set, are the clock and the period of the message retention.
-	PurgeNow      func() time.Time
-	PurgeInterval time.Duration
-	// Logger is the SMSC's logger, which discards the logs when nil.
-	Logger *slog.Logger
-	// TracerProvider, when set, traces the SMSC.
+	PurgeNow       func() time.Time
+	PurgeInterval  time.Duration
+	Logger         *slog.Logger
 	TracerProvider trace.TracerProvider
 }
 
@@ -727,7 +717,6 @@ func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 
 	t.Cleanup(func() { s.stop() })
 
-	// An SMSC restarted on the same database already has its admin, who logs in.
 	var admin api.LoginResponse
 	if code := s.api(t, http.MethodPost, "/api/v1/init",
 		api.InitializeParams{Email: "admin@example.com", Password: "correct horse"}, &admin); code == http.StatusForbidden {
@@ -806,8 +795,7 @@ func TestMobileOriginatedMessageIsDelivered(t *testing.T) {
 	}
 }
 
-// The HSS forwards the routing request to the IP-SM-GW, which answers with itself and no realm (TS 29.338 clause
-// 5.3.3.6), so the SMSC sends the message to the IP-SM-GW in the realm of its connection.
+// TS 29.338 clause 5.3.3.6
 func TestMessageIsDeliveredViaIPSMGW(t *testing.T) {
 	hss, s := newSMSC(t, alice, bob)
 	ipSMGW := newRealmFakeCore(t, "ipsmgw.example.org", "ims.example.org")
@@ -1191,14 +1179,12 @@ func TestSettingsUpdateAppliesWithoutRestart(t *testing.T) {
 	}
 }
 
-// api sends a request as the admin, and decodes its result into out.
 func (s *smsc) api(t testing.TB, method, path string, body any, out any) int {
 	t.Helper()
 
 	return s.apiAs(t, s.token, method, path, body, out)
 }
 
-// apiAs sends a request with a bearer token, or none when token is empty.
 func (s *smsc) apiAs(t testing.TB, token, method, path string, body any, out any) int {
 	t.Helper()
 
@@ -1316,8 +1302,7 @@ func TestAPIMessageIsDelivered(t *testing.T) {
 	}
 }
 
-// TestAPIMessageFromNameIsDelivered sends a message from an alphanumeric name, which reaches the phone as TP-OA of
-// Type-of-number alphanumeric (TS 23.040 clause 9.1.2.5), and the HSS as the same SM-RP-SMEA.
+// TS 23.040 clause 9.1.2.5
 func TestAPIMessageFromNameIsDelivered(t *testing.T) {
 	core := newFakeCore(t, bob)
 	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
@@ -1342,8 +1327,6 @@ func TestAPIMessageFromNameIsDelivered(t *testing.T) {
 	}
 }
 
-// TestAPITokenMessageIsDelivered is the integration of an external platform: the admin creates it a Submitter and an
-// API token, with which it submits a message that is delivered, and which it alone can follow.
 func TestAPITokenMessageIsDelivered(t *testing.T) {
 	core := newFakeCore(t, bob)
 	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
@@ -1615,7 +1598,6 @@ func TestHeldMessagesFollowInOneSession(t *testing.T) {
 	var stamps [][]byte
 
 	for i, m := range got {
-		// TP-MMS is 0 when more messages wait.
 		if more := m.tpdu[0]&0x04 == 0; !bytes.HasSuffix(m.tpdu, []byte(texts[i])) || more != (i < len(texts)-1) {
 			t.Fatalf("message %d = %x; want %q, announcing more messages unless last", i+1, m.tpdu, texts[i])
 		}
@@ -1665,7 +1647,6 @@ func TestShutdownDrainsTheAPI(t *testing.T) {
 		srv.Shutdown(context.Background())
 	}()
 
-	// While draining, the API still serves, but is not ready.
 	deadline := time.Now().Add(waitTimeout)
 	for get("/api/v1/readyz") != http.StatusServiceUnavailable {
 		if time.Now().After(deadline) {
@@ -1685,9 +1666,6 @@ func TestShutdownDrainsTheAPI(t *testing.T) {
 	_ = s.store.Close()
 }
 
-// Shutdown starts no delivery, even while the API drains: a message stored then waits, pending, for the next start.
-// The deliveries in flight, which it lets finish, so have the whole shutdown to end in rather than what the drain and
-// the SMPP unbind leave of it.
 func TestShutdownStartsNoDelivery(t *testing.T) {
 	core := newFakeCore(t, alice, bob)
 	cfg := testConfig(t, filepath.Join(t.TempDir(), "smsc.db"))
@@ -1721,7 +1699,6 @@ func TestShutdownStartsNoDelivery(t *testing.T) {
 		return resp.StatusCode == http.StatusServiceUnavailable
 	})
 
-	// The Diameter interfaces still serve while the API drains.
 	if rc := core.submit(alice, bob, "during the drain"); rc != diameter.ResultSuccess {
 		t.Fatalf("OFA result = %d", rc)
 	}

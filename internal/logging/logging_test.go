@@ -45,8 +45,6 @@ func record(t *testing.T, buf *bytes.Buffer) map[string]any {
 	return got
 }
 
-// TestTraceContext checks that a log carries the trace context of the span in its context, as OpenTelemetry names
-// its fields, and none without one.
 func TestTraceContext(t *testing.T) {
 	tests := map[string]struct {
 		ctx  context.Context
@@ -97,7 +95,6 @@ func TestTraceContext(t *testing.T) {
 	}
 }
 
-// TestFormat checks Ella Core's fields: ts, a lowercase level, and durations in words.
 func TestFormat(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -119,7 +116,6 @@ func TestFormat(t *testing.T) {
 	}
 }
 
-// TestLevel checks that the handler keeps the level of the one it wraps.
 func TestLevel(t *testing.T) {
 	var buf bytes.Buffer
 

@@ -15,16 +15,14 @@ import (
 const (
 	defaultDiameterPort = 3868
 	defaultAPIPort      = 5010
-	// defaultSMPPPort is the port IANA registers as "smpp"; SMPP 3.4 names none.
-	defaultSMPPPort = 2775
+	defaultSMPPPort     = 2775
 )
 
 type Config struct {
-	Logging  Logging  `yaml:"logging"`
-	DB       DB       `yaml:"db"`
-	API      API      `yaml:"api"`
-	Diameter Diameter `yaml:"diameter"`
-	// SMPP, when set, runs the SMPP 3.4 listener for ESMEs.
+	Logging   Logging   `yaml:"logging"`
+	DB        DB        `yaml:"db"`
+	API       API       `yaml:"api"`
+	Diameter  Diameter  `yaml:"diameter"`
 	SMPP      *SMPP     `yaml:"smpp"`
 	Telemetry Telemetry `yaml:"telemetry"`
 }
@@ -38,37 +36,28 @@ type DB struct {
 }
 
 type API struct {
-	Address netip.Addr `yaml:"address"`
-	Port    int        `yaml:"port"`
-	// TLS, when set, serves the API and UI over HTTPS.
-	TLS *TLS `yaml:"tls"`
-	// DrainDelay is how long the SMSC keeps serving, with GET /api/v1/readyz failing, once told to stop, so that
-	// a load balancer stops sending it requests before it closes its listener.
+	Address    netip.Addr    `yaml:"address"`
+	Port       int           `yaml:"port"`
+	TLS        *TLS          `yaml:"tls"`
 	DrainDelay time.Duration `yaml:"drain_delay"`
 }
 
-// TLS is a PEM certificate chain, and its private key.
 type TLS struct {
 	Cert string `yaml:"cert"`
 	Key  string `yaml:"key"`
 }
 
-// SMPP is the listener of the SMPP 3.4 interface to ESMEs.
 type SMPP struct {
 	Address netip.Addr `yaml:"address"`
 	Port    int        `yaml:"port"`
-	// TLS, when set, wraps each connection in TLS from its first octet. SMPP 3.4 runs over TCP/IP or X.25 (section
-	// 2.4): TLS is a convention outside it.
-	TLS *TLS `yaml:"tls"`
+	TLS     *TLS       `yaml:"tls"`
 }
 
-// Telemetry exports traces over OTLP/gRPC to OTLPEndpoint, a host:port, when Enabled.
 type Telemetry struct {
 	Enabled      bool   `yaml:"enabled"`
 	OTLPEndpoint string `yaml:"otlp_endpoint"`
 }
 
-// Diameter listens on Address, or on the addresses of the interface Name.
 type Diameter struct {
 	Name    string     `yaml:"name"`
 	Address netip.Addr `yaml:"address"`
@@ -152,7 +141,6 @@ func (c Config) validate() error {
 	return nil
 }
 
-// validate checks the TLS of the block named prefix, if any: both files set and present.
 func (t *TLS) validate(prefix string) error {
 	if t == nil {
 		return nil

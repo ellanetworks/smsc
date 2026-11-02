@@ -1,6 +1,5 @@
 import { apiFetch } from "@/queries/utils";
 
-// RetentionSettings is how long messages are kept once they have their final status.
 export interface RetentionSettings {
   days: number;
 }

@@ -133,7 +133,6 @@ describe("Diameter", () => {
 
     renderWithClient(<Diameter />);
 
-    // The configured peer is listed with the configured peers only.
     expect(
       await screen.findByRole("heading", {
         level: 2,

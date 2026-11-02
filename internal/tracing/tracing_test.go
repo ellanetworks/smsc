@@ -13,8 +13,6 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-// TestTraceParentRoundTrip checks that the traceparent of a recorded span links back to it, and that a span the SMSC
-// does not record, such as a peer's trace context while tracing is off, gives none.
 func TestTraceParentRoundTrip(t *testing.T) {
 	ctx, span := sdktrace.NewTracerProvider().Tracer("test").Start(context.Background(), "span")
 	defer span.End()
@@ -45,13 +43,10 @@ func TestTraceParentRoundTrip(t *testing.T) {
 	}
 }
 
-// TestNewProvider checks that the spans name the SMSC and its version, and that the OTEL_* environment variables do
-// not apply: the configuration file is the only one.
 func TestNewProvider(t *testing.T) {
 	t.Setenv("OTEL_SERVICE_NAME", "smsc-west")
 	t.Setenv("OTEL_TRACES_SAMPLER", "always_off")
 
-	// No collector listens on port 1, so that the test exports nothing.
 	tp, err := NewProvider(t.Context(), "127.0.0.1:1", "v1.2.3", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,6 @@ import (
 )
 
 type DiameterPeer struct {
-	// ID is the ID of a configured peer, and zero for a peer that connected to the SMSC.
 	ID           int64    `json:"id,omitempty"`
 	Configured   bool     `json:"configured"`
 	Host         string   `json:"host"`
@@ -22,7 +21,6 @@ type DiameterPeer struct {
 	Error        string   `json:"error,omitempty"`
 }
 
-// DiameterRoute is a route, with an empty realm for a default route.
 type DiameterRoute struct {
 	Realm       string   `json:"realm"`
 	Default     bool     `json:"default"`

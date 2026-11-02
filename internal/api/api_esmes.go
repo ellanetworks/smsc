@@ -10,31 +10,23 @@ import (
 )
 
 const (
-	// MaxNumESMEs is the most ESME accounts, as MaxNumUsers is the most users.
 	MaxNumESMEs = 50
-	// maxSystemID is the longest system_id, and maxSMPPPassword the longest SMPP password: C-Octet Strings of 16 and 9
-	// octets with their NULL terminator (SMPP 3.4 section 4.1.1, Table 4-1).
-	maxSystemID     = 15
-	maxSMPPPassword = 8
-	// generatedPasswordLength is the length of a generated SMPP password, of 62 characters: about 47.6 bits.
+	// SMPP 3.4 section 4.1.1 table 4-1
+	maxSystemID             = 15
+	maxSMPPPassword         = 8
 	generatedPasswordLength = 8
-	// maxAllowedNetworks bounds the networks of an ESME.
-	maxAllowedNetworks = 50
+	maxAllowedNetworks      = 50
 )
 
-// ESME is an account that an External Short Message Entity binds to the SMPP listener with (SMPP 3.4 section 2.2). It
-// acts as its user.
 type ESME struct {
 	SystemID        string        `json:"system_id"`
 	User            string        `json:"user"`
 	AllowedNetworks []string      `json:"allowed_networks"`
 	CreatedAt       string        `json:"created_at"`
 	Sessions        []ESMESession `json:"sessions"`
-	// Password is the generated password, in the response that creates the ESME only.
-	Password string `json:"password,omitempty"`
+	Password        string        `json:"password,omitempty"`
 }
 
-// ESMESession is a bound SMPP session of an ESME.
 type ESMESession struct {
 	BindType      string `json:"bind_type"`
 	RemoteAddress string `json:"remote_address"`
@@ -104,7 +96,6 @@ func GetESME(cfg Config) http.Handler {
 	})
 }
 
-// CreateESME stores an ESME. Without a password, it generates one, which only this response returns.
 func CreateESME(a *auth) http.Handler {
 	cfg := a.cfg
 
@@ -198,8 +189,6 @@ func CreateESME(a *auth) http.Handler {
 	})
 }
 
-// UpdateESME replaces the allowed networks of an ESME, and its password when one is given. It closes its sessions,
-// which bind again under the new settings.
 func UpdateESME(a *auth) http.Handler {
 	cfg := a.cfg
 
@@ -263,7 +252,6 @@ func UpdateESME(a *auth) http.Handler {
 	})
 }
 
-// DeleteESME deletes an ESME and closes its sessions. Its messages stay, as its user's.
 func DeleteESME(a *auth) http.Handler {
 	cfg := a.cfg
 
@@ -307,7 +295,6 @@ func lookupESME(w http.ResponseWriter, r *http.Request, cfg Config) (db.ESME, bo
 	return e, true
 }
 
-// validESME checks the networks of an ESME and sets them, or writes the error.
 func validESME(w http.ResponseWriter, r *http.Request, e *db.ESME, networks []string, cfg Config) bool {
 	if len(networks) > maxAllowedNetworks {
 		writeError(w, r, http.StatusBadRequest, fmt.Sprintf("allowed_networks must have at most %d networks", maxAllowedNetworks),
@@ -356,7 +343,6 @@ func validSystemID(s string) bool { return printableASCII(s, maxSystemID) }
 
 func validSMPPPassword(s string) bool { return printableASCII(s, maxSMPPPassword) }
 
-// newSMPPPassword returns a random password of the most characters SMPP 3.4 allows.
 func newSMPPPassword() string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 

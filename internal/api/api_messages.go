@@ -18,41 +18,33 @@ import (
 )
 
 const (
-	defaultPerPage = 25
-	maxPerPage     = 100
-	maxE164Digits  = 15
-	// attemptOutcomeSuccess is the outcome of a delivery attempt that the serving node acknowledged.
+	defaultPerPage        = 25
+	maxPerPage            = 100
+	maxE164Digits         = 15
 	attemptOutcomeSuccess = "success"
 )
 
 type CreateMessageParams struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	// Text and Binary are mutually exclusive.
-	Text   string        `json:"text"`
-	Binary *BinaryParams `json:"binary"`
-	// ValiditySeconds is how long the SC attempts delivery; absent, the default validity applies.
-	ValiditySeconds *int64 `json:"validity_seconds"`
+	From            string        `json:"from"`
+	To              string        `json:"to"`
+	Text            string        `json:"text"`
+	Binary          *BinaryParams `json:"binary"`
+	ValiditySeconds *int64        `json:"validity_seconds"`
 }
 
-// BinaryParams are the TPDU parameters of a short message that the caller codes itself, such as a (U)SIM data
-// download message (TS 23.040 clause 9.2.3.9). The SC passes them on unchanged.
 type BinaryParams struct {
 	ProtocolIdentifier *uint8 `json:"protocol_identifier"`
 	DataCodingScheme   *uint8 `json:"data_coding_scheme"`
-	// UserDataHeader is the TP-UDH, its length octet included. It is nil when absent.
-	UserDataHeader Hex `json:"user_data_header"`
-	UserData       Hex `json:"user_data"`
+	UserDataHeader     Hex    `json:"user_data_header"`
+	UserData           Hex    `json:"user_data"`
 }
 
-// Hex is octets that JSON carries as a lowercase hexadecimal string.
 type Hex []byte
 
 func (h Hex) MarshalJSON() ([]byte, error) {
 	return json.Marshal(hex.EncodeToString(h))
 }
 
-// UnmarshalJSON leaves h unchanged for null, which is then absent as an omitted value is.
 func (h *Hex) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
 		return nil
@@ -73,14 +65,9 @@ func (h *Hex) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// MessageContent is the content of a short message, which the other responses leave out: reading it is audited.
 type MessageContent struct {
-	// Text is the text of a message that is not binary.
-	Text *string `json:"text,omitempty"`
-	// Binary is the TPDU parameters of a binary message.
-	Binary *BinaryContent `json:"binary,omitempty"`
-	// DeliverReports are the SMS-DELIVER-REPORTs that the recipient answered with, whose user data is for the
-	// originator (TS 23.040 clause 9.2.2.1a).
+	Text           *string         `json:"text,omitempty"`
+	Binary         *BinaryContent  `json:"binary,omitempty"`
 	DeliverReports []DeliverReport `json:"deliver_reports,omitempty"`
 }
 
@@ -91,7 +78,6 @@ type BinaryContent struct {
 	UserData           Hex   `json:"user_data"`
 }
 
-// DeliverReport is the SMS-DELIVER-REPORT of a delivery attempt: its octets, and its parameters when they decode.
 type DeliverReport struct {
 	AttemptID          int64  `json:"attempt_id"`
 	TPDU               Hex    `json:"tpdu"`
@@ -119,20 +105,16 @@ type Message struct {
 	ExpiresAt     string         `json:"expires_at"`
 	NextAttemptAt string         `json:"next_attempt_at,omitempty"`
 	StatusReport  StatusReports  `json:"status_report"`
-	// SubmittedBy is the email of the user that submitted a message over the API or SMPP.
-	SubmittedBy string `json:"submitted_by,omitempty"`
-	// SystemID is the system_id of the ESME that submitted a message over SMPP, while the ESME exists.
-	SystemID string `json:"system_id,omitempty"`
+	SubmittedBy   string         `json:"submitted_by,omitempty"`
+	SystemID      string         `json:"system_id,omitempty"`
 }
 
-// StatusReports are whether the originator of a message asked for status reports, and the reports that the SC returned
-// to it (TS 23.040 clause 3.2.9). Only a phone asks for status reports.
+// TS 23.040 clause 3.2.9
 type StatusReports struct {
 	Requested bool           `json:"requested"`
 	Reports   []StatusReport `json:"reports"`
 }
 
-// StatusReport is an SMS-STATUS-REPORT, with the TP-Status that it tells the originator, and the state of its delivery.
 type StatusReport struct {
 	ID            int64  `json:"id"`
 	TPStatus      uint8  `json:"tp_status"`
@@ -279,9 +261,7 @@ func CreateMessage(cfg Config) http.Handler {
 	})
 }
 
-// binaryUserData returns the user data of a binary message, or the reason that its parameters are invalid. The API
-// takes octets, so the TP-DCS must not code the GSM 7 bit default alphabet, whose TP-UDL counts septets (TS 23.040
-// clause 9.2.3.16), nor UCS2, which reads back as text. The other rules are the submission's.
+// TS 23.040 clause 9.2.3.16
 func binaryUserData(p BinaryParams) (submission.UserData, string) {
 	if p.DataCodingScheme == nil {
 		return submission.UserData{}, "binary.data_coding_scheme is required"
@@ -310,7 +290,6 @@ func binaryUserData(p BinaryParams) (submission.UserData, string) {
 	return submission.UserData{PID: pid, DCS: dcs, Header: header, Octets: p.UserData}, ""
 }
 
-// submitError returns the status and the message of an error of the submission.
 func submitError(err error) (int, string) {
 	switch {
 	case errors.Is(err, submission.ErrTelematicInterworking):
@@ -351,7 +330,6 @@ func GetMessage(cfg Config) http.Handler {
 	})
 }
 
-// GetMessageContent returns the content of a short message, and logs an audit event that the caller read it.
 func GetMessageContent(cfg Config, a *auth) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m, ok := lookupMessage(w, r, cfg)
@@ -411,8 +389,6 @@ func contentOf(m db.Message) MessageContent {
 	return out
 }
 
-// deliverReportOf returns the deliver report of an attempt: for RP-ACK when the attempt succeeded, and for RP-ERROR
-// otherwise. A report that does not decode has only its octets.
 func deliverReportOf(a db.DeliveryAttempt) DeliverReport {
 	out := DeliverReport{AttemptID: a.ID, TPDU: a.DeliverReport}
 
@@ -463,8 +439,6 @@ func ListMessageAttempts(cfg Config) http.Handler {
 	})
 }
 
-// ownSubmissions returns the user whose submissions are the only messages the caller may read, or zero when it may read
-// all of them.
 func ownSubmissions(ctx context.Context) int64 {
 	if p, _ := PrincipalFrom(ctx); p.Role == db.RoleSubmitter {
 		return p.UserID
@@ -473,15 +447,11 @@ func ownSubmissions(ctx context.Context) int64 {
 	return 0
 }
 
-// visible is whether the caller may read a message. A Submitter may read only those it submitted; to it, the others
-// do not exist.
 func visible(ctx context.Context, m db.Message) bool {
 	only := ownSubmissions(ctx)
 	return only == 0 || m.SubmittedBy == only
 }
 
-// lookupMessage returns the short message of the request. A status report is not one: it is under the message it is
-// on.
 func lookupMessage(w http.ResponseWriter, r *http.Request, cfg Config) (db.Message, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -560,7 +530,6 @@ func ListMessages(cfg Config) http.Handler {
 		}
 
 		if from := q.Get("from"); from != "" {
-			// A sender is a number, matched by part, or a name, matched in any case.
 			if digits, isNumber := partialNumber(from); isNumber {
 				ton := uint8(tpdu.TypeOfNumberInternational)
 				filter.Originator, filter.OriginatorContains, filter.OriginatorTON = digits, true, &ton
@@ -618,7 +587,6 @@ func ListMessages(cfg Config) http.Handler {
 	})
 }
 
-// messagesOf returns the messages, each with the status reports on it.
 func messagesOf(ctx context.Context, cfg Config, messages []db.Message) ([]Message, error) {
 	ids := make([]int64, 0, len(messages))
 	for _, m := range messages {
@@ -689,7 +657,6 @@ func messageOf(m db.Message, reports []db.Message) Message {
 		return out
 	}
 
-	// Only a phone asks for status reports; the API never does.
 	out.StatusReport.Requested = m.Origin == db.OriginMobile && submit.StatusReportRequest
 
 	content, err := submit.Content()
@@ -734,13 +701,12 @@ func formatAddress(a db.Address) string {
 	return a.Digits
 }
 
-// timeParam parses the query parameter name, an RFC 3339 time, and returns the zero time when it is absent.
+// RFC 3339
 func timeParam(w http.ResponseWriter, r *http.Request, value, name string, cfg Config) (time.Time, bool) {
 	if value == "" {
 		return time.Time{}, true
 	}
 
-	// The database stores times as Unix nanoseconds, which cover the years 1678 to 2262.
 	t, err := time.Parse(time.RFC3339Nano, value)
 	if err == nil && (t.Before(time.Unix(0, math.MinInt64)) || t.After(time.Unix(0, math.MaxInt64))) {
 		err = errors.New("out of range")
@@ -758,8 +724,7 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }
 
-// originatorOf returns the originator a from value names: an E.164 number when it starts with '+', and an
-// alphanumeric name (TS 23.040 clause 9.1.2.5) otherwise.
+// TS 23.040 clause 9.1.2.5
 func originatorOf(w http.ResponseWriter, r *http.Request, from string, cfg Config) (db.Address, bool) {
 	if strings.HasPrefix(from, "+") {
 		digits, ok := e164Digits(from)
@@ -781,7 +746,6 @@ func originatorOf(w http.ResponseWriter, r *http.Request, from string, cfg Confi
 	return db.Address{Digits: from, TypeOfNumber: tpdu.TypeOfNumberAlphanumeric}, true
 }
 
-// partialNumber returns the digits of all or part of an E.164 number: 1 to 15 digits, after an optional +.
 func partialNumber(s string) (string, bool) {
 	digits := strings.TrimPrefix(s, "+")
 	if digits == "" || len(digits) > maxE164Digits {

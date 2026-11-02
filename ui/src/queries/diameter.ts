@@ -4,7 +4,6 @@ export type DiameterPeerState =
   "down" | "connecting" | "open" | "suspect" | "reopen" | "closing";
 
 export interface DiameterPeer {
-  // The ID of a configured peer, absent for a peer that connected to the SMSC.
   id?: number;
   configured: boolean;
   host: string;
@@ -17,7 +16,6 @@ export interface DiameterPeer {
 }
 
 export interface DiameterRoute {
-  // Empty for a default route.
   realm: string;
   default: boolean;
   application: string;
@@ -36,8 +34,6 @@ export const getDiameterStatus = (): Promise<DiameterStatus> =>
 
 export type PeerApplication = "s6c" | "sgd";
 
-// PeerRoute sends a peer the requests of an application for a realm, or, for
-// a default route, for every other realm but this SMSC's own.
 export interface PeerRoute {
   realm?: string;
   default?: boolean;
@@ -53,14 +49,12 @@ export interface PeerStatus {
   error?: string;
 }
 
-// Peer is a Diameter agent that this SMSC connects to, such as a DEA or a DRA.
 export interface Peer {
   id: number;
   host: string;
   addresses: string[];
   port: number;
   routes: PeerRoute[];
-  // status is in reads only: the SMSC applies a change after it answers.
   status?: PeerStatus;
 }
 

@@ -17,8 +17,7 @@ type Settings struct {
 	Operator  Operator
 	Delivery  Delivery
 	Retention Retention
-	// Peers are ordered by ID.
-	Peers []Peer
+	Peers     []Peer
 }
 
 type Operator struct {
@@ -28,15 +27,12 @@ type Operator struct {
 	Numbering            numbering.Plan
 }
 
-// Realm is the home network realm of the operator's PLMN (3GPP TS 23.003
-// clause 19.2). The SMSC uses it as its own Diameter realm and to address the
-// HSS (3GPP TS 29.338 clauses 5.3.1.1.2 and 6.3.1.1).
-// Host is the SMSC's Diameter identity, named under the operator-controlled
-// node subdomain of the realm (3GPP TS 23.003 clause 19.4.2.8).
+// TS 23.003 clause 19.4.2.8
 func (o Operator) Host() string {
 	return "smsc.node." + o.Realm()
 }
 
+// TS 23.003 clause 19.2
 func (o Operator) Realm() string {
 	mnc := o.MNC
 	if len(mnc) == 2 {
@@ -51,13 +47,10 @@ type Delivery struct {
 	RetryIntervals  []time.Duration
 }
 
-// Retention is how long the SMSC keeps a message once it has its final status. 3GPP sets no such period: the SC is
-// responsible for a message only until its report is received or its validity period expires (TS 23.040 clause 6.1).
 type Retention struct {
 	Messages time.Duration
 }
 
-// MinRetention is the shortest retention.
 const MinRetention = 24 * time.Hour
 
 func (s Settings) Validate() error {
@@ -120,8 +113,6 @@ type Store interface {
 	PeerStore
 }
 
-// Live serves the current settings to the running SMSC and persists changes
-// before they take effect.
 type Live struct {
 	store   Store
 	current atomic.Pointer[Settings]
@@ -145,12 +136,10 @@ func NewLive(store Store, initial Settings) *Live {
 	return l
 }
 
-// Get returns the current settings. Callers must not modify its slices.
 func (l *Live) Get() Settings {
 	return *l.current.Load()
 }
 
-// UpdateOperator changes the operator, unless its new Diameter host is a configured peer's.
 func (l *Live) UpdateOperator(ctx context.Context, o Operator) error {
 	if err := o.Validate(); err != nil {
 		return err
@@ -203,8 +192,6 @@ func (l *Live) update(save func() error, apply func(*Settings)) error {
 	})
 }
 
-// change applies fn to a copy of the current settings, which it must persist, and makes the copy current unless fn
-// fails. Changes are serialized, so fn sees the settings it replaces.
 func (l *Live) change(fn func(*Settings) error) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -222,7 +209,6 @@ func (l *Live) change(fn func(*Settings) error) error {
 	return nil
 }
 
-// Changed returns a channel that is closed on the next successful update.
 func (l *Live) Changed() <-chan struct{} {
 	l.mu.Lock()
 	defer l.mu.Unlock()

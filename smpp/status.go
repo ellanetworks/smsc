@@ -2,10 +2,10 @@ package smpp
 
 import "fmt"
 
-// CommandID is the command_id of a PDU header (SMPP 3.4 §5.1.2). A response has the request's value with bit 31 set.
+// SMPP 3.4 section 5.1.2
 type CommandID uint32
 
-// The command_id values of SMPP 3.4 §5.1.2.1, Table 5-1.
+// SMPP 3.4 section 5.1.2.1 table 5-1
 const (
 	CmdGenericNack         CommandID = 0x80000000
 	CmdBindReceiver        CommandID = 0x00000001
@@ -69,8 +69,6 @@ var commandNames = map[CommandID]string{
 	CmdDataSMResp:          "data_sm_resp",
 }
 
-// String returns the name of the command in Table 5-1, "vendor(0x…)" for the range reserved for SMSC vendors, or
-// "reserved(0x…)".
 func (id CommandID) String() string {
 	if name, ok := commandNames[id]; ok {
 		return name
@@ -83,16 +81,12 @@ func (id CommandID) String() string {
 	return fmt.Sprintf("reserved(0x%08x)", uint32(id))
 }
 
-// Defined reports whether Table 5-1 names the command. A command that is not defined is answered with generic_nack
-// ESME_RINVCMDID (§3.3).
 func (id CommandID) Defined() bool {
 	_, ok := commandNames[id]
 
 	return ok
 }
 
-// Supported reports whether this package decodes and encodes the body of the command. A defined command that is not
-// supported can still be recognised by its header and answered with generic_nack ESME_RINVCMDID.
 func (id CommandID) Supported() bool {
 	switch id {
 	case CmdGenericNack, CmdBindReceiver, CmdBindReceiverResp, CmdBindTransmitter, CmdBindTransmitterResp, CmdBindTransceiver,
@@ -104,25 +98,24 @@ func (id CommandID) Supported() bool {
 	}
 }
 
-// IsResponse reports whether bit 31 of the command_id is set (§3.2.1).
+// SMPP 3.4 section 3.2.1
 func (id CommandID) IsResponse() bool {
 	return id&responseBit != 0
 }
 
-// Response returns the command_id of the response to the request id (§5.1.2).
+// SMPP 3.4 section 5.1.2
 func (id CommandID) Response() CommandID {
 	return id | responseBit
 }
 
-// IsBind reports whether id is one of the three bind requests (§4.1).
 func (id CommandID) IsBind() bool {
 	return id == CmdBindTransmitter || id == CmdBindReceiver || id == CmdBindTransceiver
 }
 
-// CommandStatus is the command_status of a PDU header (SMPP 3.4 §5.1.3).
+// SMPP 3.4 section 5.1.3
 type CommandStatus uint32
 
-// The command_status values of SMPP 3.4 §5.1.3, Table 5-2.
+// SMPP 3.4 section 5.1.3 table 5-2
 const (
 	StatusOK              CommandStatus = 0x00000000
 	StatusInvMsgLen       CommandStatus = 0x00000001
@@ -225,8 +218,6 @@ var statusNames = map[CommandStatus]string{
 	StatusUnknownErr:      "ESME_RUNKNOWNERR",
 }
 
-// String returns the error code name of Table 5-2, "vendor(0x…)" for the range reserved for SMSC vendor specific
-// errors (0x400–0x4FF), or "reserved(0x…)".
 func (s CommandStatus) String() string {
 	if name, ok := statusNames[s]; ok {
 		return name

@@ -17,8 +17,7 @@ func TestPurgeMessages(t *testing.T) {
 	submitted := cutoff.Add(-24 * time.Hour)
 
 	tests := []struct {
-		name string
-		// setup stores a message, and returns it and its status report, if any (0 otherwise).
+		name       string
 		setup      func(t *testing.T, d *DB) (message, report int64)
 		wantPurged bool
 	}{
@@ -244,7 +243,6 @@ func TestListMessagesByTime(t *testing.T) {
 	}
 }
 
-// create stores a short message from a phone, submitted at at, and returns its ID.
 func create(t *testing.T, d *DB, at time.Time) int64 {
 	t.Helper()
 
@@ -267,8 +265,6 @@ func completed(status MessageStatus, at time.Time) func(t *testing.T, d *DB) (in
 	}
 }
 
-// reported stores a message delivered at delivered with a status report on it, which reached its final status at
-// reportDone, or is pending when reportDone is zero.
 func reported(delivered, reportDone time.Time) func(t *testing.T, d *DB) (int64, int64) {
 	return func(t *testing.T, d *DB) (int64, int64) {
 		ctx := context.Background()

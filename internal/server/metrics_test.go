@@ -59,7 +59,6 @@ func TestMetrics(t *testing.T) {
 		t.Error("ellasmsc_build_info has no version")
 	}
 
-	// The SMSC has read its settings at start, so the database has timed a call.
 	if n := families["ellasmsc_database_query_duration_seconds"].GetMetric()[0].GetHistogram().GetSampleCount(); n == 0 {
 		t.Error("no database call was timed")
 	}
@@ -72,7 +71,6 @@ func TestMetrics(t *testing.T) {
 func TestMetricsOfMessages(t *testing.T) {
 	core, s := newSMSC(t, alice, bob)
 
-	// One message from a phone is delivered, and one to a phone the HSS does not know fails.
 	if rc := core.submit(alice, bob, "hello bob"); rc != diameter.ResultSuccess {
 		t.Fatalf("OFA result = %d", rc)
 	}
@@ -97,7 +95,6 @@ func TestMetricsOfMessages(t *testing.T) {
 		`ellasmsc_message_delivery_duration_seconds_count`:                     1,
 	}
 
-	// A message's status is stored before it is counted, so the counts may lag the status by a moment.
 	eventually(t, "message metrics", func() bool {
 		got := values(parseFamilies(t, scrape(t, s)))
 		for k, v := range want {
@@ -113,14 +110,12 @@ func TestMetricsOfMessages(t *testing.T) {
 func TestMetricsOfPeers(t *testing.T) {
 	core, s := newSMSC(t, alice, bob)
 
-	// A message delivered asks the HSS for a route, and the MME to deliver it.
 	if rc := core.submit(alice, bob, "hello bob"); rc != diameter.ResultSuccess {
 		t.Fatalf("OFA result = %d", rc)
 	}
 
 	s.waitForStatus(t, 1, db.StatusDelivered)
 
-	// A message to a phone the HSS says is unreachable stays pending.
 	core.setAbsent(bob.msisdn, true)
 
 	if rc := core.submit(alice, bob, "are you there?"); rc != diameter.ResultSuccess {
@@ -150,7 +145,6 @@ func TestMetricsOfPeers(t *testing.T) {
 		return true
 	})
 
-	// Without the core, there is no HSS to route through.
 	if err := core.node.SetPeers(nil); err != nil {
 		t.Fatalf("SetPeers: %v", err)
 	}
@@ -160,7 +154,6 @@ func TestMetricsOfPeers(t *testing.T) {
 	})
 }
 
-// values are the samples of the families by series, counters, gauges and histogram counts.
 func values(families map[string]*dto.MetricFamily) map[string]float64 {
 	out := map[string]float64{}
 
@@ -250,7 +243,6 @@ func TestMetricsOfStatusReports(t *testing.T) {
 	s.waitForStatus(t, 1, db.StatusDelivered)
 	waitForReportDelivered(t, s)
 
-	// The report is counted on its own, and is not a short message delivered.
 	want := map[string]float64{
 		`ellasmsc_messages_completed_total{status="delivered",type="message"}`:       1,
 		`ellasmsc_messages_completed_total{status="delivered",type="status_report"}`: 1,

@@ -24,7 +24,6 @@ import (
 	"github.com/ellanetworks/smsc/internal/server"
 )
 
-// writeCertificate writes a self-signed certificate for the loopback address, and its key, and returns their paths.
 func writeCertificate(t testing.TB, dir string) (string, string) {
 	t.Helper()
 
@@ -67,7 +66,6 @@ func writeCertificate(t testing.TB, dir string) (string, string) {
 	return certPath, keyPath
 }
 
-// trustingClient is an HTTPS client that trusts the certificate at certPath.
 func trustingClient(t testing.TB, certPath string) *http.Client {
 	t.Helper()
 
@@ -90,7 +88,6 @@ func TestAPIOverTLS(t *testing.T) {
 	certPath, keyPath := writeCertificate(t, dir)
 	cfg.API.TLS = &config.TLS{Cert: certPath, Key: keyPath}
 
-	// The harness creates the admin over TLS.
 	s := startSMSC(t, cfg)
 	client := trustingClient(t, certPath)
 
@@ -130,7 +127,6 @@ func TestAPIOverTLS(t *testing.T) {
 		t.Fatal("no Strict-Transport-Security over TLS")
 	}
 
-	// Plain HTTP on the TLS port gets no API.
 	plain, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		"http://"+s.server.APIAddr().String()+"/api/v1/status", nil)
 	if err != nil {
@@ -145,8 +141,7 @@ func TestAPIOverTLS(t *testing.T) {
 		}
 	}
 
-	// TLS 1.1 and older are refused.
-	old := &tls.Config{RootCAs: client.Transport.(*http.Transport).TLSClientConfig.RootCAs, MaxVersion: tls.VersionTLS11} //nolint:gosec // The test checks that the server refuses it.
+	old := &tls.Config{RootCAs: client.Transport.(*http.Transport).TLSClientConfig.RootCAs, MaxVersion: tls.VersionTLS11} //nolint:gosec
 
 	dialer := tls.Dialer{Config: old}
 

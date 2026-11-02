@@ -1,9 +1,8 @@
 package tpdu
 
-// Status is the TP-Status of an SMS-STATUS-REPORT (TS 23.040 clause 9.2.3.15).
+// TS 23.040 clause 9.2.3.15
 type Status byte
 
-// The statuses of a transaction completed, and of permanent errors, after which the SC makes no more transfer attempts.
 const (
 	StatusReceived                Status = 0x00
 	StatusReplaced                Status = 0x02
@@ -15,7 +14,6 @@ const (
 	StatusValidityPeriodExpired   Status = 0x46
 )
 
-// TemporaryError is a temporary error, which the SC reports once it has given up transferring the short message.
 type TemporaryError byte
 
 const (
@@ -26,12 +24,11 @@ const (
 	TemporaryErrorInSME      TemporaryError = 0x05
 )
 
-// GaveUp is the status of the temporary error once the SC makes no more transfer attempts.
 func (e TemporaryError) GaveUp() Status {
 	return Status(0x60 | e)
 }
 
-// statusNames are the meanings of the statuses that TS 23.040 clause 9.2.3.15 defines.
+// TS 23.040 clause 9.2.3.15
 var statusNames = map[Status]string{
 	0x00: "received",
 	0x01: "forwarded_unconfirmed",
@@ -54,14 +51,12 @@ var statusNames = map[Status]string{
 	0x49: "does_not_exist",
 }
 
-// String returns the meaning of the status: its name in TS 23.040 clause 9.2.3.15, "sc_specific" for a value specific
-// to each SC, or "reserved".
+// TS 23.040 clause 9.2.3.15
 func (s Status) String() string {
 	if s&0x80 != 0 {
 		return "reserved"
 	}
 
-	// A temporary error has the same meaning whether the SC still tries or has given up.
 	if s&0x60 == 0x60 {
 		s &^= 0x40
 	}

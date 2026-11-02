@@ -27,16 +27,11 @@ var applications = []diameter.Application{
 	{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
 }
 
-// nodeManager owns the Diameter node. The node's identity comes from the
-// operator settings, so a change of MCC/MNC replaces the node and its listener.
-// The node dials the configured peers, and follows their changes in place.
 type nodeManager struct {
-	addresses []netip.Addr
-	port      int
-	mux       *diameter.Mux
-	// metrics count and time the requests to the peers. They outlive the node.
-	metrics *peerMetrics
-	// tracerProvider traces the Diameter requests.
+	addresses      []netip.Addr
+	port           int
+	mux            *diameter.Mux
+	metrics        *peerMetrics
 	tracerProvider trace.TracerProvider
 	logger         *slog.Logger
 
@@ -44,10 +39,8 @@ type nodeManager struct {
 	node     *diameter.Node
 	listener *sctp.Listener
 	replaced chan struct{}
-	// peers are the configured peers that the node has.
-	peers []settings.Peer
-	// open are the configured peers that are open, by peer ID.
-	open map[string]bool
+	peers    []settings.Peer
+	open     map[string]bool
 }
 
 func (m *nodeManager) Node() *diameter.Node {
@@ -84,11 +77,7 @@ func (m *nodeManager) do(ctx context.Context, node *diameter.Node, req *diameter
 	return ans, err
 }
 
-// doHost addresses a request to a peer by its Destination-Host. For a host it
-// has no peer for, such as a visited MME, the node falls back to the realm
-// routes, then the default route, of the configured peers, which forward the
-// request with its Destination-Host (RFC 6733 section 6.1). With none, it ends
-// as an unknown peer. The default route never takes the SMSC's own realm.
+// RFC 6733 section 6.1
 func (m *nodeManager) doHost(ctx context.Context, host string, req *diameter.Message) (*diameter.Message, error) {
 	addressed := *req
 	addressed.AVPs = withDestinationHost(req.AVPs, host)
@@ -101,8 +90,6 @@ func (m *nodeManager) doHost(ctx context.Context, host string, req *diameter.Mes
 	return ans, err
 }
 
-// withDestinationHost sets the Destination-Host AVP, placed before
-// Destination-Realm when the request has none.
 func withDestinationHost(avps []diameter.AVP, host string) []diameter.AVP {
 	destHost := diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, host)
 	out := make([]diameter.AVP, 0, len(avps)+1)
@@ -166,7 +153,6 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator, pee
 		return err
 	}
 
-	// A new node has no peers yet.
 	m.mu.Lock()
 	m.peers, m.open = nil, nil
 	m.mu.Unlock()
@@ -210,8 +196,6 @@ func (m *nodeManager) shutdown(ctx context.Context) {
 	}
 }
 
-// follow replaces the node whenever the operator settings change its identity,
-// and gives it the configured peers whenever they change.
 func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 	for {
 		changed := live.Changed()
@@ -238,13 +222,7 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 	}
 }
 
-// setPeers gives the node its configured peers. The node keeps the connections
-// of the peers that are unchanged, and only replaces their routes. m.peers are
-// the peers the node has. The settings validate the peers as the node does, so
-// SetPeers fails only on a bug: the node then keeps its peers, which differ from
-// the settings, so the next change of settings tries again.
 func (m *nodeManager) setPeers(node *diameter.Node, peers []settings.Peer) {
-	// The peers are known before the node reports their state.
 	m.mu.Lock()
 	previous := m.peers
 	m.peers = peers
@@ -292,10 +270,9 @@ func toDiameterPeers(peers []settings.Peer) []diameter.Peer {
 		}
 
 		out = append(out, diameter.Peer{
-			ID:        p.NodeID(),
-			Host:      p.Host,
-			Addresses: p.Addresses,
-			// S6c and SGd run over SCTP (3GPP TS 29.338 clause 4.6).
+			ID:           p.NodeID(),
+			Host:         p.Host,
+			Addresses:    p.Addresses,
 			Transports:   []diameter.Transport{diameter.TransportSCTP},
 			Applications: applications,
 			Routes:       routes,
@@ -314,9 +291,6 @@ func applicationID(name string) uint32 {
 	return sgd.ApplicationID
 }
 
-// peerStateChanged logs the configured peers that open and close. A configured
-// peer is never an implicit route, so an HSS that is one serves S6c only
-// through an s6c route to the operator's realm: it warns of one without.
 func (m *nodeManager) peerStateChanged(operator settings.Operator, status diameter.PeerStatus) {
 	if !status.Configured {
 		return
@@ -324,7 +298,6 @@ func (m *nodeManager) peerStateChanged(operator settings.Operator, status diamet
 
 	m.mu.Lock()
 
-	// A peer that is no longer configured may still report its closing.
 	i := slices.IndexFunc(m.peers, func(p settings.Peer) bool { return p.NodeID() == status.ID })
 	if i < 0 {
 		m.mu.Unlock()
@@ -358,8 +331,6 @@ func (m *nodeManager) peerStateChanged(operator settings.Operator, status diamet
 	}
 }
 
-// supports reports whether a peer negotiated an application: its applications
-// are those common to both ends, a Relay advertisement standing for all of ours.
 func supports(status diameter.PeerStatus, app uint32) bool {
 	return slices.ContainsFunc(status.Applications, func(a diameter.Application) bool { return a.ID == app })
 }
@@ -370,9 +341,6 @@ func routesS6c(p settings.Peer, realm string) bool {
 	})
 }
 
-// listenAddresses are the addresses Diameter listens on and advertises: the
-// configured address, or the addresses of the configured interface, such as a
-// pod's eth0, whose address is not known in advance.
 func listenAddresses(cfg config.Diameter) ([]netip.Addr, error) {
 	if cfg.Name == "" {
 		return []netip.Addr{cfg.Address}, nil

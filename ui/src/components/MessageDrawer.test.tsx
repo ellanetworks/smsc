@@ -356,7 +356,6 @@ describe("MessageDrawer", () => {
             return json(200, {
               result: page([
                 m,
-                // A longer number that the to filter, which matches by part, also returns.
                 message({ id: 6, status: "pending", to: "+155512300021" }),
                 message({ id: 5, status: "pending", to: "+15551230002" }),
                 message({ id: 2, status: "pending", to: "+15551230002" }),

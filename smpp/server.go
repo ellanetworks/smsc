@@ -14,65 +14,38 @@ import (
 )
 
 var (
-	// ErrServerClosed is returned by Serve after Shutdown or Close.
 	ErrServerClosed = errors.New("smpp: server closed")
-	// ErrNoSession is a deliver_sm to an account without a session bound as a receiver or transceiver, or a
-	// submit_sm on a client that is not bound.
-	ErrNoSession = errors.New("smpp: no session bound")
+	ErrNoSession    = errors.New("smpp: no session bound")
 )
 
-// BindRequest is a bind request that an SMSC authenticates.
 type BindRequest struct {
-	Bind *Bind
-	// Session is the session being bound, still OPEN: nothing may be sent on it before the bind response.
+	Bind       *Bind
 	Session    *Session
 	RemoteAddr net.Addr
-	// TLS reports whether the connection is over TLS.
-	TLS bool
+	TLS        bool
 }
 
-// BindOutcome is the answer to a BindRequest.
 type BindOutcome struct {
-	// Status is ESME_ROK to accept the bind, or the command_status of the bind response, such as ESME_RBINDFAIL,
-	// ESME_RINVPASWD or ESME_RINVSYSID (Table 5-2).
-	Status CommandStatus
-	// Account is what the server's registry files the session under; empty is the system_id.
-	Account string
-	// Data is attached to the session, for the Handler (Session.Data).
-	Data any
-	// MaxSessions, when positive, is the most sessions bound for Account at once. One more is refused
-	// ESME_RBINDFAIL.
+	Status      CommandStatus
+	Account     string
+	Data        any
 	MaxSessions int
 }
 
-// ServerConfig configures an SMSC.
 type ServerConfig struct {
-	// SystemID identifies the SMSC in bind responses (§5.2.1), at most 15 characters.
-	SystemID string
-	// TLS, when set, wraps every connection in TLS from its first octet. SMPP 3.4 runs over TCP/IP or X.25 (§2.4);
-	// TLS is a convention outside it.
-	TLS *tls.Config
-	// Session sets the timers and windows of every session.
-	Session SessionConfig
-	// Authenticate decides each bind request. It is required. It runs on the session's reader, so the ESME's
-	// next PDU waits for it.
-	Authenticate func(ctx context.Context, req BindRequest) BindOutcome
-	// Handler handles submit_sm. It is required.
-	Handler Handler
-	// OnBound is called when a session is bound, after its bind response is written; OnClosed when a session
-	// closes, bound or not.
+	SystemID          string
+	TLS               *tls.Config
+	Session           SessionConfig
+	Authenticate      func(ctx context.Context, req BindRequest) BindOutcome
+	Handler           Handler
 	OnBound, OnClosed func(*Session)
-	// OnDecodeError is called for a request whose body does not decode, after its error response.
-	OnDecodeError func(s *Session, h Header, err error)
-	Logger        *slog.Logger
+	OnDecodeError     func(s *Session, h Header, err error)
+	Logger            *slog.Logger
 }
 
-// Server is an SMSC: it accepts ESME connections, binds them through Authenticate, and keeps a registry of the
-// bound sessions by account.
 type Server struct {
-	cfg ServerConfig
-	log *slog.Logger
-	// ctx ends when the server stops, which ends the TLS handshakes under way.
+	cfg    ServerConfig
+	log    *slog.Logger
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -81,13 +54,11 @@ type Server struct {
 	listeners map[net.Listener]struct{}
 	sessions  map[uint64]*Session
 	accounts  map[string]map[uint64]*Session
-	// reserved is the account that bind filed each session under, for closed to remove it.
-	reserved map[uint64]string
-	next     uint64
-	wg       sync.WaitGroup
+	reserved  map[uint64]string
+	next      uint64
+	wg        sync.WaitGroup
 }
 
-// NewServer checks cfg and returns a server.
 func NewServer(cfg ServerConfig) (*Server, error) {
 	switch {
 	case cfg.SystemID == "" || len(cfg.SystemID) >= maxSystemID:
@@ -114,7 +85,6 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}, nil
 }
 
-// ListenAndServe listens on the TCP address addr and serves it.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -124,7 +94,6 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	return s.Serve(l)
 }
 
-// Serve accepts connections on l until Shutdown or Close, and returns ErrServerClosed then. It closes l.
 func (s *Server) Serve(l net.Listener) error {
 	s.mu.Lock()
 	if s.closing {
@@ -241,8 +210,6 @@ func (s *Server) serveConn(c net.Conn) {
 	<-sess.Done()
 }
 
-// bind authenticates a bind request and reserves the session in its account. The reservation counts toward
-// MaxSessions at once, so that two binds at the same time cannot both pass.
 func (s *Server) bind(ctx context.Context, sess *Session, b *Bind, isTLS bool) bindDecision {
 	out := s.cfg.Authenticate(ctx, BindRequest{Bind: b, Session: sess, RemoteAddr: sess.RemoteAddr(), TLS: isTLS})
 	if out.Status != StatusOK {
@@ -263,7 +230,6 @@ func (s *Server) bind(ctx context.Context, sess *Session, b *Bind, isTLS bool) b
 
 	select {
 	case <-sess.Done():
-		// The session closed during Authenticate, and closed has run or waits for s.mu: reserve nothing.
 		return bindDecision{status: StatusBindFail}
 	default:
 	}
@@ -304,8 +270,6 @@ func (s *Server) closed(sess *Session) {
 	}
 }
 
-// bound lists the bound sessions of an account, or of all accounts when account is empty, by ID. A session that is
-// unbinding takes no new request, so it is left out.
 func (s *Server) bound(account string) []*Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -333,7 +297,6 @@ func (s *Server) bound(account string) []*Session {
 	return out
 }
 
-// Sessions describes the bound sessions of an account, or of all accounts when account is empty, oldest first.
 func (s *Server) Sessions(account string) []SessionInfo {
 	sessions := s.bound(account)
 	out := make([]SessionInfo, len(sessions))
@@ -345,8 +308,6 @@ func (s *Server) Sessions(account string) []SessionInfo {
 	return out
 }
 
-// CloseAccount closes every session of an account at once, bound or binding, for example after its credentials
-// change, and returns how many it closed.
 func (s *Server) CloseAccount(account string) int {
 	s.mu.Lock()
 	sessions := make([]*Session, 0, len(s.accounts[account]))
@@ -363,10 +324,6 @@ func (s *Server) CloseAccount(account string) int {
 	return len(sessions)
 }
 
-// Deliver sends a deliver_sm to one of an account's sessions bound as a receiver or transceiver, in turn, and
-// returns that session and the outcome: nil for deliver_sm_resp ESME_ROK, a *StatusError for another status or a
-// generic_nack, ErrResponseTimeout, ErrClosed, or ErrNoSession when none is bound. SMPP 3.4 does not say which
-// session a deliver_sm goes to; routing by account is the server's convention.
 func (s *Server) Deliver(ctx context.Context, account string, m *DeliverSM) (SessionInfo, error) {
 	var receivers []*Session
 
@@ -388,8 +345,7 @@ func (s *Server) Deliver(ctx context.Context, account string, m *DeliverSM) (Ses
 	return sess.Info(), sess.DeliverSM(ctx, m)
 }
 
-// Shutdown stops accepting connections, unbinds every bound session (§4.2) and closes the others, and waits for
-// them to close until ctx ends, when it closes the rest.
+// SMPP 3.4 section 4.2
 func (s *Server) Shutdown(ctx context.Context) error {
 	sessions := s.stop()
 
@@ -425,7 +381,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 }
 
-// Close stops accepting connections and closes every session at once.
 func (s *Server) Close() error {
 	for _, sess := range s.stop() {
 		_ = sess.Close()
@@ -436,7 +391,6 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// stop marks the server closing, closes its listeners and returns its sessions.
 func (s *Server) stop() []*Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()

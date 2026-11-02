@@ -2,13 +2,6 @@
 
 package smpp
 
-// Interoperability with pySim's smpp-ota-tool.py, an ESME built on the Python smpplib (GPL-2.0, run as a separate
-// program). It needs a pySim checkout with smpplib and pycryptodome:
-//
-//	PYSIM_DIR=/path/to/pysim go test -tags pysim -run PySim ./...
-//
-// The interpreter is $PYSIM_PYTHON, or $PYSIM_DIR/venv/bin/python when it exists, or python3.
-
 import (
 	"bytes"
 	"context"
@@ -23,8 +16,6 @@ import (
 	"time"
 )
 
-// The exchange of pySim's docs/smpp-ota-tool.rst: a sysmoISIM answering SELECT 7F20 and GET RESPONSE, key set 1,
-// TAR B00010. The PoR is the card's, ciphered with these keys, so the tool decodes it to the R-APDU it documents.
 const (
 	pysimKIc = "F09C43EE1A0391665CC9F05AF4E0BD10"
 	pysimKID = "01981F4A20999F62AF99988107BAF6CA"
@@ -66,7 +57,6 @@ func TestPySimOTATool(t *testing.T) {
 			m := req.PDU.(*SubmitSM)
 			submitted <- m
 
-			// The SIM answer goes out once the ESME has the message_id.
 			return Response{PDU: &SubmitSMResp{MessageID: "1"}, Written: func(err error) {
 				if err != nil {
 					return
@@ -112,7 +102,6 @@ func TestPySimOTATool(t *testing.T) {
 		t.Fatalf("smpp-ota-tool.py printed %q, want %q\n%s", got, pysimOut, stderr.String())
 	}
 
-	// pySim's submit_sm (plan §1): TON 1, UDHI, PID 7F, data_coding 0x02, a command packet behind UDH 027000.
 	m := <-submitted
 	if m.Source != (Address{TON: 1, Addr: "15550001000"}) || m.Destination.TON != 1 || m.Destination.Addr != "15551230002" ||
 		m.ESMClass != 0x40 || m.ProtocolID != 0x7f || m.DataCoding != 0x02 || m.RegisteredDelivery != 0 ||
@@ -120,7 +109,6 @@ func TestPySimOTATool(t *testing.T) {
 		t.Fatalf("submit_sm %+v", m)
 	}
 
-	// The tool unbinds before it exits.
 	select {
 	case err := <-unbound:
 		if !errors.Is(err, ErrUnbound) {

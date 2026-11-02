@@ -80,7 +80,6 @@ export default function SendMessageDialog({
     },
   });
 
-  // The value is kept as typed, since a name may hold spaces, and trimmed of those around it to be used.
   const sender = from.trim();
   const fromError = fieldError(
     sender,

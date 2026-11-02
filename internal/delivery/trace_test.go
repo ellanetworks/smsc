@@ -20,7 +20,6 @@ const (
 	creationSpanID  = "b7ad6b7169203331"
 )
 
-// tracedRouter and tracedSender record the span of each request they get.
 type tracedRouter struct {
 	*fakeRouter
 	spans []trace.SpanContext
@@ -41,8 +40,6 @@ func (s *tracedSender) Do(ctx context.Context, peer string, req *diameter.Messag
 	return s.fakeSender.Do(ctx, peer, req)
 }
 
-// TestDeliveryAttemptSpans checks that each delivery attempt has a span of its own, in a trace of its own that links
-// to the request that created the message, which its Diameter requests are part of, with the outcome of the attempt.
 func TestDeliveryAttemptSpans(t *testing.T) {
 	permanent := &diameter.Message{AVPs: []diameter.AVP{
 		diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, 5004),
@@ -126,8 +123,6 @@ func TestDeliveryAttemptSpans(t *testing.T) {
 	}
 }
 
-// TestDeliveryAttemptSpansPerMessage checks that the messages of a recipient that one delivery announced, sent in turn
-// without another routing lookup, each have a span of their own.
 func TestDeliveryAttemptSpansPerMessage(t *testing.T) {
 	first, second := pendingMessage(t), pendingMessage(t)
 	second.ID = 2
@@ -161,8 +156,6 @@ func TestDeliveryAttemptSpansPerMessage(t *testing.T) {
 	}
 }
 
-// TestDeliveryAttemptLogs checks that the logs of a delivery attempt carry its span's trace context, down to the
-// failure to store its outcome, so that a log leads to the attempt's trace.
 func TestDeliveryAttemptLogs(t *testing.T) {
 	tests := map[string]struct {
 		store   func(*fakeStore) Store
@@ -209,7 +202,6 @@ func TestDeliveryAttemptLogs(t *testing.T) {
 	}
 }
 
-// TestDeliveryLogsWithoutTracing checks that the logs of a delivery carry no trace context when tracing is off.
 func TestDeliveryLogsWithoutTracing(t *testing.T) {
 	var logs logtest.Recorder
 

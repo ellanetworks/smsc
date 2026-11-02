@@ -184,7 +184,6 @@ func TestLivePeerConflicts(t *testing.T) {
 		t.Fatalf("CreatePeer of two peers without a host on one address = %v", err)
 	}
 
-	// A peer with a host is told by its host, so it may share an address.
 	b.Host = "dea2.ipx.example.net"
 
 	if _, err := live.CreatePeer(ctx, b); err != nil {

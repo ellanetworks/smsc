@@ -27,10 +27,6 @@ func spanNamed(spans []sdktrace.ReadOnlySpan, name string, kind trace.SpanKind) 
 	return out
 }
 
-// TestMobileOriginatedMessageIsTraced follows a message from an MS through the SMSC and back to the core: the core's
-// request carries its trace context, which the MO-Forward-Short-Message span continues, though the core is not a
-// configured peer; the delivery attempt starts a trace that links to that span, and its routing lookup and delivery,
-// which the core continues in turn, are part of it.
 func TestMobileOriginatedMessageIsTraced(t *testing.T) {
 	coreSpans, smscSpans := tracetest.NewSpanRecorder(), tracetest.NewSpanRecorder()
 
@@ -95,8 +91,6 @@ func TestMobileOriginatedMessageIsTraced(t *testing.T) {
 	}
 }
 
-// TestSMPPMessageIsTraced follows a message from an ESME: the submit_sm has a server span that its delivery links to,
-// and so does the receipt's deliver_sm.
 func TestSMPPMessageIsTraced(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 

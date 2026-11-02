@@ -141,7 +141,6 @@ export default function SMPP() {
   const { showSnackbar } = useSnackbar();
   const [editing, setEditing] = useState<ESME | "new" | null>(null);
   const [deleting, setDeleting] = useState<ESME | null>(null);
-  // created is a new ESME whose password the server generated: it is shown once.
   const [created, setCreated] = useState<
     (CreatedESME & { password: string }) | null
   >(null);

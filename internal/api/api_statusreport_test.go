@@ -21,7 +21,6 @@ var reportSettings = settings.Settings{
 	Delivery: settings.Delivery{DefaultValidity: 24 * time.Hour},
 }
 
-// createMobileMessage stores a message from a phone, whose SMS-SUBMIT asks for status reports when srr is set.
 func createMobileMessage(t *testing.T, a *testAPI, srr bool, protocolIdentifier uint8, replace bool) db.Message {
 	t.Helper()
 
@@ -92,7 +91,6 @@ func TestMessageStatusReports(t *testing.T) {
 		t.Fatalf("status_report = %+v, want %+v", got.StatusReport, want)
 	}
 
-	// The list shows the report under its message, and not on its own.
 	code, result, _ = a.do(t, http.MethodGet, "/api/v1/messages", "")
 	if list := decode[api.ListMessagesResponse](t, result); code != http.StatusOK || list.TotalCount != 1 ||
 		!reflect.DeepEqual(list.Items[0].StatusReport, want) {
@@ -109,7 +107,6 @@ func TestMessageStatusReports(t *testing.T) {
 func TestMessageWithoutStatusReports(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	// A message from the API never asks for status reports, nor does a phone without TP-SRR.
 	fromAPI := a.create(t, "+15550001111", "+15551230002", "hi")[0].ID
 	fromPhone := createMobileMessage(t, a, false, 0, false).ID
 

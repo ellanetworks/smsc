@@ -15,8 +15,6 @@ type specOperation struct {
 	Security *[]map[string][]string `yaml:"security"`
 }
 
-// bearer is whether an operation of the spec needs a bearer token: whether its security, or the spec's when it has
-// none, names BearerAuth.
 func (o specOperation) bearer(global []map[string][]string) bool {
 	security := global
 	if o.Security != nil {
@@ -57,8 +55,6 @@ func loadSpec(t *testing.T, a *testAPI) (map[string]specOperation, []map[string]
 	return ops, spec.Security
 }
 
-// TestRoutesMatchSpec checks that the spec documents every route, with the authentication the route needs, and no
-// other.
 func TestRoutesMatchSpec(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 	ops, global := loadSpec(t, a)
@@ -94,7 +90,6 @@ func TestRoutesMatchSpec(t *testing.T) {
 	}
 }
 
-// TestProtectedRoutesRequireToken checks every route that needs a bearer token against requests without a valid one.
 func TestProtectedRoutesRequireToken(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
@@ -148,7 +143,6 @@ func TestPublicRoutes(t *testing.T) {
 	}
 }
 
-// TestRoles checks each permission of each role, with an access token of a user of that role.
 func TestRoles(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
@@ -171,7 +165,6 @@ func TestRoles(t *testing.T) {
 		db.RoleAdmin: admin, db.RoleReadOnly: readOnly, db.RoleNetworkManager: networkManager, db.RoleSubmitter: submitter,
 	}
 
-	// The requests are invalid where they would change something, since authorization comes first.
 	routes := map[string]int{
 		"POST /api/v1/messages":                                admin | networkManager | submitter,
 		"GET /api/v1/messages":                                 all,
@@ -259,7 +252,6 @@ func TestSecurityHeaders(t *testing.T) {
 
 		for name, want := range map[string]string{
 			"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-			// Only with TLS.
 			"Strict-Transport-Security": "",
 		} {
 			if got := h.Get(name); got != want {

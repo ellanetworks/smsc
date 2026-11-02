@@ -30,7 +30,6 @@ func TestRetentionPurgesFinishedMessages(t *testing.T) {
 	core.submit(alice, bob, "hi bob")
 	s.waitForStatus(t, 1, db.StatusDelivered)
 
-	// Passes within the retention keep the message.
 	time.Sleep(50 * time.Millisecond)
 	s.message(t, 1)
 

@@ -1,7 +1,3 @@
-// Package esme is the SMSC side of the SMPP 3.4 interface to External Short Message Entities, above the protocol layer
-// of package smpp: it authenticates the binds of the ESME accounts, maps submit_sm to the messages it stores (SMPP 3.4
-// section 4.4), and sends the ESMEs the delivery receipts and SIM answers on their messages as deliver_sm (SMPP 3.4
-// sections 2.11 and 4.6).
 package esme
 
 import (
@@ -31,14 +27,11 @@ import (
 )
 
 const (
-	// interfaceVersion34 is the interface_version of SMPP 3.4. An ESME of an earlier version cannot take optional
-	// parameters (SMPP 3.4 section 3.4), which receipts need, so it cannot bind.
 	interfaceVersion34 = 0x34
-	// MaxSessions is the most sessions an ESME binds at once.
-	MaxSessions = 4
+	MaxSessions        = 4
 )
 
-// BindType is the kind of session an ESME binds (SMPP 3.4 section 2.2).
+// SMPP 3.4 section 2.2
 type BindType string
 
 const (
@@ -60,30 +53,21 @@ func bindTypeOf(id smpp.CommandID) (BindType, bool) {
 	}
 }
 
-// receives is whether a session of this kind takes deliver_sm.
 func (b BindType) receives() bool { return b == Receiver || b == Transceiver }
 
-// transmits is whether a session of this kind sends submit_sm.
 func (b BindType) transmits() bool { return b == Transmitter || b == Transceiver }
 
-// permissions are what the role of an ESME's user must allow for each kind of bind: submitting creates messages, and
-// receiving reads their outcome and the SIM answers, which are content.
 var permissions = map[BindType][]api.Permission{
 	Transmitter: {api.PermCreateMessage},
 	Receiver:    {api.PermReadMessage, api.PermReadMessageContent},
 	Transceiver: {api.PermCreateMessage, api.PermReadMessage, api.PermReadMessageContent},
 }
 
-// Conn is the protocol layer's side of a bound session: an smpp.Session.
 type Conn interface {
-	// Deliver sends a deliver_sm and returns the command_status of its deliver_sm_resp. It fails when the ESME answers
-	// generic_nack, does not answer within the response timer, or the session ends.
 	Deliver(ctx context.Context, d *smpp.DeliverSM) (smpp.CommandStatus, error)
-	// Close ends the session.
 	Close()
 }
 
-// Session is a bound session, which the server keeps as its smpp.Session's Data.
 type Session struct {
 	ID       uint64
 	ESME     db.ESME
@@ -92,20 +76,17 @@ type Session struct {
 	Remote   netip.AddrPort
 	BoundAt  time.Time
 
-	// conn, inflight and closed are guarded by the service's mutex.
 	conn     Conn
 	inflight int
 	closed   bool
 }
 
-// SessionInfo is a bound session, as the API shows it.
 type SessionInfo struct {
 	BindType BindType
 	Remote   netip.AddrPort
 	BoundAt  time.Time
 }
 
-// Store is what the service needs of the database.
 type Store interface {
 	GetESMEBySystemID(ctx context.Context, systemID string) (db.ESME, error)
 	GetUserByID(ctx context.Context, id int64) (db.User, error)
@@ -117,23 +98,15 @@ type Store interface {
 	NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (time.Time, bool, error)
 }
 
-// Service is the SMSC side of the SMPP interface. Its zero values take defaults; it must not be copied once used.
 type Service struct {
-	Store     Store
-	Submitter *submission.Submitter
-	Settings  func() settings.Settings
-	// Notify tells the delivery that a message is stored.
-	Notify func()
-	// Received counts the submit_sm that the SMSC refuses; the Submitter counts the others.
-	Received *intake.Received
-	Metrics  *Metrics
-	// BcryptCost is the cost of the dummy hash that an unknown system_id is checked against: bcrypt's default when
-	// zero. It should be the cost of the ESME password hashes.
-	BcryptCost int
-	// Accounts is the server's registry of sessions, which closes those of an account, binding ones included. It is
-	// set once the server exists.
-	Accounts interface{ CloseAccount(account string) int }
-	// TracerProvider traces the submit_sm and deliver_sm; none when nil.
+	Store          Store
+	Submitter      *submission.Submitter
+	Settings       func() settings.Settings
+	Notify         func()
+	Received       *intake.Received
+	Metrics        *Metrics
+	BcryptCost     int
+	Accounts       interface{ CloseAccount(account string) int }
 	TracerProvider trace.TracerProvider
 	Now            func() time.Time
 	Logger         *slog.Logger
@@ -142,8 +115,6 @@ type Service struct {
 	dummyOnce sync.Once
 	dummyHash []byte
 	binds     *ratelimit.Limiter
-	// failures are the wrong passwords per account from inside its networks, and outsiders those from outside them
-	// and those for unknown system_ids.
 	failures  *ratelimit.Limiter
 	outsiders *ratelimit.Limiter
 	bcrypt    chan struct{}
@@ -172,13 +143,7 @@ func (s *Service) init() {
 	})
 }
 
-// Authenticate decides a bind request (SMPP 3.4 section 4.1), as smpp.ServerConfig.Authenticate. Every refusal is
-// ESME_RBINDFAIL, so that the response does not tell which check failed; the log does. The checks run in order: the
-// binds per client address, the interface version, the wrong passwords per account, counted apart for the clients
-// outside the account's networks and for unknown system_ids, the password, which bcrypt checks against a dummy hash
-// for an unknown system_id so that the time taken does not tell it exists, the client address against the account's
-// networks, and the user's role against the kind of bind. The server then counts the account's sessions against
-// max_sessions.
+// SMPP 3.4 section 4.1
 func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.BindOutcome {
 	s.init()
 
@@ -210,8 +175,6 @@ func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.B
 	return smpp.BindOutcome{Status: smpp.StatusBindFail}
 }
 
-// accountOf is the account of the server's registry that the sessions of an ESME are filed under: its ID, which a
-// change of system_id would not change.
 func accountOf(esmeID int64) string { return strconv.FormatInt(esmeID, 10) }
 
 func addrPortOf(a net.Addr) netip.AddrPort {
@@ -227,8 +190,6 @@ func addrPortOf(a net.Addr) netip.AddrPort {
 	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
 }
 
-// bind returns the session of a bind, or the reason it is refused, or an error when the SMSC cannot check it, which
-// refuses it too.
 func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind) (*Session, string, error) {
 	addr := remote.Addr().Unmap()
 
@@ -251,10 +212,6 @@ func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind)
 	}
 
 	known := err == nil
-	// A client outside the account's networks cannot bind to it, whatever its password, so its wrong passwords count
-	// apart from the account's: they cannot lock the ESME out. An unknown system_id counts with them, so that an
-	// account locked by its own clients does not tell an outsider that it exists, and so that unknown system_ids cannot
-	// fill the account limiter. An empty list allows no address.
 	inside := known && slices.ContainsFunc(e.AllowedNetworks, func(p netip.Prefix) bool { return p.Contains(addr) })
 
 	failures := s.outsiders
@@ -271,8 +228,6 @@ func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind)
 		hash = []byte(e.PasswordHash)
 	}
 
-	// bcrypt runs for every system_id, known or not, inside the networks or not, so that the time taken tells
-	// nothing.
 	match, err := s.checkPassword(ctx, hash, b.Password)
 	if err != nil {
 		return nil, "", err
@@ -305,11 +260,10 @@ func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind)
 	return &Session{ESME: e, UserID: u.ID, BindType: bindType, Remote: remote}, "", nil
 }
 
-// dummy returns the hash that the password of an unknown system_id is checked against, made on the first bind.
 func (s *Service) dummy() []byte {
 	s.dummyOnce.Do(func() {
 		password := make([]byte, 32)
-		_, _ = rand.Read(password) // It never fails.
+		_, _ = rand.Read(password)
 
 		hash, err := bcrypt.GenerateFromPassword(password, s.BcryptCost)
 		if err != nil {
@@ -334,7 +288,6 @@ func (s *Service) checkPassword(ctx context.Context, hash []byte, password strin
 	return bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil, nil
 }
 
-// OnBound registers a session once the ESME has its bind response, as smpp.ServerConfig.OnBound.
 func (s *Service) OnBound(ls *smpp.Session) {
 	sess, ok := ls.Data().(*Session)
 	if !ok {
@@ -346,24 +299,18 @@ func (s *Service) OnBound(ls *smpp.Session) {
 	s.attach(sess, libraryConn{ls})
 }
 
-// OnClosed unregisters a session, as smpp.ServerConfig.OnClosed.
 func (s *Service) OnClosed(ls *smpp.Session) {
 	if sess, ok := ls.Data().(*Session); ok {
 		s.detach(sess)
 	}
 }
 
-// OnDecodeError counts a submit_sm whose body does not decode, which the session refused, as
-// smpp.ServerConfig.OnDecodeError.
 func (s *Service) OnDecodeError(_ *smpp.Session, h smpp.Header, _ error) {
 	if h.ID == smpp.CmdSubmitSM {
 		s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
 	}
 }
 
-// ServeSMPP answers a submit_sm, as smpp.Handler. The delivery learns of the message once the submit_sm_resp is
-// written, so that the ESME has the message_id before any deliver_sm about it. That order is best effort: a deliverer
-// already running, woken by another message, can deliver this one and its notification go out first.
 func (s *Service) ServeSMPP(ctx context.Context, ls *smpp.Session, req smpp.Request) smpp.Response {
 	started := s.now()
 
@@ -377,8 +324,6 @@ func (s *Service) ServeSMPP(ctx context.Context, ls *smpp.Session, req smpp.Requ
 	return s.serveSubmit(ctx, sess, sm, started)
 }
 
-// serveSubmit answers the submit_sm of a bound session, in a span that ends once the response is written. The session
-// answers ESME_RSYSERR to a panic, without calling Written, so the span then ends as that error.
 func (s *Service) serveSubmit(ctx context.Context, sess *Session, sm *smpp.SubmitSM, started time.Time) smpp.Response {
 	ctx, span := s.startSpan(ctx, trace.SpanKindServer, smpp.CmdSubmitSM, sess)
 	answered := false
@@ -406,14 +351,11 @@ func (s *Service) serveSubmit(ctx context.Context, sess *Session, sm *smpp.Submi
 		Written: func(err error) {
 			s.Metrics.submitted(s.now().Sub(started))
 			endSubmitSpan(span, status, err)
-			// The message is stored whether or not the response reached the ESME.
 			s.Submitted()
 		},
 	}
 }
 
-// endSubmitSpan ends the span of a submit_sm once its response is written, or failed to be. Only a failure of the
-// SMSC is an error: a submit_sm that the SMSC refuses is the ESME's.
 func endSubmitSpan(span trace.Span, status smpp.CommandStatus, err error) {
 	switch {
 	case err != nil:
@@ -430,7 +372,6 @@ func (s *Service) now() time.Time {
 	return s.Now()
 }
 
-// libraryConn is a session of the protocol layer.
 type libraryConn struct{ s *smpp.Session }
 
 func (c libraryConn) Deliver(ctx context.Context, d *smpp.DeliverSM) (smpp.CommandStatus, error) {
@@ -450,7 +391,6 @@ func (c libraryConn) Deliver(ctx context.Context, d *smpp.DeliverSM) (smpp.Comma
 
 func (c libraryConn) Close() { _ = c.s.Close() }
 
-// attach registers a bound session and wakes the dispatcher.
 func (s *Service) attach(sess *Session, conn Conn) {
 	s.init()
 
@@ -463,7 +403,6 @@ func (s *Service) attach(sess *Session, conn Conn) {
 	s.wakeDispatcher()
 }
 
-// detach unregisters a session.
 func (s *Service) detach(sess *Session) {
 	s.init()
 
@@ -478,8 +417,6 @@ func (s *Service) detach(sess *Session) {
 	}
 }
 
-// CloseESME closes the sessions of an ESME, bound or binding, so that it binds again through the checks of
-// Authenticate.
 func (s *Service) CloseESME(esmeID int64) {
 	s.init()
 
@@ -490,8 +427,6 @@ func (s *Service) CloseESME(esmeID int64) {
 	s.closeWhere(func(sess *Session) bool { return sess.ESME.ID == esmeID })
 }
 
-// CloseUser closes the sessions, bound or binding, of the ESMEs of a user whose role changed, so that they bind again
-// under the checks of the new role. The ESMEs are those of the database, whatever sessions bound before.
 func (s *Service) CloseUser(ctx context.Context, userID int64) error {
 	s.init()
 
@@ -525,7 +460,6 @@ func (s *Service) closeWhere(match func(*Session) bool) {
 	}
 }
 
-// Sessions returns the bound sessions of an ESME, oldest first.
 func (s *Service) Sessions(esmeID int64) []SessionInfo {
 	s.init()
 
@@ -545,10 +479,8 @@ func (s *Service) Sessions(esmeID int64) []SessionInfo {
 	return out
 }
 
-// SubmitSM stores the message of a submit_sm and returns its message_id, the decimal ID of the stored message (SMPP
-// 3.4 section 4.4.2), or the command_status that refuses it (SMPP 3.4 section 5.1.3). The caller calls Submitted once
-// it has written the submit_sm_resp, so that the ESME has the message_id before any deliver_sm about the message, as
-// a best effort.
+// SMPP 3.4 section 4.4.2
+// SMPP 3.4 section 5.1.3
 func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM) (string, smpp.CommandStatus) {
 	s.init()
 
@@ -582,8 +514,6 @@ func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM
 	return strconv.FormatInt(ids[0], 10), smpp.StatusOK
 }
 
-// submitFailed counts and logs a submit_sm that the Submitter did not store, and returns its command_status. The
-// Submitter counts the store failures itself.
 func (s *Service) submitFailed(ctx context.Context, log *slog.Logger, err error) smpp.CommandStatus {
 	status := submissionStatus(err)
 
@@ -601,8 +531,6 @@ func (s *Service) submitFailed(ctx context.Context, log *slog.Logger, err error)
 	return status
 }
 
-// Submitted tells the delivery that a message is stored, once the ESME has its message_id, and wakes the dispatcher:
-// a replace type message may have replaced one, which queued its DELETED receipt.
 func (s *Service) Submitted() {
 	if s.Notify != nil {
 		s.Notify()

@@ -18,12 +18,9 @@ const (
 	StatusDelivered MessageStatus = "delivered"
 	StatusFailed    MessageStatus = "failed"
 	StatusExpired   MessageStatus = "expired"
-	// StatusReplaced is the status of a message that a later one replaced before its delivery (TS 23.040 clause 6.2).
-	StatusReplaced MessageStatus = "replaced"
+	StatusReplaced  MessageStatus = "replaced"
 )
 
-// MessageKind tells what the SC delivers: a short message, or an SMS-STATUS-REPORT on one to its originator, which
-// the SC delivers as it does a short message (TS 23.040 clause 3.2.9).
 type MessageKind string
 
 const (
@@ -36,8 +33,7 @@ type MessageOrigin string
 const (
 	OriginMobile MessageOrigin = "mobile"
 	OriginAPI    MessageOrigin = "api"
-	// OriginSMPP is a message that an ESME submitted over SMPP (SMPP 3.4 section 4.4).
-	OriginSMPP MessageOrigin = "smpp"
+	OriginSMPP   MessageOrigin = "smpp"
 )
 
 var (
@@ -46,24 +42,20 @@ var (
 )
 
 type Address struct {
-	// Digits holds the characters of the address, not digits, when TypeOfNumber is alphanumeric (TS 23.040 clause
-	// 9.1.2.5).
 	Digits        string
 	TypeOfNumber  uint8
 	NumberingPlan uint8
 }
 
 type Message struct {
-	ID   int64
-	Kind MessageKind
-	// ReportFor is the message that a status report is on, and ReportStatus its TP-Status. Both are zero for a message.
-	ReportFor    int64
-	ReportStatus uint8
-	Originator   Address
-	Recipient    Address
-	MSISDN       string
-	Origin       MessageOrigin
-	// SubmittedBy is the user that submitted a message over the API or SMPP, or zero.
+	ID                 int64
+	Kind               MessageKind
+	ReportFor          int64
+	ReportStatus       uint8
+	Originator         Address
+	Recipient          Address
+	MSISDN             string
+	Origin             MessageOrigin
 	SubmittedBy        int64
 	MessageReference   uint8
 	ProtocolIdentifier uint8
@@ -71,22 +63,19 @@ type Message struct {
 	Status             MessageStatus
 	SingleShot         bool
 	SubmittedAt        time.Time
-	// TimeStamp is the SC time stamp of the message, unique among the messages to its recipient.
-	TimeStamp     time.Time
-	ExpiresAt     time.Time
-	NextAttemptAt time.Time
-	Retries       int
-	UpdatedAt     time.Time
-	// TraceParent is the W3C traceparent of the request that created the message, or "" when it was not traced.
-	TraceParent string
+	TimeStamp          time.Time
+	ExpiresAt          time.Time
+	NextAttemptAt      time.Time
+	Retries            int
+	UpdatedAt          time.Time
+	TraceParent        string
 }
 
 type NewMessage struct {
-	Originator Address
-	Recipient  Address
-	MSISDN     string
-	Origin     MessageOrigin
-	// SubmittedBy is the user that submits a message over the API or SMPP, or zero.
+	Originator         Address
+	Recipient          Address
+	MSISDN             string
+	Origin             MessageOrigin
 	SubmittedBy        int64
 	MessageReference   uint8
 	ProtocolIdentifier uint8
@@ -96,49 +85,33 @@ type NewMessage struct {
 	SingleShot         bool
 	SubmittedAt        time.Time
 	ExpiresAt          time.Time
-	// ReportReplaced returns the status report on the message that this one replaces, or nil when there is none to
-	// send. The report is stored with the replacement. It runs in the transaction that stores them, so it must not use
-	// the database.
-	ReportReplaced func(replaced Message) (*NewStatusReport, error)
-	// SMPP is what the SMSC tells the ESME that submitted the message, stored with it. It is nil for a message from
-	// another origin.
-	SMPP *NewSMPPMessage
+	ReportReplaced     func(replaced Message) (*NewStatusReport, error)
+	SMPP               *NewSMPPMessage
 }
 
-// NewSMPPMessage is what the SMSC tells the ESME that submitted a message about it: a delivery receipt, and the
-// (U)SIM's answer (SMPP 3.4 section 2.11).
+// SMPP 3.4 section 2.11
 type NewSMPPMessage struct {
-	ESMEID int64
-	// SourceNPI is the submit_sm's source_addr_npi, which the notifications echo: the stored originator has the
-	// numbering plan of the TPDU.
-	SourceNPI uint8
-	// Receipt is registered_delivery bits 1-0 (SMPP 3.4 section 5.2.17): ReceiptNone, ReceiptFinal or ReceiptFailure.
-	Receipt uint8
-	// SIMAnswer is whether to forward the TP-User-Data of the recipient's SMS-DELIVER-REPORT.
-	SIMAnswer bool
-	// DataCoding is the submit_sm's data_coding, which a SIM answer in 8-bit data echoes.
-	DataCoding uint8
-	// UserMessageReference is the submit_sm's user_message_reference, echoed in the notifications (SMPP 3.4 Table
-	// 4-18), or nil.
+	ESMEID               int64
+	SourceNPI            uint8
+	Receipt              uint8
+	SIMAnswer            bool
+	DataCoding           uint8
 	UserMessageReference *uint16
 }
 
-// The values of registered_delivery bits 1-0 (SMPP 3.4 section 5.2.17).
+// SMPP 3.4 section 5.2.17
 const (
 	ReceiptNone    uint8 = 0
 	ReceiptFinal   uint8 = 1
 	ReceiptFailure uint8 = 2
 )
 
-// NewStatusReport is an SMS-STATUS-REPORT on a message from an MS, to that MS.
 type NewStatusReport struct {
-	// Originator is the address that the report shows as its sender: the SC's.
 	Originator Address
 	Status     uint8
-	// TPDU is the SMS-STATUS-REPORT, of which the SC sets TP-MMS when it sends it.
-	TPDU      []byte
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	TPDU       []byte
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
 }
 
 func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
@@ -221,8 +194,6 @@ func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]c
 	return id, nil
 }
 
-// due returns when a message to the recipient that arrives at the given time is first due: no earlier than the end of
-// a hold on the recipient, and no later than the message expires.
 func due(ctx context.Context, tx *sql.Tx, msisdn string, at, expiresAt int64) (int64, error) {
 	var held sql.Null[int64]
 
@@ -239,9 +210,7 @@ func due(ctx context.Context, tx *sql.Tx, msisdn string, at, expiresAt int64) (i
 	return min(next, expiresAt), nil
 }
 
-// stamp records that a short message to the recipient arrived at the given time, and returns its SC time stamp. TS
-// 23.040 clause 6.2 requires the time stamps of the messages to an MS to differ, changed as little as possible, so a
-// message that arrives within the second of the previous one to the same recipient takes the next free second.
+// TS 23.040 clause 6.2
 func stamp(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (int64, error) {
 	var last sql.Null[int64]
 
@@ -297,8 +266,6 @@ func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 	return res.LastInsertId()
 }
 
-// insertStatusReport stores a status report on a message from an MS, to be delivered to that MS. A status report
-// carries the time stamp of the message it is on, so it takes none of its recipient's time stamps.
 func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewStatusReport) error {
 	var (
 		recipient   Address
@@ -320,7 +287,6 @@ func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewS
 
 	at, expiresAt := r.CreatedAt.UTC().UnixNano(), r.ExpiresAt.UTC().UnixNano()
 
-	// The originator of a message from an MS is the MSISDN of the MS, in international format.
 	next, err := due(ctx, tx, recipient.Digits, at, expiresAt)
 	if err != nil {
 		return err
@@ -338,11 +304,7 @@ func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewS
 	return err
 }
 
-// replacePending marks replaced the pending message that the new one replaces, if any: the latest from the same
-// originator, of the same replace type, whatever its recipient (TS 23.040 clause 9.2.3.9: "In MO short messages the SC
-// reacts similarly but only the address of the originating MS or any other source is checked"). A message from an
-// MS follows that rule. One from the API or SMPP, whose submitter chooses its originator, replaces only one of the
-// same account: the same user for the API, the same ESME for SMPP. It stores the status report on it, if any.
+// TS 23.040 clause 9.2.3.9
 func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]completion) error {
 	query := `SELECT ` + messageColumns + ` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
 		AND originator_npi = ? AND protocol_identifier = ? AND status = ?`
@@ -389,7 +351,6 @@ func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]
 	replaced.Status = StatusReplaced
 	*completed = append(*completed, completion{KindMessage, StatusReplaced})
 
-	// TP-Status "Short message replaced by the SC" (TS 23.040 clause 9.2.3.15).
 	const statusReplaced = 0x02
 	if err := queueNotifications(ctx, tx, replaced.ID, StatusReplaced, statusReplaced, m.SubmittedAt.UTC().UnixNano()); err != nil {
 		return err
@@ -494,25 +455,18 @@ func (d *DB) GetMessage(ctx context.Context, id int64) (_ Message, err error) {
 }
 
 type MessageFilter struct {
-	// MSISDN, when not empty, keeps only the messages whose MSISDN contains these digits.
-	MSISDN string
-	// Originator, when not empty, keeps only the messages whose originator is it, in any case; or, with
-	// OriginatorContains, contains it.
+	MSISDN             string
 	Originator         string
 	OriginatorContains bool
-	// OriginatorTON, when not nil, keeps only the messages whose originator has this type of number.
-	OriginatorTON *uint8
-	Status        MessageStatus
-	// SubmittedBy, when not zero, keeps only the messages that user submitted.
-	SubmittedBy int64
-	// Start and End, when not zero, keep only the messages submitted at or after Start, and before End.
-	Start, End time.Time
+	OriginatorTON      *uint8
+	Status             MessageStatus
+	SubmittedBy        int64
+	Start, End         time.Time
 }
 
 func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) (_ []Message, _ int, err error) {
 	defer d.observe(&err)()
 
-	// Status reports show with the message they are on.
 	where, args := []string{"kind = ?"}, []any{KindMessage}
 
 	if f.MSISDN != "" {
@@ -632,10 +586,6 @@ func excludeMSISDNs(busy []string) (string, []any) {
 	return ` AND msisdn NOT IN (?` + strings.Repeat(`, ?`, len(busy)-1) + `)`, args
 }
 
-// ScheduleRetry schedules the next attempt of a pending message. With hold, it also holds the message's recipient
-// until then, in the same transaction: the recipient's other pending messages, and those that arrive meanwhile, wait
-// for that attempt, unless an alert ends the hold first. A message is never due later than it expires, so that it ends
-// expired on time rather than at an attempt after its validity period.
 func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) (err error) {
 	defer d.observe(&err)()
 
@@ -676,14 +626,11 @@ func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hol
 	return nil
 }
 
-// PendingCount is how many messages of a kind wait for delivery: those due, which NextDue returns, and those waiting
-// for a later attempt.
 type PendingCount struct {
 	Due     int
 	Waiting int
 }
 
-// CountPending returns how many messages of each kind wait for delivery at now.
 func (d *DB) CountPending(ctx context.Context, now time.Time) (_ map[MessageKind]PendingCount, err error) {
 	defer d.observe(&err)()
 
@@ -718,8 +665,6 @@ func (d *DB) CountPending(ctx context.Context, now time.Time) (_ map[MessageKind
 	return counts, nil
 }
 
-// NextDueFor returns the next message to the recipient, other than the given one, that is due and unexpired at now:
-// the message that the SC sends the recipient next, in the order NextDue would.
 func (d *DB) NextDueFor(ctx context.Context, msisdn string, excludeID int64, now time.Time) (_ Message, _ bool, err error) {
 	defer d.observe(&err)()
 
@@ -830,13 +775,6 @@ func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now
 	return nil
 }
 
-// CompleteMessage sets the final status of a pending message, and stores the status report on it, if any, in the same
-// transaction, so that the report is neither lost nor stored twice. It returns ErrNotPending, and leaves the message as
-// is, when the message already has a final status, as a message that a later one replaced during its delivery does.
-//
-// For a message from an ESME, it queues in the same transaction the notifications that the ESME asked for: the SIM
-// answer, then the delivery receipt, with tpStatus, the TP-Status of the outcome (TS 23.040 clause 9.2.3.15), as the
-// receipt's error code.
 func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus, at time.Time, report *NewStatusReport,
 	tpStatus uint8,
 ) (err error) {
@@ -902,18 +840,11 @@ const purgeableMessages = `SELECT m.id FROM messages m
 	AND NOT EXISTS (SELECT 1 FROM smpp_notifications n WHERE n.message_id = m.id AND n.result IS NULL AND n.expires_at >= ?1)
 	ORDER BY m.updated_at LIMIT ?2`
 
-// PurgeMessages deletes up to limit short messages that reached their final status before cutoff, with their delivery
-// attempts and status reports, and returns how many messages it deleted. It keeps a message with a status report that
-// is pending or that reached its final status after cutoff, so that a report always goes with its message, and a
-// message with an SMPP notification still to send that expires after cutoff.
 func (d *DB) PurgeMessages(ctx context.Context, cutoff time.Time, limit int) (_ int, err error) {
 	defer d.observe(&err)()
 
 	at := cutoff.UTC().UnixNano()
 
-	// DELETE ... LIMIT needs a compile option of SQLite, so the limit is on the subquery. The kind and status are
-	// literals, so that the query matches the WHERE of the messages_purgeable index. The changes it counts leave out the
-	// rows that foreign keys delete: they are the messages only.
 	res, err := d.conn.ExecContext(ctx, `DELETE FROM messages WHERE id IN (`+purgeableMessages+`)`, at, limit)
 	if err != nil {
 		return 0, fmt.Errorf("purge messages: %w", err)
@@ -929,7 +860,6 @@ func (d *DB) PurgeMessages(ctx context.Context, cutoff time.Time, limit int) (_ 
 	return int(n), nil
 }
 
-// StatusReportsFor returns the status reports on each of the messages that has some, oldest first.
 func (d *DB) StatusReportsFor(ctx context.Context, messageIDs []int64) (_ map[int64][]Message, err error) {
 	defer d.observe(&err)()
 
@@ -968,7 +898,6 @@ func (d *DB) StatusReportsFor(ctx context.Context, messageIDs []int64) (_ map[in
 	return reports, nil
 }
 
-// traceParent is the traceparent to store with a message that ctx creates: NULL when ctx is not traced.
 func traceParent(ctx context.Context) sql.Null[string] {
 	tp := tracing.TraceParent(ctx)
 	return sql.Null[string]{V: tp, Valid: tp != ""}

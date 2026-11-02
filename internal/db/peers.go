@@ -112,7 +112,6 @@ func (d *DB) peerRoutes(ctx context.Context, peers []settings.Peer, index map[in
 	return nil
 }
 
-// CreatePeer stores a new peer and returns its ID. It returns ErrAlreadyExists for a host that another peer has.
 func (d *DB) CreatePeer(ctx context.Context, p settings.Peer) (_ int64, err error) {
 	defer d.observe(&err)()
 
@@ -137,8 +136,6 @@ func (d *DB) CreatePeer(ctx context.Context, p settings.Peer) (_ int64, err erro
 	return id, err
 }
 
-// UpdatePeer replaces the peer of p.ID. It returns ErrNotFound for an unknown ID, and ErrAlreadyExists for a host
-// that another peer has.
 func (d *DB) UpdatePeer(ctx context.Context, p settings.Peer) (err error) {
 	defer d.observe(&err)()
 
@@ -194,7 +191,6 @@ func insertPeerDetails(ctx context.Context, tx *sql.Tx, id int64, p settings.Pee
 	return nil
 }
 
-// DeletePeer deletes a peer and its routes. It returns ErrNotFound for an unknown ID.
 func (d *DB) DeletePeer(ctx context.Context, id int64) (err error) {
 	defer d.observe(&err)()
 

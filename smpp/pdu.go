@@ -1,14 +1,3 @@
-// Package smpp is the SMPP 3.4 protocol layer of Ella SMSC and its clients. Section numbers refer to the SMPP
-// Protocol Specification v3.4, Issue 1.2.
-//
-//   - The codec: the PDU header (§3.2), the PDUs an SMSC exchanges with an ESME in the transmitter, receiver and
-//     transceiver sessions (§4), their optional parameters (§3.2.4, §5.3) and the time format (§7.1.1).
-//   - Session, the engine that both sides share over a net.Conn: framing, sequence numbers (§5.1.4), responses
-//     matched in any order, windows, the timers of §2.9 and §7.2, enquire_link, generic_nack (§3.3, §4.3), the
-//     states of §2.2 with the requests that each allows (Table 2-1), and unbind.
-//   - Server, the SMSC side: a listener, the bind through an Authenticate callback, and a registry of the bound
-//     sessions by account.
-//   - Client, the ESME side: one session bound and bound again with a backoff, and its state.
 package smpp
 
 import (
@@ -20,42 +9,33 @@ import (
 )
 
 const (
-	// HeaderLength is the size of the PDU header: command_length, command_id, command_status and sequence_number,
-	// four octets each (§3.2.1, Table 3-3).
+	// SMPP 3.4 section 3.2.1 table 3-3
 	HeaderLength = 16
-	// MaxLength is the largest command_length accepted, 68 KiB. It is Ella's limit, not the spec's: SMPP 3.4 sets no
-	// maximum (§3.2.2), and a larger value is taken as a corrupt stream (§4.3). It admits a submit_sm with a full
-	// message_payload of 65,535 octets (Table 4-10, §5.3.2.32): header 16 + mandatory parameters at most 348 + TLV
-	// header 4 + 65,535 = 65,903 octets, which leaves 3,729 octets for its other optional parameters.
-	MaxLength = 68 * 1024
-	// MaxSequence is the largest sequence_number (§5.1.4: 0x00000001 to 0x7FFFFFFF).
+	MaxLength    = 68 * 1024
+	// SMPP 3.4 section 5.1.4
 	MaxSequence = 0x7FFFFFFF
 )
 
-// The maximum sizes of the C-Octet Strings, the NULL terminator included (§3.1, note iii; §4).
+// SMPP 3.4 section 3.1
 const (
-	maxSystemID       = 16 // §4.1.1, Table 4-1
-	maxPassword       = 9  // §4.1.1, Table 4-1
-	maxSystemType     = 13 // §4.1.1, Table 4-1
-	maxAddressRange   = 41 // §4.1.1, Table 4-1
-	maxServiceType    = 6  // §4.4.1, Table 4-10
-	maxAddr           = 21 // §4.4.1, Table 4-10: source_addr and destination_addr
-	maxTime           = 17 // §4.4.1, Table 4-10: schedule_delivery_time and validity_period, "1 or 17"
-	maxMessageID      = 65 // §4.4.2, Table 4-11, and §5.3.2.12
-	maxUnusedField    = 1  // §4.6.1, Table 4-18, and §4.6.2, Table 4-19: fields set to NULL
+	maxSystemID       = 16
+	maxPassword       = 9
+	maxSystemType     = 13
+	maxAddressRange   = 41
+	maxServiceType    = 6
+	maxAddr           = 21
+	maxTime           = 17
+	maxMessageID      = 65
+	maxUnusedField    = 1
 	maxShortMessage   = 254
-	smLengthForbidden = 255 // §5.2.21: "not allowed"
+	smLengthForbidden = 255
 )
 
 var (
-	// ErrTruncated is returned when fewer octets are given than the header, or than its command_length, announce.
-	ErrTruncated = errors.New("smpp: truncated PDU")
-	// ErrInvalidField is returned by Encode for a field that does not fit its definition in §4 and §5.
+	ErrTruncated    = errors.New("smpp: truncated PDU")
 	ErrInvalidField = errors.New("smpp: invalid field")
 )
 
-// HeaderError is a command_length outside HeaderLength…MaxLength. The PDU boundaries in the stream are lost: the
-// receiver answers generic_nack ESME_RINVCMDLEN (§4.3) and closes the session.
 type HeaderError struct {
 	Length uint32
 }
@@ -64,22 +44,10 @@ func (e *HeaderError) Error() string {
 	return fmt.Sprintf("smpp: command_length %d outside %d…%d", e.Length, HeaderLength, MaxLength)
 }
 
-// Status returns ESME_RINVCMDLEN.
 func (e *HeaderError) Status() CommandStatus {
 	return StatusInvCmdLen
 }
 
-// BodyError is a PDU body that does not match its definition while the header is valid, so the next PDU in the
-// stream can still be read. Status is the command_status that the response reports:
-//
-//   - ESME_RINVCMDID for a command that is not supported (§3.3);
-//   - ESME_RINVCMDLEN when the body ends before its mandatory parameters do, or when a header-only PDU has a body
-//     (§4.3);
-//   - ESME_RINVMSGLEN for sm_length 255 or beyond the body (§5.2.21);
-//   - ESME_RINVPARLEN for a C-Octet String longer than its maximum, or an optional parameter expected in the PDU with
-//     the wrong size (§3.3, last rule);
-//   - ESME_RINVOPTPARSTREAM when the octets after the mandatory parameters do not split into TLVs (§3.2.4.1);
-//   - ESME_RINVOPTPARAMVAL for an optional parameter expected in the PDU whose value is not of its type.
 type BodyError struct {
 	Status CommandStatus
 	Field  string
@@ -90,7 +58,7 @@ func (e *BodyError) Error() string {
 	return fmt.Sprintf("smpp: %s: %s (%s)", e.Field, e.Reason, e.Status)
 }
 
-// Header is the PDU header (§3.2.1, Table 3-3).
+// SMPP 3.4 section 3.2.1 table 3-3
 type Header struct {
 	Length   uint32
 	ID       CommandID
@@ -98,8 +66,6 @@ type Header struct {
 	Sequence uint32
 }
 
-// DecodeHeader decodes the header at the start of b. It checks command_length only: any command_id is returned, so
-// that the caller can answer one it does not support with generic_nack ESME_RINVCMDID (§3.3).
 func DecodeHeader(b []byte) (Header, error) {
 	if len(b) < HeaderLength {
 		return Header{}, ErrTruncated
@@ -127,9 +93,7 @@ func appendHeader(b []byte, h Header) []byte {
 	return binary.BigEndian.AppendUint32(b, h.Sequence)
 }
 
-// ReadPDU reads one PDU from r: the header, then the command_length - 16 octets of the body (§3.2.2). It returns
-// io.EOF when r ends before the first octet, io.ErrUnexpectedEOF when it ends inside the PDU, and a *HeaderError for
-// an invalid command_length, after which the stream position is lost.
+// SMPP 3.4 section 3.2.2
 func ReadPDU(r io.Reader) (Header, []byte, error) {
 	var hb [HeaderLength]byte
 	if _, err := io.ReadFull(r, hb[:]); err != nil {
@@ -153,13 +117,11 @@ func ReadPDU(r io.Reader) (Header, []byte, error) {
 	return h, body, nil
 }
 
-// PDU is the body of a PDU that this package encodes and decodes.
 type PDU interface {
 	CommandID() CommandID
 	appendBody(b []byte, status CommandStatus) ([]byte, error)
 }
 
-// Decode decodes the PDU b, whose length must be its command_length.
 func Decode(b []byte) (Header, PDU, error) {
 	h, err := DecodeHeader(b)
 	if err != nil {
@@ -179,7 +141,6 @@ func Decode(b []byte) (Header, PDU, error) {
 	return h, p, err
 }
 
-// DecodeBody decodes the body of a PDU whose header is h. Every error is a *BodyError.
 func DecodeBody(h Header, body []byte) (PDU, error) {
 	d := &decoder{b: body}
 
@@ -219,10 +180,12 @@ func DecodeBody(h Header, body []byte) (PDU, error) {
 	return p, nil
 }
 
-// Encode encodes p in a PDU with the given command_status and sequence_number. When status is not ESME_ROK, the body of
-// bind_transmitter_resp, bind_receiver_resp and submit_sm_resp is left out (§4.1.2, §4.1.4, §4.4.2), and
-// bind_transceiver_resp carries its system_id only (§4.1.6, Table 4-6). A request must have status ESME_ROK (§3.2.1,
-// Table 3-3). sequence_number must be 1 to MaxSequence, or 0 in a generic_nack (§5.1.4, Table 4-9).
+// SMPP 3.4 section 4.1.2
+// SMPP 3.4 section 4.1.4
+// SMPP 3.4 section 4.4.2
+// SMPP 3.4 section 4.1.6 table 4-6
+// SMPP 3.4 section 3.2.1 table 3-3
+// SMPP 3.4 section 5.1.4
 func Encode(p PDU, status CommandStatus, sequence uint32) ([]byte, error) {
 	id := p.CommandID()
 
@@ -250,15 +213,19 @@ func Encode(p PDU, status CommandStatus, sequence uint32) ([]byte, error) {
 	return b, nil
 }
 
-// Address is a TON, an NPI and an address (§5.2.5, §5.2.6, §5.2.8, §5.2.9).
+// SMPP 3.4 section 5.2.5
+// SMPP 3.4 section 5.2.6
+// SMPP 3.4 section 5.2.8
+// SMPP 3.4 section 5.2.9
 type Address struct {
 	TON  byte
 	NPI  byte
 	Addr string
 }
 
-// Bind is bind_transmitter, bind_receiver or bind_transceiver, as ID says (§4.1.1, §4.1.3, §4.1.5; Tables 4-1, 4-3
-// and 4-5).
+// SMPP 3.4 section 4.1.1 table 4-1
+// SMPP 3.4 section 4.1.3 table 4-3
+// SMPP 3.4 section 4.1.5 table 4-5
 type Bind struct {
 	ID               CommandID
 	SystemID         string
@@ -270,7 +237,6 @@ type Bind struct {
 	AddressRange     string
 }
 
-// CommandID returns b.ID.
 func (b *Bind) CommandID() CommandID { return b.ID }
 
 func (b *Bind) appendBody(dst []byte, _ CommandStatus) ([]byte, error) {
@@ -288,17 +254,15 @@ func (b *Bind) appendBody(dst []byte, _ CommandStatus) ([]byte, error) {
 	return e.b, e.err
 }
 
-// BindResp is bind_transmitter_resp, bind_receiver_resp or bind_transceiver_resp, as ID says (§4.1.2, §4.1.4,
-// §4.1.6; Tables 4-2, 4-4 and 4-6). When command_status is not ESME_ROK, Encode leaves out the body of the first two
-// (notes of Tables 4-2 and 4-4) and writes SystemID without Options in the third, whose Table 4-6 has no such note.
-// Decode accepts both forms for all three.
+// SMPP 3.4 section 4.1.2 table 4-2
+// SMPP 3.4 section 4.1.4 table 4-4
+// SMPP 3.4 section 4.1.6 table 4-6
 type BindResp struct {
 	ID       CommandID
 	SystemID string
 	Options  Options
 }
 
-// CommandID returns b.ID.
 func (b *BindResp) CommandID() CommandID { return b.ID }
 
 func (b *BindResp) appendBody(dst []byte, status CommandStatus) ([]byte, error) {
@@ -319,8 +283,8 @@ func (b *BindResp) appendBody(dst []byte, status CommandStatus) ([]byte, error) 
 	return e.b, e.err
 }
 
-// Message is the body of submit_sm and deliver_sm, which have the same format (§4.4.1, Table 4-10; §4.6.1, Table
-// 4-18). sm_length is the length of ShortMessage.
+// SMPP 3.4 section 4.4.1 table 4-10
+// SMPP 3.4 section 4.6.1 table 4-18
 type Message struct {
 	ServiceType          string
 	Source               Address
@@ -338,9 +302,6 @@ type Message struct {
 	Options              Options
 }
 
-// append encodes the message. schedule_delivery_time and validity_period are empty or 16 characters ("Fixed 1 or 17"
-// with the NULL, Table 3-1 and Table 4-10), and empty in deliver_sm, where timeMax is 1. short_message and
-// message_payload are not both used (Tables 4-10 and 4-18).
 func (m *Message) append(dst []byte, timeMax int) ([]byte, error) {
 	if len(m.ShortMessage) > maxShortMessage {
 		return nil, fmt.Errorf("%w: short_message of %d octets", ErrInvalidField, len(m.ShortMessage))
@@ -366,36 +327,33 @@ func (m *Message) append(dst []byte, timeMax int) ([]byte, error) {
 	return e.b, e.err
 }
 
-// SubmitSM is submit_sm (§4.4.1).
+// SMPP 3.4 section 4.4.1
 type SubmitSM struct {
 	Message
 }
 
-// CommandID returns submit_sm.
 func (*SubmitSM) CommandID() CommandID { return CmdSubmitSM }
 
 func (s *SubmitSM) appendBody(dst []byte, _ CommandStatus) ([]byte, error) {
 	return s.append(dst, maxTime)
 }
 
-// DeliverSM is deliver_sm (§4.6.1). Its schedule_delivery_time and validity_period must be empty (Table 4-18).
+// SMPP 3.4 section 4.6.1
 type DeliverSM struct {
 	Message
 }
 
-// CommandID returns deliver_sm.
 func (*DeliverSM) CommandID() CommandID { return CmdDeliverSM }
 
 func (d *DeliverSM) appendBody(dst []byte, _ CommandStatus) ([]byte, error) {
 	return d.append(dst, maxUnusedField)
 }
 
-// SubmitSMResp is submit_sm_resp (§4.4.2, Table 4-11). Its body is absent when command_status is not ESME_ROK.
+// SMPP 3.4 section 4.4.2 table 4-11
 type SubmitSMResp struct {
 	MessageID string
 }
 
-// CommandID returns submit_sm_resp.
 func (*SubmitSMResp) CommandID() CommandID { return CmdSubmitSMResp }
 
 func (s *SubmitSMResp) appendBody(dst []byte, status CommandStatus) ([]byte, error) {
@@ -409,14 +367,11 @@ func (s *SubmitSMResp) appendBody(dst []byte, status CommandStatus) ([]byte, err
 	return e.b, e.err
 }
 
-// DeliverSMResp is deliver_sm_resp (§4.6.2, Table 4-19). Its message_id is unused and encoded NULL. When decoding,
-// a message_id of up to 64 characters, or no body at all, is tolerated: the response carries nothing else, and
-// optional parameters after message_id are ignored (§3.3).
+// SMPP 3.4 section 4.6.2 table 4-19
 type DeliverSMResp struct {
 	MessageID string
 }
 
-// CommandID returns deliver_sm_resp.
 func (*DeliverSMResp) CommandID() CommandID { return CmdDeliverSMResp }
 
 func (d *DeliverSMResp) appendBody(dst []byte, _ CommandStatus) ([]byte, error) {
@@ -426,51 +381,46 @@ func (d *DeliverSMResp) appendBody(dst []byte, _ CommandStatus) ([]byte, error) 
 	return e.b, e.err
 }
 
-// EnquireLink is enquire_link, header only (§4.11.1, Table 4-28).
+// SMPP 3.4 section 4.11.1 table 4-28
 type EnquireLink struct{}
 
-// CommandID returns enquire_link.
 func (*EnquireLink) CommandID() CommandID { return CmdEnquireLink }
 
 func (*EnquireLink) appendBody(dst []byte, _ CommandStatus) ([]byte, error) { return dst, nil }
 
-// EnquireLinkResp is enquire_link_resp, header only (§4.11.2, Table 4-29).
+// SMPP 3.4 section 4.11.2 table 4-29
 type EnquireLinkResp struct{}
 
-// CommandID returns enquire_link_resp.
 func (*EnquireLinkResp) CommandID() CommandID { return CmdEnquireLinkResp }
 
 func (*EnquireLinkResp) appendBody(dst []byte, _ CommandStatus) ([]byte, error) { return dst, nil }
 
-// Unbind is unbind, header only (§4.2.1, Table 4-7).
+// SMPP 3.4 section 4.2.1 table 4-7
 type Unbind struct{}
 
-// CommandID returns unbind.
 func (*Unbind) CommandID() CommandID { return CmdUnbind }
 
 func (*Unbind) appendBody(dst []byte, _ CommandStatus) ([]byte, error) { return dst, nil }
 
-// UnbindResp is unbind_resp, header only (§4.2.2, Table 4-8).
+// SMPP 3.4 section 4.2.2 table 4-8
 type UnbindResp struct{}
 
-// CommandID returns unbind_resp.
 func (*UnbindResp) CommandID() CommandID { return CmdUnbindResp }
 
 func (*UnbindResp) appendBody(dst []byte, _ CommandStatus) ([]byte, error) { return dst, nil }
 
-// GenericNack is generic_nack, header only (§4.3.1, Table 4-9). Its sequence_number is that of the PDU it answers,
-// or 0 when that PDU could not be decoded.
+// SMPP 3.4 section 4.3.1 table 4-9
 type GenericNack struct{}
 
-// CommandID returns generic_nack.
 func (*GenericNack) CommandID() CommandID { return CmdGenericNack }
 
 func (*GenericNack) appendBody(dst []byte, _ CommandStatus) ([]byte, error) { return dst, nil }
 
-// Tag is the tag of an optional parameter (§3.2.4.1, §5.3.1).
+// SMPP 3.4 section 3.2.4.1
+// SMPP 3.4 section 5.3.1
 type Tag uint16
 
-// The optional parameter tags of §5.3.2, Table 5-7.
+// SMPP 3.4 section 5.3.2 table 5-7
 const (
 	TagDestAddrSubunit          Tag = 0x0005
 	TagDestNetworkType          Tag = 0x0006
@@ -565,7 +515,6 @@ var tagNames = map[Tag]string{
 	TagItsSessionInfo:           "its_session_info",
 }
 
-// String returns the name of the tag in Table 5-7, or "tag(0x…)".
 func (t Tag) String() string {
 	if name, ok := tagNames[t]; ok {
 		return name
@@ -574,16 +523,16 @@ func (t Tag) String() string {
 	return fmt.Sprintf("tag(0x%04x)", uint16(t))
 }
 
-// TLV is an optional parameter (§3.2.4.1, Table 3-4).
+// SMPP 3.4 section 3.2.4.1 table 3-4
 type TLV struct {
 	Tag   Tag
 	Value []byte
 }
 
-// MessageState is a message state (§5.2.28, Table 5-6), carried by the message_state optional parameter (§5.3.2.35).
+// SMPP 3.4 section 5.2.28 table 5-6
+// SMPP 3.4 section 5.3.2.35
 type MessageState byte
 
-// The message states of Table 5-6.
 const (
 	StateEnroute       MessageState = 1
 	StateDelivered     MessageState = 2
@@ -606,7 +555,6 @@ var messageStateNames = map[MessageState]string{
 	StateRejected:      "REJECTED",
 }
 
-// String returns the name of the state in Table 5-6, or "reserved(…)".
 func (s MessageState) String() string {
 	if name, ok := messageStateNames[s]; ok {
 		return name
@@ -615,34 +563,29 @@ func (s MessageState) String() string {
 	return fmt.Sprintf("reserved(%d)", byte(s))
 }
 
-// NetworkErrorCode is the value of network_error_code (§5.3.2.31): a network type (1 ANSI-136, 2 IS-95, 3 GSM) and an
-// error code of that network.
+// SMPP 3.4 section 5.3.2.31
 type NetworkErrorCode struct {
 	NetworkType byte
 	ErrorCode   uint16
 }
 
-// Options are the optional parameters of a PDU (§3.2.4). Those that Ella uses are typed fields, nil when absent, and
-// are decoded and checked only in a PDU whose table in §4 lists them (expectedOptions). Every other one, unknown or
-// not expected in that PDU (§3.3), is kept raw in Other, in the order received. A later occurrence of a typed
-// parameter replaces an earlier one. Encode writes the typed ones in the order of Table 5-7, then Other.
+// SMPP 3.4 section 3.2.4
 type Options struct {
-	DestAddrSubunit      *byte             // 0x0005, §5.3.2.1
-	ReceiptedMessageID   *string           // 0x001E, §5.3.2.12, C-Octet String of 1 to 65 octets
-	UserMessageReference *uint16           // 0x0204, §5.3.2.17
-	SourcePort           *uint16           // 0x020A, §5.3.2.20
-	DestinationPort      *uint16           // 0x020B, §5.3.2.21
-	SarMsgRefNum         *uint16           // 0x020C, §5.3.2.22
-	SarTotalSegments     *byte             // 0x020E, §5.3.2.23
-	SarSegmentSeqnum     *byte             // 0x020F, §5.3.2.24
-	SCInterfaceVersion   *byte             // 0x0210, §5.3.2.25
-	NetworkErrorCode     *NetworkErrorCode // 0x0423, §5.3.2.31
-	MessagePayload       []byte            // 0x0424, §5.3.2.32, non-nil when present
-	MessageState         *MessageState     // 0x0427, §5.3.2.35
+	DestAddrSubunit      *byte
+	ReceiptedMessageID   *string
+	UserMessageReference *uint16
+	SourcePort           *uint16
+	DestinationPort      *uint16
+	SarMsgRefNum         *uint16
+	SarTotalSegments     *byte
+	SarSegmentSeqnum     *byte
+	SCInterfaceVersion   *byte
+	NetworkErrorCode     *NetworkErrorCode
+	MessagePayload       []byte
+	MessageState         *MessageState
 	Other                []TLV
 }
 
-// decoder reads the parameters of a body in order. The first error is kept and every later read returns zero values.
 type decoder struct {
 	b   []byte
 	err error
@@ -671,7 +614,7 @@ func (d *decoder) byte(field string) byte {
 	return v
 }
 
-// cstring reads a C-Octet String of at most maxLen octets, the NULL terminator included (§3.1).
+// SMPP 3.4 section 3.1
 func (d *decoder) cstring(field string, maxLen int) string {
 	if d.err != nil {
 		return ""
@@ -703,8 +646,7 @@ func (d *decoder) address(field string) Address {
 	return Address{TON: ton, NPI: npi, Addr: d.cstring(field, maxAddr)}
 }
 
-// headerOnly returns p, a header-only PDU, after checking that the body is empty: a longer command_length is invalid
-// (§4.3).
+// SMPP 3.4 section 4.3
 func (d *decoder) headerOnly(p PDU) PDU {
 	if len(d.b) > 0 {
 		d.fail(StatusInvCmdLen, "body", fmt.Sprintf("%d octets in a header-only PDU", len(d.b)))
@@ -713,8 +655,7 @@ func (d *decoder) headerOnly(p PDU) PDU {
 	return p
 }
 
-// bind decodes a bind request. Table 4-1, 4-3 and 4-5 list no optional parameters: any that follow address_range are
-// ignored (§3.3).
+// SMPP 3.4 section 3.3
 func (d *decoder) bind(id CommandID) *Bind {
 	b := &Bind{
 		ID:               id,
@@ -743,8 +684,7 @@ func (d *decoder) bindResp(h Header) *BindResp {
 	return r
 }
 
-// message decodes submit_sm or deliver_sm, as id says. In deliver_sm, schedule_delivery_time and validity_period are
-// read with the submit_sm maximum: §4.6.1 gives both PDUs the same format.
+// SMPP 3.4 section 4.6.1
 func (d *decoder) message(id CommandID) Message {
 	m := Message{
 		ServiceType:          d.cstring("service_type", maxServiceType),
@@ -787,8 +727,7 @@ func (d *decoder) message(id CommandID) Message {
 	return m
 }
 
-// submitSMResp decodes submit_sm_resp. Table 4-11 lists no optional parameters: any that follow message_id are
-// ignored (§3.3).
+// SMPP 3.4 section 3.3
 func (d *decoder) submitSMResp(h Header) *SubmitSMResp {
 	if len(d.b) == 0 && h.Status != StatusOK {
 		return &SubmitSMResp{}
@@ -800,8 +739,7 @@ func (d *decoder) submitSMResp(h Header) *SubmitSMResp {
 	return r
 }
 
-// deliverSMResp decodes deliver_sm_resp. Table 4-19 lists no optional parameters: any that follow message_id are
-// ignored (§3.3).
+// SMPP 3.4 section 3.3
 func (d *decoder) deliverSMResp() *DeliverSMResp {
 	if len(d.b) == 0 {
 		return &DeliverSMResp{}
@@ -813,26 +751,23 @@ func (d *decoder) deliverSMResp() *DeliverSMResp {
 	return r
 }
 
-// expectedOptions lists, for each PDU, the typed optional parameters of Options that its table in §4 lists. A PDU
-// that is not here expects none of them.
 var expectedOptions = map[CommandID]map[Tag]bool{
-	CmdBindTransmitterResp: {TagSCInterfaceVersion: true}, // Table 4-2
-	CmdBindReceiverResp:    {TagSCInterfaceVersion: true}, // Table 4-4
-	CmdBindTransceiverResp: {TagSCInterfaceVersion: true}, // Table 4-6
-	CmdSubmitSM: { // Table 4-10
+	CmdBindTransmitterResp: {TagSCInterfaceVersion: true},
+	CmdBindReceiverResp:    {TagSCInterfaceVersion: true},
+	CmdBindTransceiverResp: {TagSCInterfaceVersion: true},
+	CmdSubmitSM: {
 		TagDestAddrSubunit: true, TagUserMessageReference: true, TagSourcePort: true, TagDestinationPort: true,
 		TagSarMsgRefNum: true, TagSarTotalSegments: true, TagSarSegmentSeqnum: true, TagMessagePayload: true,
 	},
-	CmdDeliverSM: { // Table 4-18
+	CmdDeliverSM: {
 		TagReceiptedMessageID: true, TagUserMessageReference: true, TagSourcePort: true, TagDestinationPort: true,
 		TagSarMsgRefNum: true, TagSarTotalSegments: true, TagSarSegmentSeqnum: true, TagNetworkErrorCode: true,
 		TagMessagePayload: true, TagMessageState: true,
 	},
 }
 
-// options decodes the octets after the mandatory parameters of the PDU id as TLVs (§3.2.4). A typed parameter that
-// id expects is decoded and checked. An unknown one, or one that id does not expect, is kept raw in Other and the next
-// TLV is read (§3.3).
+// SMPP 3.4 section 3.2.4
+// SMPP 3.4 section 3.3
 func (d *decoder) options(id CommandID) Options {
 	var o Options
 
@@ -938,13 +873,12 @@ func (d *decoder) setOption(o *Options, tag Tag, v []byte) {
 	}
 }
 
-// encoder appends the parameters of a body. The first error is kept.
 type encoder struct {
 	b   []byte
 	err error
 }
 
-// cstring appends s and its NULL terminator, at most maxLen octets in all (§3.1).
+// SMPP 3.4 section 3.1
 func (e *encoder) cstring(field, s string, maxLen int) {
 	switch {
 	case e.err != nil:
@@ -958,8 +892,7 @@ func (e *encoder) cstring(field, s string, maxLen int) {
 	}
 }
 
-// time appends a schedule_delivery_time or validity_period: empty, or the 16 characters of §7.1.1, with the NULL
-// terminator at most maxLen octets.
+// SMPP 3.4 section 7.1.1
 func (e *encoder) time(field, s string, maxLen int) {
 	if e.err == nil && s != "" && len(s) != timeLength {
 		e.err = fmt.Errorf("%w: %s %q is %d characters, want 0 or %d", ErrInvalidField, field, s, len(s), timeLength)

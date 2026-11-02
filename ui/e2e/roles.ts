@@ -2,7 +2,6 @@ import { RoleID } from "./api";
 
 export const ROLE_PASSWORD = "E2eRolePassw0rd!";
 
-// ROLES are the users of the roles other than Admin, and the session file of each.
 export const ROLES = {
   "Read Only": {
     email: "e2e-readonly@ellanetworks.com",

@@ -1,27 +1,19 @@
-// Package intake counts the short messages the SMSC receives. Each entry point counts the messages it receives
-// itself: the SGd handler those that phones send, the API and the SMPP listener those that they submit, so that no
-// message is counted twice.
 package intake
 
 import "github.com/prometheus/client_golang/prometheus"
 
-// The entry points of a message, which label the messages received.
 const (
 	OriginMobile = "mobile"
 	OriginAPI    = "api"
-	// OriginSMPP is a submit_sm from an ESME (SMPP 3.4 section 4.4), which makes exactly one TPDU, so that it is
-	// counted whether it is accepted, rejected or failed.
-	OriginSMPP = "smpp"
+	OriginSMPP   = "smpp"
 )
 
-// The results of receiving a message: stored for delivery, refused, or not stored because the SMSC failed.
 const (
 	Accepted = "accepted"
 	Rejected = "rejected"
 	Error    = "error"
 )
 
-// Received counts the messages received. A nil Received counts nothing.
 type Received struct {
 	messages *prometheus.CounterVec
 }
@@ -34,7 +26,6 @@ func New() *Received {
 		}, []string{"origin", "result"}),
 	}
 
-	// The API refuses an invalid request before it is split into messages, so it has no rejected messages.
 	for _, series := range [][2]string{
 		{OriginMobile, Accepted},
 		{OriginMobile, Rejected},
@@ -55,7 +46,6 @@ func (r *Received) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{r.messages}
 }
 
-// Add counts n messages of an origin, with a result.
 func (r *Received) Add(origin, result string, n int) {
 	if r == nil || n <= 0 {
 		return

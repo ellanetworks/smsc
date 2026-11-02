@@ -1,13 +1,5 @@
 package server_test
 
-// Performance benchmarks that run the SMSC and a fake core in the same process, over SCTP on the loopback.
-//
-// Run them all with a fixed number of messages, so that the percentiles of each run compare:
-//
-//	go test ./internal/server -run '^$' -bench . -benchtime 2000x
-//
-// Each benchmark reports its throughput in msg/s and, where it applies, latency percentiles in milliseconds.
-
 import (
 	"bytes"
 	"context"
@@ -32,7 +24,6 @@ import (
 
 const perfTimeout = 2 * time.Minute
 
-// population returns n subscribers with distinct IMSIs and MSISDNs.
 func population(n int) []subscriber {
 	subs := make([]subscriber, n)
 	for i := range subs {
@@ -52,8 +43,6 @@ func newPerfSMSC(b *testing.B, subs []subscriber) (*fakeCore, *smsc) {
 	return core, s
 }
 
-// submitRequests builds n MO-Forward-Short-Message requests, spread round robin over the recipients, ahead of the
-// timed section.
 func (c *fakeCore) submitRequests(n int, from subscriber, to []subscriber) []*diameter.Message {
 	reqs := make([]*diameter.Message, n)
 	for i := range reqs {
@@ -78,7 +67,6 @@ func (c *fakeCore) alertRequest(to subscriber) *diameter.Message {
 	)
 }
 
-// sendAll sends the requests to the SMSC from the given number of concurrent workers, and returns the latency of each.
 func (c *fakeCore) sendAll(reqs []*diameter.Message, workers int) ([]time.Duration, error) {
 	return runWorkers(len(reqs), workers, func(i int) error {
 		ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
@@ -105,8 +93,6 @@ func (c *fakeCore) deliveredCount() int {
 	return len(c.delivered)
 }
 
-// runWorkers calls f for each index below n from the given number of concurrent workers, and returns how long each
-// call took. It stops at the first error.
 func runWorkers(n, workers int, f func(i int) error) ([]time.Duration, error) {
 	var (
 		next     atomic.Int64
@@ -158,8 +144,6 @@ func waitFor(b *testing.B, what string, cond func() bool) {
 	}
 }
 
-// waitForDelivered waits for the fake core to receive n messages, then for the SMSC to store them as delivered, and
-// returns the messages.
 func (s *smsc) waitForDelivered(b *testing.B, core *fakeCore, n int) []db.Message {
 	b.Helper()
 
@@ -184,7 +168,6 @@ func (s *smsc) waitForDelivered(b *testing.B, core *fakeCore, n int) []db.Messag
 	return messages
 }
 
-// endToEnd returns how long each message took from its submission to its delivery, as the SMSC stored them.
 func endToEnd(messages []db.Message) []time.Duration {
 	out := make([]time.Duration, len(messages))
 	for i, m := range messages {
@@ -215,8 +198,6 @@ func reportLatency(b *testing.B, prefix string, d []time.Duration) {
 	b.ReportMetric(float64(sorted[len(sorted)-1])/float64(time.Millisecond), prefix+"-max-ms")
 }
 
-// BenchmarkMobileOriginatedIntake measures how fast the SMSC accepts messages that phones send, from the
-// MO-Forward-Short-Message request to its answer, while it delivers them in the background.
 func BenchmarkMobileOriginatedIntake(b *testing.B) {
 	for _, workers := range []int{1, 16, 64} {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
@@ -243,10 +224,6 @@ func BenchmarkMobileOriginatedIntake(b *testing.B) {
 	}
 }
 
-// BenchmarkMobileOriginatedToDelivered measures how fast messages that phones send reach their recipients, from the
-// first submission until the SMSC stores the last one as delivered. The number of recipients bounds the parallelism,
-// since the SMSC delivers to each recipient one message at a time, and the core latency is added to each routing
-// lookup and each delivery.
 func BenchmarkMobileOriginatedToDelivered(b *testing.B) {
 	for _, recipients := range []int{1, 100, 1000} {
 		for _, latency := range []time.Duration{0, 10 * time.Millisecond} {
@@ -276,8 +253,6 @@ func BenchmarkMobileOriginatedToDelivered(b *testing.B) {
 	}
 }
 
-// BenchmarkAlertDrainsHeldMessages measures how fast the SMSC delivers messages held for absent recipients once the
-// core alerts it that they are reachable, as after a radio outage: one message for each of b.N recipients.
 func BenchmarkAlertDrainsHeldMessages(b *testing.B) {
 	subs := population(b.N + 1)
 	core, s := newPerfSMSC(b, subs)
@@ -325,8 +300,6 @@ func BenchmarkAlertDrainsHeldMessages(b *testing.B) {
 	reportLatency(b, "ala", took)
 }
 
-// BenchmarkAPISubmit measures how fast the SMSC accepts messages over the HTTP API, while it delivers them in the
-// background.
 func BenchmarkAPISubmit(b *testing.B) {
 	const workers = 16
 

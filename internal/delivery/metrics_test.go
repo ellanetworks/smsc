@@ -73,7 +73,6 @@ func TestMetricsTimeDeliveryFromSubmission(t *testing.T) {
 	}
 }
 
-// statusFailingStore fails to store a final status, which leaves the message pending.
 type statusFailingStore struct {
 	*fakeStore
 }

@@ -9,7 +9,6 @@ import theme, { THEME_PROVIDER_PROPS } from "@/utils/theme";
 
 export const adminAuth = authFor("admin@example.com", RoleID.Admin);
 
-// renderWithClient renders ui logged in, as an admin unless auth says otherwise. The theme mode is not stored.
 export const renderWithClient = (ui: ReactElement, auth: Auth = adminAuth) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

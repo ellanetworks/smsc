@@ -84,7 +84,6 @@ func TestESMELifecycle(t *testing.T) {
 		t.Fatalf("ListESMEsOfUser of an unknown user = %#v, %v, want an empty list", none, err)
 	}
 
-	// An empty hash keeps the password; the networks are replaced, in their new order.
 	update := want
 	update.PasswordHash = ""
 	update.AllowedNetworks = []netip.Prefix{netip.MustParsePrefix("192.0.2.7/32"), netip.MustParsePrefix("10.2.0.0/16")}
@@ -171,7 +170,6 @@ func TestESMEsAreChecked(t *testing.T) {
 	}
 }
 
-// smppMessage returns a message that the ESME submitted, as its user.
 func smppMessage(esmeID, userID int64, receipt uint8, simAnswer bool, at time.Time) NewMessage {
 	m := testMessage(0, false, []byte{0x41, 0x42}, at)
 	m.Origin, m.SubmittedBy = OriginSMPP, userID

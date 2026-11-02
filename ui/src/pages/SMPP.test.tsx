@@ -100,7 +100,6 @@ const openAdd = async () => {
   return screen.findByRole("dialog");
 };
 
-// pickUser chooses a user in the Add dialog's User list.
 const pickUser = async (dialog: HTMLElement, email: string) => {
   fireEvent.mouseDown(within(dialog).getByLabelText(/User/));
   fireEvent.click(
@@ -238,7 +237,6 @@ describe("SMPP", () => {
       expect(screen.queryByText("Ab3dE6gH")).not.toBeInTheDocument(),
     );
 
-    // Opening the dialog again does not show it.
     const again = await openAdd();
     expect(within(again).queryByText("Ab3dE6gH")).not.toBeInTheDocument();
     expect(screen.queryByText("Ab3dE6gH")).not.toBeInTheDocument();
@@ -336,7 +334,6 @@ describe("SMPP", () => {
     const dialog = await screen.findByRole("dialog");
 
     expect(within(dialog).getByLabelText(/System ID/)).toBeDisabled();
-    // The owner cannot change: its select is disabled.
     expect(within(dialog).getByLabelText(/User/)).toHaveAttribute(
       "aria-disabled",
       "true",

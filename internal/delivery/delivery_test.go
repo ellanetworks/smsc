@@ -63,7 +63,6 @@ func newFakeStore(messages ...db.Message) *fakeStore {
 	return s
 }
 
-// first returns the pending message due at now that NextDue returns first, among those that match.
 func (s *fakeStore) first(now time.Time, match func(*db.Message) bool) (db.Message, bool) {
 	var next *db.Message
 
@@ -316,7 +315,6 @@ func experimental(code uint32, extra ...diameter.AVP) *diameter.Message {
 	}, extra...)}
 }
 
-// smDeliveryFailure is an SM Delivery Failure answer, with the SMS-DELIVER-REPORT of the MS as diagnostic if any.
 func smDeliveryFailure(cause sgd.DeliveryFailureCause, diagnostic ...byte) *diameter.Message {
 	inner := []diameter.AVP{diameter.Unsigned32(sgd.AVPSMEnumeratedDeliveryFailureCause, diameter.AVPFlagMandatory, tgpp.VendorID, uint32(cause))}
 	if diagnostic != nil {
@@ -664,8 +662,6 @@ func TestDeliverViaIPSMGW(t *testing.T) {
 				t.Fatalf("Destination-Realm = %s, want %s", got, tt.want)
 			}
 
-			// The User-Name holds the MT Correlation ID that the IP-SM-GW gave in place of the IMSI (TS 23.040 clause
-			// 3.2.7a).
 			if got := string(avpData(t, tfr, diameter.AVPUserName, 0)); got != "001010000012345" {
 				t.Fatalf("User-Name = %s", got)
 			}
@@ -989,7 +985,6 @@ func TestIPSMGWFailureIsReported(t *testing.T) {
 		mwdStatus s6c.MWDStatus
 		want      s6c.DeliveryReport
 	}{
-		// The MWD-Status has no flag for the UNRI, so the SC reports every absent user via the IP-SM-GW.
 		"absent user": {absentWithDiagnostic(tgpp.AbsentUserNoResponseIPSMGW), s6c.MWDStatusMNRF, s6c.DeliveryReport{
 			MSISDN: "15551230002",
 			IPSMGW: &s6c.DeliveryOutcome{Cause: s6c.DeliveryCauseAbsentUser, AbsentDiagnostic: absentDiagnostic(tgpp.AbsentUserNoResponseIPSMGW)},
@@ -1574,7 +1569,6 @@ func TestSessionDeliversTheRecipientsQueueInOrder(t *testing.T) {
 			t.Fatalf("TFR %d announces more messages = %v, want %v", i+1, got, want)
 		}
 
-		// The SC time stamp sits after the originator address, the TP-PID and the TP-DCS.
 		scts := avpData(t, tfr, sgd.AVPSMRPUI, tgpp.VendorID)[11:18]
 		if want := mustHex(t, fmt.Sprintf("6290721195%d000", i)); !bytes.Equal(scts, want) {
 			t.Fatalf("TFR %d TP-SCTS = %x, want %x; the messages go out in order", i+1, scts, want)
@@ -1653,8 +1647,6 @@ func TestSessionFailureIsReportedAndHoldsTheRest(t *testing.T) {
 		t.Fatalf("statuses %s, %s after %d TFRs", store.messages[1].Status, store.messages[2].Status, len(sender.requests))
 	}
 
-	// The success report cleared the MNRF and the stored diagnostic at the HSS, so the absence that follows is new to
-	// it and is reported, although the routing answer carried the same flag and diagnostic.
 	if len(router.reports) != 2 || router.reports[0].MME.Cause != s6c.DeliveryCauseSuccessfulTransfer ||
 		router.reports[1].MME.Cause != s6c.DeliveryCauseAbsentUser || router.reports[1].Failed.Serving == nil {
 		t.Fatalf("reports = %+v", router.reports)
@@ -1712,8 +1704,8 @@ func TestSessionFallsBackToTheOtherServingNodes(t *testing.T) {
 	store := newFakeStore(queuedMessages(t, 2)...)
 	router := &fakeRouter{routing: routing}
 	sender := &answerSequence{fakeSender: &fakeSender{}, answers: []*diameter.Message{
-		experimental(tgpp.ResultErrorAbsentUser), success(), // the first message reaches the MS over the SGSN
-		success(), // and so does the second, which goes there first
+		experimental(tgpp.ResultErrorAbsentUser), success(),
+		success(),
 	}}
 
 	process(t, newDeliverer(store, router, sender))
@@ -1727,15 +1719,12 @@ func TestSessionFallsBackToTheOtherServingNodes(t *testing.T) {
 	store = newFakeStore(queuedMessages(t, 2)...)
 	process(t, newDeliverer(store, router, sender))
 
-	// Once the MS leaves the node that took the first message, the second falls back to the other node.
 	if !slices.Equal(sender.peers, []string{"mme.example.org", "mme.example.org", "sgsn.example.org"}) ||
 		store.messages[2].Status != db.StatusDelivered {
 		t.Fatalf("TFRs to %v, second message %s", sender.peers, store.messages[2].Status)
 	}
 }
 
-// TestCompletedIsCalledOncePerCompletion checks that the SMPP dispatcher is woken once per final status, and that the
-// TP-Status of the outcome is stored with it, for the receipt (spec_smpp.md §7.1).
 func TestCompletedIsCalledOncePerCompletion(t *testing.T) {
 	tests := map[string]struct {
 		answer   *diameter.Message
@@ -1744,7 +1733,6 @@ func TestCompletedIsCalledOncePerCompletion(t *testing.T) {
 		calls    int
 	}{
 		"delivered": {answer: success(), status: db.StatusDelivered, tpStatus: uint8(tpdu.StatusReceived), calls: 1},
-		// The (U)SIM answered RP-ERROR with TP-FCS 0xD5: failed on the first attempt.
 		"usim data download error": {
 			answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x00, tpdu.FailureUSIMDataDownloadError, 0x00),
 			status: db.StatusFailed, tpStatus: uint8(tpdu.StatusConnectionRejected), calls: 1,
@@ -1775,7 +1763,6 @@ func TestCompletedIsCalledOncePerCompletion(t *testing.T) {
 				t.Fatalf("TP-Status = %#x, want %#x", got, tt.tpStatus)
 			}
 
-			// One delivery attempt, whose report is the last, and so the SIM answer.
 			deliveries := 0
 
 			for _, a := range store.attempts {

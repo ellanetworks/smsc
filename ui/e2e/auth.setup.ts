@@ -13,7 +13,6 @@ import { ROLES, ROLE_PASSWORD } from "./roles";
 const SESSION_FILE = "e2e/.auth/admin.json";
 const TOKEN_FILE = "e2e/.auth/admin-token.txt";
 
-// The session of a user is its refresh cookie: the UI gets an access token from it when a page loads.
 setup("authenticate", async ({ request }) => {
   await ensureInitialized(request);
 

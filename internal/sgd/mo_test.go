@@ -484,7 +484,6 @@ func TestMOForwardNotifiesWhenStored(t *testing.T) {
 func TestMOForwardReportsTheMessageItReplaces(t *testing.T) {
 	store := &fakeStore{}
 
-	// A Replace Short Message Type 1, which replaces the pending message of the same type.
 	newTestHandler(store).ServeDiameter(context.Background(), nil,
 		ofrWithSubmit(t, "01"+"08"+"0b91"+"5155210300f2"+"41"+"00"+"00"))
 

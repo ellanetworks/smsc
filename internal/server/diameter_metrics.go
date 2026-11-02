@@ -12,14 +12,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// The interfaces to the peers, which label the requests to them: S6c to the HSS, SGd to the MME or the AMF.
 const (
 	interfaceS6c = "s6c"
 	interfaceSGd = "sgd"
 )
 
-// The results of a request to a peer: answered with success, answered with a failure, answered that the phone is
-// unreachable, not answered, or not answered in time.
 const (
 	peerSuccess    = "success"
 	peerFailure    = "failure"
@@ -33,7 +30,6 @@ var (
 	peerResults    = []string{peerSuccess, peerFailure, peerAbsentUser, peerError, peerTimeout}
 )
 
-// interfaceOf is the interface of an application, if it is one of the SMSC's.
 func interfaceOf(applicationID uint32) (string, bool) {
 	switch applicationID {
 	case s6c.ApplicationID:
@@ -58,9 +54,8 @@ func newPeerMetrics() *peerMetrics {
 				"(answered with an error), absent_user (the phone is unreachable), error (not answered) and timeout.",
 		}, []string{"interface", "result"}),
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "ellasmsc_peer_request_duration_seconds",
-			Help: "Duration of requests to the HSS and to the MME or AMF, by interface.",
-			// Up past the 30 s attempt timeout, so that the requests that time out are in a bucket.
+			Name:                            "ellasmsc_peer_request_duration_seconds",
+			Help:                            "Duration of requests to the HSS and to the MME or AMF, by interface.",
 			Buckets:                         []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 			NativeHistogramBucketFactor:     1.1,
 			NativeHistogramMaxBucketNumber:  100,
@@ -83,7 +78,6 @@ func (m *peerMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{m.requests, m.duration}
 }
 
-// request counts a request to a peer, of a result, and times it.
 func (m *peerMetrics) request(iface, result string, elapsed time.Duration) {
 	m.requests.WithLabelValues(iface, result).Inc()
 	m.duration.WithLabelValues(iface).Observe(elapsed.Seconds())
@@ -118,7 +112,6 @@ var hssPeersDesc = prometheus.NewDesc(
 	nil, nil,
 )
 
-// hssPeersCollector counts the HSSs the SMSC can route through when scraped.
 type hssPeersCollector struct {
 	count func() int
 }

@@ -59,8 +59,6 @@ const applicationLabels: Record<string, string> = {
 
 const applicationLabel = (name: string) => applicationLabels[name] ?? name;
 
-// The HSS route is the S6c route to this SMSC's own realm: a configured peer may
-// also route S6c to another realm.
 const hssPeers = (status: DiameterStatus): string[] =>
   status.routes.find(
     (route) =>
@@ -68,7 +66,6 @@ const hssPeers = (status: DiameterStatus): string[] =>
       route.realm.toLowerCase() === status.realm.toLowerCase(),
   )?.peers ?? [];
 
-// endpoint is an address and port, an IPv6 address in brackets.
 const endpoint = (address: string, port: number) =>
   address.includes(":") ? `[${address}]:${port}` : `${address}:${port}`;
 
@@ -194,7 +191,6 @@ const configuredColumns = (
       ) : (
         <Stack>
           {row.routes.map((r) => (
-            // A realm breaks at its dots, so that a narrow column wraps it rather than cuts it.
             <span key={routeLabel(r)}>
               {applicationLabel(r.application)} →{" "}
               {r.default ? "Default" : <DomainName name={r.realm ?? ""} />}

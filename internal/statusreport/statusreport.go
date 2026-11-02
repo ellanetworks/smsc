@@ -1,5 +1,3 @@
-// Package statusreport makes the SMS-STATUS-REPORTs that the SC returns to an MS on the short messages that the MS
-// submitted (TS 23.040 clause 3.2.9).
 package statusreport
 
 import (
@@ -11,9 +9,6 @@ import (
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
-// For returns the status report on a message, with the status that the SC concluded at discharge. It returns nil when
-// the message wants no report: only a short message from an MS asks for reports, with the TP-SRR of its SMS-SUBMIT, and
-// no report is on a report. The SC tries to deliver the report for as long as the default validity period.
 func For(m db.Message, status tpdu.Status, discharge time.Time, s settings.Settings) (*db.NewStatusReport, error) {
 	if m.Kind != db.KindMessage || m.Origin != db.OriginMobile {
 		return nil, nil

@@ -31,7 +31,6 @@ type Store interface {
 	SystemIDsFor(ctx context.Context, messageIDs []int64) (map[int64]string, error)
 }
 
-// ESMEStore stores the ESME accounts.
 type ESMEStore interface {
 	CountESMEs(ctx context.Context) (int, error)
 	CreateESME(ctx context.Context, e db.ESME) (int64, error)
@@ -42,23 +41,18 @@ type ESMEStore interface {
 	ListESMEsOfUser(ctx context.Context, userID int64) ([]db.ESME, error)
 }
 
-// SMPP is the SMPP listener: the sessions of the ESMEs, which a change to an ESME or its user closes, so that it binds
-// again under the checks of the change.
 type SMPP interface {
 	CloseESME(esmeID int64)
-	// CloseUser closes the sessions of the ESMEs that the database has for a user.
 	CloseUser(ctx context.Context, userID int64) error
 	Sessions(esmeID int64) []SMPPSession
 }
 
-// SMPPSession is a bound SMPP session.
 type SMPPSession struct {
 	BindType string
 	Remote   string
 	BoundAt  time.Time
 }
 
-// noSMPP is the SMPP of an SMSC without an SMPP listener.
 type noSMPP struct{}
 
 func (noSMPP) CloseESME(int64)                        {}
@@ -68,13 +62,11 @@ func (noSMPP) Sessions(int64) []SMPPSession           { return nil }
 type Diameter interface {
 	Identity() diameter.Identity
 	Peers() []diameter.PeerStatus
-	// Peer returns the status of the peer of a node ID, such as a configured peer's settings.Peer.NodeID.
 	Peer(id string) (diameter.PeerStatus, bool)
 	Routes() []Route
 }
 
-// Route is a realm-based routing table entry (RFC 6733, section 2.7) and the
-// open peers that can currently serve it. A default route has no realm.
+// RFC 6733 section 2.7
 type Route struct {
 	Realm         string
 	ApplicationID uint32
@@ -93,38 +85,26 @@ type Settings interface {
 }
 
 type Config struct {
-	Store    Store
-	Diameter Diameter
-	Frontend fs.FS
-	Settings Settings
-	// Submitter stores the messages the API submits, and counts them.
-	Submitter *submission.Submitter
-	Notify    func()
-	// Received counts the messages the API submits. It is the Submitter's when that is nil.
-	Received *intake.Received
-	// Ready reports why the SMSC cannot serve requests, or nil when it can. GET /api/v1/readyz answers 503 when
-	// it fails. Nil is always ready.
-	Ready func(ctx context.Context) error
-	// Metrics are the metrics GET /api/v1/metrics serves.
-	Metrics prometheus.Gatherer
-	// Auth stores the users, their sessions and their API tokens.
-	Auth AuthStore
-	// ESMEs stores the ESME accounts, and SMPP is the listener they bind to, or nil for none.
-	ESMEs ESMEStore
-	SMPP  SMPP
-	// JWTSecret signs the access tokens.
-	JWTSecret []byte
-	// SecureCookie marks the session cookie Secure, and turns on HSTS, for an API served over TLS.
-	SecureCookie bool
-	// BcryptCost is the cost of the password hashes: bcrypt.DefaultCost when zero.
-	BcryptCost int
-	// TracerProvider traces the requests to the API; none when nil.
+	Store          Store
+	Diameter       Diameter
+	Frontend       fs.FS
+	Settings       Settings
+	Submitter      *submission.Submitter
+	Notify         func()
+	Received       *intake.Received
+	Ready          func(ctx context.Context) error
+	Metrics        prometheus.Gatherer
+	Auth           AuthStore
+	ESMEs          ESMEStore
+	SMPP           SMPP
+	JWTSecret      []byte
+	SecureCookie   bool
+	BcryptCost     int
 	TracerProvider trace.TracerProvider
 	Now            func() time.Time
 	Logger         *slog.Logger
 }
 
-// route is a route of the API, and the permission that it needs: public for none.
 type route struct {
 	pattern string
 	perm    Permission
@@ -156,7 +136,6 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/diameter/peers/{id}", PermReadDiameter, GetPeer(cfg)},
 		{"PUT /api/v1/diameter/peers/{id}", PermUpdateDiameter, UpdatePeer(a)},
 		{"DELETE /api/v1/diameter/peers/{id}", PermUpdateDiameter, DeletePeer(a)},
-		// An ESME is a credential that acts as its user, so changing one needs a login, as an API token does.
 		{"GET /api/v1/esmes", PermReadESME, ListESMEs(cfg)},
 		{"POST /api/v1/esmes", PermUpdateESME, a.needsLogin(CreateESME(a))},
 		{"GET /api/v1/esmes/{system_id}", PermReadESME, GetESME(cfg)},
@@ -167,8 +146,6 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/delivery", PermReadDelivery, GetDelivery(cfg)},
 		{"PUT /api/v1/delivery", PermUpdateDelivery, UpdateDelivery(cfg)},
 
-		// The routes that create credentials or manage users need a login rather than an API token, so that a leaked
-		// API token cannot make itself others that outlive its revocation, or take an account.
 		{"GET /api/v1/users/me", PermSelf, GetMyUser(a)},
 		{"PUT /api/v1/users/me/password", PermSelf, a.needsLogin(UpdateMyPassword(a))},
 		{"GET /api/v1/users/me/api-tokens", PermSelf, ListAPITokens(a, myself(cfg))},
@@ -185,7 +162,6 @@ func routes(cfg Config, a *auth) []route {
 		{"POST /api/v1/users/{email}/api-tokens", PermManageUsers, a.needsLogin(CreateAPIToken(a, userOfPath(cfg)))},
 		{"DELETE /api/v1/users/{email}/api-tokens/{id}", PermManageUsers, a.needsLogin(DeleteAPIToken(a, userOfPath(cfg)))},
 
-		// The profiles take an API token, so that a profiler can scrape them.
 		{"GET /api/v1/pprof/{$}", PermReadProfiles, http.HandlerFunc(pprof.Index)},
 		{"GET /api/v1/pprof/allocs", PermReadProfiles, pprof.Handler("allocs")},
 		{"GET /api/v1/pprof/goroutine", PermReadProfiles, pprof.Handler("goroutine")},
@@ -199,7 +175,6 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/pprof/trace", PermReadProfiles, http.HandlerFunc(pprof.Trace)},
 	}
 
-	// The UI is static files: all its data comes from the API, which authenticates it.
 	if cfg.Frontend != nil {
 		rs = append(rs, route{"GET /", public, Frontend(cfg.Frontend)})
 	}
@@ -233,18 +208,11 @@ func NewHandler(cfg Config) http.Handler {
 		mux.Handle(rt.pattern, h)
 	}
 
-	// The session cookie authenticates the refresh and the logout, so a page of another origin must not be able to
-	// send them. CrossOriginProtection rejects the unsafe requests that a browser tells are cross-origin, and lets
-	// through those of other clients, which send none of the headers it checks.
 	return traced(cfg, securityHeaders(cfg, http.NewCrossOriginProtection().Handler(mux)))
 }
 
-// untraced are the API paths that are scraped periodically.
 var untraced = map[string]bool{"/api/v1/livez": true, "/api/v1/readyz": true, "/api/v1/metrics": true}
 
-// traced gives each request to the API a server span, named by its route. A caller's trace context is linked rather
-// than continued, since anyone can send one. The UI's static files are not traced, nor the probes, metrics and
-// profiles, which are scraped periodically.
 func traced(cfg Config, next http.Handler) http.Handler {
 	if cfg.TracerProvider == nil {
 		return next

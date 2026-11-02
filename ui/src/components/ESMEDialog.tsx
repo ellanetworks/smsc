@@ -31,13 +31,11 @@ import { listUsers, RoleID, roleLabels } from "@/queries/users";
 
 const PRINTABLE = /^[\x20-\x7E]*$/;
 
-// systemIDError is why s is not a system ID: 1 to 15 printable ASCII characters.
 export const systemIDError = (s: string): string | undefined =>
   s.length >= 1 && s.length <= MAX_SYSTEM_ID_LENGTH && PRINTABLE.test(s)
     ? undefined
     : `1 to ${MAX_SYSTEM_ID_LENGTH} printable ASCII characters.`;
 
-// passwordError is why s is not an SMPP password: 1 to 8 printable ASCII characters.
 export const passwordError = (s: string): string | undefined =>
   s.length >= 1 && s.length <= MAX_PASSWORD_LENGTH && PRINTABLE.test(s)
     ? undefined
@@ -51,7 +49,6 @@ const isIPv6 = (s: string): boolean => {
   const halves = s.split("::");
   if (halves.length > 2) return false;
   const groups = halves.flatMap((h) => (h === "" ? [] : h.split(":")));
-  // An embedded IPv4 address, last, counts as two groups.
   const last = groups.at(-1);
   const v4 = last !== undefined && last.includes(".");
   if (v4 && !IPV4.test(last)) return false;
@@ -61,7 +58,6 @@ const isIPv6 = (s: string): boolean => {
   return halves.length === 2 ? count <= 7 : count === 8;
 };
 
-// isPrefix accepts an IPv4 or an IPv6 prefix, such as 10.1.0.0/24 or 2001:db8::/32: the server has the last word.
 export const isPrefix = (s: string): boolean => {
   const slash = s.lastIndexOf("/");
   if (slash < 0) return false;
@@ -84,14 +80,11 @@ export default function ESMEDialog({
   onCreated,
   onClose,
 }: {
-  // esme is the ESME to edit, or undefined to add one.
   esme?: ESME;
-  // onCreated is given the new ESME, with the password the server generated, if it did.
   onCreated?: (esme: CreatedESME) => void;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  // The users an ESME can belong to; listing them needs the same permission as adding an ESME.
   const users = useQuery({
     queryKey: ["users", { page: 1, perPage: 100 }],
     queryFn: () => listUsers({ page: 1, perPage: 100 }),
@@ -188,7 +181,6 @@ export default function ESMEDialog({
           <MenuItem value={esme.user}>{esme.user}</MenuItem>
         ) : (
           (users.data?.items ?? []).map((u) => (
-            // A Read Only user may not bind.
             <MenuItem
               key={u.email}
               value={u.email}
@@ -228,7 +220,6 @@ export default function ESMEDialog({
   );
 }
 
-// ESMEPasswordDialog shows the password the server generated for a new ESME, once.
 export function ESMEPasswordDialog({
   esme,
   onClose,

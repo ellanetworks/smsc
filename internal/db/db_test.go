@@ -60,13 +60,10 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestDatabaseIsPrivate checks that only its owner can read the database, which holds the password hashes and the key
-// that signs the access tokens, and its journal.
 func TestDatabaseIsPrivate(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "smsc.db")
 
-	// An existing database that others can read is made private.
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +542,6 @@ func TestReplaceShortMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Only the originator and the replace type are checked: a message to another recipient replaces it too.
 	replacement := replaceType(testMessage(2, false, []byte{0x02}, now.Add(time.Minute)))
 	replacement.Recipient, replacement.MSISDN = Address{Digits: "15551239999", TypeOfNumber: 1, NumberingPlan: 1}, "15551239999"
 
@@ -991,7 +987,6 @@ func TestCountPending(t *testing.T) {
 		}
 	}
 
-	// One is delivered, with a status report that is due, one waits for a retry, and one is due.
 	if err := d.CompleteMessage(ctx, 1, StatusDelivered, now, testReport(now), 0); err != nil {
 		t.Fatal(err)
 	}
@@ -1005,7 +1000,6 @@ func TestCountPending(t *testing.T) {
 		t.Fatalf("CountPending = %+v, %v, want %+v", got, err, want)
 	}
 
-	// Once its retry is due, the second is due too.
 	want[KindMessage] = PendingCount{Due: 2}
 	if got, err := d.CountPending(ctx, now.Add(time.Minute)); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("CountPending a minute later = %+v, %v, want %+v", got, err, want)
@@ -1015,7 +1009,6 @@ func TestCountPending(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Without pending status reports, their count is zero.
 	want[KindStatusReport] = PendingCount{}
 	if got, err := d.CountPending(ctx, now.Add(time.Minute)); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("CountPending without reports = %+v, %v, want %+v", got, err, want)

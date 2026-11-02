@@ -15,7 +15,6 @@ var (
 	ErrAlreadyExists = errors.New("already exists")
 )
 
-// isUnique reports whether err is the violation of a UNIQUE constraint.
 func isUnique(err error) bool {
 	var e sqlite3.Error
 
@@ -23,8 +22,7 @@ func isUnique(err error) bool {
 }
 
 type DB struct {
-	conn *sql.DB
-	// path is the database file, whose size the metrics report.
+	conn    *sql.DB
 	path    string
 	metrics metrics
 }
@@ -250,7 +248,6 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	return d, nil
 }
 
-// Ping checks that the database answers. It is not observed: see TestEveryCallIsObserved.
 func (d *DB) Ping(ctx context.Context) error {
 	return d.conn.PingContext(ctx)
 }
@@ -293,9 +290,6 @@ func (d *DB) migrate(ctx context.Context) error {
 	return nil
 }
 
-// restrict creates the database file if absent, readable and writable by its owner only, and makes an existing one so:
-// it holds the password hashes and the key that signs the access tokens. SQLite gives its journal files the
-// permissions of the database file.
 func restrict(path string) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {

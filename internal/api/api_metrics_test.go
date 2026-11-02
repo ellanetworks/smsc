@@ -14,7 +14,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// failingStore fails to store messages.
 type failingStore struct {
 	*db.DB
 }
@@ -23,7 +22,6 @@ func (failingStore) CreateMessages(context.Context, []db.NewMessage) ([]int64, e
 	return nil, errors.New("disk full")
 }
 
-// newMetricsAPI returns an API with metrics, and the access token of its admin.
 func newMetricsAPI(t *testing.T, failStore bool) (http.Handler, string) {
 	t.Helper()
 
@@ -76,7 +74,6 @@ func wantSeries(t *testing.T, body string, series ...string) {
 func TestMetricsCountMessagesPerPart(t *testing.T) {
 	h, token := newMetricsAPI(t, false)
 
-	// A long text is stored as two parts, each counted, and an invalid request is not a message.
 	long := strings.Repeat("日本語", 30)
 	if code := post(t, h, token, `{"from": "+15550001111", "to": "+15551230002", "text": "`+long+`"}`); code != http.StatusCreated {
 		t.Fatalf("POST long text: %d", code)

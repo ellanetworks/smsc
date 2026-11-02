@@ -32,11 +32,9 @@ func EncodeSubmitReportError(failureCause byte, serviceCentreTimeStamp time.Time
 	return append(out, scts...), nil
 }
 
-// deliverReportUnusedBits are the bits of the first octet of an SMS-DELIVER-REPORT that are presently unused.
 const deliverReportUnusedBits = 0xbc
 
-// DeliverReportFailureCause returns the TP-FCS of an SMS-DELIVER-REPORT for RP-ERROR. When unused bits of its first
-// octet are set, the receiver treats it as "Unspecified error cause" (TS 23.040 clause 9.2.2.1a).
+// TS 23.040 clause 9.2.2.1a
 func DeliverReportFailureCause(b []byte) (byte, bool) {
 	if len(b) < 2 || b[0]&0x3 != mtiDeliver {
 		return 0, false

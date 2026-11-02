@@ -206,7 +206,6 @@ func addDetails(a *db.DeliveryAttempt, code uint32, err error) {
 			a.TPFailureCause = tpFailureCauseName(fcs)
 		}
 
-		// The diagnostic is the SMS-DELIVER-REPORT for RP-ERROR (TS 29.002 clause 7.6.1.4).
 		if len(sgdErr.DiagnosticInfo) > 0 {
 			a.DeliverReport = sgdErr.DiagnosticInfo
 		}

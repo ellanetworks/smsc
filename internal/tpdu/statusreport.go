@@ -5,13 +5,9 @@ import (
 	"time"
 )
 
-// mtiStatusReport is the TP-MTI of an SMS-STATUS-REPORT, from the SC to the MS. The same value is an SMS-COMMAND from
-// the MS to the SC.
 const mtiStatusReport = 0x2
 
-// StatusReport is an SMS-STATUS-REPORT (TS 23.040 clause 9.2.2.3) on a short message that an SMS-SUBMIT submitted,
-// with its mandatory parameters only: TP-SRQ is always 0, and the SC sets no TP-LP, since it neither forwards nor
-// spawns messages.
+// TS 23.040 clause 9.2.2.3
 type StatusReport struct {
 	MoreMessagesToSend     bool
 	MessageReference       uint8
@@ -21,8 +17,6 @@ type StatusReport struct {
 	Status                 Status
 }
 
-// StatusReport returns the SMS-STATUS-REPORT on the short message of the SMS-SUBMIT, which the SC received at
-// timeStamp, with the status that the SC concluded at discharge.
 func (s Submit) StatusReport(timeStamp, discharge time.Time, status Status) StatusReport {
 	return StatusReport{
 		MessageReference:       s.MessageReference,
@@ -63,8 +57,6 @@ func (r StatusReport) Encode() ([]byte, error) {
 	return append(out, byte(r.Status)), nil
 }
 
-// SetMoreMessagesToSend sets TP-MMS on an encoded SMS-STATUS-REPORT, which the SC decides only when it sends the
-// report.
 func SetMoreMessagesToSend(report []byte, more bool) []byte {
 	out := append([]byte(nil), report...)
 	if len(out) == 0 {
@@ -80,7 +72,6 @@ func SetMoreMessagesToSend(report []byte, more bool) []byte {
 	return out
 }
 
-// DecodeStatusReport decodes the mandatory parameters of an SMS-STATUS-REPORT, and ignores any optional ones.
 func DecodeStatusReport(b []byte) (StatusReport, error) {
 	if len(b) < 2 {
 		return StatusReport{}, fmt.Errorf("sms-status-report: %w", errTruncated)

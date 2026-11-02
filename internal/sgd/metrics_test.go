@@ -10,7 +10,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// received is the count of messages from phones with a result.
 func received(t *testing.T, r *intake.Received, result string) float64 {
 	t.Helper()
 
@@ -76,7 +75,6 @@ func TestMOForwardCountsMalformedRequests(t *testing.T) {
 	h := newTestHandler(&fakeStore{})
 	h.Received = intake.New()
 
-	// A request without its mandatory AVPs is refused before it is decoded.
 	h.ServeDiameter(context.Background(), nil, ofr())
 
 	if got := received(t, h.Received, intake.Rejected); got != 1 {

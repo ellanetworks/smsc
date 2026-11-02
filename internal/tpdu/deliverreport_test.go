@@ -162,8 +162,7 @@ func TestDecodeDeliverReportErrors(t *testing.T) {
 	}
 }
 
-// A (U)SIM data download message keeps every TPDU parameter on its way from the SMS-SUBMIT to the SMS-DELIVER: the ME
-// passes it to the (U)SIM in its entirety (TS 23.040 clause 9.2.3.9).
+// TS 23.040 clause 9.2.3.9
 func TestDeliverFromSubmitKeepsSIMDataDownload(t *testing.T) {
 	s, err := DecodeSubmit(mustHex(t, "41"+"00"+"0b91"+"5155210300f2"+"7f"+"f6"+"08"+"027000"+"0011223344"))
 	if err != nil {

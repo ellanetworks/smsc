@@ -24,8 +24,6 @@ func (s *Service) tracer() trace.Tracer {
 	return tp.Tracer(tracerName, trace.WithSchemaURL(semconv.SchemaURL))
 }
 
-// startSpan starts the span of an SMPP operation with the ESME of a session: a server span for a request of the ESME,
-// a client span for one of the SMSC. Each starts a trace, since an ESME sends no trace context.
 func (s *Service) startSpan(ctx context.Context, kind trace.SpanKind, id smpp.CommandID, sess *Session,
 	links ...trace.Link,
 ) (context.Context, trace.Span) {
@@ -45,8 +43,6 @@ func (s *Service) startSpan(ctx context.Context, kind trace.SpanKind, id smpp.Co
 	)
 }
 
-// endSpan ends the span of an SMPP operation with the command_status of its response, if any. The operation failed
-// when failure is set, or when err, which is then the cause.
 func endSpan(span trace.Span, status *smpp.CommandStatus, failure string, err error) {
 	defer span.End()
 

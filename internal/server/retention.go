@@ -9,20 +9,15 @@ import (
 )
 
 const (
-	// purgeInterval is the time between two passes. Hourly keeps a pass small at the rates an SMSC takes.
 	purgeInterval = time.Hour
-	// purgeBatch is the most messages that one transaction deletes, and purgePause the wait between two: the database
-	// has a single connection, which delivery and the API get in between.
-	purgeBatch = 1000
-	purgePause = 10 * time.Millisecond
+	purgeBatch    = 1000
+	purgePause    = 10 * time.Millisecond
 )
 
 type purgeStore interface {
 	PurgeMessages(ctx context.Context, cutoff time.Time, limit int) (int, error)
 }
 
-// purger deletes the messages whose retention period passed: once at start, then every interval. A change to the
-// retention applies from the next pass.
 type purger struct {
 	store    purgeStore
 	settings func() settings.Settings
@@ -46,8 +41,6 @@ func (p *purger) run(ctx context.Context) {
 	}
 }
 
-// pass deletes the messages that reached their final status a retention period ago, in batches, until none is left. A
-// pass that fails stops, and the next one resumes: deleting is idempotent.
 func (p *purger) pass(ctx context.Context) {
 	start := time.Now()
 	cutoff := p.now().Add(-p.settings().Retention.Messages)

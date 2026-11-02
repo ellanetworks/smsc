@@ -26,8 +26,7 @@ func mustHex(t testing.TB, s string) []byte {
 	return b
 }
 
-// simDataDownload is a (U)SIM data download message (TS 23.040 clause 9.2.3.9) to bob, whose user data is placeholder
-// octets after a (U)SIM Toolkit Security Header IEI.
+// TS 23.040 clause 9.2.3.9
 func simDataDownload() api.CreateMessageParams {
 	pid, dcs := uint8(0x7f), uint8(0xf6)
 
@@ -61,8 +60,6 @@ func (s *smsc) content(t *testing.T, id int64) api.MessageContent {
 	return c
 }
 
-// TestAPIBinaryMessageIsDelivered sends a (U)SIM data download message over the API, which reaches the phone with
-// its TP-PID, TP-DCS, TP-UDH and TP-UD unchanged.
 func TestAPIBinaryMessageIsDelivered(t *testing.T) {
 	core := newFakeCore(t, bob)
 	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
@@ -80,7 +77,6 @@ func TestAPIBinaryMessageIsDelivered(t *testing.T) {
 		t.Fatalf("delivered = %+v", got)
 	}
 
-	// TP-MTI SMS-DELIVER with TP-UDHI, TP-OA of 11 digits, TP-PID, TP-DCS, TP-SCTS, TP-UDL and TP-UD.
 	tpdu := got[0].tpdu
 	if len(tpdu) != 27 || tpdu[0] != 0x44 || !bytes.Equal(tpdu[1:9], mustHex(t, "0b915155001011f1")) ||
 		!bytes.Equal(tpdu[9:11], mustHex(t, "7ff6")) || !bytes.Equal(tpdu[18:], mustHex(t, "080270000011223344")) {
@@ -95,8 +91,7 @@ func TestAPIBinaryMessageIsDelivered(t *testing.T) {
 	}
 }
 
-// TestSIMDataDownloadAnswerIsKept keeps the SMS-DELIVER-REPORT for RP-ACK that the serving node passes on, which
-// carries what the (U)SIM answered (TS 29.338 clause 6.3.2.6).
+// TS 29.338 clause 6.3.2.6
 func TestSIMDataDownloadAnswerIsKept(t *testing.T) {
 	core := newFakeCore(t, bob)
 	core.setAnswerMT(func(string) *diameter.Message {
@@ -119,8 +114,7 @@ func TestSIMDataDownloadAnswerIsKept(t *testing.T) {
 	}
 }
 
-// TestSIMDataDownloadErrorIsNotRetried fails a message that the (U)SIM refused with a (U)SIM data download error
-// (TS 23.040 clause 9.2.3.22): sending it again would get the same answer.
+// TS 23.040 clause 9.2.3.22
 func TestSIMDataDownloadErrorIsNotRetried(t *testing.T) {
 	core := newFakeCore(t, bob)
 	core.setAnswerMT(func(string) *diameter.Message {
@@ -148,7 +142,6 @@ func TestSIMDataDownloadErrorIsNotRetried(t *testing.T) {
 	}
 }
 
-// TestMobileOriginatedBinaryMessageIsDelivered passes a (U)SIM data download message from a phone on unchanged.
 func TestMobileOriginatedBinaryMessageIsDelivered(t *testing.T) {
 	core, s := newSMSC(t, alice, bob)
 

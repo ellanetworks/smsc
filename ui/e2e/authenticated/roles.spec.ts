@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { ROLES } from "../roles";
 
-// The navigation of each role is the pages it may load (ui/src/contexts/AuthContext.tsx).
 const NAVIGATION = {
   "Read Only": ["Operator", "Diameter", "SMPP", "Messages"],
   "Network Manager": ["Operator", "Diameter", "SMPP", "Messages"],

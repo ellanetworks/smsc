@@ -8,15 +8,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// PendingCounter counts the notifications still to send.
 type PendingCounter interface {
 	CountPendingNotifications(ctx context.Context, now time.Time) (map[db.NotificationType]int, error)
 }
 
-// pendingTimeout bounds the count of the pending notifications, so that a scrape does not wait on a busy database.
 const pendingTimeout = 2 * time.Second
 
-// Metrics are the SMPP listener's metrics. A nil Metrics counts nothing.
 type Metrics struct {
 	sessions *prometheus.GaugeVec
 	binds    *prometheus.CounterVec
@@ -25,7 +22,6 @@ type Metrics struct {
 	pending  *pendingCollector
 }
 
-// NewMetrics returns the metrics, with the pending notifications that store counts when they are collected.
 func NewMetrics(store PendingCounter) *Metrics {
 	m := &Metrics{
 		sessions: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -71,7 +67,6 @@ func NewMetrics(store PendingCounter) *Metrics {
 	return m
 }
 
-// Collectors returns the metrics to register.
 func (m *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{m.sessions, m.binds, m.sent, m.submit, m.pending}
 }
@@ -107,8 +102,6 @@ func (m *Metrics) submitted(d time.Duration) {
 	}
 }
 
-// pendingCollector reads the pending notifications from the database when it is collected. A failed count is an
-// invalid metric, which the scrape leaves out and logs.
 type pendingCollector struct {
 	store PendingCounter
 	desc  *prometheus.Desc

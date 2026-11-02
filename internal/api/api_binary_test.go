@@ -14,8 +14,8 @@ import (
 	"github.com/ellanetworks/smsc/internal/db"
 )
 
-// simDataDownload is a (U)SIM data download message (TS 23.040 clause 9.2.3.9): class 2 8-bit data, whose user data
-// header has a (U)SIM Toolkit Security Header IEI (clause 9.2.3.24.7). The user data is placeholder octets.
+// TS 23.040 clause 9.2.3.9
+// TS 23.040 clause 9.2.3.24.7
 const simDataDownload = `{"from": "+15550001111", "to": "+15551230002", "binary": {"protocol_identifier": 127, ` +
 	`"data_coding_scheme": 246, "user_data_header": "027000", "user_data": "0011223344"}}`
 
@@ -213,8 +213,6 @@ func TestCreateBinaryReplaceTypeMessage(t *testing.T) {
 		t.Fatalf("second = %+v, %v; want pending", m, err)
 	}
 
-	// The API replaces only the messages of the same user: not one from a phone with the same originator and replace
-	// type, whose originator the network vouches for.
 	phone := createMobileMessage(t, a, true, 0x41, true)
 	a.createBinary(t, fmt.Sprintf(replaceType1, 3))
 
@@ -240,13 +238,11 @@ func TestGetMessageContentDeliverReports(t *testing.T) {
 		{
 			MessageID: id, StartedAt: testNow, CompletedAt: testNow, Step: db.StepDelivery, NodeType: db.NodeTypeMME,
 			Outcome: "sm_delivery_failure", ResultCode: &code, VendorID: &vendor, TPFailureCause: "usim_data_download_error",
-			// SMS-DELIVER-REPORT for RP-ERROR: TP-FCS D5, TP-PI with PID, DCS and UDL.
 			DeliverReport: mustHex(t, "00 d5 07 7f f6 02 cafe"),
 		},
 		{
 			MessageID: id, StartedAt: testNow, CompletedAt: testNow, Step: db.StepDelivery, NodeType: db.NodeTypeMME,
-			Outcome: "success",
-			// SMS-DELIVER-REPORT for RP-ACK with TP-UDHI.
+			Outcome:       "success",
 			DeliverReport: mustHex(t, "40 07 7f f6 05 027100 aabb"),
 		},
 		{
@@ -285,7 +281,6 @@ func TestGetMessageContentDeliverReports(t *testing.T) {
 		t.Fatalf("content = %s", result)
 	}
 
-	// The attempts leave the deliver reports out: they are content.
 	_, result, _ = a.do(t, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/attempts", id), "")
 	if strings.Contains(string(result), "cafe") || strings.Contains(string(result), "deliver_report") {
 		t.Fatalf("attempts carry the deliver reports: %s", result)
@@ -300,7 +295,6 @@ func TestCreateMessageValidity(t *testing.T) {
 		t.Fatalf("expires_at = %s", got[0].ExpiresAt)
 	}
 
-	// 10 years is the most (SRV-L8); a longer one overflowed the expiry beyond 2262.
 	body = strings.Replace(simDataDownload, `"to": "+15551230002",`, `"to": "+15551230002", "validity_seconds": 315360000,`, 1)
 	if got := a.createBinary(t, body); got[0].ExpiresAt != "2036-09-26T10:00:00.000Z" {
 		t.Fatalf("expires_at of 10 years = %s", got[0].ExpiresAt)

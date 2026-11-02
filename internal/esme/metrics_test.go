@@ -16,8 +16,6 @@ func (f pendingCounterFunc) CountPendingNotifications(ctx context.Context, now t
 	return f(ctx, now)
 }
 
-// The count of the pending notifications is bounded in time, and a failed count fails the gathering of its metric
-// rather than leaving it out silently.
 func TestPendingCollector(t *testing.T) {
 	failure := errors.New("database is locked")
 

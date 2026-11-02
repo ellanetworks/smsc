@@ -10,15 +10,11 @@ import (
 	"time"
 )
 
-// ESME is an account that an External Short Message Entity binds to the SMPP listener with. It acts as its user: the
-// messages it submits are the user's, and the user's role decides which binds it may make.
 type ESME struct {
-	ID       int64
-	SystemID string
-	UserID   int64
-	// PasswordHash is the bcrypt hash of the SMPP password.
-	PasswordHash string
-	// AllowedNetworks are the networks that it may bind from. None means no address may bind.
+	ID              int64
+	SystemID        string
+	UserID          int64
+	PasswordHash    string
 	AllowedNetworks []netip.Prefix
 	CreatedAt       time.Time
 }
@@ -40,7 +36,6 @@ func scanESME(row rowScanner) (ESME, error) {
 	return e, nil
 }
 
-// CountESMEs returns how many ESMEs exist.
 func (d *DB) CountESMEs(ctx context.Context) (_ int, err error) {
 	defer d.observe(&err)()
 
@@ -52,7 +47,6 @@ func (d *DB) CountESMEs(ctx context.Context) (_ int, err error) {
 	return n, nil
 }
 
-// CreateESME stores an ESME and returns its ID. It returns ErrAlreadyExists for a system_id that another ESME has.
 func (d *DB) CreateESME(ctx context.Context, e ESME) (_ int64, err error) {
 	defer d.observe(&err)()
 
@@ -78,8 +72,6 @@ func (d *DB) CreateESME(ctx context.Context, e ESME) (_ int64, err error) {
 	return id, err
 }
 
-// UpdateESME replaces the password hash and networks of the ESME of e.ID. It keeps the password hash when
-// e.PasswordHash is empty. It returns ErrNotFound for an unknown ID.
 func (d *DB) UpdateESME(ctx context.Context, e ESME) (err error) {
 	defer d.observe(&err)()
 
@@ -115,8 +107,6 @@ func insertNetworks(ctx context.Context, tx *sql.Tx, id int64, networks []netip.
 	return nil
 }
 
-// DeleteESME deletes an ESME, with its routing rows and its notifications. Its messages stay, as its user's. It returns
-// ErrNotFound for an unknown ID.
 func (d *DB) DeleteESME(ctx context.Context, id int64) (err error) {
 	defer d.observe(&err)()
 
@@ -134,8 +124,6 @@ func (d *DB) DeleteESME(ctx context.Context, id int64) (err error) {
 	return nil
 }
 
-// GetESMEBySystemID returns the ESME of a system_id, which is compared exactly (SMPP 3.4 section 5.2.1 defines no case
-// folding).
 func (d *DB) GetESMEBySystemID(ctx context.Context, systemID string) (_ ESME, err error) {
 	defer d.observe(&err)()
 
@@ -155,14 +143,12 @@ func (d *DB) GetESMEBySystemID(ctx context.Context, systemID string) (_ ESME, er
 	return e, nil
 }
 
-// ListESMEs returns every ESME, in the order they were created.
 func (d *DB) ListESMEs(ctx context.Context) (_ []ESME, err error) {
 	defer d.observe(&err)()
 
 	return d.listESMEs(ctx, ``)
 }
 
-// ListESMEsOfUser returns the ESMEs that act as a user.
 func (d *DB) ListESMEsOfUser(ctx context.Context, userID int64) (_ []ESME, err error) {
 	defer d.observe(&err)()
 

@@ -6,26 +6,20 @@ import (
 	"time"
 )
 
-// ErrInvalidTime is returned for a string that is not a time in the format of §7.1.1.
 var ErrInvalidTime = errors.New("smpp: invalid time")
 
 const (
-	timeLength        = 16 // "YYMMDDhhmmsstnnp"
-	maxQuarterHours   = 48 // §7.1.1: nn is 00-48
+	timeLength        = 16
+	maxQuarterHours   = 48
 	yearWindowHalf    = 50
 	secondsPerQuarter = 15 * 60
 )
 
-// RelativePeriod is a relative time (§7.1.1.2): a number of years, months, days, hours, minutes and seconds from the
-// current SMSC time, each 0 to 99.
+// SMPP 3.4 section 7.1.1.2
 type RelativePeriod struct {
 	Years, Months, Days, Hours, Minutes, Seconds int
 }
 
-// From returns t advanced by the period, in calendar units: years and months first, with the day of the month clamped
-// to the last day of the target month (31 January + 1 month is 28 or 29 February, 29 February + 1 year is 28
-// February), then days, then hours, minutes and seconds. §7.1.1.2 gives no rule for a day that the target month does
-// not have; the clamp keeps the expiry inside the month the ESME named.
 func (p RelativePeriod) From(t time.Time) time.Time {
 	year, month, day := t.Date()
 	target := time.Date(year+p.Years, month+time.Month(p.Months), 1, 0, 0, 0, 0, t.Location())
@@ -40,17 +34,16 @@ func (p RelativePeriod) From(t time.Time) time.Time {
 		t.Location()).Add(d)
 }
 
-// Time is a schedule_delivery_time or validity_period (§5.2.15, §5.2.16): an absolute time (§7.1.1.1) or a period
-// relative to the current SMSC time (§7.1.1.2).
+// SMPP 3.4 section 5.2.15
+// SMPP 3.4 section 5.2.16
+// SMPP 3.4 section 7.1.1.1
+// SMPP 3.4 section 7.1.1.2
 type Time struct {
 	Relative bool
-	// Absolute is the time when Relative is false. Its location is a fixed zone of the ±nn offset.
 	Absolute time.Time
-	// Period is the period when Relative is true.
-	Period RelativePeriod
+	Period   RelativePeriod
 }
 
-// At returns the absolute time, or now advanced by the relative period.
 func (t Time) At(now time.Time) time.Time {
 	if t.Relative {
 		return t.Period.From(now)
@@ -59,11 +52,8 @@ func (t Time) At(now time.Time) time.Time {
 	return t.Absolute
 }
 
-// ParseTime parses "YYMMDDhhmmsstnnp" (§7.1.1). p is '+' or '-' for an absolute time whose local time is nn quarter
-// hours ahead of or behind UTC, nn 00 to 48, or 'R' for a relative time, whose t and nn are ignored, digits or not
-// (§7.1.1.2). The two-digit
-// year of an absolute time is read as the year of the century nearest to now: from 49 years before now's year to 50
-// years after it. An empty C-Octet String means no time; the caller handles it before calling ParseTime.
+// SMPP 3.4 section 7.1.1
+// SMPP 3.4 section 7.1.1.2
 func ParseTime(s string, now time.Time) (Time, error) {
 	if len(s) != timeLength {
 		return Time{}, fmt.Errorf("%w: %q is %d characters, want %d", ErrInvalidTime, s, len(s), timeLength)
@@ -74,9 +64,9 @@ func ParseTime(s string, now time.Time) (Time, error) {
 		return Time{}, fmt.Errorf("%w: %q ends in %q, want '+', '-' or 'R'", ErrInvalidTime, s, p)
 	}
 
-	n := 7 // YY MM DD hh mm ss nn
+	n := 7
 	if p == 'R' {
-		n = 6 // t and nn are ignored
+		n = 6
 	}
 
 	var f [7]int
@@ -129,7 +119,6 @@ func ParseTime(s string, now time.Time) (Time, error) {
 	return Time{Absolute: t}, nil
 }
 
-// windowYear returns the year ending in yy nearest to now: in now-49…now+50.
 func windowYear(yy, now int) int {
 	y := now - now%100 + yy
 
@@ -151,8 +140,7 @@ func twoDigits(s string) (int, bool) {
 	return int(s[0]-'0')*10 + int(s[1]-'0'), true
 }
 
-// FormatAbsolute formats t as an absolute time (§7.1.1.1) in t's own location, whose offset from UTC must be a whole
-// number of quarter hours, at most 48. Tenths of a second are truncated.
+// SMPP 3.4 section 7.1.1.1
 func FormatAbsolute(t time.Time) (string, error) {
 	_, offset := t.Zone()
 	if offset%secondsPerQuarter != 0 || offset > maxQuarterHours*secondsPerQuarter ||
@@ -169,7 +157,7 @@ func FormatAbsolute(t time.Time) (string, error) {
 		t.Minute(), t.Second(), t.Nanosecond()/int(100*time.Millisecond), offset/secondsPerQuarter, sign), nil
 }
 
-// FormatRelative formats p as a relative time (§7.1.1.2), with t "0" and nn "00".
+// SMPP 3.4 section 7.1.1.2
 func FormatRelative(p RelativePeriod) (string, error) {
 	fields := []int{p.Years, p.Months, p.Days, p.Hours, p.Minutes, p.Seconds}
 	for _, v := range fields {

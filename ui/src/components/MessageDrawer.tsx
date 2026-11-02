@@ -43,14 +43,10 @@ import {
 
 export const DETAIL_REFRESH_MS = 5000;
 
-// EARLIER_PER_PAGE is how many earlier pending messages to the same number the drawer reads, to find the one it waits
-// behind.
 const EARLIER_PER_PAGE = 100;
 
 const ATTEMPTS_PER_PAGE = 100;
 
-// The panel is Ella Core's event panel: under the app bar, resizable between PANEL_MIN_WIDTH and PANEL_MAX_VW of the
-// window.
 const PANEL_DEFAULT_WIDTH = 560;
 const PANEL_MIN_WIDTH = 350;
 const PANEL_MAX_VW = 0.8;
@@ -82,7 +78,6 @@ const octets = (o: string): ReactNode => (
   </Box>
 );
 
-// tpduRows are the TPDU parameters of a binary message or a deliver report, those that it has.
 const tpduRows = (p: BinaryContent | DeliverReport): [string, ReactNode][] => {
   const rows: [string, ReactNode][] = [];
   if (p.protocol_identifier !== undefined) {
@@ -98,8 +93,6 @@ const tpduRows = (p: BinaryContent | DeliverReport): [string, ReactNode][] => {
   return rows;
 };
 
-// DeliverReports shows what the recipient answered the delivery attempts with, oldest first, such as a (U)SIM's answer
-// to a (U)SIM data download message.
 function DeliverReports({ reports }: { reports: DeliverReport[] }) {
   return (
     <Box component="section" aria-labelledby="deliver-reports-title">
@@ -127,8 +120,6 @@ function DeliverReports({ reports }: { reports: DeliverReport[] }) {
   );
 }
 
-// Content shows the content of a message only when asked to: each read is audited. It is fetched once, and forgotten
-// with the drawer.
 function Content({ message }: { message: Message }) {
   const [shown, setShown] = useState(false);
   const query = useQuery({
@@ -242,9 +233,6 @@ function Attempts({ message }: { message: Message }) {
   const attempts = data?.pages.flatMap((p) => p.items) ?? [];
   const total = data?.pages[0]?.total_count;
 
-  // A pending message waits for the earlier pending messages to the same number, which are delivered first. The list
-  // ends just after this message, since the parts of a message share its time; the to filter matches by part, so the
-  // number is compared too.
   const earlier = useQuery({
     queryKey: ["messages", "earlier", message.id],
     queryFn: () =>
@@ -329,8 +317,6 @@ function StatusReportCard({ report }: { report: StatusReport }) {
   );
 }
 
-// StatusReports shows whether the phone that sent the message asked for status reports, and those the SMSC returned
-// to it (TS 23.040 clause 3.2.9).
 function StatusReports({ message }: { message: Message }) {
   const { requested, reports } = message.status_report;
 
@@ -364,7 +350,6 @@ function StatusReports({ message }: { message: Message }) {
   );
 }
 
-// inProgress tells whether the message, or a status report on it, still waits for delivery.
 export const inProgress = (m: Message): boolean =>
   m.status === "pending" ||
   m.status_report.reports.some((r) => r.status === "pending");
@@ -469,8 +454,6 @@ interface MessageDrawerProps {
   onClose: () => void;
 }
 
-// MessageDrawer shows a message beside the list, as Ella Core shows a network event: the list stays usable, and
-// Escape closes it.
 export default function MessageDrawer({
   message,
   onClose,
@@ -479,7 +462,6 @@ export default function MessageDrawer({
   const panelRef = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(PANEL_DEFAULT_WIDTH);
 
-  // Opening the panel moves focus into it, and closing it gives focus back, to the row that opened it.
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement;

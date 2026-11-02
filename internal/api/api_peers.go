@@ -11,8 +11,6 @@ import (
 	"github.com/ellanetworks/smsc/internal/settings"
 )
 
-// Peer is a Diameter agent or node that the SMSC connects to, such as an IPX DEA or a DRA in front of the HSS, and
-// the realms it routes to.
 type Peer struct {
 	ID        int64       `json:"id"`
 	Host      string      `json:"host"`
@@ -22,7 +20,6 @@ type Peer struct {
 	Status    *PeerStatus `json:"status,omitempty"`
 }
 
-// PeerRoute is a route of a peer: to a realm, or by default to the foreign realms that no other route serves.
 type PeerRoute struct {
 	Realm       string `json:"realm,omitempty"`
 	Default     bool   `json:"default,omitempty"`
@@ -30,7 +27,6 @@ type PeerRoute struct {
 	Priority    int    `json:"priority"`
 }
 
-// PeerStatus is the connection to a peer, and the host and realm the peer gave.
 type PeerStatus struct {
 	State string `json:"state"`
 	Host  string `json:"host,omitempty"`
@@ -46,7 +42,6 @@ type PeerParams struct {
 	Routes    []PeerRoute `json:"routes"`
 }
 
-// maxPeerBody bounds a peer, which may route to many realms.
 const maxPeerBody = 64 << 10
 
 type ListPeersResponse struct {
@@ -116,7 +111,6 @@ func UpdatePeer(a *auth) http.Handler {
 		principal, _ := PrincipalFrom(r.Context())
 		a.audit(r, "update_diameter_peer", principal.Email, fmt.Sprintf("Diameter peer %d updated", id))
 
-		// The peer as stored, as GET returns it.
 		if stored, ok := findPeer(cfg, id); ok {
 			p = stored
 		}
@@ -178,7 +172,6 @@ func findPeer(cfg Config, id int64) (settings.Peer, bool) {
 	return settings.Peer{}, false
 }
 
-// decodePeer reads and validates the peer of a request, or writes the error.
 func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Peer, bool) {
 	var params PeerParams
 
@@ -222,7 +215,6 @@ func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 	return p, true
 }
 
-// peerSaved reports whether a change of peer succeeded, or writes its error.
 func peerSaved(w http.ResponseWriter, r *http.Request, err error, cfg Config, action string) bool {
 	switch {
 	case err == nil:
@@ -238,8 +230,6 @@ func peerSaved(w http.ResponseWriter, r *http.Request, err error, cfg Config, ac
 	return false
 }
 
-// peerResponse is a peer as stored. The SMSC applies a change of peer after it
-// is stored, so only a read returns the connection to the peer.
 func peerResponse(p settings.Peer) Peer {
 	resp := Peer{ID: p.ID, Host: p.Host, Addresses: []string{}, Port: p.Port, Routes: []PeerRoute{}}
 
@@ -259,7 +249,6 @@ func peerResponse(p settings.Peer) Peer {
 	return resp
 }
 
-// withStatus adds the connection to a peer.
 func withStatus(cfg Config, p Peer) Peer {
 	if st, ok := cfg.Diameter.Peer(settings.Peer{ID: p.ID}.NodeID()); ok {
 		p.Status = &PeerStatus{

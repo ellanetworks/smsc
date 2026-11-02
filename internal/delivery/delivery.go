@@ -28,10 +28,8 @@ import (
 const errorBackoff = time.Second
 
 const (
-	tracerName       = "github.com/ellanetworks/smsc/internal/delivery"
-	deliverOperation = "deliver"
-	// outcomeKey is the outcome of a delivery attempt: the status it gave the message, replaced when a later message
-	// replaced it meanwhile, or outcomeRetry or outcomeInterrupted when it stays pending.
+	tracerName         = "github.com/ellanetworks/smsc/internal/delivery"
+	deliverOperation   = "deliver"
 	outcomeKey         = attribute.Key("ella.sms.delivery.outcome")
 	outcomeRetry       = "retry"
 	outcomeInterrupted = "interrupted"
@@ -63,7 +61,6 @@ type Router interface {
 
 type Sender interface {
 	Do(ctx context.Context, peerHost string, req *diameter.Message) (*diameter.Message, error)
-	// PeerRealm returns the Origin-Realm of the connected peer with the given host.
 	PeerRealm(peerHost string) (string, bool)
 	NewSessionID() string
 }
@@ -79,11 +76,8 @@ type Deliverer struct {
 	Metrics        *Metrics
 	Now            func() time.Time
 	Logger         *slog.Logger
-	// TracerProvider traces the delivery attempts; none when nil.
 	TracerProvider trace.TracerProvider
-	// Completed, when set, is called after each message gets its final status, which may have queued SMPP
-	// notifications on it.
-	Completed func()
+	Completed      func()
 
 	wakeOnce sync.Once
 	wake     chan struct{}
@@ -133,14 +127,11 @@ type target struct {
 }
 
 type forwardResult struct {
-	outcome    outcome
-	cause      *s6c.DeliveryCause
-	diagnostic *tgpp.AbsentUserDiagnostic
-	// rejected is set when the MS refused this message, rather than being unable to take any message for now.
-	rejected bool
-	// status is the TP-Status of a status report on an attempt that did not deliver the message.
-	status tpdu.Status
-	// deliverReport is the SMS-DELIVER-REPORT for RP-ACK that the serving node passed on, if any.
+	outcome       outcome
+	cause         *s6c.DeliveryCause
+	diagnostic    *tgpp.AbsentUserDiagnostic
+	rejected      bool
+	status        tpdu.Status
 	deliverReport []byte
 }
 
@@ -151,15 +142,13 @@ type nodeOutcome struct {
 	diagnostic *tgpp.AbsentUserDiagnostic
 }
 
-// result is the outcome of a delivery attempt, and the TP-Status of a status report on it (TS 23.040 clause
-// 9.2.3.15). The status of a temporary error is the one for once the SC makes no more transfer attempts.
+// TS 23.040 clause 9.2.3.15
 type result struct {
 	outcome outcome
 	hold    bool
 	status  tpdu.Status
 }
 
-// The statuses of the outcomes of delivery attempts, which the SC reports to the originator of a message.
 var (
 	statusCongestion      = tpdu.TemporaryCongestion.GaveUp()
 	statusNoResponse      = tpdu.TemporaryNoResponse.GaveUp()
@@ -168,17 +157,13 @@ var (
 	statusServiceRejected = tpdu.TemporaryServiceRejected.GaveUp()
 )
 
-// session is what the delivery of a message to a recipient leaves for the next one: the serving node that took it, and
-// what the HSS said about the recipient. When the SC announces more messages to send, the serving node keeps the MS
-// connected for them (TS 23.040 clause 3.7), so the SC sends them there in turn, without another routing lookup, as
-// in the multiple short message transfer of TS 29.002 clause 23.3.
+// TS 23.040 clause 3.7
+// TS 29.002 clause 23.3
 type session struct {
 	routing s6c.Routing
 	target  target
 }
 
-// targets returns the serving nodes to try for the next message: the one that took the previous message, then the
-// others the HSS gave, as a routing lookup would.
 func (s *session) targets() []target {
 	targets := []target{s.target}
 
@@ -253,7 +238,7 @@ func (d *Deliverer) Run(ctx context.Context) {
 				running++
 
 				go func() {
-					_ = d.process(ctx, m) // It logs its failure.
+					_ = d.process(ctx, m)
 
 					done <- m.MSISDN
 				}()
@@ -335,9 +320,7 @@ func (d *Deliverer) finish(ctx context.Context, msisdn string) {
 	}
 }
 
-// process delivers the message, then the recipient's next messages for as long as each delivery announced the next.
-// The recipient stays busy throughout, so it never has more than one SMS-DELIVER outstanding (TS 23.040 clause 6.2).
-// It logs the failure that stops it, and returns it.
+// TS 23.040 clause 6.2
 func (d *Deliverer) process(stop context.Context, m db.Message) error {
 	ctx := context.WithoutCancel(stop)
 
@@ -369,20 +352,15 @@ func (d *Deliverer) process(stop context.Context, m db.Message) error {
 	}
 }
 
-// deliverAndSettle makes one delivery attempt of the message and stores its outcome, in a span of the attempt: a
-// messaging process span, which starts a trace of its own and links to the request that created the message, since
-// the attempts of a message can span days.
 func (d *Deliverer) deliverAndSettle(stop context.Context, m db.Message, s *session) (_ *session, err error) {
 	destination := d.Identity().OriginHost
 
-	// The span name is {messaging.operation.name} {messaging.destination.name}, as messaging spans name theirs.
 	stop, span := d.tracer().Start(stop, deliverOperation+" "+destination,
 		trace.WithNewRoot(),
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithLinks(tracing.Links(m.TraceParent)...),
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String(tracing.MessagingSystem),
-			// The SMSC has no destination but the recipient, which spans must not carry: the name identifies the SMSC.
 			semconv.MessagingDestinationName(destination),
 			semconv.MessagingOperationName(deliverOperation),
 			semconv.MessagingOperationTypeProcess,
@@ -418,7 +396,6 @@ func (d *Deliverer) tracer() trace.Tracer {
 	return tp.Tracer(tracerName, trace.WithSchemaURL(semconv.SchemaURL))
 }
 
-// settled sets the outcome of the delivery attempt on its span: an error when the message failed or expired.
 func settled(ctx context.Context, outcome string) {
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(outcomeKey.String(outcome))
@@ -429,8 +406,6 @@ func settled(ctx context.Context, outcome string) {
 	}
 }
 
-// settle stores the outcome of a delivery. A message that is to be retried holds its recipient's other messages until
-// the retry, so that they keep their order, unless the MS refused that message itself.
 func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 	switch r.outcome {
 	case delivered:
@@ -462,9 +437,6 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result) error {
 	return nil
 }
 
-// complete sets the final status of a message, with the status report on it that its originator asked for, if any. It
-// times a delivered message once its status is stored, so that a message whose status failed to be stored, which stays
-// pending, is not timed twice. A message that a later one replaced during its delivery keeps its status.
 func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, reported tpdu.Status, at time.Time) error {
 	report, err := statusreport.For(m, reported, at, d.Settings())
 	if err != nil {
@@ -498,9 +470,6 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 	return nil
 }
 
-// deliver makes one delivery attempt of the message. Within a session it goes to the serving node that took the
-// previous message; otherwise it starts with a routing lookup. It returns the session for the recipient's next message
-// when the delivery announced one.
 func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s *session) (result, *session) {
 	ctx := context.WithoutCancel(stop)
 	log := d.Logger.With(slog.Int64("message_id", m.ID))
@@ -562,7 +531,6 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		return result{outcome: permanent, status: tpdu.StatusNoInterworking}, nil
 	}
 
-	// More messages are to send when another one is due now, which the SC sends right after this one.
 	_, more, err := d.Store.NextDueFor(ctx, m.MSISDN, m.ID, d.Now())
 	if err != nil {
 		log.ErrorContext(ctx, "failed to look for more messages to the recipient", slog.Any("error", err))
@@ -624,30 +592,23 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 	}
 }
 
-// follow returns the session for the recipient's next message after a delivery via the given serving node, or nil
-// when the delivery announced no more messages. It also returns nil when the HSS may still hold message waiting data
-// that the delivery should have cleared, since the HSS then needs to hear of the next delivery too: the next message
-// starts over with a routing lookup, whose answer tells.
 func follow(routing s6c.Routing, via target, announced bool) *session {
 	if !announced {
 		return nil
 	}
 
-	// The HSS holds no message waiting flags once a delivery succeeds: they were either clear, or the success report
-	// cleared them.
 	routing.MWDStatus &^= mwdStatusFlags
 	routing.Absent = s6c.AbsentUserDiagnostics{}
 
 	return &session{routing: routing, target: via}
 }
 
+// TS 23.040 clause 3.3 table 1
 func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) result {
 	if re := (*s6c.ResultError)(nil); errors.As(err, &re) && re.AlertMSISDN != "" {
 		d.setAlertMSISDN(ctx, m.MSISDN, re.AlertMSISDN)
 	}
 
-	// An unknown subscriber, and one without SMS, are permanent errors; barring, and SMS not provided in the visited
-	// network, are temporary (TS 23.040 clause 3.3, table 1).
 	for code, status := range map[uint32]tpdu.Status{
 		tgpp.ResultErrorUserUnknown:          tpdu.StatusNotObtainable,
 		tgpp.ResultErrorServiceNotSubscribed: tpdu.StatusConnectionRejected,
@@ -667,8 +628,7 @@ func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) 
 	return result{outcome: temporary, hold: true, status: statusCongestion}
 }
 
-// routingRequest returns the routing lookup for the delivery of a message or a status report, which the HSS tells
-// apart by SM-RP-MTI (TS 29.338 clause 5.3.3.2).
+// TS 29.338 clause 5.3.3.2
 func (d *Deliverer) routingRequest(ctx context.Context, log *slog.Logger, m db.Message) s6c.RoutingRequest {
 	req := s6c.RoutingRequest{
 		MSISDN:        m.MSISDN,
@@ -684,9 +644,8 @@ func (d *Deliverer) routingRequest(ctx context.Context, log *slog.Logger, m db.M
 	return req
 }
 
-// originatingSME returns the SM-RP-SMEA of the routing lookup: the TP-OA of the SMS-DELIVER (TS 23.040 clause 9.3.2.2).
-// The SC asks the HSS for both an MME and an SGSN, so it must send it (TS 29.338 clause 5.2.1.1). An SMS-STATUS-REPORT
-// has no TP-OA: its originator is the SC, whose address the report's message holds.
+// TS 23.040 clause 9.3.2.2
+// TS 29.338 clause 5.2.1.1
 func (d *Deliverer) originatingSME(ctx context.Context, log *slog.Logger, m db.Message) []byte {
 	smea, err := tpdu.Address{
 		TypeOfNumber:  m.Originator.TypeOfNumber,
@@ -708,14 +667,10 @@ func (d *Deliverer) setAlertMSISDN(ctx context.Context, msisdn, alertMSISDN stri
 }
 
 type attemptResult struct {
-	outcome  outcome
-	outcomes []nodeOutcome
-	// via is the serving node that took the message, when it was delivered.
-	via target
-	// rejected is set when an MS refused the message itself.
-	rejected bool
-	// status is the TP-Status of the first serving node that did not take the message, or of the one that refused it
-	// for good.
+	outcome   outcome
+	outcomes  []nodeOutcome
+	via       target
+	rejected  bool
 	status    tpdu.Status
 	hasStatus bool
 }
@@ -836,7 +791,6 @@ func mwdFlag(o nodeOutcome) s6c.MWDStatus {
 	case kindSGSN:
 		return s6c.MWDStatusMNRG
 	case kindIPSMGW:
-		// MWD-Status has no flag for the UNRI (TS 29.338 clause 5.3.3.8).
 		return 0
 	case kindSMSF3GPP:
 		return s6c.MWDStatusMNR5G
@@ -920,8 +874,6 @@ func (d *Deliverer) report(stop context.Context, log *slog.Logger, m db.Message,
 	return res, true
 }
 
-// buildDeliver returns the TPDU to deliver for a message, given whether more messages wait for the recipient: the
-// SMS-DELIVER of a short message, or the SMS-STATUS-REPORT that the SC stored.
 func buildDeliver(m db.Message) (func(more bool) ([]byte, error), error) {
 	if m.Kind == db.KindStatusReport {
 		return func(more bool) ([]byte, error) {
@@ -943,7 +895,6 @@ func buildDeliver(m db.Message) (func(more bool) ([]byte, error), error) {
 	return func(more bool) ([]byte, error) {
 		deliver := tpdu.DeliverFromSubmit(submit, originator, m.TimeStamp)
 		deliver.MoreMessagesToSend = more
-		// The SC returns status reports on the short messages that an MS submits, when asked (TS 23.040 clause 3.2.9).
 		deliver.StatusReportIndication = m.Origin == db.OriginMobile && submit.StatusReportRequest
 
 		return deliver.Encode()
@@ -991,8 +942,6 @@ func deliveryTargets(n s6c.ServingNodes) []target {
 			})
 		}
 
-		// The IP-SM-GW takes the message as an MME or SGSN would, and selects the domain to deliver it in (TS 23.204
-		// clause 6.4).
 		if sn.node.IPSMGW != nil {
 			add(target{kind: kindIPSMGW, source: sn.source, name: sn.node.IPSMGW.Name, realm: sn.node.IPSMGW.Realm})
 		}
@@ -1015,9 +964,6 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 		return forwardResult{outcome: permanent, status: tpdu.StatusRemoteProcedureError}, err
 	}
 
-	// The HSS gives an IP-SM-GW without its realm (TS 29.338 clause 5.3.3.6). That is the realm of the IP-SM-GW
-	// when it is connected, and else the SMSC's own: the IP-SM-GW is an application server of the home IMS (TS
-	// 23.204), reached through the route to the home realm.
 	realm := t.realm
 	if realm == "" {
 		var ok bool
@@ -1102,15 +1048,12 @@ func classifyForwardAnswer(err error) forwardResult {
 	case tgpp.ResultErrorSMDeliveryFailure:
 		cause := re.DeliveryFailureCause
 
-		// The (U)SIM processed a (U)SIM data download message and answered with an error (TS 23.040 clause 9.2.3.22).
-		// Sending the same message again would get the same answer.
 		if fcs, ok := tpdu.DeliverReportFailureCause(re.DiagnosticInfo); ok && fcs == tpdu.FailureUSIMDataDownloadError {
 			return forwardResult{outcome: permanent, status: tpdu.StatusConnectionRejected}
 		}
 
 		switch {
 		case cause != nil && *cause == sgd.CauseEquipmentNotSMEquipped:
-			// SMS lower layers capabilities not provisioned is a temporary error (TS 23.040 clause 3.3, table 1).
 			return forwardResult{outcome: temporary, status: statusServiceRejected}
 		case cause != nil && *cause == sgd.CauseMemoryCapacityExceeded:
 			return forwardResult{outcome: temporary, cause: ptr(s6c.DeliveryCauseMemoryCapacityExceeded), status: statusErrorInSME}
@@ -1130,9 +1073,7 @@ func classifyForwardAnswer(err error) forwardResult {
 	}
 }
 
-// rejectsMessage tells whether an MS that answered with a protocol error refused the message itself, rather than being
-// unable to take any message for now. The TP-Failure-Cause of its SMS-DELIVER-REPORT says which (TS 23.040 clause
-// 9.2.3.22); without one, the error is about the message.
+// TS 23.040 clause 9.2.3.22
 func rejectsMessage(diagnostic []byte) bool {
 	fcs, ok := tpdu.DeliverReportFailureCause(diagnostic)
 	if !ok {

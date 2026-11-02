@@ -64,7 +64,6 @@ func TestPeersPersist(t *testing.T) {
 
 	t.Cleanup(func() { _ = d.Close() })
 
-	// The addresses and routes keep their order.
 	got := peersOf(t, d)
 	if len(got) != 2 || !got[0].Equal(dea1) || !got[1].Equal(hostless) {
 		t.Fatalf("Peers = %+v, want %+v and %+v", got, dea1, hostless)
@@ -129,7 +128,6 @@ func TestPeerHostIsUnique(t *testing.T) {
 		t.Fatalf("UpdatePeer to the host of another = %v", err)
 	}
 
-	// Peers without a host do not clash.
 	for range 2 {
 		if _, err := d.CreatePeer(ctx, settings.Peer{Addresses: other.Addresses, Port: 3868}); err != nil {
 			t.Fatalf("CreatePeer without a host: %v", err)
@@ -158,7 +156,6 @@ func TestDeletePeer(t *testing.T) {
 		t.Fatalf("Peers = %+v", got)
 	}
 
-	// The addresses and routes go with the peer.
 	for _, table := range []string{"diameter_peer_addresses", "diameter_routes"} {
 		var n int
 		if err := d.conn.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil || n != 0 {
@@ -172,7 +169,6 @@ func TestDefaultRouteIsStoredWithoutARealm(t *testing.T) {
 	d := openTestDB(t)
 
 	p := testPeer()
-	// A default route that carries a realm is stored as a default route.
 	p.Routes = []settings.Route{{Realm: "ignored.example.net", Default: true, Application: settings.ApplicationSGd}}
 
 	if _, err := d.CreatePeer(ctx, p); err != nil {
@@ -189,7 +185,6 @@ func TestDefaultRouteIsStoredWithoutARealm(t *testing.T) {
 		t.Fatalf("Routes = %+v, want %+v", got, want)
 	}
 
-	// Only SGd takes a default route.
 	p.Host = "dea2.ipx.example.net"
 	p.Routes = []settings.Route{{Default: true, Application: settings.ApplicationS6c}}
 

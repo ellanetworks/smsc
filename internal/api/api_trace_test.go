@@ -14,9 +14,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// TestAPISpans checks that a request to the API has a server span named by its route, that links to the caller's
-// trace context rather than continue it, and that a message it creates keeps the span as its creation context. The UI,
-// probes, metrics and profiles are not traced.
 func TestAPISpans(t *testing.T) {
 	store := openStore(t)
 	rec := tracetest.NewSpanRecorder()
@@ -80,8 +77,6 @@ func TestAPISpans(t *testing.T) {
 	}
 }
 
-// TestAPILogs checks that the logs of a request, its audit events included, carry the trace context of the request's
-// span, not the caller's, and none when tracing is off.
 func TestAPILogs(t *testing.T) {
 	const callerTraceID = "0af7651916cd43dd8448eb211c80319c"
 

@@ -1,11 +1,5 @@
 //go:build linux
 
-// Package loadtest loads a running Ella SMSC from another host, as the core network of its subscribers: the MME that
-// submits their short messages and takes those for them over SGd, and the HSS that routes them over S6c (TS 29.338).
-// It measures the submission of the messages, from the MO-Forward-Short-Message request to its answer, and their
-// delivery, from that request to the MT-Forward-Short-Message request of their delivery.
-//
-// Build it with go test -c ./internal/loadtest, and run it with -load.
 package loadtest
 
 import (
@@ -58,7 +52,7 @@ const (
 	scAddress = "15550000000"
 	mmeNumber = "15550000010"
 
-	// TS 29.338 §7.3.
+	// TS 29.338 clause 7.3
 	avpServingNode uint32 = 2401
 	avpMMEName     uint32 = 2402
 	avpMMERealm    uint32 = 2408
@@ -87,7 +81,6 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-// core is the MME and the HSS of the subscribers: subscriber i has the IMSI and MSISDN of index i.
 type core struct {
 	node *diameter.Node
 
@@ -150,8 +143,6 @@ func newCore(t *testing.T, local, smsc netip.Addr) *core {
 	}
 }
 
-// run submits short messages at rate a second for -step, between subscribers at random, and reports their submission
-// and their delivery.
 func (c *core) run(t *testing.T, api string, rate float64) {
 	t.Helper()
 
@@ -202,7 +193,6 @@ func (c *core) run(t *testing.T, api string, rate float64) {
 	elapsed := time.Since(started)
 	m := scrape(t, api)
 
-	// The deliveries of the accepted messages, waited for at most -drain after the last submission.
 	for deadline := time.Now().Add(*drain); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		if c.deliveredOf(ids) == len(ids) {
 			break
@@ -242,7 +232,7 @@ func (c *core) deliveredOf(ids []int64) int {
 	return n
 }
 
-// submit sends the short message id from subscriber from to subscriber to (TS 29.338 §6.2.1).
+// TS 29.338 clause 6.2.1
 func (c *core) submit(from, to int, id int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -278,7 +268,7 @@ func (c *core) serve(_ context.Context, _ *diameter.Conn, req *diameter.Message)
 	}
 }
 
-// route answers that the recipient is registered at this MME (TS 29.338 §5.3.2.3).
+// TS 29.338 clause 5.3.2.3
 func (c *core) route(req *diameter.Message) *diameter.Message {
 	a, ok := req.Find(tgpp.AVPMSISDN, tgpp.VendorID)
 	if !ok {
@@ -309,7 +299,7 @@ func (c *core) route(req *diameter.Message) *diameter.Message {
 	return ans
 }
 
-// deliver takes a short message for a subscriber, and records when it came (TS 29.338 §6.2.2).
+// TS 29.338 clause 6.2.2
 func (c *core) deliver(req *diameter.Message) *diameter.Message {
 	if ui, ok := req.Find(sgd.AVPSMRPUI, tgpp.VendorID); ok {
 		if i := bytes.LastIndexByte(ui.Data, '#'); i >= 0 {
@@ -378,7 +368,7 @@ func mustTBCD(digits string) []byte {
 	return b
 }
 
-// smsSubmit is an SMS-SUBMIT to the international number to, its 8-bit text ending with "#id" (TS 23.040 §9.2.2.2).
+// TS 23.040 clause 9.2.2.2
 func smsSubmit(to string, id int64) []byte {
 	text := "load test #" + strconv.FormatInt(id, 10)
 
@@ -389,7 +379,6 @@ func smsSubmit(to string, id int64) []byte {
 	return append(out, text...)
 }
 
-// logIn creates the admin of the SMSC if it has no user yet, logs it in, and returns its access token.
 func logIn(t *testing.T, api string) string {
 	t.Helper()
 
@@ -472,7 +461,6 @@ func call(t *testing.T, token, method, url string, body any) {
 	}
 }
 
-// scrape is the SMSC's metrics without labels, and the sums of those with.
 func scrape(t *testing.T, api string) map[string]float64 {
 	t.Helper()
 
@@ -532,7 +520,6 @@ func parseRates(t *testing.T, s string) []float64 {
 	return out
 }
 
-// latencies are the durations of the operations that succeeded, and the errors of those that failed.
 type latencies struct {
 	mu     sync.Mutex
 	d      []time.Duration
@@ -565,7 +552,6 @@ func (l *latencies) at(q float64) time.Duration {
 	return l.d[min(len(l.d)-1, int(q*float64(len(l.d))))]
 }
 
-// report logs the operations: n attempted over elapsed, those that failed, and the latencies of the others.
 func (l *latencies) report(t *testing.T, what string, n int, elapsed time.Duration) {
 	t.Helper()
 

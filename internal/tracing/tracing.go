@@ -1,5 +1,3 @@
-// Package tracing exports the SMSC's traces over OTLP, and carries a trace context across the messages that the SMSC
-// stores and delivers later.
 package tracing
 
 import (
@@ -18,14 +16,10 @@ import (
 
 const ServiceName = "ella-smsc"
 
-// MessagingSystem is the messaging.system of the spans that process a stored message.
 const MessagingSystem = "ella_smsc"
 
-// Propagator is the only trace context the SMSC reads and writes: W3C Trace Context, without baggage.
 var Propagator = propagation.TraceContext{}
 
-// NewProvider returns a provider that exports to an OTLP/gRPC collector at endpoint, a host:port. It samples every
-// trace that a caller has not decided against.
 func NewProvider(ctx context.Context, endpoint, version string, logger *slog.Logger) (*sdktrace.TracerProvider, error) {
 	exp, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(endpoint), otlptracegrpc.WithInsecure())
 	if err != nil {
@@ -52,9 +46,6 @@ func NewProvider(ctx context.Context, endpoint, version string, logger *slog.Log
 	), nil
 }
 
-// TraceParent returns the W3C traceparent of the span in ctx, to store with a message that ctx creates, or "" when
-// that span is not recorded: when tracing is off, ctx can still carry a peer's trace context, which no span of the
-// SMSC would link to.
 func TraceParent(ctx context.Context) string {
 	if !trace.SpanFromContext(ctx).IsRecording() {
 		return ""
@@ -66,8 +57,6 @@ func TraceParent(ctx context.Context) string {
 	return carrier.Get("traceparent")
 }
 
-// Links returns a link to the span of a stored traceparent, for a span that processes the message stored with it, or
-// none when traceparent is empty or invalid.
 func Links(traceparent string) []trace.Link {
 	if traceparent == "" {
 		return nil

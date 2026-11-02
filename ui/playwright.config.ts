@@ -1,7 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The tests run against ELLA_E2E_BASE_URL when it is set, as in CI. Otherwise they build the UI and the SMSC, and run
-// it in the SMSC image with docker compose.
 const E2E_PORT = process.env.ELLA_E2E_PORT ?? "5110";
 const DEFAULT_URL = `http://localhost:${E2E_PORT}`;
 const baseURL = process.env.ELLA_E2E_BASE_URL ?? DEFAULT_URL;

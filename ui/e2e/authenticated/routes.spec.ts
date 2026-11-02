@@ -10,7 +10,6 @@ const ROUTES = [
   { label: "Profile", route: "/profile", heading: "Profile" },
 ] as const;
 
-// settle waits for the page's heading, and for its loading spinners to go.
 const settle = async (page: Page, heading: string | RegExp) => {
   await expect(
     page.getByRole("heading", { level: 1, name: heading }),

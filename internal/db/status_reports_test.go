@@ -62,7 +62,6 @@ func TestCompleteMessageStoresStatusReport(t *testing.T) {
 		t.Fatalf("GetMessage = %+v, %v", got, err)
 	}
 
-	// The report is delivered to the originator, as a message to it is.
 	if next, ok, err := d.NextDueFor(ctx, testOriginator.Digits, 0, delivered); err != nil || !ok || next.ID != r.ID {
 		t.Fatalf("NextDueFor = %+v, %v, %v; want the report", next, ok, err)
 	}
@@ -73,7 +72,6 @@ func TestStatusReportJoinsTheRecipientsQueue(t *testing.T) {
 	d := openTestDB(t)
 	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 
-	// A message to the originator waits for a retry, which holds the originator.
 	toOriginator := testMessage(1, false, []byte{0x01}, base)
 	toOriginator.Originator, toOriginator.Recipient, toOriginator.MSISDN = testRecipient, testOriginator, testOriginator.Digits
 
@@ -101,8 +99,6 @@ func TestStatusReportJoinsTheRecipientsQueue(t *testing.T) {
 		t.Fatalf("reports = %+v, %v; want one held until %v", reports, err, until)
 	}
 
-	// A report takes none of its recipient's time stamps: the next message to the originator in the same second gets
-	// the first free one after the held message's.
 	next := toOriginator
 	next.SubmittedAt = base.Add(time.Minute)
 
@@ -137,7 +133,6 @@ func TestStatusReportOnlyOnMessagesFromAnMS(t *testing.T) {
 		t.Fatalf("message = %+v, %v; want it still pending, since its completion failed", m, err)
 	}
 
-	// Nor on a status report.
 	mobile, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, now))
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +218,6 @@ func TestSchemaKeepsStatusReportsConsistent(t *testing.T) {
 	}
 }
 
-// listStatusReports returns the status reports on a message, oldest first.
 func listStatusReports(ctx context.Context, d *DB, messageID int64) ([]Message, error) {
 	reports, err := d.StatusReportsFor(ctx, []int64{messageID})
 

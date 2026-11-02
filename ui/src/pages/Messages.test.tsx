@@ -30,7 +30,6 @@ const serveMessages = (items = [message()], totalCount?: number) => {
 const lastQuery = (requests: URL[]) =>
   Object.fromEntries(requests[requests.length - 1].searchParams);
 
-// listed waits for the default message's row.
 const listed = () => screen.findByRole("gridcell", { name: "+15551230002" });
 
 const rowCells = (to: string) =>
@@ -68,7 +67,6 @@ describe("Messages", () => {
       "ota@example.com",
     ]);
     expect(rowCells("+15551230008")).toContain("—");
-    // The content is not listed: reading it is audited.
     for (const name of ["ID", "Next attempt", "Encoding", "Text"]) {
       expect(
         screen.queryByRole("columnheader", { name }),
@@ -92,7 +90,6 @@ describe("Messages", () => {
     await listed();
 
     const input = screen.getByRole("textbox", { name: "To" });
-    // The start of a number is no error.
     fireEvent.change(input, { target: { value: "+" } });
     expect(input).toHaveAttribute("aria-invalid", "false");
 
@@ -238,7 +235,6 @@ describe("Messages", () => {
         name: "Delivery attempts (1)",
       }),
     ).toBeInTheDocument();
-    // The open message is highlighted, not selected for an action.
     expect(screen.queryByText(/row selected/)).not.toBeInTheDocument();
 
     fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));

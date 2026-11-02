@@ -15,8 +15,6 @@ import (
 
 const maxSeconds = math.MaxInt64 / int64(time.Second)
 
-// maxValiditySeconds is the longest validity period, 10 years, so that an expiry stays well within the times that
-// int64 nanoseconds since 1970 hold, until 2262.
 const maxValiditySeconds = 10 * 365 * 24 * 60 * 60
 
 type OperatorSettings struct {
@@ -37,8 +35,6 @@ type DeliverySettings struct {
 	RetryIntervalsSeconds  []int64 `json:"retry_intervals_seconds"`
 }
 
-// RetentionSettings is how long messages are kept once they have their final status, in whole days, like the retention
-// policies of Ella Core.
 type RetentionSettings struct {
 	Days int64 `json:"days"`
 }

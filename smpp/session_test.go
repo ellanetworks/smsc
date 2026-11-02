@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// rawPeer is the far end of a net.Pipe, which writes and reads PDUs with the codec only.
 type rawPeer struct {
 	t *testing.T
 	c net.Conn
@@ -60,7 +59,6 @@ func (p *rawPeer) read() (Header, PDU) {
 	return h, d
 }
 
-// expect reads a PDU and checks its header.
 func (p *rawPeer) expect(id CommandID, status CommandStatus, seq uint32) PDU {
 	p.t.Helper()
 
@@ -72,7 +70,6 @@ func (p *rawPeer) expect(id CommandID, status CommandStatus, seq uint32) PDU {
 	return d
 }
 
-// expectClosed checks that the session closes the connection.
 func (p *rawPeer) expectClosed() {
 	p.t.Helper()
 
@@ -105,12 +102,10 @@ func pipe(t *testing.T, r role, cfg SessionConfig, h Handler, hk hooks) (*Sessio
 	return s, &rawPeer{t: t, c: b, r: bufio.NewReader(b)}
 }
 
-// acceptAll is the bind hook of an SMSC that accepts every bind.
 func acceptAll(context.Context, *Session, *Bind) bindDecision {
 	return bindDecision{status: StatusOK, account: "acct"}
 }
 
-// submitOK answers every submit_sm with message_id "m1".
 var submitOK = HandlerFunc(func(context.Context, *Session, Request) Response {
 	return Response{PDU: &SubmitSMResp{MessageID: "m1"}}
 })
@@ -119,7 +114,6 @@ func smscHooks() hooks {
 	return hooks{systemID: "EllaSMSC", bind: acceptAll}
 }
 
-// boundSMSC is an SMSC session that the peer, an ESME, has bound with bind id.
 func boundSMSC(t *testing.T, id CommandID, cfg SessionConfig, h Handler) (*Session, *rawPeer) {
 	t.Helper()
 
@@ -219,7 +213,8 @@ func TestBindResponse(t *testing.T) {
 	}
 }
 
-// TestStateErrors checks each request against the state of Table 2-1 and the checks of §3.3 and §4.3.
+// SMPP 3.4 section 3.3
+// SMPP 3.4 section 4.3
 func TestStateErrors(t *testing.T) {
 	submit := &SubmitSM{Message: message()}
 	deliver := &DeliverSM{Message: message()}
@@ -239,7 +234,7 @@ func TestStateErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		b[len(b)-3] = 255 // sm_length of "hi"
+		b[len(b)-3] = 255
 
 		return b
 	}
@@ -247,7 +242,7 @@ func TestStateErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		role   role
-		bind   CommandID // 0: stay OPEN
+		bind   CommandID
 		send   PDU
 		raw    []byte
 		id     CommandID
@@ -309,7 +304,6 @@ func TestStateErrors(t *testing.T) {
 
 			p.expect(tc.id, tc.status, tc.seq)
 
-			// The session stays up: it answers the next PDU.
 			before := s.State()
 
 			p.send(&EnquireLink{}, StatusOK, 10)
@@ -324,8 +318,7 @@ func TestStateErrors(t *testing.T) {
 	}
 }
 
-// TestHeaderError checks that a command_length outside 16…MaxLength is answered generic_nack ESME_RINVCMDLEN, and the
-// session closed, since the PDU boundaries are lost (§4.3).
+// SMPP 3.4 section 4.3
 func TestHeaderError(t *testing.T) {
 	for _, length := range []uint32{15, MaxLength + 1} {
 		s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{}, submitOK)
@@ -432,7 +425,6 @@ func TestTimers(t *testing.T) {
 		cfg := SessionConfig{InactivityTimeout: 100 * time.Millisecond, EnquireLinkInterval: -1}
 		s, p := boundSMSC(t, CmdBindTransceiver, cfg, submitOK)
 
-		// Traffic keeps the session up.
 		for i := range 4 {
 			time.Sleep(40 * time.Millisecond)
 			p.send(&EnquireLink{}, StatusOK, uint32(i+2))
@@ -445,7 +437,6 @@ func TestTimers(t *testing.T) {
 	})
 }
 
-// blockingHandler holds each submit_sm until release is closed.
 type blockingHandler struct {
 	started chan uint32
 	release chan struct{}
@@ -468,11 +459,9 @@ func TestInboundWindow(t *testing.T) {
 	<-h.started
 	<-h.started
 
-	// The third is over the window: answered at once.
 	p.send(&SubmitSM{Message: message()}, StatusOK, 4)
 	p.expect(CmdSubmitSMResp, StatusThrottled, 4)
 
-	// enquire_link is answered by the session, outside the window.
 	p.send(&EnquireLink{}, StatusOK, 5)
 	p.expect(CmdEnquireLinkResp, StatusOK, 5)
 
@@ -505,7 +494,6 @@ func TestOutboundWindow(t *testing.T) {
 
 	h1, _ := p.read()
 
-	// The second waits for the window: it is not sent.
 	time.Sleep(100 * time.Millisecond)
 
 	s.mu.Lock()
@@ -532,7 +520,7 @@ func TestOutboundWindow(t *testing.T) {
 	}
 }
 
-// TestOutOfOrderResponses checks that responses are matched by sequence_number, in any order (§2.5.2).
+// SMPP 3.4 section 2.5.2
 func TestOutOfOrderResponses(t *testing.T) {
 	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{}, submitOK)
 
@@ -594,7 +582,6 @@ func TestResponseTimeout(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// A late response is discarded, and the session stays bound.
 	p.send(&DeliverSMResp{}, StatusOK, h.Sequence)
 	p.send(&EnquireLink{}, StatusOK, 20)
 	p.expect(CmdEnquireLinkResp, StatusOK, 20)
@@ -620,14 +607,13 @@ func TestContextCancel(t *testing.T) {
 	}
 }
 
-// TestSequenceWrap checks that sequence_number runs from 1 to 0x7FFFFFFF and back to 1, skipping a number still in
-// use (§5.1.4).
+// SMPP 3.4 section 5.1.4
 func TestSequenceWrap(t *testing.T) {
 	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{}, submitOK)
 
 	s.mu.Lock()
 	s.seq = MaxSequence - 1
-	s.pending[1] = &pending{id: CmdDeliverSM, ch: make(chan result, 1)} // 1 is still outstanding
+	s.pending[1] = &pending{id: CmdDeliverSM, ch: make(chan result, 1)}
 	s.mu.Unlock()
 
 	for _, want := range []uint32{MaxSequence, 2, 3} {
@@ -656,7 +642,6 @@ func TestPeerUnbind(t *testing.T) {
 	<-h.started
 	p.send(&Unbind{}, StatusOK, 3)
 
-	// The submit_sm in progress is answered first, then unbind_resp.
 	time.Sleep(20 * time.Millisecond)
 	close(h.release)
 	p.expect(CmdSubmitSMResp, StatusOK, 2)
@@ -681,7 +666,6 @@ func TestUnbind(t *testing.T) {
 		t.Fatalf("got %s", h.ID)
 	}
 
-	// Nothing new goes out while unbinding.
 	if err := s.DeliverSM(context.Background(), &DeliverSM{Message: message()}); err == nil {
 		t.Fatal("deliver_sm sent while unbinding")
 	}
@@ -735,7 +719,6 @@ func TestHandlerWrongResponse(t *testing.T) {
 	p.expect(CmdSubmitSMResp, StatusSysErr, 2)
 }
 
-// TestWritten checks that Written is called after the response is on the wire.
 func TestWritten(t *testing.T) {
 	written := make(chan error, 1)
 	h := HandlerFunc(func(context.Context, *Session, Request) Response {
@@ -758,8 +741,7 @@ func TestWritten(t *testing.T) {
 	}
 }
 
-// TestNoOptionalParametersToV33 checks that no optional parameter goes to an ESME of interface_version below 0x34
-// (§3.4).
+// SMPP 3.4 section 3.4
 func TestNoOptionalParametersToV33(t *testing.T) {
 	s, p := pipe(t, roleSMSC, SessionConfig{}, submitOK, smscHooks())
 	p.send(&Bind{ID: CmdBindReceiver, SystemID: "old", InterfaceVersion: 0x33}, StatusOK, 1)
@@ -806,7 +788,6 @@ func TestESMEBind(t *testing.T) {
 		t.Fatalf("bind %+v", b)
 	}
 
-	// The SMSC's deliver_sm right after its bind response is handled in BOUND_TRX.
 	p.send(&BindResp{ID: CmdBindTransceiverResp, SystemID: "SMSC", Options: Options{SCInterfaceVersion: new(byte(0x34))}},
 		StatusOK, h1.Sequence)
 	p.send(&DeliverSM{Message: message()}, StatusOK, 1)
@@ -820,7 +801,6 @@ func TestESMEBind(t *testing.T) {
 		t.Fatalf("state %s, system_id %q, %d delivered", s.State(), s.SystemID(), len(delivered))
 	}
 
-	// submit_sm goes out and its message_id comes back.
 	idc := make(chan string, 1)
 
 	go func() {
@@ -835,14 +815,12 @@ func TestESMEBind(t *testing.T) {
 		t.Fatalf("message_id %q", id)
 	}
 
-	// An ESME cannot send deliver_sm.
 	var se *StateError
 	if err := s.DeliverSM(context.Background(), &DeliverSM{Message: message()}); !errors.As(err, &se) {
 		t.Fatalf("deliver_sm from an ESME: %v", err)
 	}
 }
 
-// TestESMEBindRefused checks that a refused bind leaves the session OPEN, with the status.
 func TestESMEBindRefused(t *testing.T) {
 	s, p := pipe(t, roleESME, SessionConfig{}, nil, hooks{})
 	errc := make(chan error, 1)
@@ -864,7 +842,6 @@ func TestESMEBindRefused(t *testing.T) {
 		t.Fatalf("state %s", s.State())
 	}
 
-	// No sc_interface_version: no optional parameters toward this SMSC (§3.4). Bound as a transmitter now.
 	go func() {
 		_, err := s.bind(context.Background(), &Bind{ID: CmdBindTransmitter, SystemID: "esme"})
 		errc <- err
@@ -885,7 +862,6 @@ func TestESMEBindRefused(t *testing.T) {
 	}
 }
 
-// FuzzSession feeds arbitrary octets to an SMSC session: it must not panic, and must answer or close.
 func FuzzSession(f *testing.F) {
 	bind, _ := Encode(&Bind{ID: CmdBindTransceiver, SystemID: "esme", InterfaceVersion: 0x34}, StatusOK, 1)
 	submit, _ := Encode(&SubmitSM{Message: message()}, StatusOK, 2)
@@ -922,7 +898,7 @@ func FuzzSession(f *testing.F) {
 	})
 }
 
-// TestAlertNotificationUnanswered checks that alert_notification gets no response (§2.8), not generic_nack.
+// SMPP 3.4 section 2.8
 func TestAlertNotificationUnanswered(t *testing.T) {
 	_, p := pipe(t, roleESME, SessionConfig{}, nil, hooks{})
 
@@ -935,12 +911,9 @@ func TestAlertNotificationUnanswered(t *testing.T) {
 	p.sendRaw(alert)
 	p.send(&EnquireLink{}, StatusOK, 8)
 
-	// The next PDU answers the enquire_link: nothing answered the alert_notification.
 	p.expect(CmdEnquireLinkResp, StatusInvBndSts, 8)
 }
 
-// TestSendRefusesBindAndUnbind checks that Send does not send bind or unbind, which would change the state behind
-// the session's back: an unbind_resp would leave the session CLOSED with its connection open.
 func TestSendRefusesBindAndUnbind(t *testing.T) {
 	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{EnquireLinkInterval: -1}, submitOK)
 
@@ -955,7 +928,6 @@ func TestSendRefusesBindAndUnbind(t *testing.T) {
 		t.Fatalf("Send(bind) = %v", err)
 	}
 
-	// Nothing was sent: the next PDU is the enquire_link's response, and the session is still bound.
 	go func() { _ = s.EnquireLink(context.Background()) }()
 
 	h, _ := p.read()
@@ -970,8 +942,7 @@ func TestSendRefusesBindAndUnbind(t *testing.T) {
 	}
 }
 
-// TestNoRequestAfterUnbind checks that a deliver_sm waiting for the outbound window is not sent after unbind
-// (Table 2-1, §4.2).
+// SMPP 3.4 section 4.2
 func TestNoRequestAfterUnbind(t *testing.T) {
 	s, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{OutboundWindow: 1, EnquireLinkInterval: -1}, submitOK)
 
@@ -988,7 +959,7 @@ func TestNoRequestAfterUnbind(t *testing.T) {
 
 	go func() { second <- s.DeliverSM(context.Background(), &DeliverSM{Message: message()}) }()
 
-	time.Sleep(50 * time.Millisecond) // the second waits for the window
+	time.Sleep(50 * time.Millisecond)
 
 	unbound := make(chan error, 1)
 
@@ -999,7 +970,6 @@ func TestNoRequestAfterUnbind(t *testing.T) {
 		t.Fatalf("got %s, want unbind", h2.ID)
 	}
 
-	// The window opens after unbind: the second deliver_sm is refused, not sent.
 	p.send(&DeliverSMResp{}, StatusOK, h1.Sequence)
 
 	if err := <-first; err != nil {
@@ -1029,8 +999,7 @@ func TestNoRequestAfterUnbind(t *testing.T) {
 	}
 }
 
-// TestUnbindRacingSubmit runs a local unbind against a submit_sm arriving at the same time: the submit_sm gets one
-// response (§2.8), and a submit_sm accepted for handling is answered before the unbind.
+// SMPP 3.4 section 2.8
 func TestUnbindRacingSubmit(t *testing.T) {
 	h := HandlerFunc(func(context.Context, *Session, Request) Response {
 		time.Sleep(time.Millisecond)
@@ -1080,7 +1049,6 @@ func TestUnbindRacingSubmit(t *testing.T) {
 			case CmdUnbind:
 				unbind = true
 
-				// net.Pipe has no buffer: answer on another goroutine, after the submit_sm, while this one reads.
 				go func() {
 					if err := <-written; err != nil {
 						return

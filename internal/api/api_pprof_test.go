@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// gzipMagic starts a profile in the protobuf format, which is gzipped.
 var gzipMagic = []byte{0x1f, 0x8b}
 
 func TestPprof(t *testing.T) {
@@ -53,8 +52,6 @@ func TestPprof(t *testing.T) {
 	}
 }
 
-// TestPprofIndexLinks checks that each link of the index serves its profile, rather than the index again, but for the
-// block and mutex profiles, which are not served: they stay empty without a sampling rate.
 func TestPprofIndexLinks(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
@@ -72,7 +69,6 @@ func TestPprofIndexLinks(t *testing.T) {
 		}
 
 		path := "/api/v1/pprof/" + href
-		// The CPU profile takes 30 seconds by default.
 		if strings.HasPrefix(href, "profile?") {
 			path += "&seconds=1"
 		}
@@ -89,7 +85,6 @@ func TestPprofIndexLinks(t *testing.T) {
 	}
 }
 
-// TestPprofWithAPIToken checks that a profiler can scrape the profiles with an API token of an Admin.
 func TestPprofWithAPIToken(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 	token := a.createToken(t, a.token, "/api/v1/users/me/api-tokens", `{"name": "pyroscope"}`)

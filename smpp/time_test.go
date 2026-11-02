@@ -10,10 +10,10 @@ func zone(quarters int) *time.Location {
 	return time.FixedZone("", quarters*15*60)
 }
 
+// SMPP 3.4 section 7.1.1
 func TestParseTimeAbsolute(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 
-	// §7.1.1: "YYMMDDhhmmsstnnp", local time nn quarter hours ahead of ('+') or behind ('-') UTC.
 	tests := map[string]struct {
 		s    string
 		want time.Time
@@ -60,15 +60,12 @@ func TestParseTimeRelative(t *testing.T) {
 		p    RelativePeriod
 		want time.Time
 	}{
-		// §14 of the plan: one day.
 		"one day": {"000001000000000R", RelativePeriod{Days: 1}, now.Add(24 * time.Hour)},
-		// §7.1.1.2: the example of 2 years, 6 months, 10 days, 23:34:29.
 		"spec example": {
 			"020610233429000R",
 			RelativePeriod{Years: 2, Months: 6, Days: 10, Hours: 23, Minutes: 34, Seconds: 29},
 			time.Date(2029, 5, 9, 11, 34, 29, 0, time.UTC),
 		},
-		// §7.1.1.2: t and nn are ignored.
 		"t and nn ignored":        {"000000010000549R", RelativePeriod{Hours: 1}, now.Add(time.Hour)},
 		"non-digit t and nn":      {"00000100000000AR", RelativePeriod{Days: 1}, now.Add(24 * time.Hour)},
 		"non-digit t, nn of 99":   {"000000000001x99R", RelativePeriod{Seconds: 1}, now.Add(time.Second)},
@@ -135,7 +132,6 @@ func TestParseTimeErrors(t *testing.T) {
 }
 
 func TestParseTimeYearWindow(t *testing.T) {
-	// Two-digit years are read in now-49…now+50.
 	tests := map[string]struct {
 		now  int
 		yy   string
@@ -190,9 +186,8 @@ func TestFormatAbsoluteOffsets(t *testing.T) {
 	}
 }
 
+// SMPP 3.4 section 7.1.1.2
 func TestRelativePeriodMonthEnd(t *testing.T) {
-	// §7.1.1.2: a period of years, months, days, hours, minutes and seconds from the current SMSC time. A day that the
-	// target month does not have is clamped to its last day before the days and the time are added.
 	tests := map[string]struct {
 		now  time.Time
 		s    string

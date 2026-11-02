@@ -19,8 +19,6 @@ import (
 	"time"
 )
 
-// testServer is a Server on a loopback port that accepts the password "secret", files each ESME under its system_id,
-// and answers each submit_sm with a message_id counting from 1.
 type testServer struct {
 	*Server
 	addr      string
@@ -137,7 +135,6 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// TestLoopback runs our client against our server: bind, submit_sm both ways of deliver_sm, the registry.
 func TestLoopback(t *testing.T) {
 	ts := newTestServer(t, nil)
 
@@ -193,7 +190,6 @@ func TestLoopback(t *testing.T) {
 		t.Fatalf("all sessions = %+v", got)
 	}
 
-	// deliver_sm with optional parameters: the client's bind was v3.4.
 	receipt := &DeliverSM{Message: message()}
 	receipt.ESMClass = 0x04
 	receipt.Options.ReceiptedMessageID = new("1")
@@ -219,7 +215,6 @@ func TestLoopback(t *testing.T) {
 		t.Fatalf("Deliver to no session = %v", err)
 	}
 
-	// The account's sessions closed: the client binds again.
 	if n := ts.CloseAccount("simota"); n != 1 {
 		t.Fatalf("CloseAccount = %d", n)
 	}
@@ -289,7 +284,6 @@ func TestClientTransmitterAndReceiver(t *testing.T) {
 		t.Fatalf("submit_sm on a receiver = %v", err)
 	}
 
-	// deliver_sm goes to the receiver only.
 	for range 3 {
 		info, err := ts.Deliver(context.Background(), "simota", &DeliverSM{Message: message()})
 		if err != nil || info.State != StateBoundRX {
@@ -321,7 +315,7 @@ func TestMaxSessions(t *testing.T) {
 	}
 }
 
-// TestShutdown checks that Shutdown unbinds the bound sessions (§4.2) and closes the rest.
+// SMPP 3.4 section 4.2
 func TestShutdown(t *testing.T) {
 	ts := newTestServer(t, nil)
 	c := newTestClient(t, ts.addr, nil)
@@ -329,7 +323,6 @@ func TestShutdown(t *testing.T) {
 
 	sess := <-ts.bound
 
-	// A connection that never binds.
 	raw, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", ts.addr)
 	if err != nil {
 		t.Fatal(err)
@@ -356,7 +349,7 @@ func TestShutdown(t *testing.T) {
 	}
 }
 
-// TestClientClose checks that Close unbinds (§4.2).
+// SMPP 3.4 section 4.2
 func TestClientClose(t *testing.T) {
 	ts := newTestServer(t, nil)
 	c := newTestClient(t, ts.addr, nil)
@@ -386,7 +379,6 @@ func TestClientClose(t *testing.T) {
 	}
 }
 
-// TestClientRebindsAfterServerRestart checks the backoff loop against a listener that comes back.
 func TestClientRebindsAfterServerRestart(t *testing.T) {
 	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -483,11 +475,9 @@ func TestTLS(t *testing.T) {
 		t.Fatalf("SubmitSM = %q, %v", id, err)
 	}
 
-	// A client without the CA fails the handshake, and says so.
 	bad := newTestClient(t, ts.addr, func(cfg *ClientConfig) { cfg.TLS = &tls.Config{MinVersion: tls.VersionTLS12} })
 	waitFor(t, "a failed handshake", func() bool { return bad.State().LastError != nil })
 
-	// A plain client to a TLS server does not bind.
 	plain := newTestClient(t, ts.addr, func(cfg *ClientConfig) {
 		cfg.Session.ResponseTimeout = 200 * time.Millisecond
 	})
@@ -533,8 +523,6 @@ func TestBackoff(t *testing.T) {
 	}
 }
 
-// TestBindClosedDuringAuthenticate checks that a session closed while Authenticate runs, here by the
-// session_init_timer, holds no MaxSessions slot: the account binds again.
 func TestBindClosedDuringAuthenticate(t *testing.T) {
 	ts := newTestServer(t, func(cfg *ServerConfig) {
 		cfg.Session.SessionInitTimeout = 100 * time.Millisecond
@@ -582,11 +570,9 @@ func TestBindClosedDuringAuthenticate(t *testing.T) {
 	waitBound(t, fresh)
 }
 
-// TestDeliverSkipsUnbinding checks that Deliver does not pick a session that is unbinding.
 func TestDeliverSkipsUnbinding(t *testing.T) {
 	ts := newTestServer(t, nil)
 
-	// A raw ESME that binds and never answers the unbind.
 	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", ts.addr)
 	if err != nil {
 		t.Fatal(err)
@@ -618,7 +604,7 @@ func TestDeliverSkipsUnbinding(t *testing.T) {
 	}
 }
 
-// TestClientCloseWhileBinding checks that Close unbinds a session that the SMSC binds while Close runs (§4.2).
+// SMPP 3.4 section 4.2
 func TestClientCloseWhileBinding(t *testing.T) {
 	authenticating := make(chan struct{})
 	release := make(chan struct{})
@@ -643,7 +629,7 @@ func TestClientCloseWhileBinding(t *testing.T) {
 
 	go func() { closed <- c.Close(ctx) }()
 
-	time.Sleep(50 * time.Millisecond) // Close has cancelled the client
+	time.Sleep(50 * time.Millisecond)
 
 	close(release)
 
@@ -664,8 +650,6 @@ func TestClientCloseWhileBinding(t *testing.T) {
 	}
 }
 
-// TestBackoffAfterShortSession checks that a session that binds and soon fails does not reset the backoff: an SMSC
-// that binds then drops is retried less and less often.
 func TestBackoffAfterShortSession(t *testing.T) {
 	ts := newTestServer(t, func(cfg *ServerConfig) {
 		cfg.OnBound = func(s *Session) { go func() { _ = s.Close() }() }
@@ -698,14 +682,11 @@ func TestBackoffAfterShortSession(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// 10, 20, 40, 80 ms, less up to a fifth.
 	if waits[3] < 60*time.Millisecond {
 		t.Fatalf("waits %v: the backoff did not grow", waits)
 	}
 }
 
-// A connection that stalls in its TLS handshake does not hold up Shutdown or Close: the handshake ends with the
-// server, not only at the session_init_timer.
 func TestStopDuringTLSHandshake(t *testing.T) {
 	cert := selfSigned(t)
 
@@ -722,7 +703,6 @@ func TestStopDuringTLSHandshake(t *testing.T) {
 				cfg.Session.SessionInitTimeout = time.Minute
 			})
 
-			// A TCP connection that never sends its ClientHello.
 			conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", ts.addr)
 			if err != nil {
 				t.Fatal(err)
@@ -736,7 +716,6 @@ func TestStopDuringTLSHandshake(t *testing.T) {
 
 				return len(ts.listeners) == 1
 			})
-			// Let the server start the handshake.
 			time.Sleep(50 * time.Millisecond)
 
 			done := make(chan error, 1)

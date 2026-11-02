@@ -7,10 +7,9 @@ import (
 )
 
 type Status struct {
-	Version  string `json:"version"`
-	Revision string `json:"revision"`
-	// Initialized is whether the first user exists, which the UI needs before a login.
-	Initialized bool `json:"initialized"`
+	Version     string `json:"version"`
+	Revision    string `json:"revision"`
+	Initialized bool   `json:"initialized"`
 }
 
 func GetStatus(cfg Config) http.Handler {

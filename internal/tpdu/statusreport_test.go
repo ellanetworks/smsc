@@ -106,7 +106,6 @@ func TestSetMoreMessagesToSend(t *testing.T) {
 }
 
 func TestDecodeStatusReport(t *testing.T) {
-	// The optional parameters that follow TP-ST are ignored.
 	r, err := DecodeStatusReport(mustHex(t, "46"+"07"+reportMandatory+"43"+"07"+"00"+"04"+"02"+"abcd"))
 	if err != nil || r.Status != Status(0x43) || r.MessageReference != 0x07 || r.Recipient != reportRecipient {
 		t.Fatalf("report = %+v, %v", r, err)

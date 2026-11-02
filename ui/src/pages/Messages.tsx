@@ -67,14 +67,11 @@ const NUMBER_HINT = "All or part of a number, e.g. +1555123 or 0002";
 const SENDER_HINT =
   "All or part of a number, e.g. +1555123, or a name of up to 11 letters and digits, with single spaces";
 
-// A filter is applied once valid; a lone "+", the start of a number, is neither applied nor an error.
 const numberStarted = (value: string) => value === "+";
 
 const formatOptionalTimestamp = (value?: string) =>
   value ? formatTimestamp(value) : "—";
 
-// DATE_WIDTH fits a date of 19 characters, YYYY-MM-DD HH:MM:SS: 160px in Source Code Pro at 14px, with the 10px
-// padding each side of a cell, and some room.
 const DATE_WIDTH = 190;
 
 const columns: GridColDef<Message>[] = [
@@ -84,8 +81,6 @@ const columns: GridColDef<Message>[] = [
     width: DATE_WIDTH,
     valueFormatter: formatOptionalTimestamp,
   },
-  // The text columns share the spare width, so that none is cut while there is room.
-  // At 140px, they fit an E.164 number of 15 digits or a name of 11 characters, and the columns fit 1280px wide.
   { field: "from", headerName: "From", flex: 1, minWidth: 140 },
   { field: "to", headerName: "To", flex: 1, minWidth: 140 },
   {
@@ -161,9 +156,7 @@ export default function Messages() {
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   const timeFilter = useMemo(() => timeRangeFilter(timeRange), [timeRange]);
 
-  // Numbers match by part, and names in any case.
   const toInvalid = to !== "" && !numberStarted(to) && !isPartialNumber(to);
-  // The value is kept as typed, since a name may hold spaces, and trimmed of those around it to be used.
   const sender = from.trim();
   const fromInvalid =
     sender !== "" &&
@@ -185,7 +178,6 @@ export default function Messages() {
     status: status || undefined,
   };
 
-  // A relative range resolves on each request, so that the refresh keeps "Last 1 hour" moving.
   const messages = useQuery({
     queryKey: ["messages", filters, timeFilter, pagination],
     queryFn: () =>
@@ -376,7 +368,6 @@ export default function Messages() {
           columns: {
             columnVisibilityModel: {
               ...hiddenByDefault,
-              // A Submitter sees only its own messages.
               submitted_by: auth.roleId !== RoleID.Submitter,
             },
           },

@@ -19,7 +19,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// fakeSMPP is an SMPP listener that records the sessions it is asked to close.
 type fakeSMPP struct {
 	sessions    map[int64][]api.SMPPSession
 	closedESMEs []int64
@@ -35,7 +34,6 @@ func (f *fakeSMPP) CloseUser(_ context.Context, id int64) error {
 
 func (f *fakeSMPP) Sessions(id int64) []api.SMPPSession { return f.sessions[id] }
 
-// newSMPPTestAPI returns an initialized API, as newTestAPI does, with an SMPP listener.
 func newSMPPTestAPI(t *testing.T, smpp api.SMPP) *testAPI {
 	t.Helper()
 
@@ -56,7 +54,6 @@ func newSMPPTestAPI(t *testing.T, smpp api.SMPP) *testAPI {
 const otaESMEBody = `{"system_id": "ota", "user": "ota@example.com", "password": "secret",
 	"allowed_networks": ["10.1.0.0/24", "2001:db8::/32"]}`
 
-// createESME creates an ESME as the admin, and returns it.
 func (a *testAPI) createESME(t *testing.T, body string) api.ESME {
 	t.Helper()
 
@@ -153,7 +150,6 @@ func TestESMELifecycle(t *testing.T) {
 
 	smpp.sessions = nil
 
-	// Without a password, the old one stays.
 	code, result, msg = a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["192.0.2.7/32"]}`)
 	if code != http.StatusOK {
 		t.Fatalf("PUT = %d %q", code, msg)
@@ -274,7 +270,6 @@ func TestESMEValidation(t *testing.T) {
 	a.createUser(t, "ota@example.com", db.RoleSubmitter)
 	a.createESME(t, otaESMEBody)
 
-	// create returns a valid body for POST with more fields.
 	create := func(fields string) string {
 		body := `{"system_id": "new", "user": "ota@example.com", "password": "secret", "allowed_networks": ["10.0.0.0/8"]`
 		if fields != "" {
@@ -284,7 +279,6 @@ func TestESMEValidation(t *testing.T) {
 		return body + "}"
 	}
 
-	// createWith returns a valid body for POST with one field set to a JSON value.
 	createWith := func(field, value string) string {
 		var m map[string]any
 		if err := json.Unmarshal([]byte(create("")), &m); err != nil {
@@ -378,7 +372,6 @@ func TestESMEValidation(t *testing.T) {
 			"not a network", http.MethodPost, "/api/v1/esmes", createWith("allowed_networks", `["example.org/8"]`),
 			http.StatusBadRequest,
 		},
-		// The removed settings are unknown fields.
 		{"max_sessions", http.MethodPost, "/api/v1/esmes", createWith("max_sessions", `4`), http.StatusBadRequest},
 		{"default_alphabet", http.MethodPost, "/api/v1/esmes", createWith("default_alphabet", `"gsm7"`), http.StatusBadRequest},
 		{
@@ -431,7 +424,6 @@ func TestESMEValidation(t *testing.T) {
 		})
 	}
 
-	// The networks are stored masked, without duplicates.
 	e := a.createESME(t, `{"system_id": "masked", "user": "ota@example.com", "password": "x",
 		"allowed_networks": ["10.1.2.3/8", "10.0.0.0/8", "192.0.2.1/32"]}`)
 	if want := []string{"10.0.0.0/8", "192.0.2.1/32"}; !slices.Equal(e.AllowedNetworks, want) {
@@ -507,7 +499,6 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("creating ESMEs closed sessions: %v %v", smpp.closedESMEs, smpp.closedUsers)
 	}
 
-	// A refused change closes nothing.
 	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["10.0.0.1"]}`); code != http.StatusBadRequest {
 		t.Fatalf("invalid PUT = %d", code)
 	}
@@ -542,7 +533,6 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("closed users after a role change = %v, want [%d]", smpp.closedUsers, otaUser)
 	}
 
-	// A password change does not change what an ESME may do.
 	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/users/other@example.com/password",
 		`{"password": "new password"}`); code != http.StatusOK {
 		t.Fatalf("password change = %d", code)
@@ -552,7 +542,6 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("closed ESMEs after a password change = %v, want no more", smpp.closedESMEs)
 	}
 
-	// Deleting a user deletes its ESMEs, whose sessions close: those it had before the deletion.
 	a.createESME(t, `{"system_id": "other2", "user": "other@example.com", "password": "x", "allowed_networks": []}`)
 	other2 := a.storedESME(t, "other2").ID
 
@@ -583,7 +572,6 @@ func TestESMEChangesAreAudited(t *testing.T) {
 		t.Fatalf("DELETE = %d", code)
 	}
 
-	// Refused changes are not audited.
 	if code, _, _ := a.do(t, http.MethodPost, "/api/v1/esmes", `{"system_id": "", "user": "ota@example.com"}`); code != http.StatusBadRequest {
 		t.Fatalf("invalid POST = %d", code)
 	}
@@ -674,7 +662,6 @@ func TestMessagesFromAnESME(t *testing.T) {
 		t.Fatalf("content as the owner = %+v", c)
 	}
 
-	// Once its ESME is gone, the message stays its user's, without a system_id.
 	if code, _, _ := a.do(t, http.MethodDelete, "/api/v1/esmes/ota", ""); code != http.StatusOK {
 		t.Fatalf("DELETE = %d", code)
 	}

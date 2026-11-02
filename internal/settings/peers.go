@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// DefaultPort is the Diameter port of a peer that does not name one (RFC 6733 section 2.1).
+// RFC 6733 section 2.1
 const DefaultPort = 3868
 
 const (
@@ -20,37 +20,29 @@ const (
 
 var (
 	ErrNotFound = errors.New("not found")
-	// ErrConflict is a peer that clashes with another peer, or with the SMSC itself.
 	ErrConflict = errors.New("conflict")
 )
 
-// Peer is a Diameter agent or node that the SMSC connects to, and the realms it routes to (RFC 6733 sections 2.6
-// and 2.7). The SMSC keeps accepting the connections of the cores and HSSs that are not peers.
+// RFC 6733 section 2.6
+// RFC 6733 section 2.7
 type Peer struct {
-	ID int64
-	// Host is the peer's Diameter identity: when set, the peer must give it as its Origin-Host.
-	Host string
-	// Addresses are the peer's SCTP addresses, more than one for a multi-homed peer.
+	ID        int64
+	Host      string
 	Addresses []netip.Addr
 	Port      int
 	Routes    []Route
 }
 
-// Route sends the requests of an application for a realm to a peer. A default route takes the realms that no other
-// route or connected peer serves, other than the SMSC's own (RFC 6733 section 2.7).
+// RFC 6733 section 2.7
 type Route struct {
-	// Realm is empty for a default route.
 	Realm       string
 	Default     bool
 	Application string
-	// Priority orders the peers of a route, lowest first; peers of equal priority share the requests.
-	Priority int
+	Priority    int
 }
 
-// NodeID is the ID of the peer in the Diameter node.
 func (p Peer) NodeID() string { return "peer-" + strconv.FormatInt(p.ID, 10) }
 
-// PeerID returns the ID of the configured peer whose NodeID is nodeID.
 func PeerID(nodeID string) (int64, bool) {
 	rest, ok := strings.CutPrefix(nodeID, "peer-")
 	if !ok {
@@ -71,7 +63,6 @@ func (p Peer) Validate() error {
 		return errors.New("addresses must list at least one address")
 	}
 
-	// An IPv4-mapped IPv6 address is the IPv4 address, which is how the peer is stored and dialled.
 	for i, a := range p.Addresses {
 		if a = a.Unmap(); !a.IsValid() || a.IsUnspecified() || a.IsMulticast() {
 			return fmt.Errorf("address %v must be a unicast IP address", a)
@@ -109,7 +100,6 @@ func (r Route) Validate() error {
 		return fmt.Errorf("application %q must be s6c or sgd", r.Application)
 	case r.Default && r.Realm != "":
 		return errors.New("a default route takes no realm")
-	// S6c goes to the SMSC's own realm, which a default route never covers.
 	case r.Default && r.Application != ApplicationSGd:
 		return errors.New("only sgd takes a default route")
 	case !r.Default && !isDiameterIdentity(r.Realm):
@@ -125,13 +115,11 @@ func (r Route) sameKey(o Route) bool {
 	return r.Application == o.Application && r.Default == o.Default && strings.EqualFold(r.Realm, o.Realm)
 }
 
-// Equal reports whether p and q are the same peer, with the same configuration.
 func (p Peer) Equal(q Peer) bool {
 	return p.ID == q.ID && p.Host == q.Host && slices.Equal(p.Addresses, q.Addresses) && p.Port == q.Port &&
 		slices.Equal(p.Routes, q.Routes)
 }
 
-// conflict is why p cannot join peers, the other peers of the SMSC whose host is self.
 func (p Peer) conflict(peers []Peer, self string) error {
 	if strings.EqualFold(p.Host, self) {
 		return fmt.Errorf("%w: host %s is the SMSC's own", ErrConflict, p.Host)
@@ -142,7 +130,6 @@ func (p Peer) conflict(peers []Peer, self string) error {
 		case o.ID == p.ID:
 		case p.Host != "" && strings.EqualFold(o.Host, p.Host):
 			return fmt.Errorf("%w: peer %d has the host %s", ErrConflict, o.ID, p.Host)
-		// The SMSC tells a peer without a host by its address.
 		case p.Host == "" && o.Host == "":
 			for _, a := range p.Addresses {
 				if slices.Contains(o.Addresses, a) {
@@ -155,7 +142,7 @@ func (p Peer) conflict(peers []Peer, self string) error {
 	return nil
 }
 
-// isDiameterIdentity reports whether s is a DiameterIdentity: an FQDN (RFC 6733 section 4.3.1).
+// RFC 6733 section 4.3.1
 func isDiameterIdentity(s string) bool {
 	if s == "" || len(s) > 253 {
 		return false
@@ -182,7 +169,6 @@ type PeerStore interface {
 	DeletePeer(ctx context.Context, id int64) error
 }
 
-// CreatePeer adds a peer and returns it with its ID.
 func (l *Live) CreatePeer(ctx context.Context, p Peer) (Peer, error) {
 	p.ID = 0
 
@@ -211,7 +197,6 @@ func (l *Live) CreatePeer(ctx context.Context, p Peer) (Peer, error) {
 	return p, err
 }
 
-// UpdatePeer replaces the peer of p.ID.
 func (l *Live) UpdatePeer(ctx context.Context, p Peer) error {
 	if err := p.Validate(); err != nil {
 		return err

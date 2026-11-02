@@ -32,7 +32,6 @@ func TestFailedSetPeersKeepsThePeersTheNodeHas(t *testing.T) {
 		t.Fatalf("peers = %+v", got)
 	}
 
-	// An address the node refuses, which the settings would not let through.
 	bad := []settings.Peer{{ID: 2, Addresses: []netip.Addr{{}}, Port: 3868}}
 	m.setPeers(node, bad)
 

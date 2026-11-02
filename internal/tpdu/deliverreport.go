@@ -9,11 +9,9 @@ const (
 	parameterIndicatorExtension = 0x80
 )
 
-// DeliverReport is an SMS-DELIVER-REPORT (TS 23.040 clause 9.2.2.1a): the answer of an MS to an SMS-DELIVER, in the
-// RP-ACK or the RP-ERROR. Its optional parameters are nil when the TP-PI says they are absent.
+// TS 23.040 clause 9.2.2.1a
 type DeliverReport struct {
-	UserDataHeader bool
-	// FailureCause is the TP-FCS of a report for RP-ERROR.
+	UserDataHeader     bool
 	FailureCause       *byte
 	ProtocolIdentifier *byte
 	DataCodingScheme   *byte
@@ -21,10 +19,7 @@ type DeliverReport struct {
 	UserData           []byte
 }
 
-// DecodeDeliverReport decodes an SMS-DELIVER-REPORT for RP-ACK when ack is set, and for RP-ERROR otherwise. Both have
-// the same TP-MTI, so only the transfer that carried it tells them apart. A report that ends before its mandatory TP-PI
-// has no optional parameters. A report for RP-ERROR with unused bits set in its first octet has only the TP-FCS
-// "Unspecified error cause"; for RP-ACK, those bits are ignored (TS 23.040 clause 9.2.2.1a).
+// TS 23.040 clause 9.2.2.1a
 func DecodeDeliverReport(b []byte, ack bool) (DeliverReport, error) {
 	if len(b) == 0 {
 		return DeliverReport{}, fmt.Errorf("sms-deliver-report: %w", errTruncated)
@@ -57,8 +52,6 @@ func DecodeDeliverReport(b []byte, ack bool) (DeliverReport, error) {
 		return r, nil
 	}
 
-	// Each TP-PI octet with its extension bit set is followed by another. Reserved bits mean that more information
-	// follows the TP-UD, which the receiver discards (TS 23.040 clause 9.2.3.27).
 	pi := rest[0]
 	reserved := pi&0x78 != 0
 
@@ -103,7 +96,6 @@ func DecodeDeliverReport(b []byte, ack bool) (DeliverReport, error) {
 			return DeliverReport{}, err
 		}
 
-		// Without a TP-DCS, the TP-UD is in the GSM 7 bit default alphabet.
 		var dcs byte
 		if r.DataCodingScheme != nil {
 			dcs = *r.DataCodingScheme

@@ -10,7 +10,6 @@ export const formatTimestamp = (iso: string): string => {
   );
 };
 
-// formatDateTime is Ella Core's short date and time, such as "Oct 23, 14:30", with the year when it is not this one.
 export const formatDateTime = (value: string): string => {
   if (!value) return "";
   const d = new Date(value);
@@ -26,7 +25,6 @@ export const formatDateTime = (value: string): string => {
   });
 };
 
-// startOfLocalDay is midnight, local time, daysBack days before now.
 export const startOfLocalDay = (daysBack = 0, now: Date = new Date()): Date => {
   const at = new Date(now);
   at.setDate(at.getDate() - Math.round(daysBack));

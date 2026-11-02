@@ -26,14 +26,11 @@ import (
 	"github.com/linxGnu/gosmpp/pdu"
 )
 
-// The ESME of these tests, a gosmpp client (Apache-2.0, a test-only dependency).
 const (
 	esmeSystemID = "ota"
 	esmePassword = "secret"
 )
 
-// startSMPPSMSC starts an SMSC with an SMPP listener, connected to a core that serves bob, and an ESME owned by a
-// Submitter user.
 func startSMPPSMSC(t *testing.T, edit func(*smscConfig)) (*fakeCore, *smsc) {
 	t.Helper()
 
@@ -68,7 +65,6 @@ func startSMPPSMSC(t *testing.T, edit func(*smscConfig)) (*fakeCore, *smsc) {
 
 func ptrTo[T any](v T) *T { return &v }
 
-// esmeClient is a bound gosmpp session and the PDUs it receives.
 type esmeClient struct {
 	session  *gosmpp.Session
 	received chan pdu.PDU
@@ -84,8 +80,7 @@ func bindESME(t *testing.T, s *smsc, connector func(gosmpp.Dialer, gosmpp.Auth) 
 		gosmpp.Settings{
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 5 * time.Second,
-			// gosmpp answers deliver_sm itself with ESME_ROK.
-			OnPDU: func(p pdu.PDU, _ bool) { c.received <- p },
+			OnPDU:        func(p pdu.PDU, _ bool) { c.received <- p },
 		}, -1)
 	if err != nil {
 		t.Fatalf("bind: %v", err)
@@ -104,7 +99,6 @@ func tx(d gosmpp.Dialer, a gosmpp.Auth) gosmpp.Connector { return gosmpp.TXConne
 
 func rx(d gosmpp.Dialer, a gosmpp.Auth) gosmpp.Connector { return gosmpp.RXConnector(d, a) }
 
-// next returns the next PDU of type T, skipping others.
 func next[T pdu.PDU](t *testing.T, c *esmeClient) T {
 	t.Helper()
 
@@ -142,8 +136,7 @@ func shortMessage(t *testing.T, d *pdu.DeliverSM) []byte {
 	return append(udh, ud...)
 }
 
-// otaSubmit is a submit_sm of a (U)SIM data download message to bob, as smpp-ota-tool.py sends it: esm_class 0x40,
-// PID 0x7F, data_coding 0x02, and a command packet after the UDH 027000 (TS 31.115 clause 4.1).
+// TS 31.115 clause 4.1
 func otaSubmit(t *testing.T, registeredDelivery byte) *pdu.SubmitSM {
 	t.Helper()
 
@@ -196,12 +189,9 @@ func submitted(t *testing.T, c *esmeClient, sm *pdu.SubmitSM) int64 {
 
 func receiptText(id int64) string { return "id:" + strconv.FormatInt(id, 10) + " sub:001 " }
 
-// TestSMPPSIMDataDownload binds a transceiver, submits a (U)SIM data download message that asks for a receipt and a
-// user acknowledgement (registered_delivery 0x09), and gets the (U)SIM's answer from the RP-ACK, then the receipt.
 func TestSMPPSIMDataDownload(t *testing.T) {
 	core, s := startSMPPSMSC(t, nil)
 
-	// The Response Packet on an RP-ACK, without TP-UDHI (TS 31.115 clause 4.1).
 	core.setAnswerMT(func(string) *diameter.Message {
 		return &diameter.Message{AVPs: []diameter.AVP{
 			diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, diameter.ResultSuccess),
@@ -212,7 +202,6 @@ func TestSMPPSIMDataDownload(t *testing.T) {
 	esme := bindESME(t, s, trx, gosmpp.NonTLSDialer)
 	id := submitted(t, esme, otaSubmit(t, 0x09))
 
-	// The SMS-DELIVER: TP-UDHI, TP-PID 0x7F, TP-DCS 0xF6 and the TP-UD as submitted.
 	eventually(t, "the SMS-DELIVER", func() bool { return len(core.forwardedTo(bob.imsi)) == 1 })
 
 	deliver := core.forwardedTo(bob.imsi)[0].tpdu
@@ -238,8 +227,6 @@ func TestSMPPSIMDataDownload(t *testing.T) {
 	}
 }
 
-// TestSMPPSIMDataDownloadError answers RP-ERROR with TP-FCS 0xD5 and TP-UD: the answer is forwarded, and the receipt
-// is UNDELIV err:066 after one attempt.
 func TestSMPPSIMDataDownloadError(t *testing.T) {
 	core, s := startSMPPSMSC(t, nil)
 
@@ -271,7 +258,6 @@ func TestSMPPSIMDataDownloadError(t *testing.T) {
 	}
 }
 
-// TestSMPPNotificationsWaitForAReceiver submits on a transmitter: the receipt waits until a receiver binds.
 func TestSMPPNotificationsWaitForAReceiver(t *testing.T) {
 	_, s := startSMPPSMSC(t, nil)
 
@@ -287,7 +273,6 @@ func TestSMPPNotificationsWaitForAReceiver(t *testing.T) {
 	}
 }
 
-// TestSMPPOverTLS binds over TLS with a self-signed certificate.
 func TestSMPPOverTLS(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir())
 
@@ -309,7 +294,6 @@ func TestSMPPOverTLS(t *testing.T) {
 	esme := bindESME(t, s, trx, dialer)
 	submitted(t, esme, otaSubmit(t, 0))
 
-	// A plain TCP bind to the TLS listener fails.
 	if _, err := gosmpp.NewSession(gosmpp.TXConnector(gosmpp.NonTLSDialer, gosmpp.Auth{
 		SMSC: s.server.SMPPAddr().String(), SystemID: esmeSystemID, Password: esmePassword,
 	}), gosmpp.Settings{ReadTimeout: time.Second, WriteTimeout: time.Second}, -1); err == nil {
@@ -325,7 +309,6 @@ func TestSMPPListenerIsOptional(t *testing.T) {
 	}
 }
 
-// TestSMPPRevocation checks that deleting the ESME closes its session.
 func TestSMPPRevocation(t *testing.T) {
 	_, s := startSMPPSMSC(t, nil)
 	esme := bindESME(t, s, trx, gosmpp.NonTLSDialer)
@@ -339,8 +322,6 @@ func TestSMPPRevocation(t *testing.T) {
 	})
 }
 
-// TestSMPPAndAPIParity submits the same PID, DCS, UDH and user data over the API and as submit_sm: the stored
-// SMS-SUBMITs are the same octets.
 func TestSMPPAndAPIParity(t *testing.T) {
 	_, s := startSMPPSMSC(t, nil)
 	esme := bindESME(t, s, trx, gosmpp.NonTLSDialer)
@@ -351,7 +332,6 @@ func TestSMPPAndAPIParity(t *testing.T) {
 		UserDataHeader: api.Hex{0x02, 0x70, 0x00}, UserData: api.Hex{0x00, 0x11, 0x22, 0x33},
 	}})
 
-	// data_coding 0x02 with PID 0x7F is TP-DCS 0xF6 (spec_smpp.md §5.2).
 	id := submitted(t, esme, otaSubmit(t, 0))
 
 	viaAPI, err := s.store.GetMessage(context.Background(), sent[0].ID)

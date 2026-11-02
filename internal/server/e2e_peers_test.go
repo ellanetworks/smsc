@@ -29,17 +29,12 @@ const (
 	ipxRealm     = "ipx.example"
 )
 
-// agentRequest is a request that an agent received.
 type agentRequest struct {
 	command          uint32
 	destinationHost  string
 	destinationRealm string
 }
 
-// fakeAgent is a Diameter agent, such as an IPX DEA or a DRA in front of the HSS, that the SMSC connects to. It
-// advertises the Relay application, and hands the requests it receives to the nodes behind it, its backend, as a
-// relay would, whatever their Destination-Host. The library's Node answers a request for another host itself, so the
-// agent speaks Diameter over SCTP directly.
 type fakeAgent struct {
 	t       testing.TB
 	host    string
@@ -48,12 +43,10 @@ type fakeAgent struct {
 	ln      *sctp.Listener
 	port    int
 
-	mu       sync.Mutex
-	conns    []*agentConn
-	requests []agentRequest
-	// answer, when it returns an answer, answers a request instead of the backend.
-	answer func(req *diameter.Message) *diameter.Message
-	// applications are those the agent advertises; Relay when empty.
+	mu           sync.Mutex
+	conns        []*agentConn
+	requests     []agentRequest
+	answer       func(req *diameter.Message) *diameter.Message
 	applications []uint32
 	closed       bool
 }
@@ -64,8 +57,7 @@ type agentConn struct {
 	mu      sync.Mutex
 	pending map[uint32]chan *diameter.Message
 	hbh     uint32
-	// origin is the Origin-Host of the CER.
-	origin string
+	origin  string
 }
 
 func newFakeAgent(t testing.TB, host, realm string, backend *fakeCore) *fakeAgent {
@@ -121,7 +113,6 @@ func (a *fakeAgent) accept() {
 	}
 }
 
-// shutdown closes the agent and its connections, as an agent that goes down would.
 func (a *fakeAgent) shutdown() {
 	a.mu.Lock()
 	a.closed = true
@@ -239,7 +230,6 @@ func (c *agentConn) write(m *diameter.Message) error {
 	return err
 }
 
-// advertise makes the agent advertise applications in place of Relay.
 func (a *fakeAgent) advertise(applications ...uint32) {
 	a.mu.Lock()
 	a.applications = applications
@@ -252,7 +242,6 @@ func (a *fakeAgent) setAnswer(f func(req *diameter.Message) *diameter.Message) {
 	a.mu.Unlock()
 }
 
-// received returns the requests of a command that the agent received.
 func (a *fakeAgent) received(command uint32) []agentRequest {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -268,7 +257,6 @@ func (a *fakeAgent) received(command uint32) []agentRequest {
 	return out
 }
 
-// connections returns the Origin-Host of each connection the SMSC opened to the agent.
 func (a *fakeAgent) connections() []string {
 	a.mu.Lock()
 	conns := slices.Clone(a.conns)
@@ -285,8 +273,6 @@ func (a *fakeAgent) connections() []string {
 	return out
 }
 
-// relay sends a request to the SMSC on its newest connection, as the agent relays it from a node behind it, and
-// returns the answer.
 func (a *fakeAgent) relay(req *diameter.Message) *diameter.Message {
 	a.t.Helper()
 
@@ -321,7 +307,6 @@ func (a *fakeAgent) relay(req *diameter.Message) *diameter.Message {
 	}
 }
 
-// peerParams is the configuration of a peer for the agent.
 func (a *fakeAgent) peerParams(routes ...api.PeerRoute) api.PeerParams {
 	return api.PeerParams{Host: a.host, Addresses: []string{loopback.String()}, Port: a.port, Routes: routes}
 }
@@ -334,7 +319,6 @@ func sgdRoute(realm string, priority int) api.PeerRoute {
 	return api.PeerRoute{Realm: realm, Application: "sgd", Priority: priority}
 }
 
-// addPeer configures a peer, and waits for the SMSC to connect to it.
 func (s *smsc) addPeer(t *testing.T, params api.PeerParams) api.Peer {
 	t.Helper()
 
@@ -374,8 +358,6 @@ func (c *fakeCore) setServingMME(name, realm string) {
 	c.mu.Unlock()
 }
 
-// roamingSMSC returns an HSS that knows bob roaming on the visited MME, the visited MME behind an agent, and the
-// SMSC.
 func roamingSMSC(t *testing.T) (hss, mme *fakeCore, s *smsc) {
 	t.Helper()
 
@@ -535,13 +517,11 @@ func TestDirectlyConnectedMMEIsPreferredOverARoute(t *testing.T) {
 }
 
 func TestRoutingInfoGoesThroughAConfiguredDRA(t *testing.T) {
-	// The HSS is behind the DRA: it never connects to the SMSC.
 	hss := newFakeCore(t, alice, bob)
 	s := startSMSC(t, testConfig(t, filepath.Join(t.TempDir(), "smsc.db")))
 	dra := newFakeAgent(t, "dra1.dra.example", "dra.example", hss)
 	s.addPeer(t, dra.peerParams(api.PeerRoute{Realm: realm, Application: "s6c"}))
 
-	// The routing answer names the HSS's own MME, which is connected.
 	mme := newNamedFakeCore(t, "mme1."+realm, alice, bob)
 	hss.setServingMME(mme.host, realm)
 	mme.connect(s)
@@ -561,7 +541,6 @@ func TestRoutingInfoGoesThroughAConfiguredDRA(t *testing.T) {
 	var status api.DiameterStatus
 	s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status)
 
-	// The MME advertises S6c in the operator's realm, so it counts as an HSS too.
 	r := status.Routes[0]
 	if r.Realm != realm || r.Application != "s6c" || !slices.Contains(r.Peers, dra.host) {
 		t.Fatalf("HSS route = %+v", r)
@@ -583,7 +562,6 @@ func TestDefaultRouteDoesNotCatchTheHomeRealm(t *testing.T) {
 	homeMME := newNamedFakeCore(t, "mme1."+realm, alice, bob)
 	hss.setServingMME(homeMME.host, realm)
 
-	// The home MME connected once, then closed: it has left the peer table.
 	homeMME.connect(s)
 
 	if err := homeMME.node.SetPeers(nil); err != nil {
@@ -612,7 +590,6 @@ func TestDefaultRouteDoesNotCatchTheHomeRealm(t *testing.T) {
 		t.Fatalf("the default route took the home realm: %+v", got)
 	}
 
-	// An explicit route to the home realm sends it to the agent.
 	params := dea.peerParams(defaultSGd(), sgdRoute(realm, 0))
 	if code := s.api(t, http.MethodPut, fmt.Sprintf("/api/v1/diameter/peers/%d", p.ID), params, nil); code != http.StatusOK {
 		t.Fatalf("PUT peer = %d", code)
@@ -632,7 +609,6 @@ func TestMobileOriginatedMessageThroughAnEdgeAgent(t *testing.T) {
 	dea := newFakeAgent(t, "dea1.ipx.example", ipxRealm, mme)
 	s.addPeer(t, dea.peerParams(defaultSGd()))
 
-	// The OFR of the visited MME, which the agent relays with its Origin-Host.
 	mme.smsc = smscHost
 	ofr := mme.request(sgd.CommandMOForwardShortMessage, sgd.ApplicationID,
 		diameter.OctetString(tgpp.AVPSCAddress, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(t, serviceCentreAddress)),
@@ -646,7 +622,6 @@ func TestMobileOriginatedMessageThroughAnEdgeAgent(t *testing.T) {
 		t.Fatalf("OFA result = %d", rc)
 	}
 
-	// alice roams on the same MME.
 	eventually(t, "delivery to alice", func() bool { return len(mme.deliveredTo(alice.imsi)) == 1 })
 
 	if got := hss.deliveredTo(alice.imsi); len(got) != 0 {
@@ -766,7 +741,6 @@ func TestPeersAreDialledAfterARestart(t *testing.T) {
 	s.waitForPeer(t, p.ID, "open")
 }
 
-// syncBuffer is a log destination that the SMSC writes to concurrently.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -794,7 +768,6 @@ func TestConfiguredHSSWithoutAnS6cRouteIsLogged(t *testing.T) {
 
 	s := startSMSC(t, cfg)
 	hss := newFakeCore(t, alice, bob)
-	// The HSS listens, and gives the operator's realm, but the SMSC has no s6c route to it.
 	hssDRA := newFakeAgent(t, coreHost, realm, hss)
 	s.addPeer(t, hssDRA.peerParams(sgdRoute(visitedRealm, 0)))
 
@@ -832,8 +805,7 @@ func TestPeerWithoutS6cIsNotAnHSS(t *testing.T) {
 	}
 }
 
-// The HSS names an IP-SM-GW without its realm (TS 29.338 clause 5.3.3.6). One that is not connected is in the home
-// realm, reached through the agent of its route.
+// TS 29.338 clause 5.3.3.6
 func TestMessageIsDeliveredToAnIPSMGWViaAnAgent(t *testing.T) {
 	hss, s := newSMSC(t, alice, bob)
 	ipSMGW := newNamedFakeCore(t, "ipsmgw."+realm, alice, bob)

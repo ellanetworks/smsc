@@ -14,11 +14,8 @@ import (
 	versioncollector "github.com/prometheus/client_golang/prometheus/collectors/version"
 )
 
-// pendingTimeout bounds counting the pending messages for a scrape.
 const pendingTimeout = 2 * time.Second
 
-// metrics are those the API serves. They are created once per server and outlive the Diameter node, which the
-// server replaces when the operator settings change its identity, so that a settings change keeps the counts.
 type metrics struct {
 	registry *prometheus.Registry
 	received *intake.Received
@@ -27,8 +24,6 @@ type metrics struct {
 	smpp     *esme.Metrics
 }
 
-// newMetrics registers the metrics of the Go runtime, the process, the build, the database, the messages and the
-// requests to the peers, and those of the SMPP listener. watchHSS adds the count of the HSSs.
 func newMetrics(database *db.DB) *metrics {
 	m := &metrics{
 		registry: prometheus.NewRegistry(),
@@ -38,8 +33,6 @@ func newMetrics(database *db.DB) *metrics {
 	}
 	m.smpp = esme.NewMetrics(database)
 
-	// The build's labels are those of Prometheus's own build_info, with the SMSC's version and, when the build sets
-	// it, its revision.
 	v := version.Get()
 
 	build := prometheus.Labels{"version": v.Version}
@@ -62,7 +55,6 @@ func newMetrics(database *db.DB) *metrics {
 	return m
 }
 
-// watchHSS registers the count of the HSSs the SMSC can route through, read from the node in place when scraped.
 func (m *metrics) watchHSS(hss hssSender) {
 	m.registry.MustRegister(hssPeersCollector{count: func() int {
 		return len(hss.hosts())
@@ -77,8 +69,6 @@ var pendingDesc = prometheus.NewDesc(
 	[]string{"type", "state"}, nil,
 )
 
-// pendingCollector counts the pending messages in the database when scraped, so that the count is that of the
-// messages, and of the status reports on them, that the API shows.
 type pendingCollector struct {
 	database *db.DB
 }

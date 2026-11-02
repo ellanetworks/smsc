@@ -18,8 +18,6 @@ func writeResponse(w http.ResponseWriter, r *http.Request, v any, status int, lo
 	writeJSON(w, r, Response{Result: v}, status, logger)
 }
 
-// writeError answers a request with an error, which it logs with the request's context, and so its span's trace
-// context: at level error for a failure of the SMSC, debug for one of the client.
 func writeError(w http.ResponseWriter, r *http.Request, status int, message string, err error, logger *slog.Logger) {
 	if status >= 500 {
 		logger.ErrorContext(r.Context(), message, slog.Any("error", err))

@@ -23,12 +23,11 @@ import (
 
 var testNow = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 
-// destination is the SMS-SUBMIT TP-DA of +15551230002 (TS 23.040 clause 9.1.2.5).
+// TS 23.040 clause 9.1.2.5
 const destination = "0b915155210300f2"
 
 type testEnv struct {
-	store *db.DB
-	// path is the database's file, which a test reads apart from the store.
+	store    *db.DB
 	path     string
 	service  *Service
 	received *intake.Received
@@ -110,7 +109,6 @@ func (e *testEnv) session(t BindType) *Session {
 	return &Session{ID: 1, ESME: e.esme, UserID: e.user.ID, BindType: t}
 }
 
-// submit sends a submit_sm on a transceiver session, and returns the stored SMS-SUBMIT in hex, or the status.
 func (e *testEnv) submit(t *testing.T, sm smpp.Message) (string, smpp.CommandStatus) {
 	t.Helper()
 
@@ -143,7 +141,6 @@ func unhex(s string) []byte {
 
 func ptr[T any](v T) *T { return &v }
 
-// baseSubmit is a submit_sm from +15550001000 to +15551230002 with the given user data.
 func baseSubmit(dc byte, sm string) smpp.Message {
 	return smpp.Message{
 		Source:       smpp.Address{TON: 1, NPI: 1, Addr: "15550001000"},
@@ -158,8 +155,7 @@ func with(m smpp.Message, edit func(*smpp.Message)) smpp.Message {
 	return m
 }
 
-// TestSubmitMapping checks each rule of the submit_sm mapping (spec_smpp.md §5) against the exact SMS-SUBMIT that
-// the SMSC stores, or the command_status that refuses it (SMPP 3.4 section 5.1.3, Table 5-2).
+// SMPP 3.4 section 5.1.3 table 5-2
 func TestSubmitMapping(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -169,8 +165,6 @@ func TestSubmitMapping(t *testing.T) {
 		status smpp.CommandStatus
 	}{
 		{
-			// smpp-ota-tool.py: esm_class 0x40, PID 0x7F, data_coding 0x02. TP-DCS becomes 0xF6, class 2 (TS 23.040
-			// clause 9.2.3.9), and TP-UDHI is set.
 			name: "pySim OTA submit",
 			sm: with(baseSubmit(0x02, "027000 0011aabb"), func(m *smpp.Message) {
 				m.ESMClass, m.ProtocolID = 0x40, 0x7f
@@ -205,13 +199,11 @@ func TestSubmitMapping(t *testing.T) {
 			want: "0100" + destination + "0004 02 aabb",
 		},
 		{
-			// "hi" in unpacked septets, packed by the SC (TS 23.038 clause 6.1.2.1.1).
 			name: "0x00 with the GSM 7 bit default alphabet",
 			sm:   baseSubmit(0x00, "6869"),
 			want: "0100" + destination + "0000 02 e834",
 		},
 		{
-			// A 6-octet UDH takes 7 septets with one fill bit (TS 23.040 clause 9.2.3.24).
 			name: "0x00 septets after a UDH, with fill bits",
 			sm:   with(baseSubmit(0x00, "050003010201 6869"), func(m *smpp.Message) { m.ESMClass = 0x40 }),
 			want: "4100" + destination + "0000 09 050003010201d069",
@@ -473,7 +465,6 @@ func TestSubmitMapping(t *testing.T) {
 	}
 }
 
-// receivedCount returns ellasmsc_messages_received_total{origin="smpp"} of a result.
 func receivedCount(t *testing.T, r *intake.Received, result string) float64 {
 	t.Helper()
 
@@ -501,8 +492,6 @@ func receivedCount(t *testing.T, r *intake.Received, result string) float64 {
 	return 0
 }
 
-// TestSubmitFailuresAreCounted checks that a submit_sm the SMSC fails to encode counts as an error, once, as one it
-// fails to store does through the Submitter (SRV-L6).
 func TestSubmitFailuresAreCounted(t *testing.T) {
 	tests := []struct {
 		err    error

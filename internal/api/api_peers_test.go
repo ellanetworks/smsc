@@ -112,7 +112,6 @@ func TestPeerStatus(t *testing.T) {
 		Configured: true,
 	}}})
 
-	// A write returns the peer as stored: the SMSC applies it after the response.
 	code, result, errMsg := a.do(t, http.MethodPost, "/api/v1/diameter/peers", deaBody)
 	if code != http.StatusCreated || decodePeer(t, result).Status != nil {
 		t.Fatalf("POST = %d %s %s", code, result, errMsg)
@@ -197,7 +196,6 @@ func TestPeerConflicts(t *testing.T) {
 		t.Fatalf("POST of the same host = %d %q", code, errMsg)
 	}
 
-	// The SMSC's host is smsc.node.<realm> of the operator settings.
 	self := `{"host": "smsc.node.epc.mnc001.mcc001.3gppnetwork.org", "addresses": ["192.0.2.20"]}`
 	if code, _, _ := a.do(t, http.MethodPost, "/api/v1/diameter/peers", self); code != http.StatusConflict {
 		t.Fatalf("POST of the SMSC's host = %d", code)

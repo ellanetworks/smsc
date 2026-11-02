@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// notificationRow is a row of smpp_notifications, as stored, with the ESME of its message.
 type notificationRow struct {
 	ID, MessageID, ESMEID int64
 	Type                  NotificationType
@@ -74,7 +73,6 @@ func notificationByID(t *testing.T, d *DB, id int64) notificationRow {
 	return notificationRow{}
 }
 
-// smppFixture is a database with an ESME, owned by a Submitter.
 type smppFixture struct {
 	d      *DB
 	user   int64
@@ -94,7 +92,6 @@ func newSMPPFixture(t *testing.T) smppFixture {
 	}
 }
 
-// submit stores a message from the fixture's ESME, submitted at the fixture's origin.
 func (f smppFixture) submit(t *testing.T, esme int64, receipt uint8, simAnswer bool) int64 {
 	t.Helper()
 
@@ -106,7 +103,6 @@ func (f smppFixture) submit(t *testing.T, esme int64, receipt uint8, simAnswer b
 	return id
 }
 
-// attempt stores a delivery attempt on a message, with an SMS-DELIVER-REPORT when report is not nil.
 func (f smppFixture) attempt(t *testing.T, id int64, outcome string, report []byte) int64 {
 	t.Helper()
 
@@ -126,8 +122,6 @@ const defaultValidity = 604800 * time.Second
 func TestCompleteMessageQueuesNotifications(t *testing.T) {
 	report := []byte{0x00, 0x07, 0x7f, 0xf6, 0x03, 0x02, 0x71, 0x00}
 
-	// attempts stores the delivery attempts of a message, and returns the ID of the one whose report a SIM answer
-	// forwards, or 0 when there is none to forward.
 	attemptCases := []struct {
 		name     string
 		attempts func(t *testing.T, f smppFixture, id int64) int64
@@ -191,7 +185,6 @@ func TestCompleteMessageQueuesNotifications(t *testing.T) {
 							got = append(got, n.Type)
 						}
 
-						// The rows are in id order, so the SIM answer comes first.
 						if !reflect.DeepEqual(got, want) {
 							t.Fatalf("notifications = %v, want %v", got, want)
 						}
@@ -263,8 +256,6 @@ func TestCompleteMessageQueuesNothingForOtherOrigins(t *testing.T) {
 	}
 }
 
-// TestCompleteMessageQueuesInItsTransaction checks that a failure to queue a notification leaves the message
-// pending, with no status report and no other notification.
 func TestCompleteMessageQueuesInItsTransaction(t *testing.T) {
 	ctx := context.Background()
 	f := newSMPPFixture(t)
@@ -272,7 +263,6 @@ func TestCompleteMessageQueuesInItsTransaction(t *testing.T) {
 	id := f.submit(t, f.esme, ReceiptFinal, true)
 	f.attempt(t, id, "success", []byte{0x00, 0x07})
 
-	// The SIM answer goes in first; the receipt after it fails.
 	if _, err := f.d.conn.ExecContext(ctx, `CREATE TRIGGER fail_receipt BEFORE INSERT ON smpp_notifications
 		WHEN NEW.type = 'receipt' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`); err != nil {
 		t.Fatal(err)
@@ -304,7 +294,6 @@ func TestCompleteMessageQueuesInItsTransaction(t *testing.T) {
 		t.Fatalf("notifications = %+v, want 2", rows)
 	}
 
-	// A second completion is refused and queues nothing more.
 	if err := f.d.CompleteMessage(ctx, id, StatusFailed, at, nil, 0); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("CompleteMessage twice = %v, want ErrNotPending", err)
 	}
@@ -334,7 +323,6 @@ func TestReplacedSMPPMessageGetsADeletedReceipt(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// A report on the attempt would be a SIM answer, but a replaced message gets none.
 			f.attempt(t, id, "error", []byte{0x00, 0x07})
 
 			replacedAt := f.origin.Add(time.Minute)
@@ -368,7 +356,6 @@ func TestReplacedSMPPMessageGetsADeletedReceipt(t *testing.T) {
 				t.Fatalf("receipt = %+v, want TP-Status 2", n)
 			}
 
-			// Its message_state is that of the message's status, replaced: DELETED.
 			if due, err := f.d.DueNotifications(ctx, f.esme, replacedAt, nil, 10); err != nil || len(due) != 1 ||
 				due[0].MessageState != 4 {
 				t.Fatalf("DueNotifications = %+v, %v; want DELETED (4)", due, err)
@@ -390,7 +377,6 @@ func TestDueNotifications(t *testing.T) {
 	report := []byte{0x00, 0x07, 0x7f, 0xf6, 0x03, 0x02, 0x71, 0x00}
 	reference := uint16(0x1234)
 
-	// answered: a SIM answer, then a receipt.
 	m := smppMessage(f.esme, f.user, ReceiptFinal, true, f.origin)
 	m.SMPP.UserMessageReference = &reference
 
@@ -406,13 +392,11 @@ func TestDueNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// failed: a receipt, completed a second later.
 	failed := f.submit(t, f.esme, ReceiptFailure, false)
 	if err := d.CompleteMessage(ctx, failed, StatusFailed, t0.Add(time.Second), nil, 0x42); err != nil {
 		t.Fatal(err)
 	}
 
-	// other: a receipt to another ESME.
 	other := f.submit(t, otherESME, ReceiptFinal, false)
 	if err := d.CompleteMessage(ctx, other, StatusDelivered, t0, nil, 0); err != nil {
 		t.Fatal(err)
@@ -515,7 +499,6 @@ func TestDueNotifications(t *testing.T) {
 		}
 	})
 
-	// Retrying moves the notification on, and counts the attempt.
 	retryAt := later.Add(10 * time.Minute)
 	if err := d.RetryNotification(ctx, failedReceipt, retryAt); err != nil {
 		t.Fatalf("RetryNotification: %v", err)
@@ -534,7 +517,6 @@ func TestDueNotifications(t *testing.T) {
 		t.Fatalf("DueNotifications once the retry is due = %+v, %v", ns, err)
 	}
 
-	// Acknowledging the SIM answer frees the receipt of the same message.
 	if err := d.CloseNotification(ctx, simAnswer, NotificationAcknowledged); err != nil {
 		t.Fatalf("CloseNotification: %v", err)
 	}
@@ -551,7 +533,6 @@ func TestDueNotifications(t *testing.T) {
 		t.Fatalf("CloseNotification of an unknown ID = %v, want ErrNotFound", err)
 	}
 
-	// A retry of a closed notification changes nothing.
 	if err := d.RetryNotification(ctx, simAnswer, retryAt); err != nil {
 		t.Fatal(err)
 	}
@@ -634,12 +615,10 @@ func TestExpireAndCountNotifications(t *testing.T) {
 		t.Fatalf("NextNotificationAt = %v, %t, %v, want %v", at, ok, err, t0)
 	}
 
-	// The rows already due, in flight or waiting behind another, do not count: the next is the second's (SRV-L2).
 	if at, ok, err := d.NextNotificationAt(ctx, f.esme, t0); err != nil || !ok || !at.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("NextNotificationAt after the first is due = %v, %t, %v, want %v", at, ok, err, t0.Add(time.Hour))
 	}
 
-	// A retry later than its expiry: the expiry comes first.
 	thirdReceipt := notificationRows(t, d, third)[0].ID
 	if err := d.RetryNotification(ctx, thirdReceipt, t0.Add(30*24*time.Hour)); err != nil {
 		t.Fatal(err)
@@ -649,7 +628,6 @@ func TestExpireAndCountNotifications(t *testing.T) {
 		t.Fatalf("NextNotificationAt = %v, %t, %v, want the expiry %v", at, ok, err, t0.Add(defaultValidity))
 	}
 
-	// Closed rows do not count.
 	firstRows := notificationRows(t, d, first)
 	if err := d.CloseNotification(ctx, firstRows[0].ID, NotificationAcknowledged); err != nil {
 		t.Fatal(err)
@@ -662,7 +640,6 @@ func TestExpireAndCountNotifications(t *testing.T) {
 
 	expiry := t0.Add(defaultValidity)
 
-	// Expired rows do not count, and nothing is expired yet before then.
 	if counts, err := d.CountPendingNotifications(ctx, expiry); err != nil ||
 		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 1, NotificationSIMAnswer: 0}) {
 		t.Fatalf("CountPendingNotifications at expiry = %v, %v", counts, err)
@@ -730,8 +707,7 @@ func TestPurgeKeepsMessagesWithNotificationsToSend(t *testing.T) {
 	before := cutoff.Add(-time.Hour)
 
 	tests := []struct {
-		name string
-		// validity is the default validity, which the notification expires after; 0 keeps the default.
+		name       string
 		validity   time.Duration
 		close      NotificationResult
 		wantPurged bool
@@ -795,8 +771,7 @@ func TestPurgeKeepsMessagesWithNotificationsToSend(t *testing.T) {
 	}
 }
 
-// TestReplaceIsScopedToTheAccount checks that a replace type from the API or SMPP replaces only a pending message of
-// the same account, while one from an MS replaces any of its originator (TS 23.040 clause 9.2.3.9).
+// TS 23.040 clause 9.2.3.9
 func TestReplaceIsScopedToTheAccount(t *testing.T) {
 	ctx := context.Background()
 	f := newSMPPFixture(t)
@@ -832,7 +807,6 @@ func TestReplaceIsScopedToTheAccount(t *testing.T) {
 		return id
 	}
 
-	// SMPP: another ESME with the same originator does not replace it; the same ESME does.
 	smppID := create(replaceType(smppMessage(f.esme, f.user, ReceiptNone, false, f.origin)))
 	create(replaceType(smppMessage(otherESME, other, ReceiptNone, false, f.origin.Add(time.Second))))
 
@@ -840,7 +814,6 @@ func TestReplaceIsScopedToTheAccount(t *testing.T) {
 		t.Fatalf("SMPP message after another ESME's replace = %s, want pending", s)
 	}
 
-	// An API message of the same user as the ESME is another account.
 	create(api(f.user, f.origin.Add(2*time.Second)))
 
 	if s := status(smppID); s != StatusPending {
@@ -853,7 +826,6 @@ func TestReplaceIsScopedToTheAccount(t *testing.T) {
 		t.Fatalf("SMPP message after its ESME's replace = %s, want replaced", s)
 	}
 
-	// API: another user does not replace it; the same user does.
 	apiID := create(api(other, f.origin.Add(4*time.Second)))
 	create(api(f.user, f.origin.Add(5*time.Second)))
 
@@ -867,7 +839,6 @@ func TestReplaceIsScopedToTheAccount(t *testing.T) {
 		t.Fatalf("API message after its user's replace = %s, want replaced", s)
 	}
 
-	// An MS follows the plain rule: the latest pending message of the originator and the replace type.
 	create(replaceType(testMessage(0, false, []byte{0x01}, f.origin.Add(7*time.Second))))
 
 	if s := status(latest); s != StatusReplaced {

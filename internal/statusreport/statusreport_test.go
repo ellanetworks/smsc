@@ -19,11 +19,9 @@ var (
 	}
 )
 
-// submitTPDU is an SMS-SUBMIT with TP-SRR, TP-MR 7, to +15551230002.
 const submitTPDU = "21" + "07" + "0b91" + "5155210300f2" + "00" + "00" + "05" + "e8329bfd06"
 
-// selectiveTPDU is an SMS-SUBMIT with TP-SRR and a Selective Status Report for permanent errors only (TS 23.040 clause
-// 9.2.3.24.5), which the SC does not support.
+// TS 23.040 clause 9.2.3.24.5
 const selectiveTPDU = "61" + "07" + "0b91" + "5155210300f2" + "00" + "04" + "04" + "03" + "060102"
 
 func message(t *testing.T, tpduHex string) db.Message {

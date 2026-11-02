@@ -1,9 +1,5 @@
 package smpp
 
-// Interoperability with github.com/linxGnu/gosmpp (Apache-2.0), a test-only dependency: a gosmpp ESME session bound to
-// our Server, and our Client bound to a scripted SMSC that frames its PDUs with gosmpp's codec. gosmpp has no SMSC
-// session, so the second proves codec interop and our Client's session behaviour, not gosmpp's.
-
 import (
 	"bytes"
 	"context"
@@ -17,10 +13,7 @@ import (
 	"github.com/linxGnu/gosmpp/pdu"
 )
 
-// TestGosmppESME binds a gosmpp transceiver to our server: submit_sm, deliver_sm with optional parameters, the
-// server's enquire_link, and gosmpp's unbind.
 func TestGosmppESME(t *testing.T) {
-	// An enquire_link every 50 ms, closing the session if one is unanswered within 300 ms.
 	ts := newTestServer(t, func(cfg *ServerConfig) {
 		cfg.Session.EnquireLinkInterval = 50 * time.Millisecond
 		cfg.Session.ResponseTimeout = 300 * time.Millisecond
@@ -72,8 +65,6 @@ func TestGosmppESME(t *testing.T) {
 		t.Fatalf("submit_sm_resp %+v", resp)
 	}
 
-	// The server's enquire_links, answered by gosmpp, keep the session bound past the response_timer: an unanswered
-	// one would close it with ErrEnquireLinkTimeout.
 	time.Sleep(time.Second)
 
 	if sess.State() != StateBoundTRX {
@@ -115,7 +106,6 @@ func TestGosmppESME(t *testing.T) {
 	}
 }
 
-// next returns the next PDU of type T from ch, skipping others.
 func next[T pdu.PDU](t *testing.T, ch chan pdu.PDU) T {
 	t.Helper()
 
@@ -137,8 +127,6 @@ func next[T pdu.PDU](t *testing.T, ch chan pdu.PDU) T {
 	}
 }
 
-// gosmppSMSC is a minimal SMSC built from gosmpp's codec: it accepts one connection, binds it, answers submit_sm,
-// enquire_link and unbind, and sends a deliver_sm after the bind.
 type gosmppSMSC struct {
 	addr     string
 	got      chan pdu.PDU
@@ -227,9 +215,6 @@ func (g *gosmppSMSC) serve(c net.Conn) error {
 	}
 }
 
-// TestClientToGosmppSMSC binds our client to the scripted SMSC: submit_sm with a user data header and an optional
-// parameter, deliver_sm answered, unbind. It checks that each PDU decodes on the other side, and that Close ends the
-// session with unbind and its unbind_resp.
 func TestClientToGosmppSMSC(t *testing.T) {
 	d := pdu.NewDeliverSM().(*pdu.DeliverSM)
 	d.SourceAddr = gosmppAddress(t, "15551230002")
@@ -293,8 +278,6 @@ func TestClientToGosmppSMSC(t *testing.T) {
 	ud, _ := s.Message.GetMessageData()
 	udh, _ := s.Message.UDH().MarshalBinary()
 
-	// gosmpp maps data_coding to its encodings and has none for 0xF6 (GSM message class control, §5.2.19), so it
-	// keeps no value for it.
 	if s.EsmClass != 0x40 || s.ProtocolID != 0x7f || s.RegisteredDelivery != 0x09 || s.ValidityPeriod != "000001000000000R" ||
 		s.Message.Encoding() != nil || !bytes.Equal(append(udh, ud...), m.ShortMessage) ||
 		!bytes.Equal(s.OptionalParameters[pdu.TagUserMessageReference].Data, []byte{0, 9}) {

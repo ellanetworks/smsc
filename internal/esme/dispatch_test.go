@@ -17,7 +17,6 @@ import (
 	"github.com/ellanetworks/smsc/smpp"
 )
 
-// fakeConn is a bound session that answers each deliver_sm with the status that answer returns.
 type fakeConn struct {
 	got    chan *smpp.DeliverSM
 	answer func(*smpp.DeliverSM) (smpp.CommandStatus, error)
@@ -62,7 +61,6 @@ func (c *fakeConn) none(t *testing.T) {
 	}
 }
 
-// clock is a time that a test moves.
 type clock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -81,7 +79,6 @@ func (c *clock) advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
-// run starts the dispatcher with a clock, until the test ends.
 func (e *testEnv) run(t *testing.T) *clock {
 	t.Helper()
 
@@ -105,13 +102,10 @@ func (e *testEnv) run(t *testing.T) *clock {
 	return c
 }
 
-// bind attaches a session of a kind, as the server does once the ESME has its bind response.
 func (e *testEnv) bind(id uint64, kind BindType, esme db.ESME) *fakeConn {
 	return e.bindAnswering(id, kind, esme, nil)
 }
 
-// bindAnswering binds a session that answers each deliver_sm with what answer returns. answer is set before the session
-// is attached, since the service may deliver to it as soon as it is.
 func (e *testEnv) bindAnswering(
 	id uint64, kind BindType, esme db.ESME, answer func(*smpp.DeliverSM) (smpp.CommandStatus, error),
 ) *fakeConn {
@@ -122,7 +116,6 @@ func (e *testEnv) bindAnswering(
 	return conn
 }
 
-// stored submits a message and returns its ID.
 func (e *testEnv) stored(t *testing.T, sm smpp.Message) int64 {
 	t.Helper()
 
@@ -136,7 +129,6 @@ func (e *testEnv) stored(t *testing.T, sm smpp.Message) int64 {
 	return n
 }
 
-// complete records a delivery attempt with a report, if any, and gives the message its final status.
 func (e *testEnv) complete(t *testing.T, id int64, status db.MessageStatus, tpStatus uint8, outcome, report string, at time.Time) {
 	t.Helper()
 
@@ -169,7 +161,6 @@ func encodeDeliverSM(t *testing.T, d *smpp.DeliverSM) string {
 	return hex.EncodeToString(b[smpp.HeaderLength:])
 }
 
-// cstring is the hex of a C-Octet String.
 func cstring(s string) string { return hex.EncodeToString(append([]byte(s), 0)) }
 
 func TestReceipt(t *testing.T) {
@@ -190,8 +181,6 @@ func TestReceipt(t *testing.T) {
 	text := "id:" + strconv.FormatInt(id, 10) + " sub:001 dlvrd:001 submit date:2610281200 done date:2610281201 " +
 		"stat:DELIVRD err:000 text:"
 
-	// §2.11 swaps the addresses; esm_class 0x04 is an SMSC Delivery Receipt, data_coding 0x01 IA5, and the TLVs are
-	// receipted_message_id, user_message_reference and message_state, and no other (SMPP 3.4 Table 4-18).
 	want := "00" + "0101" + cstring("15551230002") + "0101" + cstring("15550001000") + "04" + "00" + "00" + "00" + "00" +
 		"00" + "00" + "01" + "00" + hex.EncodeToString([]byte{byte(len(text))}) + hex.EncodeToString([]byte(text)) +
 		"001e0002" + cstring(strconv.FormatInt(id, 10)) + "020400020102" + "0427000102"
@@ -203,8 +192,7 @@ func TestReceipt(t *testing.T) {
 	waitResult(t, env, id, db.NotificationReceipt, db.NotificationAcknowledged)
 }
 
-// TestReceiptEchoesTheSourceNPI checks that a receipt goes to the source address as submitted, source_addr_npi
-// included (SMPP 3.4 section 2.11), while the stored originator, which the TPDU takes, is normalised (SRV-L9).
+// SMPP 3.4 section 2.11
 func TestReceiptEchoesTheSourceNPI(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
@@ -226,7 +214,6 @@ func TestReceiptEchoesTheSourceNPI(t *testing.T) {
 	}
 }
 
-// waitResult waits until the notification of a type on a message has a result.
 func waitResult(t *testing.T, env *testEnv, messageID int64, typ db.NotificationType, want db.NotificationResult) {
 	t.Helper()
 
@@ -280,8 +267,6 @@ func TestReceiptStates(t *testing.T) {
 	}
 }
 
-// TestReplacedReceipt checks the DELETED receipt on a message that a replace type message replaces: its submit date is
-// when it was submitted (SRV-L10), and the replacing submit wakes the dispatcher (SRV-L3).
 func TestReplacedReceipt(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
@@ -290,7 +275,6 @@ func TestReplacedReceipt(t *testing.T) {
 	sm := with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.ProtocolID, m.RegisteredDelivery = 0x41, 0x01 })
 	first := env.stored(t, sm)
 
-	// The dispatcher idles, with nothing to send.
 	conn.none(t)
 
 	c.advance(5 * time.Minute)
@@ -310,8 +294,6 @@ func TestReplacedReceipt(t *testing.T) {
 }
 
 func TestSIMAnswer(t *testing.T) {
-	// A Response Packet on an RP-ACK, without TP-UDHI (TS 31.115 clause 4.1), with the PID and DCS of the message
-	// (TS 31.111 clause 7.1.1.1).
 	const ack = "00 07 7f f6 07 02710003aabbcc"
 
 	tests := []struct {
@@ -343,7 +325,6 @@ func TestSIMAnswer(t *testing.T) {
 			esmClass: 0x50, dc: 0x04, pid: 0x7f, ud: "02710003aabbcc",
 		},
 		{
-			// An ME of an earlier release answers RP-ERROR with TP-FCS 0xD5 (TS 23.040 clause 9.2.3.22).
 			name: "RP-ERROR with TP-FCS D5",
 			sm: with(baseSubmit(0xf6, "027000 0011aabb"), func(m *smpp.Message) {
 				m.ESMClass, m.ProtocolID, m.RegisteredDelivery = 0x40, 0x7f, 0x0c
@@ -352,7 +333,6 @@ func TestSIMAnswer(t *testing.T) {
 			esmClass: 0x50, dc: 0xf6, pid: 0x7f, ud: "0271000102ff",
 		},
 		{
-			// TP-UD that does not start with a UDH gets no UDHI, which would make the ESME misread it.
 			name: "PID 0x7F user data without a UDH",
 			sm: with(baseSubmit(0xf6, "027000 0011aabb"), func(m *smpp.Message) {
 				m.ESMClass, m.ProtocolID, m.RegisteredDelivery = 0x40, 0x7f, 0x08
@@ -367,7 +347,6 @@ func TestSIMAnswer(t *testing.T) {
 			esmClass: 0x50, dc: 0x08, pid: 0x00, ud: "027000004100",
 		},
 		{
-			// "hi" in GSM 7 bit, unpacked.
 			name:    "a report in GSM 7 bit",
 			sm:      with(baseSubmit(0x00, "68"), func(m *smpp.Message) { m.RegisteredDelivery = 0x08 }),
 			outcome: "success", report: "00 04 02 e834", status: db.StatusDelivered,
@@ -400,7 +379,6 @@ func TestSIMAnswer(t *testing.T) {
 
 			waitResult(t, env, id, db.NotificationSIMAnswer, db.NotificationAcknowledged)
 
-			// A receipt asked for comes after the answer.
 			if tc.sm.RegisteredDelivery&0x03 != 0 {
 				if r := conn.next(t); r.ESMClass != esmTypeReceipt {
 					t.Fatalf("after the answer: esm_class %#x", r.ESMClass)
@@ -410,8 +388,8 @@ func TestSIMAnswer(t *testing.T) {
 	}
 }
 
-// TestNoSIMAnswerUnasked checks that a (U)SIM data download whose registered_delivery bits 3-2 ask for no SME
-// acknowledgement gets no SIM answer (SMPP 3.4 sections 2.11 and 5.2.17).
+// SMPP 3.4 section 2.11
+// SMPP 3.4 section 5.2.17
 func TestNoSIMAnswerUnasked(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
@@ -440,7 +418,6 @@ func TestSIMAnswerWithoutUserData(t *testing.T) {
 
 	id := env.stored(t, with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.RegisteredDelivery = 0x09 }))
 
-	// TP-PI 0: no TP-UD (TS 23.040 clause 9.2.3.27).
 	env.complete(t, id, db.StatusDelivered, 0, "success", "0000", c.Now())
 
 	if d := conn.next(t); d.ESMClass != esmTypeReceipt {
@@ -450,7 +427,6 @@ func TestSIMAnswerWithoutUserData(t *testing.T) {
 	waitResult(t, env, id, db.NotificationSIMAnswer, db.NotificationNoUserData)
 }
 
-// TestAnswerBeforeReceipt checks that the receipt waits while the answer is retried.
 func TestAnswerBeforeReceipt(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
@@ -475,7 +451,6 @@ func TestAnswerBeforeReceipt(t *testing.T) {
 
 	conn.none(t)
 
-	// The retry is 1 minute later.
 	c.advance(time.Minute)
 	env.service.NotificationsQueued()
 
@@ -520,7 +495,6 @@ func TestOutcomes(t *testing.T) {
 				return
 			}
 
-			// A temporary failure is retried after 1 minute, then 2.
 			for _, wait := range []time.Duration{time.Minute, 2 * time.Minute} {
 				conn.none(t)
 				c.advance(wait)
@@ -538,7 +512,6 @@ func TestExpiry(t *testing.T) {
 	id := env.stored(t, with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.RegisteredDelivery = 0x01 }))
 	env.complete(t, id, db.StatusDelivered, 0, "", "", c.Now())
 
-	// No receiver binds within the default validity period.
 	c.advance(env.settings.Delivery.DefaultValidity)
 	env.service.NotificationsQueued()
 	waitResult(t, env, id, db.NotificationReceipt, db.NotificationExpired)
@@ -547,8 +520,6 @@ func TestExpiry(t *testing.T) {
 	conn.none(t)
 }
 
-// TestRouting checks that a notification goes only to the receiver and transceiver sessions of the ESME that submitted
-// the message, and waits while it has none.
 func TestRouting(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
@@ -574,8 +545,6 @@ func TestRouting(t *testing.T) {
 	waitResult(t, env, id, db.NotificationReceipt, db.NotificationAcknowledged)
 }
 
-// TestLostSession checks that a deliver_sm that fails because its session ended is no failed attempt: it goes, with no
-// backoff, to the next session, however many ended before (SRV-L1).
 func TestLostSession(t *testing.T) {
 	env := newTestEnv(t, nil)
 	c := env.run(t)
@@ -594,7 +563,6 @@ func TestLostSession(t *testing.T) {
 		}
 
 		conn.next(t)
-		// The session takes no other deliver_sm, before the server unregisters it.
 		env.service.NotificationsQueued()
 		conn.none(t)
 		env.service.detach(&Session{ID: uint64(i + 1), BindType: Receiver})
@@ -615,8 +583,6 @@ func TestRetryDelay(t *testing.T) {
 	}
 }
 
-// notificationResult reads the result of the notification of a type on a message, "" while it is open, from the
-// database file.
 func notificationResult(t *testing.T, env *testEnv, messageID int64, typ db.NotificationType) db.NotificationResult {
 	t.Helper()
 

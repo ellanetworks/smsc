@@ -8,7 +8,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// tracedContext returns a context in a recorded span, and the span's traceparent.
 func tracedContext(t *testing.T) (context.Context, string) {
 	t.Helper()
 
@@ -21,8 +20,6 @@ func tracedContext(t *testing.T) (context.Context, string) {
 	return ctx, "00-" + sc.TraceID().String() + "-" + sc.SpanID().String() + "-01"
 }
 
-// TestMessagesStoreTheirCreationContext checks that a message, and a status report, keep the trace context of the
-// request that stores them, and that one stored outside a trace has none.
 func TestMessagesStoreTheirCreationContext(t *testing.T) {
 	d := openTestDB(t)
 	at := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)

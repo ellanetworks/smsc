@@ -8,7 +8,6 @@ import {
 export type MessageStatus =
   "pending" | "delivered" | "failed" | "expired" | "replaced";
 
-// A status report is delivered as a message is, but is never replaced.
 export type StatusReportDelivery = Exclude<MessageStatus, "replaced">;
 
 export interface StatusReport {
@@ -48,24 +47,19 @@ export interface Message {
   next_attempt_at?: string;
   status_report: StatusReports;
   submitted_by?: string;
-  // system_id is the ESME that submitted the message over SMPP.
   system_id?: string;
 }
 
-// Octets are in hexadecimal, two digits each.
 export type Octets = string;
 
-// BinaryContent is the TPDU parameters of a binary message (TS 23.040 clause 9.2.3.9).
 export interface BinaryContent {
   protocol_identifier: number;
   data_coding_scheme: number;
-  // user_data_header is the TP-UDH, its length octet included. It is absent when there is none.
   user_data_header?: Octets;
   user_data: Octets;
 }
 
-// DeliverReport is an SMS-DELIVER-REPORT that the recipient answered a delivery attempt with (TS 23.040 clause
-// 9.2.2.1a). Only tpdu is present when it does not decode.
+// TS 23.040 clause 9.2.2.1a
 export interface DeliverReport {
   attempt_id: number;
   tpdu: Octets;
@@ -75,9 +69,7 @@ export interface DeliverReport {
   user_data?: Octets;
 }
 
-// MessageContent is the content of a message, which the other responses leave out. Reading it is audited.
 export interface MessageContent {
-  // text is absent for a binary message.
   text?: string;
   binary?: BinaryContent;
   deliver_reports?: DeliverReport[];
@@ -122,7 +114,6 @@ export interface ListMessagesParams extends PageParams {
   to?: string;
   from?: string;
   status?: MessageStatus;
-  // start and end bound when the messages were created: start included, end excluded.
   start?: string;
   end?: string;
 }

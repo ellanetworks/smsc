@@ -55,12 +55,9 @@ type testAPI struct {
 	handler  http.Handler
 	store    *db.DB
 	notified atomic.Int32
-	// token is the access token of the admin, which do sends.
-	token string
-	// now is the time of the API's clock.
-	now time.Time
-	// logs are the API's logs, as JSON lines.
-	logs bytes.Buffer
+	token    string
+	now      time.Time
+	logs     bytes.Buffer
 }
 
 const (
@@ -70,7 +67,6 @@ const (
 
 var testJWTSecret = []byte("0123456789abcdef0123456789abcdef")
 
-// testConfig is the configuration of an API on a store, with authentication at the cheapest bcrypt cost.
 func testConfig(t *testing.T, store *db.DB) api.Config {
 	t.Helper()
 
@@ -101,7 +97,6 @@ func openStore(t *testing.T) *db.DB {
 	return store
 }
 
-// initialize creates the first user, an admin, and returns its access token.
 func initialize(t *testing.T, h http.Handler) string {
 	t.Helper()
 
@@ -122,7 +117,6 @@ func initialize(t *testing.T, h http.Handler) string {
 	return resp.Result.Token
 }
 
-// request is a request with a bearer token, unless token is empty.
 func request(method, path, body, token string) *http.Request {
 	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
 	if token != "" {
@@ -161,7 +155,6 @@ func newTestAPI(t *testing.T, d api.Diameter) *testAPI {
 	return a
 }
 
-// newUninitializedAPI returns an API without users, whose clock is a.now.
 func newUninitializedAPI(t *testing.T, d api.Diameter) *testAPI {
 	t.Helper()
 
@@ -179,14 +172,12 @@ func newUninitializedAPI(t *testing.T, d api.Diameter) *testAPI {
 	return a
 }
 
-// do sends a request as the admin, and returns its status, and its result or error.
 func (a *testAPI) do(t *testing.T, method, path, body string) (int, json.RawMessage, string) {
 	t.Helper()
 
 	return a.doAs(t, a.token, method, path, body)
 }
 
-// doAs sends a request with a bearer token, or none when token is empty.
 func (a *testAPI) doAs(t *testing.T, token, method, path, body string) (int, json.RawMessage, string) {
 	t.Helper()
 
@@ -389,7 +380,6 @@ func TestGetMessage(t *testing.T) {
 	}
 }
 
-// content returns the content of a message, read with token.
 func (a *testAPI) content(t *testing.T, token string, id int64) api.MessageContent {
 	t.Helper()
 
@@ -401,7 +391,6 @@ func (a *testAPI) content(t *testing.T, token string, id int64) api.MessageConte
 	return decode[api.MessageContent](t, result)
 }
 
-// auditEvents returns the details of the audit events with action that the API logged, oldest first.
 func (a *testAPI) auditEvents(t *testing.T, action string) []string {
 	t.Helper()
 
@@ -431,7 +420,6 @@ func TestGetMessageContent(t *testing.T) {
 		Originator: db.Address{Digits: "15550001111", TypeOfNumber: 1, NumberingPlan: 1},
 		Recipient:  db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1},
 		MSISDN:     "15551230002", Origin: db.OriginMobile,
-		// TP-DCS 0x04: 8-bit data.
 		TPDU:        []byte{0x01, 0x00, 0x0b, 0x91, 0x51, 0x55, 0x21, 0x03, 0x00, 0xf2, 0x00, 0x04, 0x02, 0xca, 0xfe},
 		SubmittedAt: testNow, ExpiresAt: testNow.Add(time.Hour),
 	})
@@ -668,7 +656,6 @@ func TestListMessages(t *testing.T) {
 
 	a.create(t, "EllaSMSC", "+15551230004", "four")
 
-	// A numeric originator with the same characters as the name, which only the network could store.
 	if _, err := a.store.CreateMessage(context.Background(), db.NewMessage{
 		Originator: db.Address{Digits: "EllaSMSC", TypeOfNumber: 1, NumberingPlan: 1},
 		Recipient:  db.Address{Digits: "15551230004", TypeOfNumber: 1, NumberingPlan: 1},

@@ -1,8 +1,5 @@
 package smpp
 
-// Interoperability with an independent codec, github.com/linxGnu/gosmpp (Apache-2.0), a test-only dependency: PDUs
-// encoded by gosmpp are decoded here, and the reverse.
-
 import (
 	"bytes"
 	"reflect"
@@ -34,7 +31,6 @@ func gosmppParse(t *testing.T, b []byte) pdu.PDU {
 	return p
 }
 
-// gosmppAddress returns an international E.164 address (TON 1, NPI 1).
 func gosmppAddress(t *testing.T, addr string) pdu.Address {
 	t.Helper()
 
@@ -46,7 +42,6 @@ func gosmppAddress(t *testing.T, addr string) pdu.Address {
 	return a
 }
 
-// otaCommand is the user data of a submit_sm from an OTA platform: a command packet header without the UDH.
 var otaCommand = []byte{0x00, 0x1a, 0x15, 0x06, 0x01, 0x25, 0x25, 0xb0, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01}
 
 func TestGosmppBindTransceiver(t *testing.T) {
@@ -56,7 +51,6 @@ func TestGosmppBindTransceiver(t *testing.T) {
 
 	b := gosmppBytes(t, g, 2)
 
-	// gosmpp's octets are those of the hand-assembled §4.1.5 vector.
 	if want := mustHex(t, pduVectors["bind_transceiver"].hex); !bytes.Equal(b, want) {
 		t.Fatalf("gosmpp = %x\nvector   %x", b, want)
 	}
@@ -99,8 +93,6 @@ func TestGosmppBindTransceiverResp(t *testing.T) {
 		t.Fatalf("sc_interface_version = %x", v.Data)
 	}
 
-	// §4.1.6, Table 4-6: a failed bind_transceiver_resp keeps its system_id, unlike the header-only failures of §4.1.2
-	// and §4.1.4. gosmpp reads a system_id in every bind_transceiver_resp, and parses Ella's.
 	nack, err := Encode(&BindResp{ID: CmdBindTransceiverResp, SystemID: "EllaSMSC"}, StatusBindFail, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +114,6 @@ func TestGosmppBindTransceiverResp(t *testing.T) {
 }
 
 func TestGosmppSubmitSM(t *testing.T) {
-	// An OTA submit: UDH 027000 (TS 31.115 command packet IEI 0x70), binary data_coding 0x02, PID 0x7F.
 	g := pdu.NewSubmitSM().(*pdu.SubmitSM)
 	g.SourceAddr = gosmppAddress(t, "15550001000")
 	g.DestAddr = gosmppAddress(t, "15551230002")
@@ -206,8 +197,6 @@ func TestGosmppSubmitSMResp(t *testing.T) {
 }
 
 func TestGosmppDeliverSM(t *testing.T) {
-	// A receipt with the TLVs of §7.2 of the plan, a network_error_code and a vendor-specific TLV. gosmpp writes its
-	// TLVs in map order, so only the decoded fields are compared.
 	g := pdu.NewDeliverSM().(*pdu.DeliverSM)
 	g.SourceAddr = gosmppAddress(t, "15551230002")
 	g.DestAddr = gosmppAddress(t, "15550001000")
@@ -248,7 +237,6 @@ func TestGosmppDeliverSM(t *testing.T) {
 		t.Fatalf("Decode = %#v\nwant %#v", p, want)
 	}
 
-	// The SIM answer of §7.3 of the plan: esm_class 0x50, PID 0x7F, the TP-UD with its UDH.
 	answer := &DeliverSM{Message: Message{
 		Source:       Address{TON: 1, NPI: 1, Addr: "15551230002"},
 		Destination:  Address{TON: 1, NPI: 1, Addr: "15550001000"},
@@ -334,9 +322,9 @@ func TestGosmppEnquireLink(t *testing.T) {
 	}
 }
 
+// SMPP 3.4 section 3.2.4.1
+// SMPP 3.4 section 5.3.2.32
 func TestGosmppEmptyTLV(t *testing.T) {
-	// Disagreement: gosmpp leaves out a TLV whose value is empty. §3.2.4.1 allows a Length of 0, and §5.3.2.32 sets no
-	// minimum for message_payload, so this codec writes it (0424 0000) and decodes it as present and empty.
 	g := pdu.NewDeliverSM().(*pdu.DeliverSM)
 	g.RegisterOptionalParam(pdu.Field{Tag: pdu.TagMessagePayload, Data: []byte{}})
 

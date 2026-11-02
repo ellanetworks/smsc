@@ -27,7 +27,6 @@ export async function send(
   });
 }
 
-// json sends a request, and returns the result of its response.
 export async function json<T>(
   request: APIRequestContext,
   method: Method,
@@ -58,7 +57,6 @@ export async function isInitialized(
   return status.initialized;
 }
 
-// ensureInitialized creates the first user, the e2e admin, unless the SMSC has users already.
 export async function ensureInitialized(
   request: APIRequestContext,
 ): Promise<void> {
@@ -75,7 +73,6 @@ export async function ensureInitialized(
   }
 }
 
-// adminToken returns an access token of the e2e admin, the one auth.setup.ts saved if any.
 export async function adminToken(request: APIRequestContext): Promise<string> {
   await ensureInitialized(request);
 

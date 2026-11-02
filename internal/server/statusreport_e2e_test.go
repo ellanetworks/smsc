@@ -11,8 +11,6 @@ import (
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
-// smsSubmitRequestingReport returns an SMS-SUBMIT of 8-bit text with TP-SRR set, and the validity period, if any, in
-// the enhanced format.
 func smsSubmitRequestingReport(t testing.TB, to subscriber, reference byte, text string, enhancedValidity []byte) []byte {
 	t.Helper()
 
@@ -30,7 +28,6 @@ func smsSubmitRequestingReport(t testing.TB, to subscriber, reference byte, text
 	return append(out, text...)
 }
 
-// statusReportTo waits for the SMS-STATUS-REPORT that the SC delivers to a subscriber.
 func statusReportTo(t *testing.T, core *fakeCore, to subscriber) tpdu.StatusReport {
 	t.Helper()
 
@@ -44,7 +41,6 @@ func statusReportTo(t *testing.T, core *fakeCore, to subscriber) tpdu.StatusRepo
 	return report
 }
 
-// waitForReportDelivered waits for the status report on the first message to be delivered.
 func waitForReportDelivered(t *testing.T, s *smsc) {
 	t.Helper()
 
@@ -91,7 +87,6 @@ func TestStatusReportIsReturnedToTheOriginator(t *testing.T) {
 		t.Fatalf("messages = %+v, %d, %v; want only the short message", messages, total, err)
 	}
 
-	// The API shows the report under the message.
 	status := s.message(t, 1).StatusReport
 	if !status.Requested || len(status.Reports) != 1 || status.Reports[0].TPStatusName != "received" ||
 		status.Reports[0].Status != "delivered" {
@@ -103,7 +98,6 @@ func TestExpiredMessageIsReported(t *testing.T) {
 	core, s := newSMSC(t, alice, bob)
 	core.setAbsent(bob.msisdn, true)
 
-	// Valid for one second, in the enhanced format.
 	validity := []byte{0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}
 
 	if rc := core.submitTPDU(alice, smsSubmitRequestingReport(t, bob, 0x05, "too late", validity)); rc != diameter.ResultSuccess {

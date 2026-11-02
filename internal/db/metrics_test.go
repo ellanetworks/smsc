@@ -26,7 +26,6 @@ func TestMetricsCountFailuresOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A message that is not there and a duplicate are answers, not failures.
 	if _, err := d.GetMessage(ctx, 1); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetMessage of a missing message: %v, want ErrNotFound", err)
 	}
@@ -47,7 +46,6 @@ func TestMetricsCountFailuresOnly(t *testing.T) {
 		t.Errorf("duration has %d observations, want 4", got)
 	}
 
-	// A call on a closed database fails.
 	if err := d.conn.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +75,6 @@ func TestMetricsStorage(t *testing.T) {
 		t.Fatalf("storage has %d series, want 2", n)
 	}
 
-	// A file that is not there, such as a write-ahead log that SQLite removed, is empty.
 	if n, err := fileSize(filepath.Join(t.TempDir(), "missing")); err != nil || n != 0 {
 		t.Fatalf("fileSize of a missing file = %d, %v, want 0, nil", n, err)
 	}
@@ -102,11 +99,7 @@ func TestMetricsLint(t *testing.T) {
 	}
 }
 
-// TestEveryCallIsObserved checks that each exported method of DB that calls the database starts with
-// defer d.observe(...)(), so that a new one cannot be left out of the metrics.
 func TestEveryCallIsObserved(t *testing.T) {
-	// CreateMessage calls CreateMessages, which is observed, so that a call is not counted twice. Ping is the
-	// readiness probe's, which would fill the query metrics with pings.
 	unobserved := map[string]bool{"Close": true, "Collectors": true, "CreateMessage": true, "Ping": true}
 
 	files, err := filepath.Glob("*.go")
@@ -181,7 +174,6 @@ func startsObserved(fn *ast.FuncDecl) bool {
 	return ok && sel.Sel.Name == "observe"
 }
 
-// messageCounts returns the counts of messages completed, by type and status, that are not zero.
 func messageCounts(t *testing.T, d *DB) map[string]float64 {
 	t.Helper()
 
@@ -212,7 +204,6 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A message retried, then failed.
 	retried, err := d.CreateMessage(ctx, testMessage(2, false, []byte{0x02}, now))
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +219,6 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A message replaced, with a report on it.
 	replaced, err := d.CreateMessage(ctx, replaceType(testMessage(3, false, []byte{0x03}, now)))
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +236,6 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A report delivered.
 	reports, err := listStatusReports(ctx, d, delivered)
 	if err != nil || len(reports) != 1 {
 		t.Fatalf("reports = %+v, %v", reports, err)
@@ -267,7 +256,6 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatalf("counts = %v, want %v", got, want)
 	}
 
-	// Neither a message no longer pending, nor a transaction rolled back, counts.
 	if err := d.CompleteMessage(ctx, replaced, StatusDelivered, now, nil, 0); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("err = %v, want ErrNotPending", err)
 	}

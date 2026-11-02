@@ -1,4 +1,3 @@
-// Package logtest records the logs of the SMSC's logger in tests.
 package logtest
 
 import (
@@ -13,13 +12,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Recorder records the logs of a logger as the SMSC's, at level debug.
 type Recorder struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
 }
 
-// Logger returns a logger as the SMSC's that logs to r.
 func (r *Recorder) Logger() *slog.Logger {
 	return logging.New(r, slog.LevelDebug)
 }
@@ -31,7 +28,6 @@ func (r *Recorder) Write(p []byte) (int, error) {
 	return r.buf.Write(p)
 }
 
-// Records returns the logs so far, each a decoded JSON object.
 func (r *Recorder) Records(t *testing.T) []map[string]any {
 	t.Helper()
 
@@ -53,7 +49,6 @@ func (r *Recorder) Records(t *testing.T) []map[string]any {
 	return out
 }
 
-// Messages returns the logs with a msg.
 func (r *Recorder) Messages(t *testing.T, msg string) []map[string]any {
 	t.Helper()
 
@@ -68,7 +63,6 @@ func (r *Recorder) Messages(t *testing.T, msg string) []map[string]any {
 	return out
 }
 
-// InSpan fails the test unless the log carries the trace context of the span.
 func InSpan(t *testing.T, rec map[string]any, span trace.SpanContext) {
 	t.Helper()
 
@@ -85,7 +79,6 @@ func InSpan(t *testing.T, rec map[string]any, span trace.SpanContext) {
 	}
 }
 
-// NoSpan fails the test if the log carries a trace context.
 func NoSpan(t *testing.T, rec map[string]any) {
 	t.Helper()
 

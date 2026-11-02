@@ -23,8 +23,7 @@ func bindRequest(id smpp.CommandID, systemID, password string, remote string) sm
 	}
 }
 
-// TestBindChecks checks each check of a bind (spec_smpp.md §8.2): every refusal is ESME_RBINDFAIL, which does not tell
-// which check failed (SMPP 3.4 section 4.1).
+// SMPP 3.4 section 4.1
 func TestBindChecks(t *testing.T) {
 	tests := []struct {
 		name string
@@ -110,7 +109,6 @@ func TestBindAccountFailures(t *testing.T) {
 	env := newTestEnv(t, nil)
 
 	for i := range api.AccountFailureLimit {
-		// One address per attempt, so that the per-address limit does not count.
 		remote := netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 1, byte(i / 256), byte(i % 256)}), 4000).String()
 		env.service.Authenticate(context.Background(), bindRequest(smpp.CmdBindTransceiver, "ota", "wrong", remote))
 	}
@@ -121,9 +119,6 @@ func TestBindAccountFailures(t *testing.T) {
 	}
 }
 
-// TestBindFailuresOutsideTheNetworks checks that the wrong passwords from outside an account's networks neither count
-// toward its lockout nor are refused by it, and that unknown system_ids, counted with them, cannot fill the account
-// limiter (SRV-M1).
 func TestBindFailuresOutsideTheNetworks(t *testing.T) {
 	env := newTestEnv(t, nil)
 	ctx := context.Background()
@@ -141,13 +136,11 @@ func TestBindFailuresOutsideTheNetworks(t *testing.T) {
 		t.Fatalf("bind after %d wrong passwords from outside = %s, want ESME_ROK", api.AccountFailureLimit, out.Status)
 	}
 
-	// The outsiders' limit refuses outsiders only.
 	if out := env.service.Authenticate(ctx, bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
 		outside(1000))); out.Status != smpp.StatusBindFail {
 		t.Fatalf("bind from outside = %s, want ESME_RBINDFAIL", out.Status)
 	}
 
-	// A full limiter of unknown system_ids does not refuse a known account.
 	for i := range ratelimit.MaxKeys {
 		env.service.outsiders.Allow("unknown" + strconv.Itoa(i))
 	}
@@ -158,7 +151,6 @@ func TestBindFailuresOutsideTheNetworks(t *testing.T) {
 	}
 }
 
-// fakeAccounts is the server's registry.
 type fakeAccounts struct{ closed []string }
 
 func (f *fakeAccounts) CloseAccount(account string) int {
@@ -213,7 +205,6 @@ func TestSubmitOnReceiver(t *testing.T) {
 	}
 }
 
-// TestSubmitStoresSMPP checks what a submit_sm stores for its notifications (spec_smpp.md §5.5, §5.6).
 func TestSubmitStoresSMPP(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -263,9 +254,6 @@ func TestSubmitStoresSMPP(t *testing.T) {
 	}
 }
 
-// TestCloseUserWithoutABind checks that CloseUser finds the ESMEs of a user in the database: a session of an ESME that
-// has not completed a bind, such as one binding while the role changes, is closed through the server's registry
-// (SRV-L7).
 func TestCloseUserWithoutABind(t *testing.T) {
 	env := newTestEnv(t, nil)
 	accounts := &fakeAccounts{}
@@ -279,7 +267,6 @@ func TestCloseUserWithoutABind(t *testing.T) {
 		t.Fatalf("accounts closed = %v, want [%s]", accounts.closed, want)
 	}
 
-	// Another user has no ESME.
 	accounts.closed = nil
 
 	if err := env.service.CloseUser(context.Background(), env.user.ID+1); err != nil || len(accounts.closed) != 0 {
