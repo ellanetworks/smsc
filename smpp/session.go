@@ -599,7 +599,7 @@ func (s *Session) handleRequest(h Header, body []byte) {
 			status = StatusAlyBnd
 		}
 
-		_ = s.respond(h, nil, status)
+		s.refuseInbound(h, status)
 
 		return
 	}

@@ -32,7 +32,11 @@ func (m *RequestMetrics) Collectors() []prometheus.Collector {
 }
 
 func (m *RequestMetrics) instrument(pattern string, next http.Handler) http.Handler {
-	_, route, _ := strings.Cut(pattern, " ")
+	route := pattern
+	if _, path, ok := strings.Cut(pattern, " "); ok {
+		route = path
+	}
+
 	if m == nil || !strings.HasPrefix(route, "/api/") || strings.HasPrefix(route, "/api/v1/pprof/") {
 		return next
 	}

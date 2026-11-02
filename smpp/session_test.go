@@ -117,7 +117,13 @@ func smscHooks() hooks {
 func boundSMSC(t *testing.T, id CommandID, cfg SessionConfig, h Handler) (*Session, *rawPeer) {
 	t.Helper()
 
-	s, p := pipe(t, roleSMSC, cfg, h, smscHooks())
+	return boundSMSCWith(t, id, cfg, h, smscHooks())
+}
+
+func boundSMSCWith(t *testing.T, id CommandID, cfg SessionConfig, h Handler, hk hooks) (*Session, *rawPeer) {
+	t.Helper()
+
+	s, p := pipe(t, roleSMSC, cfg, h, hk)
 	p.send(&Bind{ID: id, SystemID: "esme", Password: "pw", InterfaceVersion: InterfaceVersion}, StatusOK, 1)
 	p.expect(id.Response(), StatusOK, 1)
 	waitState(t, s, boundState(id))
@@ -460,10 +466,7 @@ func TestInboundWindow(t *testing.T) {
 		}
 	}
 
-	s, p := pipe(t, roleSMSC, SessionConfig{InboundWindow: 2}, h, hk)
-	p.send(&Bind{ID: CmdBindTransceiver, SystemID: "esme", Password: "pw", InterfaceVersion: InterfaceVersion}, StatusOK, 1)
-	p.expect(CmdBindTransceiverResp, StatusOK, 1)
-	waitState(t, s, StateBoundTRX)
+	_, p := boundSMSCWith(t, CmdBindTransceiver, SessionConfig{InboundWindow: 2}, h, hk)
 
 	p.send(&SubmitSM{Message: message()}, StatusOK, 2)
 	p.send(&SubmitSM{Message: message()}, StatusOK, 3)
@@ -473,8 +476,13 @@ func TestInboundWindow(t *testing.T) {
 	p.send(&SubmitSM{Message: message()}, StatusOK, 4)
 	p.expect(CmdSubmitSMResp, StatusThrottled, 4)
 
-	if got := <-refused; got.ID != CmdSubmitSM || got.Sequence != 4 {
-		t.Fatalf("refused %+v, want submit_sm 4", got)
+	select {
+	case got := <-refused:
+		if got.ID != CmdSubmitSM || got.Sequence != 4 {
+			t.Fatalf("refused %+v, want submit_sm 4", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("throttled submit_sm not reported")
 	}
 
 	p.send(&EnquireLink{}, StatusOK, 5)
@@ -495,6 +503,31 @@ func TestInboundWindow(t *testing.T) {
 
 	if !seen[2] || !seen[3] {
 		t.Fatalf("responses to %v", seen)
+	}
+}
+
+func TestRefusedHookOnReceiver(t *testing.T) {
+	type refusal struct {
+		id     CommandID
+		status CommandStatus
+	}
+
+	refused := make(chan refusal, 1)
+	hk := smscHooks()
+	hk.refused = func(_ *Session, h Header, status CommandStatus) { refused <- refusal{h.ID, status} }
+
+	_, p := boundSMSCWith(t, CmdBindReceiver, SessionConfig{}, submitOK, hk)
+
+	p.send(&SubmitSM{Message: message()}, StatusOK, 2)
+	p.expect(CmdSubmitSMResp, StatusInvBndSts, 2)
+
+	select {
+	case got := <-refused:
+		if got != (refusal{CmdSubmitSM, StatusInvBndSts}) {
+			t.Fatalf("refused %+v, want submit_sm %s", got, StatusInvBndSts)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("submit_sm on a receiver not reported")
 	}
 }
 
