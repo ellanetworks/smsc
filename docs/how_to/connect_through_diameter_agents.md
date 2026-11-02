@@ -33,6 +33,8 @@ Click **Add Route**, and keep **Application** set to **SGd** and **Destination**
 
 To add a backup agent, repeat with its host and addresses, and set the route's **Priority** to `1`.
 
+When an agent fails with a message in flight, Ella SMSC sends the message through the backup, and the subscriber may receive it twice.
+
 ## 2. Add the DRA
 
 Skip this step if the HSS connects to Ella SMSC.

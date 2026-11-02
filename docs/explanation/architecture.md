@@ -6,7 +6,7 @@ description: Where Ella SMSC sits in a 4G or 5G network, and how phones and appl
 
 Ella SMSC is a Short Message Service Centre (SMSC) for private 4G and 5G networks. It stores the short messages sent to the network's subscribers, and delivers them when their phones can receive them.
 
-Ella SMSC is a single application, with an embedded database, an embedded web UI, and a REST API.
+Ella SMSC is a single application, with an embedded database, an embedded web UI, and an HTTP API.
 
 ## How phones send and receive SMS
 
@@ -55,7 +55,7 @@ Besides phones, applications can send messages to subscribers, for example notif
 
 ## 3GPP roles
 
-Ella SMSC satisfies all three roles in one node:
+Ella SMSC integrates all three 3GPP functions:
 
 | Function | Role | Diameter procedures (TS 29.338) |
 | -------- | ---- | ------------------------------- |
