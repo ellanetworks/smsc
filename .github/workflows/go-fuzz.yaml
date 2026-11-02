@@ -1,0 +1,44 @@
+name: Go Fuzz
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+
+jobs:
+  go-fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { module: ., package: ./internal/tpdu/, target: FuzzDecodeSubmit }
+          - { module: ., package: ./internal/tpdu/, target: FuzzDecodeDeliverReport }
+          - { module: ., package: ./internal/tpdu/, target: FuzzDecodeStatusReport }
+          - { module: ., package: ./internal/tpdu/, target: FuzzSeptets }
+          - { module: smpp, package: ./, target: FuzzDecode }
+          - { module: smpp, package: ./, target: FuzzParseTime }
+          - { module: smpp, package: ./, target: FuzzSession }
+          - { module: smpp, package: ./, target: FuzzSessionESME }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: |
+            go.sum
+            smpp/go.sum
+
+      - name: Fuzz ${{ matrix.package }} ${{ matrix.target }}
+        working-directory: ${{ matrix.module }}
+        run: go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=60s ${{ matrix.package }}
+
+      - name: Upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: ${{ matrix.module }}/${{ matrix.package }}testdata/fuzz/${{ matrix.target }}/
+          if-no-files-found: ignore

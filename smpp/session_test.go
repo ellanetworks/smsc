@@ -866,7 +866,11 @@ func FuzzSession(f *testing.F) {
 	bind, _ := Encode(&Bind{ID: CmdBindTransceiver, SystemID: "esme", InterfaceVersion: 0x34}, StatusOK, 1)
 	submit, _ := Encode(&SubmitSM{Message: message()}, StatusOK, 2)
 
+	enquire, _ := Encode(&EnquireLink{}, StatusOK, 3)
+	unbind, _ := Encode(&Unbind{}, StatusOK, 4)
+
 	f.Add(append(append([]byte{}, bind...), submit...))
+	f.Add(append(append(append(append([]byte{}, bind...), submit...), enquire...), unbind...))
 	f.Add(submit)
 	f.Add([]byte{0, 0, 0, 16, 0, 0, 0, 0x15, 0, 0, 0, 0, 0, 0, 0, 1})
 	f.Add([]byte{0, 0, 0, 1})
@@ -876,19 +880,7 @@ func FuzzSession(f *testing.F) {
 		s := newSession(a, roleSMSC, SessionConfig{ResponseTimeout: 100 * time.Millisecond}, submitOK, smscHooks())
 		s.start()
 
-		go func() {
-			_, _ = b.Write(in)
-			_ = b.Close()
-		}()
-
-		go func() {
-			buf := make([]byte, 1024)
-			for {
-				if _, err := b.Read(buf); err != nil {
-					return
-				}
-			}
-		}()
+		go feed(b, in)
 
 		select {
 		case <-s.Done():

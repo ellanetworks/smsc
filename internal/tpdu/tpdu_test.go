@@ -274,6 +274,7 @@ var alphanumericVectors = []struct {
 	{"@@@@@@@", "0d" + "d0" + "00000000000000"},
 	{"Ella@", "09" + "d0" + "45363b0c00"},
 	{"Design@Home", "14" + "d0" + "c4f23c7d760390ef7619"},
+	{"Ella€", "0b" + "d0" + "45363bbc2903"},
 }
 
 func TestEncodeAlphanumericAddress(t *testing.T) {
@@ -338,7 +339,7 @@ func TestEncodeAlphanumericAddressErrors(t *testing.T) {
 	tests := map[string]Address{
 		"12 characters":      {TypeOfNumber: TypeOfNumberAlphanumeric, Digits: "EllaNetworks"},
 		"empty":              {TypeOfNumber: TypeOfNumberAlphanumeric, Digits: ""},
-		"extension table":    {TypeOfNumber: TypeOfNumberAlphanumeric, Digits: "Ella€"},
+		"11 septets with €":  {TypeOfNumber: TypeOfNumberAlphanumeric, Digits: "EllaNetwor€"},
 		"escape":             {TypeOfNumber: TypeOfNumberAlphanumeric, Digits: "Ella\x1b"},
 		"numbering plan set": {TypeOfNumber: TypeOfNumberAlphanumeric, NumberingPlan: NumberingPlanISDN, Digits: "Ella"},
 	}
@@ -357,14 +358,46 @@ func TestDecodeAlphanumericAddressErrors(t *testing.T) {
 		field string
 		want  error
 	}{
-		"length 21": {"15" + "d0" + "45363bec2cd3ef6ff91a00", ErrUnsupportedAddress},
-		"truncated": {"14" + "d0" + "45363bec2cd3ef6ff9", errTruncated},
+		"length 21":          {"15" + "d0" + "45363bec2cd3ef6ff91a00", ErrUnsupportedAddress},
+		"truncated":          {"14" + "d0" + "45363bec2cd3ef6ff9", errTruncated},
+		"numbering plan set": {"07" + "d1" + "45363b0c", ErrUnsupportedAddress},
+		"no characters":      {"00" + "d0", ErrUnsupportedAddress},
+		"one semi-octet":     {"01" + "d0" + "41", ErrUnsupportedAddress},
+		"lone escape":        {"02" + "d0" + "1b", ErrUnsupportedAddress},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			if _, _, err := decodeAddress(mustHex(t, tt.field)); !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecodeAlphanumericAddressEscapes(t *testing.T) {
+	tests := map[string]struct {
+		septets []byte
+		want    string
+	}{
+		"extension character": {[]byte{0x41, gsm7Escape, 0x28, 0x42}, "A{B"},
+		"escape to escape":    {[]byte{0x41, gsm7Escape, gsm7Escape, 0x42}, "A B"},
+		"undefined extension": {[]byte{0x41, gsm7Escape, 0x43}, "AC"},
+		"trailing escape":     {[]byte{0x41, 0x42, gsm7Escape}, "AB"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, packed := PackSeptets(nil, tt.septets)
+			b := append([]byte{byte((7*len(tt.septets) + 3) / 4), 0xd0}, packed...)
+
+			got, n, err := decodeAddress(b)
+			if err != nil {
+				t.Fatalf("decodeAddress(%x): %v", b, err)
+			}
+
+			if got.Digits != tt.want || n != len(b) {
+				t.Fatalf("decodeAddress(%x) = %q (%d octets), want %q (%d octets)", b, got.Digits, n, tt.want, len(b))
 			}
 		})
 	}

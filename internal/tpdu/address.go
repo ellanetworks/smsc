@@ -25,7 +25,7 @@ const bcdDigits = "0123456789*#abc"
 const maxAddressDigits = 20
 
 // TS 23.040 clause 9.1.2.5
-const maxAlphanumericChars = 11
+const maxAlphanumericSeptets = 11
 
 func decodeAddress(b []byte) (Address, int, error) {
 	if len(b) < 2 {
@@ -50,7 +50,16 @@ func decodeAddress(b []byte) (Address, int, error) {
 	}
 
 	if addr.TypeOfNumber == TypeOfNumberAlphanumeric {
+		if addr.NumberingPlan != 0 {
+			return Address{}, 0, fmt.Errorf("address: %w: alphanumeric with numbering plan %d", ErrUnsupportedAddress,
+				addr.NumberingPlan)
+		}
+
 		addr.Digits = decodeAlphanumeric(b[2:2+valueOctets], length)
+		if addr.Digits == "" {
+			return Address{}, 0, fmt.Errorf("address: %w: alphanumeric without characters", ErrUnsupportedAddress)
+		}
+
 		return addr, 2 + valueOctets, nil
 	}
 
@@ -121,24 +130,20 @@ func semiOctet(c byte) (byte, error) {
 
 // TS 23.040 clause 9.1.2.5
 // TS 23.038 clause 6.1.2.1.1
+// TS 23.038 clause 6.2.1.1
 func (a Address) encodeAlphanumeric() ([]byte, error) {
 	if a.NumberingPlan != 0 {
 		return nil, fmt.Errorf("address: invalid type of address %d/%d", a.TypeOfNumber, a.NumberingPlan)
 	}
 
-	septets := make([]byte, 0, maxAlphanumericChars)
-
-	for _, r := range a.Digits {
-		s, ok := gsm7BasicIndex[r]
-		if !ok {
-			return nil, fmt.Errorf("address: %q is not in the GSM 7-bit default alphabet", r)
-		}
-
-		septets = append(septets, s)
+	chars, ok := gsm7Septets(a.Digits)
+	if !ok {
+		return nil, fmt.Errorf("address: %q is not in the GSM 7-bit default alphabet", a.Digits)
 	}
 
-	if len(septets) == 0 || len(septets) > maxAlphanumericChars {
-		return nil, fmt.Errorf("address: %d characters, want 1 to %d", len(septets), maxAlphanumericChars)
+	septets := flatten(chars)
+	if len(septets) == 0 || len(septets) > maxAlphanumericSeptets {
+		return nil, fmt.Errorf("address: %d septets, want 1 to %d", len(septets), maxAlphanumericSeptets)
 	}
 
 	value := gsm7Part(nil, septets).UserData
@@ -146,11 +151,8 @@ func (a Address) encodeAlphanumeric() ([]byte, error) {
 	return append([]byte{byte((7*len(septets) + 3) / 4), 0x80 | TypeOfNumberAlphanumeric<<4}, value...), nil
 }
 
+// TS 23.040 clause 9.1.2.5
+// TS 23.038 clause 6.2.1.1
 func decodeAlphanumeric(value []byte, length int) string {
-	runes := make([]rune, length*4/7)
-	for i := range runes {
-		runes[i] = gsm7Basic[septetAt(value, i)]
-	}
-
-	return string(runes)
+	return decodeGSM7(value, 0, length*4/7)
 }
