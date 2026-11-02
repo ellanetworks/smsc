@@ -121,7 +121,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | `concatenation.reference`       | int     | Reference shared by the parts of the message. |
 | `concatenation.part`            | int     | Number of this part, from 1. |
 | `concatenation.total`           | int     | Number of parts. |
-| `status`                        | string  | `pending`; `delivered`; `failed`; `expired`, when its validity period ended before its delivery; or `replaced`, by a later message from the same sender, of the same replace type, before its delivery. |
+| `status`                        | string  | See [Statuses](#statuses). |
 | `created_at`                    | string  | Time the SMSC received the message. |
 | `updated_at`                    | string  | Time of the last change. |
 | `expires_at`                    | string  | End of the validity period. |
@@ -139,6 +139,19 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | `status_report.reports[].next_attempt_at` | string | Time of the next delivery attempt of the report. Present while `pending`. |
 | `submitted_by`                  | string  | Email of the user that sent the message over the API, or of the user of the ESME that sent it over SMPP. Absent for a message from a phone. |
 | `system_id`                     | string  | `system_id` of the [ESME](esmes.md) that sent the message over SMPP. Absent for other messages, and once the ESME is deleted. |
+
+### Statuses
+
+| Status | When |
+| ------ | ---- |
+| `pending` | Not yet delivered, within its validity period. |
+| `delivered` | A serving node took it. |
+| `failed` | The recipient is unknown, is not allowed SMS, or has no serving node that supports SGd. |
+| `failed` | The network rejected the recipient's subscription or phone as illegal. |
+| `failed` | The SIM refused a (U)SIM data download message. |
+| `failed` | An attempt failed, and the message is single-shot or retries are off. |
+| `expired` | Its validity period ended before its delivery. |
+| `replaced` | A later message of the same replace type, from the same sender, before its delivery. From the API or an ESME, only by the same user or ESME. |
 
 ### Sample Response
 

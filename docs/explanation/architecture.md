@@ -1,74 +1,64 @@
 ---
-description: How Ella SMSC is built and where it sits in a 4G or 5G network.
+description: Where Ella SMSC sits in a 4G or 5G network, and how phones and applications send it messages.
 ---
 
 # Architecture
 
-A Short Message Service Centre (SMSC) stores the short messages phones send, and forwards them to their recipients. Ella SMSC is a single process, with one SQLite database, one UI, one API and, when configured, an SMPP listener.
+Ella SMSC is a Short Message Service Centre (SMSC) for private 4G and 5G networks. It stores the short messages sent to the network's subscribers, and delivers them when their phones can receive them.
 
-## Where Ella SMSC sits
+Ella SMSC is a single application, with an embedded database, an embedded web UI, and a REST API.
 
-Ella SMSC has no radio access and stores no subscribers. It relies on the core network, over Diameter:
+## How phones send and receive SMS
 
-- **The HSS**, over S6c, says where a recipient is served, and alerts the SMSC when an unreachable recipient is back.
-- **The MME or SMSF**, over SGd, carries messages between the phones and the SMSC, in NAS signalling.
-- **An IP-SM-GW**, over SGd, carries them for phones registered for SMS over IP.
+A phone exchanges SMS with Ella SMSC in one of two ways: over NAS, through the core network, or over IP, through the IMS.
 
-Ella Core provides the HSS, the MME and the SMSF. For how it works with an SMSC, see Ella Core's [SMS Integration](https://docs.ellanetworks.com/core/explanation/sms_integration/).
+### SMS over NAS
 
-Ella SMSC's Diameter host and realm derive from the operator's MCC and MNC: `smsc.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`. Its peers connect to it, and it asks the HSSs of that realm for routing.
+<figure markdown="span">
+  ![SMS over NAS](../images/sms_over_nas.svg){ width="800" }
+  <figcaption>SMS over NAS</figcaption>
+</figure>
 
-## Reaching other networks
+With SMS over NAS, the message travels inside the signalling the phone already exchanges with the core network to attach and stay registered. It needs no IMS.
 
-A subscriber roaming on another network is served by a visited MME or SMSF that never connects to Ella SMSC. Ella SMSC reaches it through a Diameter agent it connects to, such as the edge agent of the operator or of an IPX provider. An HSS behind a DRA is reached the same way.
+### SMS over IP
 
-Each agent has routes: the realms it reaches. A default route takes every other realm, except Ella SMSC's own, so a home MME that is briefly disconnected is retried rather than sent out to the IPX. An agent is asked only for the requests of its routes: an HSS added as an agent needs an S6c route to Ella SMSC's realm.
+<figure markdown="span">
+  ![SMS over IP](../images/sms_over_ip.svg){ width="800" }
+  <figcaption>SMS over IP</figcaption>
+</figure>
 
-When an agent fails with a short message in flight, Ella SMSC sends it through the next one, and the subscriber may receive it twice.
+With SMS over IP, the phone sends and receives its messages as SIP messages through the IMS. An IP Short Message Gateway (IP-SM-GW) in the IMS converts between SIP and short messages, and connects to Ella SMSC. [Ella IMS](https://docs.ellanetworks.com/ims/explanation/sms_over_ip/) includes an IP-SM-GW.
 
-## Receiving
+## Store and forward
 
-A phone's message reaches Ella SMSC when the SMSC number on its SIM card is Ella SMSC's service centre address. The MME, SMSF or IP-SM-GW gives the phone's MSISDN, which is the sender. Ella SMSC converts the recipient to an international number with the operator's numbering plan, stores the message, and acknowledges it.
+1. Ella SMSC stores the message, and acknowledges it to the sender.
+2. It asks the HSS where the recipient is served: an MME, an SMSF or an IP-SM-GW.
+3. It sends the message there.
+4. If the phone is unreachable, the HSS records that a message waits, and alerts Ella SMSC when the phone is back. Ella SMSC also retries after the [retry intervals](../reference/api/delivery.md).
 
-Applications send messages to phones with the [Messages API](../reference/api/messages.md), or over [SMPP](#esmes-over-smpp).
+Messages to a phone are delivered one at a time, in order.
 
-## Delivering
+A message ends delivered, failed, expired at the end of its validity period, or replaced by a later message. See [Statuses](../reference/api/messages.md#statuses).
 
-For each message, Ella SMSC asks the HSS for the serving nodes of the recipient, then tries them in turn until one takes the message. Messages to a phone go one at a time, in order. When more wait, the serving node that took one takes the next, without another routing lookup.
+## Messages from applications
 
-Each lookup and delivery is recorded as an attempt, shown in the UI and the API.
+Besides phones, applications can send messages to subscribers, for example notifications, one-time codes or updates to SIM cards. Ella SMSC offers them two interfaces:
 
-## When a phone is unreachable
+- The [Messages API](../reference/api/messages.md): Ella SMSC's HTTP API, for applications you write or script.
+- [SMPP](../reference/smpp.md): the standard SMSC protocol, for software that already speaks it, such as OTA platforms.
 
-When no serving node takes a message, Ella SMSC makes sure the HSS records that a message waits. The message and the recipient's other messages wait for a retry, after the [retry intervals](../reference/api/delivery.md). When the phone can receive messages again, the HSS alerts Ella SMSC, which delivers them right away.
+<figure markdown="span">
+  ![OTA SIM delivery with SMPP](../images/smsc_apps.svg){ width="800" }
+  <figcaption>OTA SIM delivery with SMPP</figcaption>
+</figure>
 
-A message ends:
+## 3GPP roles
 
-- **delivered**, when a serving node takes it;
-- **failed**, when the recipient is unknown, not allowed SMS, or has no serving node that supports SGd, when the SIM refuses a (U)SIM data download message, or when an attempt fails and the message is single-shot or retries are off;
-- **expired**, when its validity period ends first;
-- **replaced**, when a later message from the same sender replaces it. A message from the Messages API or an ESME is replaced only by one from the same user or ESME.
+Ella SMSC satisfies all three roles in one node:
 
-## Status reports
-
-When a phone asks for status reports, Ella SMSC returns one to it when the message ends. It delivers the report as it does a message.
-
-## ESMEs over SMPP
-
-Platforms built for SMSCs, such as OTA platforms, connect as External Short Message Entities (ESMEs), over SMPP 3.4:
-
-```
-OTA platform (ESME) ──SMPP over TCP or TLS, 2775──▶ SMPP listener ──▶ submission ──▶ database ──▶ delivery ──▶ HSS, MME, SMSF
-        ▲                                                                                       │
-        └──────────────── deliver_sm: receipts, SIM answers ◀── notifications ◀─────────────────┘
-```
-
-- **The SMPP listener** accepts the ESMEs' connections, checks each bind against the ESME accounts, and keeps the sessions. An ESME account acts as a user: the messages it submits are that user's, and the user's role decides what it may do.
-- **Submission.** Each `submit_sm` becomes one short message, through the same path as the [Messages API](../reference/api/messages.md), so the same parameters give the same message. Ella SMSC answers once the message is stored, then delivers it as any other.
-- **Notifications.** When a message from an ESME ends, Ella SMSC queues the delivery receipt and the SIM's answer that the ESME asked for. It sends them as `deliver_sm` to a receiving session of that ESME, the answer first, and keeps them until the ESME acknowledges them, binds again, or they expire. They survive a restart.
-
-See the [SMPP reference](../reference/smpp.md).
-
-## Binary messages
-
-Applications can send binary messages, such as the (U)SIM data download messages that an OTA platform sends to update SIM cards: the phone passes them to the SIM instead of showing them. Ella SMSC delivers their parameters and user data unchanged, and keeps the phone's answer to each delivery attempt, which can carry the SIM's response.
+| Function | Role | Diameter procedures (TS 29.338) |
+| -------- | ---- | ------------------------------- |
+| SC, Service Centre | Stores each message until it is delivered or expires. | |
+| SMS-IWMSC | Receives the messages phones send (mobile originated, MO), and the HSS's alerts. | MO-Forward-Short-Message, Alert-Service-Centre |
+| SMS-GMSC | Finds where a phone is served, and delivers messages to it (mobile terminated, MT). | Send-Routing-Info-for-SM, MT-Forward-Short-Message, Report-SM-Delivery-Status |

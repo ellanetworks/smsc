@@ -4,7 +4,7 @@ description: Reference of the 3GPP specifications Ella SMSC implements.
 
 # 3GPP Compliance
 
-Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter interfaces of TS 29.338.
+Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c, SGd and Gdd Diameter interfaces of TS 29.338.
 
 !!! note
 
@@ -12,16 +12,9 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter i
 
 ## Supported
 
-### Interfaces
+### SGd and Gdd (TS 29.338)
 
-| Interface | Peer | Transport |
-| --------- | ---- | --------- |
-| S6c | HSS | Diameter over SCTP |
-| SGd | MME, SGSN, SMSF, IP-SM-GW | Diameter over SCTP |
-
-### SGd (TS 29.338)
-
-- **MO-Forward-Short-Message**, received: a phone's short message, from its MME, SMSF or IP-SM-GW.
+- **MO-Forward-Short-Message**, received: a phone's short message, from its MME, SGSN, SMSF or IP-SM-GW.
 - **MT-Forward-Short-Message**, sent: a short message or a status report, to the phone's MME, SGSN, IP-SM-GW, or SMSF for 3GPP or non-3GPP access.
 
 ### S6c (TS 29.338)
@@ -44,7 +37,7 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter i
 - **Status reports.** On the delivery, failure, expiry or replacement of a message whose sender set TP-Status-Report-Request.
 - **Reject duplicates.** TP-Reject-Duplicates.
 - **Replace short message.** Replace types 1 to 7 of TP-Protocol-Identifier, from phones, the API and SMPP. A message from the API or SMPP replaces only one of the same user or ESME.
-- **Binary messages from the API.** TP-Protocol-Identifier, TP-Data-Coding-Scheme, TP-User-Data-Header and TP-User-Data delivered unchanged, including (U)SIM data download.
+- **Binary messages from the API and SMPP.** TP-Protocol-Identifier, TP-Data-Coding-Scheme, TP-User-Data-Header and TP-User-Data delivered unchanged, including (U)SIM data download.
 - **SMS-DELIVER-REPORT.** Kept from each delivery: in the SM-RP-UI of a successful MT-Forward-Short-Message answer, and in the SM-Diagnostic-Info of an SM Delivery Failure.
 - **(U)SIM data download error.** A message whose SMS-DELIVER-REPORT has the TP-Failure-Cause `usim_data_download_error` fails without another attempt.
 - **SC time stamps.** Distinct for the messages to a phone.
@@ -55,8 +48,9 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c and SGd Diameter i
 - **SMS-COMMAND.** Refused with the TP-Failure-Cause `command_unsupported`.
 - **Telematic interworking.** Refused with the TP-Failure-Cause `telematic_interworking_not_supported`.
 - **Device triggering from phones.** Refused with the TP-Failure-Cause `unspecified_tp_pid_error`.
-- **SMS-MI-Correlation-ID.** A short message that carries one is refused with DIAMETER_ERROR_FACILITY_NOT_SUPPORTED.
+- **SMSMI-Correlation-ID.** A short message that carries one is refused with DIAMETER_ERROR_FACILITY_NOT_SUPPORTED.
 - **Diameter over TCP.**
 - **Delivery to an MSC-Number.**
 - **Destination-Host in Report-SM-Delivery-Status.**
 - **MAP over SS7.**
+- **Routing to other networks' HSSs.** Send-Routing-Info-for-SM goes to the operator's realm only, not the realm of the recipient's MSISDN (TS 29.338 §5.3.1.1.2).
