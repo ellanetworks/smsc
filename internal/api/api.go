@@ -94,6 +94,7 @@ type Config struct {
 	Received       *intake.Received
 	Ready          func(ctx context.Context) error
 	Metrics        prometheus.Gatherer
+	Requests       *RequestMetrics
 	Auth           AuthStore
 	ESMEs          ESMEStore
 	SMPP           SMPP
@@ -205,7 +206,7 @@ func NewHandler(cfg Config) http.Handler {
 			h = a.authenticate(a.authorize(rt.perm, h))
 		}
 
-		mux.Handle(rt.pattern, h)
+		mux.Handle(rt.pattern, cfg.Requests.instrument(rt.pattern, h))
 	}
 
 	return traced(cfg, securityHeaders(cfg, http.NewCrossOriginProtection().Handler(mux)))

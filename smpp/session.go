@@ -217,6 +217,7 @@ type hooks struct {
 	bound       func(s *Session)
 	closed      func(s *Session)
 	decodeError func(s *Session, h Header, err error)
+	refused     func(s *Session, h Header, status CommandStatus)
 }
 
 type result struct {
@@ -688,14 +689,12 @@ func (s *Session) serve(h Header, p PDU) {
 	switch {
 	case s.unbinding:
 		s.mu.Unlock()
-
-		_ = s.respond(h, nil, StatusInvBndSts)
+		s.refuseInbound(h, StatusInvBndSts)
 
 		return
 	case s.inflight >= s.cfg.InboundWindow:
 		s.mu.Unlock()
-
-		_ = s.respond(h, nil, StatusThrottled)
+		s.refuseInbound(h, StatusThrottled)
 
 		return
 	}
@@ -722,6 +721,14 @@ func (s *Session) serve(h Header, p PDU) {
 			r.Written(err)
 		}
 	}()
+}
+
+func (s *Session) refuseInbound(h Header, status CommandStatus) {
+	_ = s.respond(h, nil, status)
+
+	if s.hooks.refused != nil {
+		s.hooks.refused(s, h, status)
+	}
 }
 
 func (s *Session) call(h Header, p PDU) (r Response) {

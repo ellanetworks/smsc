@@ -452,7 +452,18 @@ func (b *blockingHandler) ServeSMPP(_ context.Context, _ *Session, req Request) 
 
 func TestInboundWindow(t *testing.T) {
 	h := &blockingHandler{started: make(chan uint32, 10), release: make(chan struct{})}
-	_, p := boundSMSC(t, CmdBindTransceiver, SessionConfig{InboundWindow: 2}, h)
+	refused := make(chan Header, 1)
+	hk := smscHooks()
+	hk.refused = func(_ *Session, h Header, status CommandStatus) {
+		if status == StatusThrottled {
+			refused <- h
+		}
+	}
+
+	s, p := pipe(t, roleSMSC, SessionConfig{InboundWindow: 2}, h, hk)
+	p.send(&Bind{ID: CmdBindTransceiver, SystemID: "esme", Password: "pw", InterfaceVersion: InterfaceVersion}, StatusOK, 1)
+	p.expect(CmdBindTransceiverResp, StatusOK, 1)
+	waitState(t, s, StateBoundTRX)
 
 	p.send(&SubmitSM{Message: message()}, StatusOK, 2)
 	p.send(&SubmitSM{Message: message()}, StatusOK, 3)
@@ -461,6 +472,10 @@ func TestInboundWindow(t *testing.T) {
 
 	p.send(&SubmitSM{Message: message()}, StatusOK, 4)
 	p.expect(CmdSubmitSMResp, StatusThrottled, 4)
+
+	if got := <-refused; got.ID != CmdSubmitSM || got.Sequence != 4 {
+		t.Fatalf("refused %+v, want submit_sm 4", got)
+	}
 
 	p.send(&EnquireLink{}, StatusOK, 5)
 	p.expect(CmdEnquireLinkResp, StatusOK, 5)

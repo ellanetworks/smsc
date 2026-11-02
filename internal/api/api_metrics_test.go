@@ -33,8 +33,10 @@ func newMetricsAPI(t *testing.T, failStore bool) (http.Handler, string) {
 	}
 
 	cfg.Received = intake.New()
+	cfg.Requests = api.NewRequestMetrics()
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(cfg.Received.Collectors()...)
+	registry.MustRegister(cfg.Requests.Collectors()...)
 	cfg.Metrics = registry
 
 	h := api.NewHandler(cfg)
@@ -100,6 +102,38 @@ func TestMetricsCountStoreFailures(t *testing.T) {
 		`ellasmsc_messages_received_total{origin="api",result="accepted"} 0`,
 		`ellasmsc_messages_received_total{origin="api",result="error"} 1`,
 	)
+}
+
+func TestMetricsCountRequestsByRouteAndCode(t *testing.T) {
+	h, token := newMetricsAPI(t, false)
+
+	if code := post(t, h, token, `{"from": "+15550001111", "to": "+15551230002", "text": "hi"}`); code != http.StatusCreated {
+		t.Fatalf("POST: %d", code)
+	}
+
+	if code := post(t, h, "", `{}`); code != http.StatusUnauthorized {
+		t.Fatalf("POST without token: %d", code)
+	}
+
+	if code := serve(h, request(http.MethodGet, "/api/v1/messages/42", "", token)).Code; code != http.StatusNotFound {
+		t.Fatalf("GET missing message: %d", code)
+	}
+
+	serve(h, request(http.MethodGet, "/api/v1/pprof/cmdline", "", token))
+	serve(h, request(http.MethodGet, "/", "", ""))
+
+	body := scrape(t, h)
+	wantSeries(t, body,
+		`ellasmsc_api_request_duration_seconds_count{code="201",method="post",route="/api/v1/messages"} 1`,
+		`ellasmsc_api_request_duration_seconds_count{code="401",method="post",route="/api/v1/messages"} 1`,
+		`ellasmsc_api_request_duration_seconds_count{code="404",method="get",route="/api/v1/messages/{id}"} 1`,
+	)
+
+	for _, route := range []string{`route="/api/v1/pprof/`, `route="/"`} {
+		if strings.Contains(body, route) {
+			t.Errorf("metrics have %s", route)
+		}
+	}
 }
 
 func TestMetricsWithoutRegistry(t *testing.T) {

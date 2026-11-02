@@ -311,6 +311,19 @@ func (s *Service) OnDecodeError(_ *smpp.Session, h smpp.Header, _ error) {
 	}
 }
 
+func (s *Service) OnRefused(_ *smpp.Session, h smpp.Header, status smpp.CommandStatus) {
+	if h.ID != smpp.CmdSubmitSM {
+		return
+	}
+
+	result := intake.Rejected
+	if status == smpp.StatusThrottled {
+		result = intake.Throttled
+	}
+
+	s.Received.Add(intake.OriginSMPP, result, 1)
+}
+
 func (s *Service) ServeSMPP(ctx context.Context, ls *smpp.Session, req smpp.Request) smpp.Response {
 	started := s.now()
 
@@ -487,6 +500,7 @@ func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM
 	log := s.Logger.With(slog.String("system_id", sess.ESME.SystemID))
 
 	if !sess.BindType.transmits() {
+		s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
 		return "", smpp.StatusInvBndSts
 	}
 

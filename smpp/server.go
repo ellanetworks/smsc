@@ -40,6 +40,7 @@ type ServerConfig struct {
 	Handler           Handler
 	OnBound, OnClosed func(*Session)
 	OnDecodeError     func(s *Session, h Header, err error)
+	OnRefused         func(s *Session, h Header, status CommandStatus)
 	Logger            *slog.Logger
 }
 
@@ -192,6 +193,7 @@ func (s *Server) serveConn(c net.Conn) {
 		bound:       s.cfg.OnBound,
 		closed:      s.closed,
 		decodeError: s.cfg.OnDecodeError,
+		refused:     s.cfg.OnRefused,
 	})
 
 	s.mu.Lock()

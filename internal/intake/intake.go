@@ -9,9 +9,10 @@ const (
 )
 
 const (
-	Accepted = "accepted"
-	Rejected = "rejected"
-	Error    = "error"
+	Accepted  = "accepted"
+	Rejected  = "rejected"
+	Error     = "error"
+	Throttled = "throttled"
 )
 
 type Received struct {
@@ -22,7 +23,7 @@ func New() *Received {
 	r := &Received{
 		messages: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ellasmsc_messages_received_total",
-			Help: "Short messages received, one per TPDU, by origin (mobile, api, smpp) and result (accepted, rejected, error).",
+			Help: "Short messages received, one per TPDU, by origin (mobile, api, smpp) and result (accepted, rejected, error, and throttled for smpp).",
 		}, []string{"origin", "result"}),
 	}
 
@@ -35,6 +36,7 @@ func New() *Received {
 		{OriginSMPP, Accepted},
 		{OriginSMPP, Rejected},
 		{OriginSMPP, Error},
+		{OriginSMPP, Throttled},
 	} {
 		r.messages.WithLabelValues(series[0], series[1])
 	}

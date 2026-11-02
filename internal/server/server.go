@@ -232,6 +232,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 			Ready:          func(ctx context.Context) error { return s.ready(ctx, database) },
 			Received:       m.received,
 			Metrics:        m.registry,
+			Requests:       m.requests,
 			Auth:           database,
 			JWTSecret:      jwtSecret,
 			BcryptCost:     s.bcryptCost,
@@ -330,6 +331,7 @@ func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsCo
 		OnBound:       esmes.OnBound,
 		OnClosed:      esmes.OnClosed,
 		OnDecodeError: esmes.OnDecodeError,
+		OnRefused:     esmes.OnRefused,
 		Session:       smpp.SessionConfig{InboundWindow: smppInboundWindow},
 		Logger:        s.Logger,
 	})

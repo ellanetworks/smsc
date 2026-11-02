@@ -10,6 +10,7 @@ import (
 
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/ratelimit"
 	"github.com/ellanetworks/smsc/smpp"
 )
@@ -202,6 +203,26 @@ func TestSubmitOnReceiver(t *testing.T) {
 	if _, status := env.service.SubmitSM(context.Background(), env.session(Receiver),
 		&smpp.SubmitSM{Message: baseSubmit(0x04, "aa")}); status != smpp.StatusInvBndSts {
 		t.Fatalf("submit_sm on a receiver = %s", status)
+	}
+
+	if got := receivedCount(t, env.received, intake.Rejected); got != 1 {
+		t.Fatalf("rejected = %v, want 1", got)
+	}
+}
+
+func TestRefusedSubmitCounted(t *testing.T) {
+	env := newTestEnv(t, nil)
+
+	env.service.OnRefused(nil, smpp.Header{ID: smpp.CmdSubmitSM}, smpp.StatusThrottled)
+	env.service.OnRefused(nil, smpp.Header{ID: smpp.CmdSubmitSM}, smpp.StatusInvBndSts)
+	env.service.OnRefused(nil, smpp.Header{ID: smpp.CmdQuerySM}, smpp.StatusThrottled)
+
+	if got := receivedCount(t, env.received, intake.Throttled); got != 1 {
+		t.Fatalf("throttled = %v, want 1", got)
+	}
+
+	if got := receivedCount(t, env.received, intake.Rejected); got != 1 {
+		t.Fatalf("rejected = %v, want 1", got)
 	}
 }
 

@@ -16,7 +16,7 @@ func TestReceived(t *testing.T) {
 	r.Add(intake.OriginAPI, intake.Error, 0)
 
 	want := `
-# HELP ellasmsc_messages_received_total Short messages received, one per TPDU, by origin (mobile, api, smpp) and result (accepted, rejected, error).
+# HELP ellasmsc_messages_received_total Short messages received, one per TPDU, by origin (mobile, api, smpp) and result (accepted, rejected, error, and throttled for smpp).
 # TYPE ellasmsc_messages_received_total counter
 ellasmsc_messages_received_total{origin="api",result="accepted"} 3
 ellasmsc_messages_received_total{origin="api",result="error"} 0
@@ -26,6 +26,7 @@ ellasmsc_messages_received_total{origin="mobile",result="rejected"} 0
 ellasmsc_messages_received_total{origin="smpp",result="accepted"} 0
 ellasmsc_messages_received_total{origin="smpp",result="error"} 0
 ellasmsc_messages_received_total{origin="smpp",result="rejected"} 0
+ellasmsc_messages_received_total{origin="smpp",result="throttled"} 0
 `
 
 	if err := testutil.CollectAndCompare(r.Collectors()[0], strings.NewReader(want)); err != nil {

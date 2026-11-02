@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
 	"github.com/ellanetworks/smsc/internal/esme"
@@ -22,6 +23,7 @@ type metrics struct {
 	delivery *delivery.Metrics
 	peers    *peerMetrics
 	smpp     *esme.Metrics
+	requests *api.RequestMetrics
 }
 
 func newMetrics(database *db.DB) *metrics {
@@ -30,6 +32,7 @@ func newMetrics(database *db.DB) *metrics {
 		received: intake.New(),
 		delivery: delivery.NewMetrics(),
 		peers:    newPeerMetrics(),
+		requests: api.NewRequestMetrics(),
 	}
 	m.smpp = esme.NewMetrics(database)
 
@@ -51,6 +54,7 @@ func newMetrics(database *db.DB) *metrics {
 	m.registry.MustRegister(m.delivery.Collectors()...)
 	m.registry.MustRegister(m.peers.collectors()...)
 	m.registry.MustRegister(m.smpp.Collectors()...)
+	m.registry.MustRegister(m.requests.Collectors()...)
 
 	return m
 }
