@@ -247,6 +247,8 @@ func (c *Client) verify(ctx context.Context, raw, nonce string) (map[string]json
 		return nil, fmt.Errorf("%w: audiences other than %q", ErrToken, c.settings.ClientID)
 	case azp != "" && azp != c.settings.ClientID:
 		return nil, fmt.Errorf("%w: issued to %q", ErrToken, azp)
+	case token.IssuedAt.IsZero():
+		return nil, fmt.Errorf("%w: no issue time", ErrToken)
 	case token.IssuedAt.After(c.now().Add(maxIssuedAt)):
 		return nil, fmt.Errorf("%w: issued in the future", ErrToken)
 	case token.Subject == "" || len(token.Subject) > maxValue:

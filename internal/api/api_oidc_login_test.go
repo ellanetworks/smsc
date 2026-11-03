@@ -484,6 +484,9 @@ func TestOIDCLoginRefusals(t *testing.T) {
 		"an audience array with the client alone": {func(*testAPI) oidcLogin {
 			return oidcLogin{claims: map[string]any{"aud": []string{"smsc"}, "azp": "smsc"}}
 		}, "success"},
+		"a token without an issue time": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"iat": nil}}
+		}, "failed"},
 		"a token issued in the future": {func(a *testAPI) oidcLogin {
 			return oidcLogin{claims: map[string]any{"iat": a.now.Add(6 * time.Minute).Unix()}}
 		}, "failed"},
