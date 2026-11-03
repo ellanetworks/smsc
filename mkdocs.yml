@@ -66,6 +66,8 @@ nav:
     - Integrate with Ella IMS: how_to/integrate_with_ella_ims.md
     - Integrate with a Third-Party Core: how_to/integrate_with_third_party_core.md
     - Connect through Diameter Agents: how_to/connect_through_diameter_agents.md
+    - Configure Single Sign-On: how_to/configure_single_sign_on.md
+    - Manage Single Sign-On Users: how_to/manage_single_sign_on_users.md
     - Send Messages from an Application: how_to/send_messages_from_an_application.md
     - Send (U)SIM Data Download Messages over the API: how_to/send_sim_data_download_messages_over_the_api.md
     - Send (U)SIM Data Download Messages over SMPP: how_to/send_sim_data_download_messages_over_smpp.md
@@ -76,6 +78,7 @@ nav:
       - Initialize: reference/api/initialize.md
       - Authentication: reference/api/auth.md
       - Users: reference/api/users.md
+      - Single Sign-On: reference/api/oidc.md
       - Messages: reference/api/messages.md
       - Diameter: reference/api/diameter.md
       - ESMEs: reference/api/esmes.md
@@ -95,6 +98,7 @@ nav:
     - explanation/index.md
     - Architecture: explanation/architecture.md
     - Security: explanation/security.md
+    - Single Sign-On: explanation/single_sign_on.md
 plugins:
   - search
   - glightbox

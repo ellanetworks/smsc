@@ -12,9 +12,10 @@ The only allowed comments are:
   // TS 23.040 clause 9.2.3.9
   // SMPP 3.4 section 4.4.1
   // RFC 6733 section 5.3
+  // OpenID Connect Core 1.0 section 3.1.3.7
   ```
 
-  3GPP specs use `clause`, SMPP and RFCs use `section`. Never put a citation inside a function body or on a struct field. Only cite a clause that you have confirmed in the spec (3GPP specs are in `../3gpp`). Never guess a clause number.
+  3GPP specs use `clause`; SMPP, RFCs, and OpenID specs use `section`. Never put a citation inside a function body or on a struct field. Only cite a clause that you have confirmed in the spec (3GPP specs are in `../3gpp`). Never guess a clause number.
 - **Comments that tooling requires**: `//go:build`, `//go:embed`, `//go:generate`, `//nolint:<linter>` (with no trailing reason), `// eslint-disable…`, `// @ts-expect-error`.
 
 **Do not touch existing citations** unless your change makes one wrong. In that case, fix it or delete it.

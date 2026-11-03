@@ -7,6 +7,11 @@ const ROUTES = [
   { label: "SMPP", route: "/smpp", heading: /^SMPP/ },
   { label: "Messages", route: "/messages", heading: "Messages" },
   { label: "Users", route: "/users", heading: /^Users/ },
+  {
+    label: "Single Sign-On",
+    route: "/single-sign-on",
+    heading: "Single Sign-On",
+  },
   { label: "Profile", route: "/profile", heading: "Profile" },
 ] as const;
 

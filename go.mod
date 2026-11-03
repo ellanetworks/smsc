@@ -3,9 +3,11 @@ module github.com/ellanetworks/smsc
 go 1.27.3
 
 require (
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/ellanetworks/core/diameter v0.0.0-20261029224453-05651a99fe33
 	github.com/ellanetworks/core/sctp v0.0.0-20260928204907-fc197c42dc3f
 	github.com/ellanetworks/smsc/smpp v0.0.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/linxGnu/gosmpp v0.3.1
 	github.com/mattn/go-sqlite3 v1.14.52
@@ -18,6 +20,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
 	golang.org/x/crypto v0.58.0
+	golang.org/x/oauth2 v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

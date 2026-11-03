@@ -1,0 +1,44 @@
+name: ella-smsc-oidc-e2e
+
+configs:
+  smsc_config:
+    content: |
+      logging:
+        level: info
+      db:
+        path: smsc.db
+      api:
+        address: 0.0.0.0
+        port: 5010
+        tls:
+          cert: /certs/smsc.pem
+          key: /certs/smsc-key.pem
+      diameter:
+        name: eth0
+
+services:
+  ella-smsc:
+    image: ${ELLA_SMSC_IMAGE:-ella-smsc:latest}
+    configs:
+      - source: smsc_config
+        target: /smsc.yaml
+    entrypoint: /bin/smsc --config /smsc.yaml
+    volumes:
+      - ${ELLA_E2E_OIDC_DIR:-../.build/oidc}:/certs:ro
+    ports:
+      - "${ELLA_E2E_OIDC_PORT:-15443}:5010"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: start-dev --import-realm
+    environment:
+      KC_HOSTNAME: https://keycloak:${KEYCLOAK_E2E_PORT:-18443}
+      KC_HTTPS_PORT: ${KEYCLOAK_E2E_PORT:-18443}
+      KC_HTTPS_CERTIFICATE_FILE: /certs/keycloak.pem
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /certs/keycloak-key.pem
+      KC_HTTP_ENABLED: "false"
+    volumes:
+      - ${ELLA_E2E_OIDC_DIR:-../.build/oidc}:/certs:ro
+      - ./realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "${KEYCLOAK_E2E_PORT:-18443}:${KEYCLOAK_E2E_PORT:-18443}"

@@ -71,16 +71,18 @@ func testConfig(t *testing.T, store *db.DB) api.Config {
 	t.Helper()
 
 	return api.Config{
-		Store:      store,
-		Diameter:   fakeDiameter{},
-		Settings:   settings.NewLive(store, testSettings(t, store)),
-		Notify:     func() {},
-		Auth:       store,
-		ESMEs:      store,
-		JWTSecret:  testJWTSecret,
-		BcryptCost: bcrypt.MinCost,
-		Now:        func() time.Time { return testNow },
-		Logger:     slog.New(slog.DiscardHandler),
+		Store:         store,
+		Diameter:      fakeDiameter{},
+		Settings:      settings.NewLive(store, testSettings(t, store)),
+		Notify:        func() {},
+		Auth:          store,
+		ESMEs:         store,
+		OIDC:          testOIDC(t, store),
+		JWTSecret:     testJWTSecret,
+		OIDCCookieKey: []byte("fedcba9876543210fedcba9876543210"),
+		BcryptCost:    bcrypt.MinCost,
+		Now:           func() time.Time { return testNow },
+		Logger:        slog.New(slog.DiscardHandler),
 	}
 }
 

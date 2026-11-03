@@ -8,6 +8,8 @@ These how-to guides cover key operations and common tasks in Ella SMSC.
 - [Integrate with Ella IMS](integrate_with_ella_ims.md)
 - [Integrate with a Third-Party Core](integrate_with_third_party_core.md)
 - [Connect through Diameter Agents](connect_through_diameter_agents.md)
+- [Configure Single Sign-On](configure_single_sign_on.md)
+- [Manage Single Sign-On Users](manage_single_sign_on_users.md)
 - [Send Messages from an Application](send_messages_from_an_application.md)
 - [Send (U)SIM Data Download Messages over the API](send_sim_data_download_messages_over_the_api.md)
 - [Send (U)SIM Data Download Messages over SMPP](send_sim_data_download_messages_over_smpp.md)

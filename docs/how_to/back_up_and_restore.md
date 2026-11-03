@@ -6,7 +6,7 @@ description: Step-by-step instructions to back up and restore Ella SMSC.
 
 Ella SMSC keeps all its data, messages, users and settings, in one database file: `db.path` in the [configuration file](../reference/config_file.md). The commands below use the snap's path, `/var/snap/ella-smsc/common/smsc.db`.
 
-The backup holds message content and user accounts. Store and transfer it encrypted.
+The backup holds message content, user accounts, and the single sign-on client secret. Store and transfer it encrypted.
 
 ## Back up
 

@@ -27,6 +27,7 @@ Ella SMSC exposes Prometheus metrics at [`GET /api/v1/metrics`](api/metrics.md).
 | `ellasmsc_smpp_notifications_sent_total` | Counter | Delivery receipts and SIM answers that reached a final outcome, by type and result (`acknowledged`, `rejected`, `expired`, `no_user_data`). |
 | `ellasmsc_smpp_submit_duration_seconds` | Histogram | Time from a `submit_sm` read to its `submit_sm_resp` written. |
 | `ellasmsc_api_request_duration_seconds` | Histogram | Duration of API requests, by method, route (`/api/v1/messages/{id}`) and status code. Requests to `/api/v1/pprof/` and to no route are left out. |
+| `ellasmsc_oidc_logins_total` | Counter | Logins through the identity provider, by outcome: `success`, or a [login error](api/auth.md#errors). |
 | `ellasmsc_database_query_duration_seconds` | Histogram | Duration of database calls, the wait for the connection included. |
 | `ellasmsc_database_query_errors_total` | Counter | Failed database calls. |
 | `ellasmsc_database_storage_bytes` | Gauge | Size of the database on disk, by file: `main`, `wal`. |

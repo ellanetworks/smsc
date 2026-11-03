@@ -55,7 +55,7 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 		t.Fatal(err)
 	}
 
-	userID, err := store.CreateUser(ctx, db.NewUser{Email: "ota@example.com", Role: db.RoleSubmitter, PasswordHash: string(hash)})
+	userID, err := store.CreateUser(ctx, db.NewUser{Email: "ota@example.com", Role: db.RoleSubmitter, PasswordHash: string(hash)}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}

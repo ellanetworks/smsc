@@ -12,6 +12,10 @@ The first user, an Admin, is created when Ella SMSC is initialized. Admins creat
 
 Ella SMSC limits login attempts, from each address and for each account, to slow down password guessing.
 
+## Single sign-on
+
+Users can also log in through the organization's identity provider. See [Single sign-on](single_sign_on.md).
+
 ## Applications
 
 Applications, such as an OTA platform, use an API token rather than a password. A token belongs to a user and has that user's role, but it cannot create API tokens, change a password, or manage users. Tokens can expire, and an Admin or the token's user can delete one at any time.

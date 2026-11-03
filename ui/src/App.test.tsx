@@ -5,6 +5,7 @@ import App from "@/App";
 import { RoleID } from "@/queries/users";
 import { makeToken } from "@/test/jwt";
 import { json, renderWithClient, stubApi } from "@/test/render";
+import { rememberReturnPath, returnPath } from "@/utils/returnPath";
 
 const serve = (role: RoleID | null = RoleID.Admin) => {
   let session = role;
@@ -74,6 +75,7 @@ const renderAt = (path: string) =>
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  sessionStorage.clear();
 });
 
 describe("App", () => {
@@ -98,6 +100,7 @@ describe("App", () => {
       ["SMPP", "/smpp"],
       ["Messages", "/messages"],
       ["Users", "/users"],
+      ["Single Sign-On", "/single-sign-on"],
     ]);
     expect(
       within(screen.getByRole("navigation", { name: "Main" })).getByText(
@@ -130,6 +133,40 @@ describe("App", () => {
       "page",
     );
     expect(document.title).toBe("Diameter · Ella SMSC");
+  });
+
+  it("returns to the page asked for before single sign-on", async () => {
+    serve();
+    rememberReturnPath("/operator");
+    renderAt("/");
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Operator" }),
+    ).toBeInTheDocument();
+    expect(returnPath()).toBeUndefined();
+  });
+
+  it("opens the home page when the page asked for is not allowed", async () => {
+    serve(RoleID.Submitter);
+    rememberReturnPath("/users");
+    renderAt("/");
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Messages" }),
+    ).toBeInTheDocument();
+  });
+
+  it("forgets a page asked for long ago", async () => {
+    serve();
+    sessionStorage.setItem(
+      "smsc.returnPath",
+      JSON.stringify({ path: "/operator", at: Date.now() - 11 * 60_000 }),
+    );
+    renderAt("/");
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Diameter" }),
+    ).toBeInTheDocument();
   });
 
   it("navigates between pages", async () => {

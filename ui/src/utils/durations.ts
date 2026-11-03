@@ -21,3 +21,21 @@ export function parseDuration(value: string): number | undefined {
   const seconds = Number(match[1]) * size;
   return seconds >= 1 && Number.isSafeInteger(seconds) ? seconds : undefined;
 }
+
+const names: [string, number][] = [
+  ["day", 86400],
+  ["hour", 3600],
+  ["minute", 60],
+  ["second", 1],
+];
+
+export function describeDuration(seconds: number): string {
+  const parts: string[] = [];
+  let rest = seconds;
+  for (const [name, size] of names) {
+    const count = Math.floor(rest / size);
+    rest -= count * size;
+    if (count > 0) parts.push(`${count} ${name}${count === 1 ? "" : "s"}`);
+  }
+  return parts.join(" ") || "0 seconds";
+}

@@ -7,6 +7,7 @@ const SESSION_FILE = "e2e/.auth/admin.json";
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "**/.build/**",
   globalSetup: "./e2e/global-setup.ts",
   globalTeardown: "./e2e/global-teardown.ts",
   fullyParallel: true,
