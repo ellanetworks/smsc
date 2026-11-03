@@ -102,7 +102,7 @@ async function configureOIDC(
 async function keycloakLogin(page: Page, username: string, start = "/login") {
   await spendLogins(1);
   await page.goto(start);
-  await page.getByRole("link", { name: "Sign in with Keycloak" }).click();
+  await page.getByRole("link", { name: "Log in with Keycloak" }).click();
   await page.waitForURL((url) => url.host === `keycloak:${KEYCLOAK_PORT}`);
   await page.locator("#username").fill(username);
   await page.locator("#password").fill(`${username}-password`);
@@ -200,10 +200,14 @@ test("an admin configures single sign-on in the UI", async ({
 
   expect((await passwordLogin(page.request)).ok()).toBe(true);
   await page.goto("/single-sign-on");
-  await page.getByRole("button", { name: "Edit" }).click();
-  const dialog = page.getByRole("dialog", { name: "Edit Single Sign-On" });
+  await expect(page.getByRole("switch", { name: "Enabled" })).toBeDisabled();
+  await page.getByRole("button", { name: "Edit provider" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit Provider" });
 
   await expect(dialog.getByLabel("External URL")).toHaveValue(EXTERNAL_URL);
+  await expect(
+    dialog.getByRole("textbox", { name: "Redirect URL" }),
+  ).toHaveValue(`${EXTERNAL_URL}/api/v1/auth/oidc/callback`);
   await dialog.getByLabel("Display name").fill("Keycloak");
   await dialog.getByLabel("Issuer URL").fill(ISSUER);
   await dialog.getByLabel("Client ID").fill(CLIENT_ID);
@@ -215,36 +219,55 @@ test("an admin configures single sign-on in the UI", async ({
   await dialog.getByLabel("CA certificate").fill(CA_CERTIFICATE);
 
   await dialog.getByRole("button", { name: "Test" }).click();
-  const result = dialog.getByRole("alert").filter({
-    hasText: "Ella SMSC can use this identity provider.",
-  });
-  await expect(result).toBeVisible();
-  await expect(result).toContainText("client_secret_basic");
+  await expect(dialog.getByRole("status")).toContainText("Works");
 
-  await dialog.getByRole("switch", { name: "Enabled" }).check();
   await dialog.getByRole("button", { name: "Update" }).click();
   await expect(
     page.getByText("Single sign-on updated successfully."),
   ).toBeVisible();
   await expect(dialog).toBeHidden();
 
-  const table = page.getByRole("table", { name: "Single sign-on settings" });
+  const table = page.getByRole("table", { name: "Provider" });
   await expect(table.getByText("5 minutes")).toBeVisible();
   await expect(
     table.getByText(`${EXTERNAL_URL}/api/v1/auth/oidc/callback`),
   ).toBeVisible();
+  await expect(page.getByRole("switch", { name: "Enabled" })).not.toBeChecked();
+
+  await page.getByRole("button", { name: "Edit roles from groups" }).click();
+  const groups = page.getByRole("dialog", { name: "Edit Roles from Groups" });
+  await groups.getByLabel("Groups claim").fill("groups");
+  await groups.getByRole("button", { name: "Add group" }).click();
+  await groups.getByRole("textbox", { name: "Group 1" }).fill(OPERATORS);
+  await groups.getByRole("button", { name: "Update" }).click();
+  await expect(groups).toBeHidden();
+  await expect(
+    page
+      .getByRole("table", { name: "Roles from groups" })
+      .getByText(`1. ${OPERATORS} → Read Only`),
+  ).toBeVisible();
+
+  await page.getByRole("switch", { name: "Enabled" }).click();
+  await expect(
+    page.getByText("Single sign-on enabled successfully."),
+  ).toBeVisible();
+  await expect(page.getByRole("switch", { name: "Enabled" })).toBeChecked();
 
   const saved = await json<{
     enabled: boolean;
     issuer: string;
     client_secret_set: boolean;
     session_lifetime_seconds: number;
+    groups_claim: string;
+    group_roles: GroupRole[];
   }>(request, "get", "/api/v1/oidc", { token: adminToken });
   expect(saved).toMatchObject({
     enabled: true,
     issuer: ISSUER,
     client_secret_set: true,
     session_lifetime_seconds: LIFETIME_SECONDS,
+    groups_claim: "groups",
+    group_roles: [{ group: OPERATORS, role_id: RoleID.ReadOnly }],
   });
 });
 
@@ -291,12 +314,12 @@ test("an unknown user is refused without a group mapping", async ({
 
   await keycloakLogin(page, BOB.username);
 
-  await expect(page).toHaveURL(/\/login\?error=not_set_up$/);
   await expect(
     page.getByText(
       "Your account has not been set up in Ella SMSC. Contact an administrator.",
     ),
   ).toBeVisible();
+  await expect(page).toHaveURL(/\/login$/);
   expect(await sessionCookie(page.context())).toBeUndefined();
   expect(
     (
@@ -376,12 +399,12 @@ test("a user in no mapped group is refused", async ({ page, request }) => {
 
   await keycloakLogin(page, BOB.username);
 
-  await expect(page).toHaveURL(/\/login\?error=no_group$/);
   await expect(
     page.getByText(
       "None of your groups gives access to Ella SMSC. Contact an administrator.",
     ),
   ).toBeVisible();
+  await expect(page).toHaveURL(/\/login$/);
   expect(
     (
       await send(request, "get", userPath(BOB.email), { token: adminToken })
@@ -402,6 +425,7 @@ test("a user created in the UI with a pinned role and no password signs in only 
   await page.getByRole("button", { name: "Create" }).click();
   const dialog = page.getByRole("dialog", { name: "Create User" });
   await dialog.getByLabel("Email").fill(BOB.email);
+  await dialog.getByRole("switch", { name: "Password" }).uncheck();
   await dialog.getByRole("combobox", { name: /Role/ }).click();
   await page.getByRole("option", { name: /^Submitter/ }).click();
   await dialog.getByRole("checkbox", { name: "Pin role" }).check();
@@ -500,4 +524,32 @@ test("the OIDC session lasts the session lifetime and ends when OIDC is disabled
   expect(
     (await send(request, "get", "/api/v1/users", { token: adminToken })).ok(),
   ).toBe(true);
+});
+
+test("an admin disables single sign-on after confirmation", async ({
+  page,
+  request,
+}) => {
+  await configureOIDC(request);
+
+  expect((await passwordLogin(page.request)).ok()).toBe(true);
+  await page.goto("/single-sign-on");
+  await page.getByRole("switch", { name: "Enabled" }).click();
+  const dialog = page.getByRole("dialog", { name: "Disable Single Sign-On" });
+  await expect(dialog).toContainText(
+    "Everyone who logged in with single sign-on is signed out.",
+  );
+  await dialog.getByRole("button", { name: "Disable" }).click();
+  await expect(
+    page.getByText("Single sign-on disabled successfully."),
+  ).toBeVisible();
+  await expect(page.getByRole("switch", { name: "Enabled" })).not.toBeChecked();
+
+  const saved = await json<{ enabled: boolean; client_secret_set: boolean }>(
+    request,
+    "get",
+    "/api/v1/oidc",
+    { token: adminToken },
+  );
+  expect(saved).toMatchObject({ enabled: false, client_secret_set: true });
 });

@@ -12,24 +12,9 @@ The first user, an Admin, is created when Ella SMSC is initialized. Admins creat
 
 Ella SMSC limits login attempts, from each address and for each account, to slow down password guessing.
 
-## Sign-in methods
+## Single sign-on
 
-Users sign in to the UI with a password, through the organization's identity provider ([single sign-on](../how_to/configure_single_sign_on.md)), or both.
-
-| | Password | Single sign-on |
-|---|---|---|
-| Credentials kept by | Ella SMSC | The identity provider, with its own policies, such as multi-factor authentication |
-| Role set by | An Admin | An Admin, or the user's groups at the identity provider |
-| Session | 30 days | The session lifetime, 24 hours by default |
-| Access removed by | Deleting the user in Ella SMSC, at once | Removing the user at the identity provider, at the end of their session |
-
-Password login stays when single sign-on is on, and at least one Admin always keeps a password. An identity provider that is down or misconfigured cannot lock everyone out.
-
-A user is matched to their account at the identity provider, not to their email address, so a changed or reused email address does not give access to another user. The email address is used once, to link the account at its first login, and only if the identity provider has verified it. A provider that does not verify email addresses, such as Microsoft Entra ID, must be trusted explicitly: anyone who can set their email address there could take over the matching user. An account with no user in Ella SMSC gets one only from a [group mapping](../how_to/manage_single_sign_on_users.md#map-groups-to-roles).
-
-Ella SMSC does not learn when someone is removed at the identity provider. Their session lasts until its lifetime ends, and their API tokens until deleted. A shorter session lifetime narrows that window, at the cost of signing in more often. To end access at once, [offboard the user](../how_to/manage_single_sign_on_users.md#offboard-a-user) in Ella SMSC.
-
-The identity provider's client secret is stored in the database, and so in its [backups](../how_to/back_up_and_restore.md).
+Users can also log in through the organization's identity provider. See [Single sign-on](single_sign_on.md).
 
 ## Applications
 

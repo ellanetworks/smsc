@@ -1,5 +1,5 @@
 import { apiFetch } from "@/queries/utils";
-import type { RoleID } from "@/queries/users";
+import type { RoleID, User } from "@/queries/users";
 
 export interface GroupRole {
   group: string;
@@ -65,6 +65,7 @@ export const MAX_URL_BYTES = 2048;
 export const MAX_CA_CERTIFICATE_BYTES = 64 * 1024;
 export const REQUIRED_SCOPES = ["openid", "email"];
 export const OIDC_LOGIN_PATH = "/api/v1/auth/oidc/login";
+export const OIDC_CALLBACK_PATH = "/api/v1/auth/oidc/callback";
 
 export const getOIDC = () => apiFetch<OIDCSettings>("/api/v1/oidc");
 
@@ -76,6 +77,27 @@ export const discoverOIDC = (issuer: string, caCertificate: string) =>
     method: "POST",
     body: { issuer, ca_certificate: caCertificate },
   });
+
+export const currentUpdate = (settings: OIDCSettings): UpdateOIDCSettings => ({
+  enabled: settings.enabled,
+  external_url: settings.external_url,
+  issuer: settings.issuer,
+  client_id: settings.client_id,
+  client_secret: "",
+  display_name: settings.display_name,
+  scopes: settings.scopes,
+  session_lifetime_seconds: settings.session_lifetime_seconds,
+  trust_unverified_email: settings.trust_unverified_email,
+  ca_certificate: settings.ca_certificate,
+  groups_claim: settings.groups_claim,
+  group_roles: settings.group_roles,
+});
+
+export const roleFromGroups = (user: User, settings?: OIDCSettings) =>
+  settings?.enabled === true &&
+  settings.group_roles.length > 0 &&
+  user.oidc_linked &&
+  !user.role_pinned;
 
 export const getOIDCLogin = () =>
   apiFetch<OIDCLogin>("/api/v1/auth/oidc", { anonymous: true });

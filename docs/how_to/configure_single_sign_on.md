@@ -1,10 +1,10 @@
 ---
-description: Step-by-step instructions to let users sign in to Ella SMSC through an OpenID Connect identity provider, such as Keycloak or Microsoft Entra ID.
+description: Step-by-step instructions to let users sign in to Ella SMSC through an OpenID Connect identity provider, such as Keycloak.
 ---
 
 # Configure Single Sign-On
 
-This guide lets users sign in to the Ella SMSC UI through an OpenID Connect identity provider. It gives the steps for Keycloak and Microsoft Entra ID; other providers are set up the same way.
+This guide lets users sign in to the Ella SMSC UI through an OpenID Connect identity provider. It gives the steps for Keycloak; other providers are set up the same way.
 
 ## Prerequisites
 
@@ -33,53 +33,46 @@ The examples use these values:
 
     In **Users**, turn on **Email verified** for each user.
 
-=== "Microsoft Entra ID"
-
-    In the [Microsoft Entra admin center](https://entra.microsoft.com):
-
-    1. Go to **Entra ID** > **App registrations** and click **New registration**.
-    2. Set **Name** to `Ella SMSC`, and **Supported account types** to **Accounts in this organizational directory only**.
-    3. Under **Redirect URI**, choose **Web** and enter the redirect URL. Click **Register**.
-    4. In **Certificates & secrets** > **Client secrets**, click **New client secret**, then copy its **Value**.
-
 === "Other providers"
 
     1. Register a web application, or confidential client, with the redirect URL.
     2. Create a client secret for it.
     3. Allow the `openid`, `email` and `profile` scopes.
 
-    If the provider does not send `email_verified` in the ID token, turn on **Trust email addresses from this provider** in step 2.
+    If the provider does not send `email_verified`, turn on **Trust email addresses from this provider** in step 2.
 
 ## 2. Configure Ella SMSC
 
-In the UI, go to **Single Sign-On** and click **Edit**. Set:
+In the UI, go to **Single Sign-On** and, in **Provider**, click **Edit**. Set:
 
 | Field | Value |
 |---|---|
-| **Display name** | The name on the login button, such as `Keycloak` |
-| **Issuer URL** | Keycloak: `https://<keycloak-host>/realms/<realm>`. Entra ID: `https://login.microsoftonline.com/<Directory (tenant) ID>/v2.0`. Otherwise, from the provider. |
-| **Client ID** | Keycloak: `smsc`. Entra ID: the **Application (client) ID**. Otherwise, from the provider. |
-| **Client secret** | The secret from step 1 |
 | **External URL** | `https://smsc.example.com` |
+| **Issuer URL** | Keycloak: `https://<keycloak-host>/realms/<realm>`. Otherwise, from the provider. |
+| **CA certificate** | The PEM CA certificate of the identity provider, only if a private CA signs its certificate |
+| **Client ID** | Keycloak: `smsc`. Otherwise, from the provider. |
+| **Client secret** | The secret from step 1 |
+| **Display name** | The name on the login button, such as `Keycloak` |
 | **Scopes** | `openid email profile` |
 | **Session lifetime** | `24` hours, or less to end access sooner after offboarding |
-| **CA certificate** | The PEM CA certificate of the identity provider, only if a private CA signs its certificate |
-| **Trust email addresses from this provider** | Off, unless the provider does not mark email addresses as verified, as Entra ID does not. |
+| **Trust email addresses from this provider** | Off, unless the provider does not send `email_verified` |
 
-Check that the **Redirect URL** on the page is the one registered in step 1.
+Check that the **Redirect URL** under the external URL is the one registered in step 1.
 
 ## 3. Test the identity provider
 
-In the dialog, click **Test**. Fix the issuer URL or the CA certificate until the test passes.
+In the dialog, click **Test**. Fix the issuer URL or the CA certificate until it shows **Works**. Click **Update**.
 
 ## 4. Enable single sign-on
 
-Turn on **Enabled** and click **Update**.
+On the **Single Sign-On** page, click **Enable**.
+
+To turn it off, for example during an incident, click **Disable**. Everyone who logged in with single sign-on is signed out.
 
 ## 5. Sign in
 
 1. Give a user access: [create their user](manage_single_sign_on_users.md#give-a-user-access), or [map their groups to a role](manage_single_sign_on_users.md#map-groups-to-roles).
-2. In a private browser window, open `https://smsc.example.com`, and click **Sign in with** your display name.
+2. In a private browser window, open `https://smsc.example.com`, and click **Log in with** your display name.
 3. Sign in at the identity provider. Ella SMSC opens.
 
 If the login page shows an error, the `auth_oidc_login` [audit event](../reference/observability.md#audit-events) in the logs gives the reason.

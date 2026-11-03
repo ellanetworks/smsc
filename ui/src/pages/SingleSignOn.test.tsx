@@ -85,19 +85,48 @@ const renderPage = (auth = adminAuth) =>
     auth,
   );
 
-const field = (label: string) =>
-  screen.getByLabelText(label, { exact: false, selector: "input, textarea" });
+function field(label: string): HTMLElement;
+function field(label: string, within: HTMLElement): HTMLElement | undefined;
+function field(label: string, container?: HTMLElement) {
+  if (container) {
+    return (
+      within(container).queryByLabelText(label, {
+        exact: false,
+        selector: "input, textarea",
+      }) ?? undefined
+    );
+  }
+  return screen.getByLabelText(label, {
+    exact: false,
+    selector: "input, textarea",
+  });
+}
 
 const fill = (label: string, value: string) =>
   fireEvent.change(field(label), { target: { value } });
+
+const bodyOf = (s: OIDCSettings) => ({
+  enabled: s.enabled,
+  external_url: s.external_url,
+  issuer: s.issuer,
+  client_id: s.client_id,
+  client_secret: "",
+  display_name: s.display_name,
+  scopes: s.scopes,
+  session_lifetime_seconds: s.session_lifetime_seconds,
+  trust_unverified_email: s.trust_unverified_email,
+  ca_certificate: s.ca_certificate,
+  groups_claim: s.groups_claim,
+  group_roles: s.group_roles,
+});
 
 const chooseUnit = async (dialog: HTMLElement, unit: string) => {
   fireEvent.mouseDown(within(dialog).getByRole("combobox", { name: "Unit" }));
   fireEvent.click(await screen.findByRole("option", { name: unit }));
 };
 
-const openEditor = async () => {
-  const edit = await screen.findByRole("button", { name: "Edit" });
+const openEditor = async (name = "Edit provider") => {
+  const edit = await screen.findByRole("button", { name });
   await waitFor(() => expect(edit).toBeEnabled());
   fireEvent.click(edit);
   return screen.findByRole("dialog");
@@ -112,21 +141,34 @@ describe("Single sign-on", () => {
     serve();
     renderPage();
 
-    const table = await screen.findByRole("table", {
-      name: "Single sign-on settings",
-    });
-    await within(table).findByText("Enabled");
+    const provider = await screen.findByRole("table", { name: "Provider" });
+    await within(provider).findByText("Keycloak");
     expect(
-      within(table).getByText(
+      within(provider).getByText(
         "https://smsc.example.com/api/v1/auth/oidc/callback",
       ),
     ).toBeInTheDocument();
-    expect(within(table).getByText("Set")).toBeInTheDocument();
-    expect(within(table).getByText("1 day")).toBeInTheDocument();
+    expect(within(provider).getByText("Set")).toBeInTheDocument();
+    expect(within(provider).getByText("1 day")).toBeInTheDocument();
+
+    const groups = screen.getByRole("table", { name: "Roles from groups" });
+    expect(within(groups).getByText("groups")).toBeInTheDocument();
     expect(
-      within(table).getByText("1. noc → Network Manager"),
+      within(groups).getByText("1. noc → Network Manager"),
     ).toBeInTheDocument();
-    expect(within(table).getByText("2. ops → Read Only")).toBeInTheDocument();
+    expect(within(groups).getByText("2. ops → Read Only")).toBeInTheDocument();
+  });
+
+  it("links to the how-to", async () => {
+    serve();
+    renderPage();
+
+    expect(
+      await screen.findByRole("link", { name: "Configure Single Sign-On" }),
+    ).toHaveAttribute(
+      "href",
+      "https://docs.ellanetworks.com/smsc/how_to/configure_single_sign_on/",
+    );
   });
 
   it("asks for the external URL before showing a redirect URL", async () => {
@@ -140,17 +182,18 @@ describe("Single sign-on", () => {
     ).toBeInTheDocument();
   });
 
-  it("saves the settings, keeping the secret when left empty", async () => {
+  it("saves the provider, keeping the secret and the groups", async () => {
     const bodies = serve();
     renderPage();
 
     const dialog = await openEditor();
+    expect(
+      within(dialog).getByRole("heading", { name: "Edit Provider" }),
+    ).toBeInTheDocument();
+    expect(field("Groups claim", dialog)).toBeUndefined();
     fill("Display name", "Corporate SSO");
     await chooseUnit(dialog, "hours");
     fill("Session lifetime", "8");
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Move group 2 up" }),
-    );
     fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
 
     await waitFor(() => expect(bodies).toHaveLength(1));
@@ -167,10 +210,185 @@ describe("Single sign-on", () => {
       ca_certificate: "",
       groups_claim: "groups",
       group_roles: [
+        { group: "noc", role_id: 3 },
+        { group: "ops", role_id: 2 },
+      ],
+    });
+  });
+
+  it("saves the roles from groups, keeping the provider", async () => {
+    const bodies = serve({
+      current: settings({
+        trust_unverified_email: true,
+        ca_certificate: "-----BEGIN CERTIFICATE-----",
+      }),
+    });
+    renderPage();
+
+    const dialog = await openEditor("Edit roles from groups");
+    expect(
+      within(dialog).getByRole("heading", { name: "Edit Roles from Groups" }),
+    ).toBeInTheDocument();
+    expect(field("Issuer URL", dialog)).toBeUndefined();
+    fill("Groups claim", " roles ");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Move group 2 up" }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0].body).toEqual({
+      enabled: true,
+      external_url: "https://smsc.example.com",
+      issuer: "https://idp.example.com/realms/smsc",
+      client_id: "smsc",
+      client_secret: "",
+      display_name: "Keycloak",
+      scopes: ["openid", "email", "profile"],
+      session_lifetime_seconds: 86400,
+      trust_unverified_email: true,
+      ca_certificate: "-----BEGIN CERTIFICATE-----",
+      groups_claim: "roles",
+      group_roles: [
         { group: "ops", role_id: 2 },
         { group: "noc", role_id: 3 },
       ],
     });
+  });
+
+  it("shows the redirect URL as the external URL is typed", async () => {
+    serve({
+      current: settings({ enabled: false, external_url: "", redirect_url: "" }),
+    });
+    renderPage();
+
+    const dialog = await openEditor();
+    expect(field("Redirect URL", dialog)).toBeUndefined();
+    fill("External URL", "https://smsc.example.org");
+    expect(field("Redirect URL", dialog)).toHaveValue(
+      "https://smsc.example.org/api/v1/auth/oidc/callback",
+    );
+    fill("External URL", "https://smsc.example.org/");
+    expect(field("Redirect URL", dialog)).toHaveValue(
+      "https://smsc.example.org/api/v1/auth/oidc/callback",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Copy the redirect URL" }),
+    ).toBeInTheDocument();
+    fill("External URL", "https://smsc.example.org/ui");
+    expect(field("Redirect URL", dialog)).toBeUndefined();
+  });
+
+  it("warns that changing the issuer signs everyone out", async () => {
+    serve();
+    renderPage();
+
+    const dialog = await openEditor();
+    const warning =
+      "Saving signs out everyone who logged in with single sign-on.";
+    expect(
+      within(dialog).queryByRole("switch", { name: "Enabled" }),
+    ).not.toBeInTheDocument();
+    fill("Client ID", "other");
+    expect(within(dialog).queryByText(warning)).not.toBeInTheDocument();
+    fill("Issuer URL", "https://idp.example.com/realms/other");
+    expect(within(dialog).getByText(warning)).toBeInTheDocument();
+  });
+
+  it("does not warn about the issuer while single sign-on is off", async () => {
+    serve({ current: settings({ enabled: false }) });
+    renderPage();
+
+    const dialog = await openEditor();
+    fill("Issuer URL", "https://idp.example.com/realms/other");
+    expect(
+      within(dialog).queryByText(/Saving signs out everyone/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("enables single sign-on from the page", async () => {
+    const bodies = serve({ current: settings({ enabled: false }) });
+    renderPage();
+
+    const enabled = await screen.findByRole("switch", { name: "Enabled" });
+    expect(enabled).not.toBeChecked();
+    fireEvent.click(enabled);
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0].body).toEqual({
+      ...bodyOf(settings()),
+      enabled: true,
+    });
+    expect(
+      await screen.findByText("Single sign-on enabled successfully."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(enabled).toBeChecked());
+  });
+
+  it("says what is missing before single sign-on can be enabled", async () => {
+    serve({
+      current: settings({
+        enabled: false,
+        external_url: "",
+        redirect_url: "",
+        client_secret_set: false,
+      }),
+    });
+    renderPage();
+
+    const enabled = await screen.findByRole("switch", { name: "Enabled" });
+    expect(enabled).toBeDisabled();
+    fireEvent.mouseOver(enabled.closest("label")!);
+    expect(
+      await screen.findByRole("tooltip", {
+        name: "Missing: external URL, client secret.",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows why single sign-on could not be enabled", async () => {
+    serve({
+      current: settings({ enabled: false }),
+      put: () => json(400, { error: "Invalid single sign-on settings" }),
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Enabled" }));
+    expect(
+      await screen.findByText(
+        "Failed to enable single sign-on: Invalid single sign-on settings",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("disables single sign-on after confirmation", async () => {
+    const bodies = serve();
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Enabled" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "Disable single sign-on? Everyone who logged in with single sign-on is signed out.",
+    );
+    expect(bodies).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disable" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0].body).toEqual({ ...bodyOf(settings()), enabled: false });
+    expect(
+      await screen.findByText("Single sign-on disabled successfully."),
+    ).toBeInTheDocument();
+  });
+
+  it("lets only who can change the settings enable or disable", async () => {
+    serve();
+    const auth = authFor("ro@example.com", RoleID.Admin);
+    renderPage({ ...auth, can: (p) => p !== "oidc:update" && auth.can(p) });
+
+    await screen.findByText("Keycloak");
+    const enabled = await screen.findByRole("switch", { name: "Enabled" });
+    expect(enabled).toBeChecked();
+    expect(enabled).toBeDisabled();
   });
 
   it("refuses settings the API would refuse", async () => {
@@ -229,7 +447,6 @@ describe("Single sign-on", () => {
         "not a certificate",
         "PEM certificates, each starting with -----BEGIN CERTIFICATE-----.",
       ],
-      ["Groups claim", "x".repeat(256), "At most 255 bytes."],
     ] as const) {
       const before = (field(label) as HTMLInputElement).value;
       fill(label, value);
@@ -244,8 +461,19 @@ describe("Single sign-on", () => {
     serve();
     renderPage();
 
-    const dialog = await openEditor();
+    const dialog = await openEditor("Edit roles from groups");
     const update = within(dialog).getByRole("button", { name: "Update" });
+
+    fill("Groups claim", "x".repeat(256));
+    expect(field("Groups claim")).toHaveAccessibleDescription(
+      "At most 255 bytes.",
+    );
+    expect(update).toBeDisabled();
+    fill("Groups claim", "");
+    expect(field("Groups claim")).toHaveAccessibleDescription(
+      "Enter the claim that holds the groups.",
+    );
+    fill("Groups claim", "groups");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Add group" }));
     expect(field("Group 3")).toHaveAccessibleDescription("Enter the group.");
@@ -272,7 +500,7 @@ describe("Single sign-on", () => {
     serve();
     renderPage();
 
-    const dialog = await openEditor();
+    const dialog = await openEditor("Edit roles from groups");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Move group 2 up" }),
     );
@@ -399,7 +627,7 @@ describe("Single sign-on", () => {
 
     await screen.findByText("Keycloak");
     expect(
-      screen.queryByRole("button", { name: "Edit" }),
+      screen.queryByRole("button", { name: /^Edit/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -419,17 +647,16 @@ describe("Single sign-on", () => {
     ).toBeEnabled();
   });
 
-  it("needs a client secret to enable single sign-on the first time", async () => {
-    serve({
-      current: settings({ enabled: false, client_secret_set: false }),
-    });
+  it("needs a complete provider while single sign-on is on", async () => {
+    serve();
     renderPage();
 
     const dialog = await openEditor();
-    fireEvent.click(within(dialog).getByRole("switch", { name: "Enabled" }));
-
+    fill("Display name", "");
     expect(
-      await within(dialog).findByText("Enter the client secret."),
+      await within(dialog).findByText(
+        "Enter the name to show on the login page.",
+      ),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("button", { name: "Update" }),
@@ -443,20 +670,9 @@ describe("Single sign-on", () => {
     const dialog = await openEditor();
     fireEvent.click(within(dialog).getByRole("button", { name: "Test" }));
 
-    const result = await within(dialog).findByRole("alert");
-    expect(result).toHaveTextContent(
-      "Ella SMSC can use this identity provider.",
-    );
-    expect(result).toHaveTextContent("Signing keys1");
-    expect(result).toHaveTextContent("Signing algorithmsRS256");
-    expect(result).toHaveTextContent("PKCEYes");
-    expect(result).toHaveTextContent("Issuer parameter (RFC 9207)Yes");
-    expect(result).toHaveTextContent(
-      "Client authenticationclient_secret_basic",
-    );
-    expect(result).toHaveTextContent(
-      "UserInfo endpointhttps://idp.example.com/realms/smsc/protocol/openid-connect/userinfo",
-    );
+    const result = await within(dialog).findByRole("status");
+    expect(await within(result).findByText("Works")).toBeInTheDocument();
+    expect(result).not.toHaveTextContent("Failed");
     expect(bodies).toEqual([
       {
         path: "/api/v1/oidc/discovery",
@@ -478,11 +694,12 @@ describe("Single sign-on", () => {
     const dialog = await openEditor();
     fireEvent.click(within(dialog).getByRole("button", { name: "Test" }));
 
+    const result = await within(dialog).findByRole("status");
+    expect(await within(result).findByText("Failed")).toBeInTheDocument();
     expect(
-      await within(dialog).findByText(/discovery: 404 Not Found/),
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).getByText("Ella SMSC cannot use this identity provider."),
+      within(result).getByText(
+        "the identity provider: discovery: 404 Not Found",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -496,38 +713,42 @@ describe("Single sign-on", () => {
       ["CA certificate", "-----BEGIN CERTIFICATE-----"],
     ] as const) {
       fireEvent.click(within(dialog).getByRole("button", { name: "Test" }));
-      expect(
-        await within(dialog).findByText(
-          "Ella SMSC can use this identity provider.",
-        ),
-      ).toBeInTheDocument();
+      expect(await within(dialog).findByText("Works")).toBeInTheDocument();
       fill(label, value);
-      expect(
-        within(dialog).queryByText("Ella SMSC can use this identity provider."),
-      ).not.toBeInTheDocument();
+      expect(within(dialog).queryByText("Works")).not.toBeInTheDocument();
     }
   });
 
-  it("warns before trusting unverified email addresses", async () => {
+  it("explains the risk of trusting email addresses on hover", async () => {
     serve();
     renderPage();
 
     const dialog = await openEditor();
-    fireEvent.click(
-      within(dialog).getByRole("switch", {
-        name: "Trust email addresses from this provider",
-      }),
-    );
+    const trust = within(dialog).getByRole("switch", {
+      name: "Trust email addresses from this provider",
+    });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+
+    fireEvent.mouseOver(trust);
 
     expect(
-      await within(dialog).findByText(
-        /can then take over the Ella SMSC user with that address, Admins included/,
-      ),
+      await screen.findByRole("tooltip", {
+        name: /can log in as the Ella SMSC user with that address, Admins included/,
+      }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the enabled state as a switch outside the provider settings", async () => {
+    serve();
+    renderPage();
+
     expect(
-      within(dialog).getByText(
-        /An address the provider says is not verified is always refused/,
+      await screen.findByRole("switch", { name: "Enabled" }),
+    ).toBeChecked();
+    expect(
+      within(screen.getByRole("table", { name: "Provider" })).queryByText(
+        "Status",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   });
 });

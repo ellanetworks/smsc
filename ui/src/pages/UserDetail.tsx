@@ -15,7 +15,7 @@ import { EditRoleDialog, PasswordDialog } from "@/components/UserDialogs";
 import { useAuth } from "@/contexts/AuthContext";
 import { errorMessage, useSnackbar } from "@/contexts/SnackbarContext";
 import { listAPITokens } from "@/queries/api_tokens";
-import { getOIDC } from "@/queries/oidc";
+import { getOIDC, roleFromGroups } from "@/queries/oidc";
 import {
   deleteUser,
   getUser,
@@ -29,10 +29,10 @@ const removePasswordDescription = (
   linked: boolean,
 ) => {
   const consequence = !ssoEnabled
-    ? "Single sign-on is off, so they will be unable to sign in until it is turned on or they get a password again."
+    ? "Single sign-on is off, so they cannot sign in until it is on."
     : linked
       ? "They can then sign in only with single sign-on."
-      : "They have never signed in with single sign-on: if their identity provider account does not have this email address, they will be unable to sign in.";
+      : "They have not signed in with single sign-on yet.";
   return `Remove the password of ${email}? ${consequence} Their sessions end.`;
 };
 
@@ -132,6 +132,7 @@ export default function UserDetail() {
         {user.data ? (
           <UserAccountCard
             user={user.data}
+            fromGroups={roleFromGroups(user.data, oidc.data)}
             onEditRole={self ? undefined : () => setEditing("role")}
             onUnlink={self ? undefined : () => setEditing("unlink")}
           />
@@ -190,7 +191,7 @@ export default function UserDetail() {
       {editing === "unlink" && (
         <ConfirmDialog
           title="Unlink from Identity Provider"
-          description={`Unlink ${email} from their identity provider account? Their single sign-on sessions end. Their next sign-in links them again by verified email.`}
+          description={`Unlink ${email} from their identity provider account? Their single sign-on sessions end, and their next sign-in links them again.`}
           confirmLabel="Unlink"
           pending={unlink.isPending}
           onConfirm={() => unlink.mutate()}

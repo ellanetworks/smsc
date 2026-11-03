@@ -3,6 +3,7 @@ import {
   Checkbox,
   FormControlLabel,
   FormHelperText,
+  Switch,
   TextField,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +11,7 @@ import EditDialog from "@/components/EditDialog";
 import { useSnackbar } from "@/contexts/SnackbarContext";
 import PasswordField from "@/components/PasswordField";
 import RoleField from "@/components/RoleField";
-import { getOIDC } from "@/queries/oidc";
+import { getOIDC, roleFromGroups } from "@/queries/oidc";
 import {
   createUser,
   passwordError,
@@ -23,17 +24,16 @@ import {
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
-function useGroupMapping() {
-  const oidc = useQuery({ queryKey: ["oidc"], queryFn: getOIDC });
-  return (oidc.data?.group_roles.length ?? 0) > 0;
-}
+const useOIDC = () => useQuery({ queryKey: ["oidc"], queryFn: getOIDC });
 
 function PinRoleField({
   checked,
   onChange,
+  required = false,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
+  required?: boolean;
 }) {
   return (
     <div>
@@ -41,6 +41,7 @@ function PinRoleField({
         control={
           <Checkbox
             checked={checked}
+            disabled={required}
             onChange={(e) => onChange(e.target.checked)}
             slotProps={{ input: { "aria-describedby": "pin-role-help" } }}
           />
@@ -48,8 +49,9 @@ function PinRoleField({
         label="Pin role"
       />
       <FormHelperText id="pin-role-help" sx={{ mt: 0 }}>
-        A pinned role stays as set here. Otherwise, it follows the user's
-        identity provider groups at each sign-in.
+        {required
+          ? "Pinned, or groups would replace it at the next login."
+          : "A pinned role is not updated from the user's groups."}
       </FormHelperText>
     </div>
   );
@@ -62,11 +64,21 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState(RoleID.ReadOnly);
   const [pinned, setPinned] = useState(false);
-  const mapped = useGroupMapping();
+  const [withPassword, setWithPassword] = useState(true);
+  const oidc = useOIDC().data;
+  const mapped = (oidc?.group_roles.length ?? 0) > 0;
+  const ssoConfigured =
+    oidc !== undefined && oidc.issuer !== "" && oidc.client_id !== "";
+  const needsPassword = !ssoConfigured || withPassword;
 
   const mutation = useMutation({
     mutationFn: () =>
-      createUser(email, password, role, mapped ? pinned : undefined),
+      createUser(
+        email,
+        needsPassword ? password : "",
+        role,
+        mapped ? pinned : undefined,
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["users"] });
       showSnackbar("User created successfully.", "success");
@@ -84,7 +96,7 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
       title="Create User"
       valid={
         EMAIL.test(email) &&
-        (password === "" || passwordError(password) === undefined)
+        (!needsPassword || passwordError(password) === undefined)
       }
       pending={mutation.isPending}
       error={mutation.error}
@@ -104,17 +116,28 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
         required
         autoFocus
       />
-      <PasswordField
-        label="Password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        error={newPasswordError !== undefined}
-        helperText={
-          newPasswordError ??
-          "8 to 72 characters. Leave empty for a user who signs in only with single sign-on."
-        }
-        autoComplete="new-password"
-      />
+      {ssoConfigured && (
+        <FormControlLabel
+          control={
+            <Switch
+              checked={withPassword}
+              onChange={(e) => setWithPassword(e.target.checked)}
+            />
+          }
+          label="Password"
+        />
+      )}
+      {needsPassword && (
+        <PasswordField
+          label="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          error={newPasswordError !== undefined}
+          helperText={newPasswordError ?? "8 to 72 characters."}
+          required
+          autoComplete="new-password"
+        />
+      )}
       <RoleField value={role} onChange={setRole} />
       {mapped && <PinRoleField checked={pinned} onChange={setPinned} />}
     </EditDialog>
@@ -131,8 +154,11 @@ export function EditRoleDialog({
   const queryClient = useQueryClient();
   const { showSnackbar } = useSnackbar();
   const [role, setRole] = useState(user.role_id);
-  const [pinned, setPinned] = useState(user.role_pinned);
-  const pinnable = useGroupMapping() || user.role_pinned;
+  const [chosenPin, setPinned] = useState(user.role_pinned);
+  const oidc = useOIDC();
+  const pinnable = (oidc.data?.group_roles.length ?? 0) > 0 || user.role_pinned;
+  const pinRequired = roleFromGroups(user, oidc.data) && role !== user.role_id;
+  const pinned = chosenPin || pinRequired;
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -155,7 +181,13 @@ export function EditRoleDialog({
     >
       <TextField label="Email" value={user.email} disabled />
       <RoleField value={role} onChange={setRole} />
-      {pinnable && <PinRoleField checked={pinned} onChange={setPinned} />}
+      {pinnable && (
+        <PinRoleField
+          checked={pinned}
+          onChange={setPinned}
+          required={pinRequired}
+        />
+      )}
     </EditDialog>
   );
 }

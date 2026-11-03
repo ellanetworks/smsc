@@ -11,10 +11,17 @@ import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import { signInMethods } from "@/components/UserCards";
 import { CreateUserDialog } from "@/components/UserDialogs";
+import { getOIDC, roleFromGroups, type OIDCSettings } from "@/queries/oidc";
 import { listUsers, roleLabels, type User } from "@/queries/users";
 import { GRID_SX } from "@/utils/layout";
 
-const columns: GridColDef<User>[] = [
+const roleSource = (user: User, oidc?: OIDCSettings) => {
+  if (user.role_pinned) return " (pinned)";
+  if (roleFromGroups(user, oidc)) return " (from groups)";
+  return "";
+};
+
+const columns = (oidc?: OIDCSettings): GridColDef<User>[] => [
   {
     field: "email",
     headerName: "Email",
@@ -34,9 +41,9 @@ const columns: GridColDef<User>[] = [
   {
     field: "role_id",
     headerName: "Role",
-    width: 180,
+    width: 240,
     valueGetter: (_value, row) =>
-      roleLabels[row.role_id] + (row.role_pinned ? " (pinned)" : ""),
+      roleLabels[row.role_id] + roleSource(row, oidc),
   },
   {
     field: "sign_in",
@@ -62,6 +69,7 @@ export default function Users() {
     placeholderData: (prev) => prev,
   });
   const { data, isFetching } = users;
+  const oidc = useQuery({ queryKey: ["oidc"], queryFn: getOIDC });
 
   return (
     <Box component="section" aria-labelledby="users-title">
@@ -84,7 +92,7 @@ export default function Users() {
       <DataGrid
         aria-label="Users"
         rows={data?.items ?? []}
-        columns={columns}
+        columns={columns(oidc.data)}
         getRowId={(row) => row.email}
         loading={isFetching && !data}
         paginationMode="server"

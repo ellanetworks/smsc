@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import { returnPath } from "@/utils/returnPath";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import Login from "@/pages/Login";
 import { makeToken } from "@/test/jwt";
 import { json, renderWithClient, stubApi } from "@/test/render";
@@ -35,6 +35,10 @@ const serve = ({
     ),
   );
 
+function Search() {
+  return <output aria-label="search">{useLocation().search}</output>;
+}
+
 const renderLogin = (from?: string, search = "") =>
   renderWithClient(
     <MemoryRouter
@@ -43,7 +47,15 @@ const renderLogin = (from?: string, search = "") =>
       ]}
     >
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route
+          path="/login"
+          element={
+            <>
+              <Login />
+              <Search />
+            </>
+          }
+        />
         <Route path="/initialize" element={<p>initialize page</p>} />
         <Route path="/messages" element={<p>messages page</p>} />
         <Route path="/" element={<p>home page</p>} />
@@ -123,10 +135,13 @@ describe("Login", () => {
     renderLogin();
 
     const button = await screen.findByRole("link", {
-      name: "Sign in with Keycloak",
+      name: "Log in with Keycloak",
     });
     expect(button).toHaveAttribute("href", "/api/v1/auth/oidc/login");
-    expect(screen.getByRole("button", { name: "Login" })).toBeInTheDocument();
+    expect(button).toHaveClass("MuiButton-contained");
+    expect(screen.getByRole("button", { name: "Login" })).toHaveClass(
+      "MuiButton-outlined",
+    );
   });
 
   it("offers only the password without single sign-on", async () => {
@@ -135,19 +150,25 @@ describe("Login", () => {
 
     await screen.findByRole("heading", { name: "Login" });
     expect(
-      screen.queryByRole("link", { name: /Sign in with/ }),
+      screen.queryByRole("link", { name: /Log in with/ }),
     ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Login" })).toHaveClass(
+      "MuiButton-contained",
+    );
   });
 
   it("says why single sign-on failed", async () => {
     serve({ oidc: { enabled: true, display_name: "Keycloak" } });
-    renderLogin(undefined, "?error=not_set_up");
+    renderLogin(undefined, "?error=not_set_up&x=1");
 
     expect(
       await screen.findByText(
         "Your account has not been set up in Ella SMSC. Contact an administrator.",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "search" })).toHaveTextContent(
+      /^\?x=1$/,
+    );
   });
 
   it("gives a general message for an unknown single sign-on error", async () => {
@@ -173,7 +194,7 @@ describe("Login", () => {
         ),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("link", { name: "Sign in with Keycloak" }),
+        screen.getByRole("link", { name: "Log in with Keycloak" }),
       ).toBeInTheDocument();
     },
   );
@@ -183,7 +204,7 @@ describe("Login", () => {
     renderLogin();
 
     expect(
-      await screen.findByRole("link", { name: "Sign in with Keycloak" }),
+      await screen.findByRole("link", { name: "Log in with Keycloak" }),
     ).toHaveFocus();
   });
 
@@ -202,7 +223,7 @@ describe("Login", () => {
     renderLogin("/messages");
 
     const link = await screen.findByRole("link", {
-      name: "Sign in with Keycloak",
+      name: "Log in with Keycloak",
     });
     link.addEventListener("click", (e) => e.preventDefault());
     fireEvent.click(link);

@@ -33,8 +33,21 @@ export default function Login() {
     () =>
       (location.state as { from?: string } | null)?.from ?? returnPath() ?? "/",
   );
-  const [params] = useSearchParams();
-  const oidcError = params.get("error");
+  const [params, setParams] = useSearchParams();
+  const [oidcError] = useState(() => params.get("error"));
+
+  useEffect(() => {
+    if (params.has("error")) {
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.delete("error");
+          return next;
+        },
+        { replace: true, state: location.state },
+      );
+    }
+  }, [params, setParams, location.state]);
 
   const [checking, setChecking] = useState(true);
   const [email, setEmail] = useState("");
@@ -112,6 +125,7 @@ export default function Login() {
     <AuthLayout
       title="Login"
       submitLabel="Login"
+      submitVariant={oidc.enabled ? "outlined" : "contained"}
       submitting={submitting}
       valid={email !== "" && password !== ""}
       onSubmit={submit}
@@ -120,13 +134,22 @@ export default function Login() {
       {oidc.enabled && (
         <>
           <Button
-            variant="outlined"
+            variant="contained"
+            color="success"
             fullWidth
+            disableFocusRipple
+            sx={{
+              "&.Mui-focusVisible": {
+                outline: "2px solid",
+                outlineColor: "success.main",
+                outlineOffset: 2,
+              },
+            }}
             href={OIDC_LOGIN_PATH}
             onClick={() => rememberReturnPath(from)}
             ref={ssoButton}
           >
-            Sign in with {oidc.display_name}
+            Log in with {oidc.display_name}
           </Button>
           <Divider>or</Divider>
         </>

@@ -10,18 +10,18 @@ These guides manage users who sign in through the identity provider. [Configure 
 
 1. In the UI, go to **Users** and click **Create**. Set:
     - **Email**: the user's email address at the identity provider
-    - **Password**: empty
+    - **Password**: off
     - **Role**: the user's role
     - **Pin role**: checked to keep this role, if groups are mapped to roles
 2. Click **Create**.
 
-The user signs in with **Sign in with** the display name. Their first login links their user to their account at the identity provider.
+The user signs in with **Log in with** the display name. Their first login links their user to their account at the identity provider.
 
 ## Map groups to roles
 
 Users in a mapped group get their role from it at each login, and get a user at their first login. Users in no mapped group cannot sign in through the identity provider, unless their role is [pinned](#pin-a-users-role).
 
-### 1. Send groups in the ID token
+### 1. Send groups to Ella SMSC
 
 === "Keycloak"
 
@@ -32,20 +32,13 @@ Users in a mapped group get their role from it at each login, and get a user at 
 
     The groups are group names, such as `smsc-admins`.
 
-=== "Microsoft Entra ID"
+=== "Other providers"
 
-    1. Go to **Entra ID** > **App registrations** and open the app.
-    2. In **Token configuration**, click **Add groups claim**.
-    3. Check **Security groups**. Under **ID**, choose **Group ID**.
-    4. Click **Save**.
-
-    The groups are group object IDs, such as `5a1c2f3e-8b7d-4c6e-9f0a-1b2c3d4e5f60`: the **Object ID** of each group in **Entra ID** > **Groups**.
-
-    Entra ID lists at most 200 groups in an ID token, and a user in more cannot sign in. If users are in more, check **Groups assigned to the application** instead of **Security groups**, and add the mapped groups to the app in **Entra ID** > **Enterprise applications** > the app > **Users and groups**. This needs Entra ID P1 or P2.
+    Configure the provider to send the user's groups in a claim, such as `groups`, as a list of group names or IDs.
 
 ### 2. Map the groups in Ella SMSC
 
-1. Go to **Single Sign-On** and click **Edit**.
+1. Go to **Single Sign-On** and, in **Roles from groups**, click **Edit**.
 2. Set **Groups claim** to `groups`.
 3. Click **Add group** for each group, and set the group and its role. Put the most privileged first: a user in several groups gets the role of the first.
 4. Click **Update**.
@@ -55,7 +48,7 @@ Users in a mapped group get their role from it at each login, and get a user at 
 A pinned role is kept whatever the user's groups.
 
 1. Go to **Users** and open the user.
-2. In **Account**, edit the role: choose the role, check **Pin role**, and click **Update**.
+2. In **Account**, edit the role: choose the role, check **Pin role**, and click **Update**. Changing a role that comes from groups checks it for you.
 
 To unpin, uncheck **Pin role**. The role then follows the user's groups from their next login.
 

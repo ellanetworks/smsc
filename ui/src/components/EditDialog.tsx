@@ -1,5 +1,6 @@
 import { useEffect, useRef, type FormEvent, type ReactNode } from "react";
 import {
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -20,6 +21,7 @@ interface EditDialogProps {
   submitLabel?: string;
   pendingLabel?: string;
   failure?: string;
+  notice?: ReactNode;
 }
 
 export default function EditDialog({
@@ -33,6 +35,7 @@ export default function EditDialog({
   submitLabel = "Update",
   pendingLabel = "Updating…",
   failure = "Could not update",
+  notice,
 }: EditDialogProps) {
   const content = useRef<HTMLDivElement>(null);
 
@@ -61,6 +64,7 @@ export default function EditDialog({
           {children}
         </Stack>
       </DialogContent>
+      {notice && <Box sx={{ px: 3, pt: 2 }}>{notice}</Box>}
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button

@@ -98,6 +98,7 @@ nav:
     - explanation/index.md
     - Architecture: explanation/architecture.md
     - Security: explanation/security.md
+    - Single Sign-On: explanation/single_sign_on.md
 plugins:
   - search
   - glightbox

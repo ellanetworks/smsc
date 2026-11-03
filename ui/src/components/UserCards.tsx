@@ -85,10 +85,12 @@ export function signInMethods(user: User): string[] {
 
 export function UserAccountCard({
   user,
+  fromGroups = false,
   onEditRole,
   onUnlink,
 }: {
   user: User;
+  fromGroups?: boolean;
   onEditRole?: () => void;
   onUnlink?: () => void;
 }) {
@@ -111,8 +113,13 @@ export function UserAccountCard({
             variant="outlined"
           />
           {user.role_pinned && (
-            <Tooltip title="Set by an admin. Not updated from the identity provider's groups.">
+            <Tooltip title="Not updated from the user's groups.">
               <Chip size="small" label="Pinned" sx={{ ml: 1 }} />
+            </Tooltip>
+          )}
+          {fromGroups && (
+            <Tooltip title="Updated from the user's groups at each login.">
+              <Chip size="small" label="From groups" sx={{ ml: 1 }} />
             </Tooltip>
           )}
           <Box sx={{ flex: 1 }} />

@@ -636,12 +636,42 @@ func TestOIDCLoginRolesFromGroups(t *testing.T) {
 		t.Fatalf("login with fewer groups: %q, role %d", got, role("new@example.com").RoleID)
 	}
 
-	if got := login("sub-new", "new@example.com", []string{"other"}); got != "no_group" {
+	lastEvent := func() string {
+		t.Helper()
+
+		events := a.auditEvents(t, "auth_oidc_login")
+
+		return events[len(events)-1]
+	}
+
+	if got := login("sub-new", "new@example.com", []string{"other", "/admins"}); got != "no_group" {
 		t.Fatalf("login with no mapped group: %q, want no_group", got)
+	}
+
+	if got, want := lastEvent(), `none of the user's 2 groups is mapped to a role: "other", "/admins"`; !strings.HasSuffix(got, want) {
+		t.Fatalf("audit detail = %q, want suffix %q", got, want)
+	}
+
+	many := []string{strings.Repeat("g", 100)}
+	for i := range 11 {
+		many = append(many, fmt.Sprintf("group-%d", i))
+	}
+
+	if got := login("sub-new", "new@example.com", many); got != "no_group" {
+		t.Fatalf("login with many unmapped groups: %q, want no_group", got)
+	}
+
+	if got, want := lastEvent(), `12 groups is mapped to a role: "`+strings.Repeat("g", 24)+`…", "group-0", `; !strings.Contains(got, want) ||
+		!strings.HasSuffix(got, `"group-8", and 2 more`) {
+		t.Fatalf("audit detail = %q", got)
 	}
 
 	if got := login("sub-none", "none@example.com", nil); got != "no_group" {
 		t.Fatalf("a new user with no group: %q, want no_group", got)
+	}
+
+	if got := lastEvent(); !strings.HasSuffix(got, "the user has no groups") {
+		t.Fatalf("audit detail = %q", got)
 	}
 
 	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/users/new@example.com", `{"role_id": 4, "role_pinned": true}`); code != http.StatusOK {

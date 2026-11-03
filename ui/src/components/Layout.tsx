@@ -42,11 +42,10 @@ import DeploymentIdentity from "@/components/DeploymentIdentity";
 import Footer from "@/components/Footer";
 import Logo from "@/components/Logo";
 import { useAuth, type Permission } from "@/contexts/AuthContext";
+import { DOCS_URL } from "@/utils/docs";
 import { MAX_WIDTH, PAGE_PADDING_X } from "@/utils/layout";
 
 const drawerWidth = 250;
-
-const DOCS_URL = "https://docs.ellanetworks.com/smsc/";
 
 const NEW_ISSUE_URL = "https://github.com/ellanetworks/smsc/issues/new/choose";
 

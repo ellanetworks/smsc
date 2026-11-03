@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 const (
 	OIDCLoginCookieName = "__Host-smsc_oidc_login"
 	maxErrorDetail      = 300
+	maxListedGroups     = 10
+	maxListedGroupBytes = 24
 )
 
 const (
@@ -281,7 +284,11 @@ func groupRole(c *oidc.Client, cl oidc.Claims) (db.Role, error) {
 
 	role, ok := c.RoleFor(cl.Groups)
 	if !ok {
-		return 0, refuse(OIDCNoGroup, "none of the user's %d groups is mapped to a role", len(cl.Groups))
+		if len(cl.Groups) == 0 {
+			return 0, refuse(OIDCNoGroup, "the user has no groups")
+		}
+
+		return 0, refuse(OIDCNoGroup, "none of the user's %d groups is mapped to a role: %s", len(cl.Groups), listGroups(cl.Groups))
 	}
 
 	return role, nil
@@ -320,6 +327,26 @@ func actor(cl oidc.Claims) string {
 	}
 
 	return cl.Subject
+}
+
+func listGroups(groups []string) string {
+	shown := groups[:min(len(groups), maxListedGroups)]
+	quoted := make([]string, len(shown))
+
+	for i, g := range shown {
+		if len(g) > maxListedGroupBytes {
+			g = strings.ToValidUTF8(g[:maxListedGroupBytes], "") + "…"
+		}
+
+		quoted[i] = strconv.Quote(g)
+	}
+
+	list := strings.Join(quoted, ", ")
+	if more := len(groups) - len(shown); more > 0 {
+		list += fmt.Sprintf(", and %d more", more)
+	}
+
+	return list
 }
 
 func clip(s string) string {
