@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
+import { returnPath } from "@/utils/returnPath";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Login from "@/pages/Login";
 import { makeToken } from "@/test/jwt";
@@ -60,6 +61,7 @@ const fill = (label: string, value: string) =>
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  sessionStorage.clear();
 });
 
 describe("Login", () => {
@@ -157,5 +159,71 @@ describe("Login", () => {
         "Single sign-on failed. Try again, or contact an administrator.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
+    "gives the general message for the error %s",
+    async (code) => {
+      serve({ oidc: { enabled: true, display_name: "Keycloak" } });
+      renderLogin(undefined, `?error=${code}`);
+
+      expect(
+        await screen.findByText(
+          "Single sign-on failed. Try again, or contact an administrator.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "Sign in with Keycloak" }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("focuses single sign-on when it is on", async () => {
+    serve({ oidc: { enabled: true, display_name: "Keycloak" } });
+    renderLogin();
+
+    expect(
+      await screen.findByRole("link", { name: "Sign in with Keycloak" }),
+    ).toHaveFocus();
+  });
+
+  it("focuses the email without single sign-on", async () => {
+    serve();
+    renderLogin();
+
+    await screen.findByRole("heading", { name: "Login" });
+    expect(
+      screen.getByLabelText("Email", { exact: false, selector: "input" }),
+    ).toHaveFocus();
+  });
+
+  it("remembers the page asked for across single sign-on", async () => {
+    serve({ oidc: { enabled: true, display_name: "Keycloak" } });
+    renderLogin("/messages");
+
+    const link = await screen.findByRole("link", {
+      name: "Sign in with Keycloak",
+    });
+    link.addEventListener("click", (e) => e.preventDefault());
+    fireEvent.click(link);
+
+    expect(returnPath()).toBe("/messages");
+  });
+
+  it("returns to the page asked for after a failed single sign-on", async () => {
+    sessionStorage.setItem(
+      "smsc.returnPath",
+      JSON.stringify({ path: "/messages", at: Date.now() }),
+    );
+    serve({ oidc: { enabled: true, display_name: "Keycloak" } });
+    renderLogin(undefined, "?error=denied");
+
+    await screen.findByRole("heading", { name: "Login" });
+    fill("Email", "admin@example.com");
+    fill("Password", "correct horse");
+    fireEvent.click(screen.getByRole("button", { name: "Login" }));
+
+    expect(await screen.findByText("messages page")).toBeInTheDocument();
+    expect(returnPath()).toBeUndefined();
   });
 });

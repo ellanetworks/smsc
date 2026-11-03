@@ -17,9 +17,30 @@ const user = (overrides: Partial<User> = {}): User => ({
   ...overrides,
 });
 
+const oidcSettings = ({
+  enabled = true,
+  mapped = true,
+}: { enabled?: boolean; mapped?: boolean } = {}) => ({
+  enabled,
+  external_url: "https://smsc.example.com",
+  redirect_url: "https://smsc.example.com/api/v1/auth/oidc/callback",
+  issuer: "https://idp.example.com/realms/smsc",
+  client_id: "smsc",
+  client_secret_set: true,
+  display_name: "Keycloak",
+  scopes: ["openid", "email"],
+  session_lifetime_seconds: 86400,
+  trust_unverified_email: false,
+  ca_certificate: "",
+  groups_claim: mapped ? "groups" : "",
+  group_roles: mapped ? [{ group: "noc", role_id: 3 }] : [],
+});
+
 const serve = (
   u: User,
   me: User = user({ email: "admin@example.com", role_id: 1 }),
+  oidc = oidcSettings(),
+  fail?: { path: string; status: number; error: string },
 ) => {
   const calls: { method: string; path: string; body?: unknown }[] = [];
   const path = `/api/v1/users/${encodeURIComponent(u.email)}`;
@@ -29,6 +50,9 @@ const serve = (
       path: url.pathname,
       ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
     });
+    if (fail?.path === url.pathname) {
+      return json(fail.status, { error: fail.error });
+    }
     return json(200, { result: { message: "ok" } });
   };
   vi.stubGlobal(
@@ -40,6 +64,7 @@ const serve = (
             ? record(url, init)
             : json(200, { result: page([me, u]) }),
         "/api/v1/users/me": () => json(200, { result: me }),
+        "/api/v1/oidc": () => json(200, { result: oidc }),
         "/api/v1/users/me/api-tokens": () => json(200, { result: page([]) }),
         [path]: (url, init) =>
           init?.method === "PUT" ? record(url, init) : json(200, { result: u }),
@@ -83,7 +108,7 @@ describe("Users and single sign-on", () => {
   });
 
   it("creates a user without a password", async () => {
-    const calls = serve(user());
+    const calls = serve(user(), undefined, oidcSettings({ mapped: false }));
     renderAt("/users");
 
     fireEvent.click(await screen.findByRole("button", { name: "Create" }));
@@ -104,6 +129,38 @@ describe("Users and single sign-on", () => {
     );
   });
 
+  it("pins the role of a user created with group mapping on", async () => {
+    const calls = serve(user());
+    renderAt("/users");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Email", { exact: false }), {
+      target: { value: "boss@example.com" },
+    });
+    fireEvent.mouseDown(within(dialog).getByRole("combobox", { name: /Role/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /Admin/ }));
+    fireEvent.click(
+      await within(dialog).findByRole("checkbox", { name: /Pin role/ }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(calls).toEqual([
+        {
+          method: "POST",
+          path: "/api/v1/users",
+          body: {
+            email: "boss@example.com",
+            password: "",
+            role_id: 1,
+            role_pinned: true,
+          },
+        },
+      ]),
+    );
+  });
+
   it("removes a user's password", async () => {
     const calls = serve(user());
     renderAt("/users/nm%40example.com");
@@ -111,11 +168,11 @@ describe("Users and single sign-on", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Remove Password" }),
     );
-    fireEvent.click(
-      within(await screen.findByRole("dialog")).getByRole("button", {
-        name: "Remove",
-      }),
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "They can then sign in only with single sign-on.",
     );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
 
     await waitFor(() =>
       expect(calls).toEqual([
@@ -124,6 +181,56 @@ describe("Users and single sign-on", () => {
     );
     expect(
       await screen.findByText("Password removed successfully."),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "single sign-on is off",
+      user(),
+      oidcSettings({ enabled: false }),
+      "Single sign-on is off, so they will be unable to sign in until it is turned on or they get a password again.",
+    ],
+    [
+      "the user never signed in with single sign-on",
+      user({ oidc_linked: false }),
+      oidcSettings(),
+      "They have never signed in with single sign-on: if their identity provider account does not have this email address, they will be unable to sign in.",
+    ],
+  ])(
+    "warns before removing a password when %s",
+    async (_case, u, oidc, warning) => {
+      serve(u, undefined, oidc);
+      renderAt("/users/nm%40example.com");
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Remove Password" }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("dialog")).toHaveTextContent(warning),
+      );
+    },
+  );
+
+  it("says why a user could not be unlinked", async () => {
+    serve(user(), undefined, oidcSettings(), {
+      path: "/api/v1/users/nm%40example.com/oidc",
+      status: 404,
+      error: "This user is not linked to an identity provider account.",
+    });
+    renderAt("/users/nm%40example.com");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Unlink" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Unlink",
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        "Failed to unlink the user: This user is not linked to an identity provider account.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -157,13 +264,15 @@ describe("Users and single sign-on", () => {
     );
   });
 
-  it("pins a role", async () => {
-    const calls = serve(user());
+  it("pins the role of a user not linked yet", async () => {
+    const calls = serve(user({ oidc_linked: false }));
     renderAt("/users/nm%40example.com");
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit role" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Pin role/ }));
+    fireEvent.click(
+      await within(dialog).findByRole("checkbox", { name: /Pin role/ }),
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
 
     await waitFor(() =>
@@ -208,10 +317,35 @@ describe("Users and single sign-on", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not offer pinning to a user without single sign-on", async () => {
-    serve(user({ oidc_linked: false }));
+  it("lets a pinned role be unpinned without group mapping", async () => {
+    const calls = serve(
+      user({ role_pinned: true }),
+      undefined,
+      oidcSettings({ mapped: false }),
+    );
     renderAt("/users/nm%40example.com");
 
+    fireEvent.click(await screen.findByRole("button", { name: "Edit role" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Pin role/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
+
+    await waitFor(() =>
+      expect(calls).toEqual([
+        {
+          method: "PUT",
+          path: "/api/v1/users/nm%40example.com",
+          body: { role_id: 3, role_pinned: false },
+        },
+      ]),
+    );
+  });
+
+  it("does not offer pinning without group mapping", async () => {
+    serve(user(), undefined, oidcSettings({ mapped: false }));
+    const { client } = renderAt("/users/nm%40example.com");
+
+    await waitFor(() => expect(client.getQueryData(["oidc"])).toBeDefined());
     fireEvent.click(await screen.findByRole("button", { name: "Edit role" }));
     const dialog = await screen.findByRole("dialog");
     expect(

@@ -15,12 +15,26 @@ import { EditRoleDialog, PasswordDialog } from "@/components/UserDialogs";
 import { useAuth } from "@/contexts/AuthContext";
 import { errorMessage, useSnackbar } from "@/contexts/SnackbarContext";
 import { listAPITokens } from "@/queries/api_tokens";
+import { getOIDC } from "@/queries/oidc";
 import {
   deleteUser,
   getUser,
   removeUserPassword,
   unlinkUser,
 } from "@/queries/users";
+
+const removePasswordDescription = (
+  email: string,
+  ssoEnabled: boolean,
+  linked: boolean,
+) => {
+  const consequence = !ssoEnabled
+    ? "Single sign-on is off, so they will be unable to sign in until it is turned on or they get a password again."
+    : linked
+      ? "They can then sign in only with single sign-on."
+      : "They have never signed in with single sign-on: if their identity provider account does not have this email address, they will be unable to sign in.";
+  return `Remove the password of ${email}? ${consequence} Their sessions end.`;
+};
 
 export default function UserDetail() {
   const email = useParams<{ email: string }>().email ?? "";
@@ -38,6 +52,7 @@ export default function UserDetail() {
     queryKey: ["users", "user", email],
     queryFn: () => getUser(email),
   });
+  const oidc = useQuery({ queryKey: ["oidc"], queryFn: getOIDC });
   const tokens = useQuery({
     queryKey: tokenQueryKey(email),
     queryFn: () => listAPITokens(email),
@@ -161,7 +176,11 @@ export default function UserDetail() {
       {editing === "removePassword" && (
         <ConfirmDialog
           title="Remove Password"
-          description={`Remove the password of ${email}? They can then sign in only with single sign-on. Their sessions end.`}
+          description={removePasswordDescription(
+            email,
+            oidc.data?.enabled === true,
+            user.data?.oidc_linked === true,
+          )}
           confirmLabel="Remove"
           pending={removePassword.isPending}
           onConfirm={() => removePassword.mutate()}

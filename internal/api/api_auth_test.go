@@ -193,7 +193,7 @@ func TestLogin(t *testing.T) {
 func TestLoginWithoutAPasswordIsRefused(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	if _, err := a.store.CreateUser(context.Background(), db.NewUser{Email: "sso@example.com", Role: db.RoleAdmin}); err != nil {
+	if _, err := a.store.CreateUser(context.Background(), db.NewUser{Email: "sso@example.com", Role: db.RoleAdmin}, api.MaxNumUsers); err != nil {
 		t.Fatal(err)
 	}
 

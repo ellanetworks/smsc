@@ -24,7 +24,7 @@ services:
         target: /smsc.yaml
     entrypoint: /bin/smsc --config /smsc.yaml
     volumes:
-      - ../.build/oidc:/certs:ro
+      - ${ELLA_E2E_OIDC_DIR:-../.build/oidc}:/certs:ro
     ports:
       - "${ELLA_E2E_OIDC_PORT:-15443}:5010"
 
@@ -38,7 +38,7 @@ services:
       KC_HTTPS_CERTIFICATE_KEY_FILE: /certs/keycloak-key.pem
       KC_HTTP_ENABLED: "false"
     volumes:
-      - ../.build/oidc:/certs:ro
+      - ${ELLA_E2E_OIDC_DIR:-../.build/oidc}:/certs:ro
       - ./realm.json:/opt/keycloak/data/import/realm.json:ro
     ports:
       - "${KEYCLOAK_E2E_PORT:-18443}:${KEYCLOAK_E2E_PORT:-18443}"

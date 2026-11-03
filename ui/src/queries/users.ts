@@ -65,10 +65,15 @@ export const listUsers = ({ page = 1, perPage = 25 }: PageParams = {}) =>
 
 export const getUser = (email: string) => apiFetch<User>(userPath(email));
 
-export const createUser = (email: string, password: string, roleId: RoleID) =>
+export const createUser = (
+  email: string,
+  password: string,
+  roleId: RoleID,
+  rolePinned?: boolean,
+) =>
   apiFetch<void>("/api/v1/users", {
     method: "POST",
-    body: { email, password, role_id: roleId },
+    body: { email, password, role_id: roleId, role_pinned: rolePinned },
   });
 
 export const updateUserRole = (

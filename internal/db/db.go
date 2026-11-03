@@ -15,12 +15,13 @@ var (
 	ErrAlreadyExists     = errors.New("already exists")
 	ErrLastPasswordAdmin = errors.New("the last admin with a password")
 	ErrTooManyUsers      = errors.New("too many users")
+	ErrNoPassword        = errors.New("the user has no password")
 )
 
 func isUnique(err error) bool {
 	var e sqlite3.Error
 
-	return errors.As(err, &e) && e.ExtendedCode == sqlite3.ErrConstraintUnique
+	return errors.As(err, &e) && (e.ExtendedCode == sqlite3.ErrConstraintUnique || e.ExtendedCode == sqlite3.ErrConstraintPrimaryKey)
 }
 
 type DB struct {
@@ -102,6 +103,11 @@ var migrations = []string{
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		key BLOB NOT NULL CHECK (length(key) >= 32)
 	);
+	CREATE TABLE oidc_used_states (
+		state_hash BLOB PRIMARY KEY CHECK (length(state_hash) = 32),
+		expires_at INTEGER NOT NULL
+	) WITHOUT ROWID;
+	CREATE INDEX oidc_used_states_expires_at ON oidc_used_states (expires_at);
 	CREATE TABLE messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		kind TEXT NOT NULL CHECK (kind IN ('message', 'status_report')),

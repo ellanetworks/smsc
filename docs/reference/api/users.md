@@ -114,9 +114,10 @@ At most 50 users.
 
 | Field      | Type   | Required | Description |
 | ---------- | ------ | -------- | ----------- |
-| `email`    | string | Yes      | Email address. Stored in lower case. |
+| `email`    | string | Yes      | Email address. ASCII letters are stored in lower case. |
 | `password` | string | No       | 8 to 72 bytes. Without it, the user signs in only through the [identity provider](oidc.md). |
 | `role_id`  | int    | Yes      | `1` to `4`. See [roles](index.md#roles). |
+| `role_pinned` | boolean | No    | Keep the role whatever the user's [groups](oidc.md#group-roles). Default `false`. |
 
 ### Response Codes
 
@@ -179,7 +180,7 @@ This path removes the password of a user, who can then sign in only through the 
 
 | Code  | Description |
 | ----- | ----------- |
-| `409` | The user is the last Admin with a password. |
+| `409` | The user has no password, or is the last Admin with a password. |
 
 ## Unlink a User
 
@@ -188,6 +189,12 @@ This path unlinks a user from their account at the identity provider, and ends t
 | Method | Path                           |
 | ------ | ------------------------------ |
 | DELETE | `/api/v1/users/{email}/oidc`   |
+
+### Response Codes
+
+| Code  | Description |
+| ----- | ----------- |
+| `404` | No user has the email, or the user is not linked to the current identity provider. |
 
 ## Delete a User
 

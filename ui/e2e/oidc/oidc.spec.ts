@@ -6,6 +6,8 @@ import {
   type Page,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ADMIN_EMAIL,
   ADMIN_PASSWORD,
@@ -17,23 +19,61 @@ import {
 
 const SMSC_PORT = process.env.ELLA_E2E_OIDC_PORT ?? "15443";
 const KEYCLOAK_PORT = process.env.KEYCLOAK_E2E_PORT ?? "18443";
+const OIDC_DIR =
+  process.env.ELLA_E2E_OIDC_DIR ??
+  fileURLToPath(new URL("../.build/oidc", import.meta.url));
 const EXTERNAL_URL = `https://localhost:${SMSC_PORT}`;
 const ISSUER = `https://keycloak:${KEYCLOAK_PORT}/realms/ella`;
-const CA_CERTIFICATE = readFileSync(
-  new URL("../.build/oidc/ca.pem", import.meta.url),
-  "utf8",
-);
+const CLIENT_ID = "ella-smsc";
+const CLIENT_SECRET = "e2e-client-secret";
+const CA_CERTIFICATE = readFileSync(join(OIDC_DIR, "ca.pem"), "utf8");
 const SESSION_COOKIE = "__Host-smsc_session";
 const LIFETIME_SECONDS = 300;
+const OPERATORS = "smsc-operators";
+const LOGIN_LIMIT = 20;
+const LOGIN_WINDOW_MS = 61_000;
 
 const ALICE = { username: "alice", email: "alice@example.com" };
 const BOB = { username: "bob", email: "bob@example.com" };
 const CAROL = { username: "carol", email: "carol@example.com" };
 
-type User = { email: string; role_id: number; oidc_linked: boolean };
+type User = {
+  email: string;
+  role_id: number;
+  role_pinned: boolean;
+  password_set: boolean;
+  oidc_linked: boolean;
+};
 type GroupRole = { group: string; role_id: number };
 
 let adminToken = "";
+let loginWindow = { start: 0, count: 0 };
+
+async function spendLogins(count: number) {
+  const now = Date.now();
+  if (now - loginWindow.start > LOGIN_WINDOW_MS) {
+    loginWindow = { start: now, count: 0 };
+  }
+  if (loginWindow.count + count > LOGIN_LIMIT) {
+    const wait = loginWindow.start + LOGIN_WINDOW_MS - now;
+    test.info().setTimeout(test.info().timeout + wait);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    loginWindow = { start: Date.now(), count: 0 };
+  }
+  loginWindow.count += count;
+}
+
+async function passwordLogin(
+  request: APIRequestContext,
+  email = ADMIN_EMAIL,
+  password = ADMIN_PASSWORD,
+) {
+  await spendLogins(1);
+  return request.post("/api/v1/auth/login", { data: { email, password } });
+}
+
+const userPath = (email: string) =>
+  `/api/v1/users/${encodeURIComponent(email)}`;
 
 async function configureOIDC(
   request: APIRequestContext,
@@ -46,8 +86,8 @@ async function configureOIDC(
       enabled: opts.enabled ?? true,
       external_url: EXTERNAL_URL,
       issuer: ISSUER,
-      client_id: "ella-smsc",
-      client_secret: "e2e-client-secret",
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
       display_name: "Keycloak",
       scopes: ["openid", "email", "profile"],
       session_lifetime_seconds: LIFETIME_SECONDS,
@@ -59,8 +99,9 @@ async function configureOIDC(
   });
 }
 
-async function keycloakLogin(page: Page, username: string) {
-  await page.goto("/login");
+async function keycloakLogin(page: Page, username: string, start = "/login") {
+  await spendLogins(1);
+  await page.goto(start);
   await page.getByRole("link", { name: "Sign in with Keycloak" }).click();
   await page.waitForURL((url) => url.host === `keycloak:${KEYCLOAK_PORT}`);
   await page.locator("#username").fill(username);
@@ -69,10 +110,27 @@ async function keycloakLogin(page: Page, username: string) {
   await page.waitForURL((url) => url.host === `localhost:${SMSC_PORT}`);
 }
 
+async function expectSignedIn(page: Page, path?: string) {
+  await expect(
+    page.getByRole("button", { name: "Account menu" }),
+  ).toBeVisible();
+  expect(new URL(page.url()).pathname).not.toBe("/login");
+  if (path) await expect(page).toHaveURL(new RegExp(`${path}$`));
+}
+
+async function signOutOfKeycloak(context: BrowserContext) {
+  await context.clearCookies();
+}
+
 async function getUser(request: APIRequestContext, email: string) {
-  return send(request, "get", `/api/v1/users/${encodeURIComponent(email)}`, {
+  return json<User>(request, "get", userPath(email), { token: adminToken });
+}
+
+async function deleteUserIfPresent(request: APIRequestContext, email: string) {
+  const response = await send(request, "delete", userPath(email), {
     token: adminToken,
   });
+  expect([200, 204, 404]).toContain(response.status());
 }
 
 async function sessionCookie(context: BrowserContext) {
@@ -87,37 +145,120 @@ async function refresh(page: Page) {
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ request }) => {
+  await spendLogins(1);
   await ensureInitialized(request);
-  const login = await json<{ token: string }>(
-    request,
-    "post",
-    "/api/v1/auth/login",
-    { data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } },
-  );
-  adminToken = login.token;
+  const login = await passwordLogin(request);
+  expect(login.ok()).toBe(true);
+  adminToken = ((await login.json()) as { result: { token: string } }).result
+    .token;
+  await deleteUserIfPresent(request, BOB.email);
+  await deleteUserIfPresent(request, CAROL.email);
 });
 
 test("Keycloak is discovered through the CA certificate", async ({
   request,
 }) => {
-  const discovery = await json<{ issuer: string; pkce: boolean }>(
-    request,
-    "post",
-    "/api/v1/oidc/discovery",
-    {
-      token: adminToken,
-      data: { issuer: ISSUER, ca_certificate: CA_CERTIFICATE },
-    },
-  );
+  const discovery = await json<{
+    issuer: string;
+    pkce: boolean;
+    token_endpoint_auth_method: string;
+    userinfo_endpoint: string;
+  }>(request, "post", "/api/v1/oidc/discovery", {
+    token: adminToken,
+    data: { issuer: ISSUER, ca_certificate: CA_CERTIFICATE },
+  });
 
   expect(discovery.issuer).toBe(ISSUER);
   expect(discovery.pkce).toBe(true);
+  expect(discovery.token_endpoint_auth_method).toBe("client_secret_basic");
+  expect(discovery.userinfo_endpoint).toBe(
+    `${ISSUER}/protocol/openid-connect/userinfo`,
+  );
 });
 
-test("an existing user is linked on first login", async ({ page, request }) => {
+test("an admin configures single sign-on in the UI", async ({
+  page,
+  request,
+}) => {
+  await json(request, "put", "/api/v1/oidc", {
+    token: adminToken,
+    data: {
+      enabled: false,
+      external_url: "",
+      issuer: "",
+      client_id: "",
+      client_secret: "former-secret",
+      display_name: "",
+      scopes: ["openid", "email"],
+      session_lifetime_seconds: 86400,
+      trust_unverified_email: false,
+      ca_certificate: "",
+      groups_claim: "",
+      group_roles: [],
+    },
+  });
+
+  expect((await passwordLogin(page.request)).ok()).toBe(true);
+  await page.goto("/single-sign-on");
+  await page.getByRole("button", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit Single Sign-On" });
+
+  await expect(dialog.getByLabel("External URL")).toHaveValue(EXTERNAL_URL);
+  await dialog.getByLabel("Display name").fill("Keycloak");
+  await dialog.getByLabel("Issuer URL").fill(ISSUER);
+  await dialog.getByLabel("Client ID").fill(CLIENT_ID);
+  await dialog.getByLabel("Client secret").fill(CLIENT_SECRET);
+  await dialog.getByLabel("Scopes").fill("openid email profile");
+  await dialog.getByRole("combobox", { name: "Unit" }).click();
+  await page.getByRole("option", { name: "minutes" }).click();
+  await dialog.getByLabel("Session lifetime").fill("5");
+  await dialog.getByLabel("CA certificate").fill(CA_CERTIFICATE);
+
+  await dialog.getByRole("button", { name: "Test" }).click();
+  const result = dialog.getByRole("alert").filter({
+    hasText: "Ella SMSC can use this identity provider.",
+  });
+  await expect(result).toBeVisible();
+  await expect(result).toContainText("client_secret_basic");
+
+  await dialog.getByRole("switch", { name: "Enabled" }).check();
+  await dialog.getByRole("button", { name: "Update" }).click();
+  await expect(
+    page.getByText("Single sign-on updated successfully."),
+  ).toBeVisible();
+  await expect(dialog).toBeHidden();
+
+  const table = page.getByRole("table", { name: "Single sign-on settings" });
+  await expect(table.getByText("5 minutes")).toBeVisible();
+  await expect(
+    table.getByText(`${EXTERNAL_URL}/api/v1/auth/oidc/callback`),
+  ).toBeVisible();
+
+  const saved = await json<{
+    enabled: boolean;
+    issuer: string;
+    client_secret_set: boolean;
+    session_lifetime_seconds: number;
+  }>(request, "get", "/api/v1/oidc", { token: adminToken });
+  expect(saved).toMatchObject({
+    enabled: true,
+    issuer: ISSUER,
+    client_secret_set: true,
+    session_lifetime_seconds: LIFETIME_SECONDS,
+  });
+});
+
+test("an existing user is linked on first login, on the page asked for", async ({
+  page,
+  request,
+}) => {
   await configureOIDC(request);
 
-  if ((await getUser(request, ALICE.email)).status() === 404) {
+  if (
+    (
+      await send(request, "get", userPath(ALICE.email), { token: adminToken })
+    ).status() === 404
+  ) {
     await json(request, "post", "/api/v1/users", {
       token: adminToken,
       data: {
@@ -128,18 +269,16 @@ test("an existing user is linked on first login", async ({ page, request }) => {
     });
   }
 
-  await keycloakLogin(page, ALICE.username);
+  await keycloakLogin(page, ALICE.username, "/messages");
+  await expectSignedIn(page, "/messages");
+  await expect(
+    page.getByRole("heading", { level: 1, name: /^Messages/ }),
+  ).toBeVisible();
 
-  expect(new URL(page.url()).pathname).not.toBe("/login");
   expect(await sessionCookie(page.context())).toBeDefined();
   expect((await refresh(page)).status()).toBe(200);
 
-  const user = await json<User>(
-    request,
-    "get",
-    `/api/v1/users/${encodeURIComponent(ALICE.email)}`,
-    { token: adminToken },
-  );
+  const user = await getUser(request, ALICE.email);
   expect(user.oidc_linked).toBe(true);
   expect(user.role_id).toBe(RoleID.ReadOnly);
 });
@@ -159,7 +298,11 @@ test("an unknown user is refused without a group mapping", async ({
     ),
   ).toBeVisible();
   expect(await sessionCookie(page.context())).toBeUndefined();
-  expect((await getUser(request, BOB.email)).status()).toBe(404);
+  expect(
+    (
+      await send(request, "get", userPath(BOB.email), { token: adminToken })
+    ).status(),
+  ).toBe(404);
 });
 
 test("a user in a mapped group is created with the group's role", async ({
@@ -167,27 +310,68 @@ test("a user in a mapped group is created with the group's role", async ({
   request,
 }) => {
   await configureOIDC(request, {
-    groupRoles: [{ group: "smsc-operators", role_id: RoleID.NetworkManager }],
+    groupRoles: [{ group: OPERATORS, role_id: RoleID.NetworkManager }],
   });
 
   await keycloakLogin(page, CAROL.username);
-
-  expect(new URL(page.url()).pathname).not.toBe("/login");
+  await expectSignedIn(page);
   expect((await refresh(page)).status()).toBe(200);
 
-  const user = await json<User>(
-    request,
-    "get",
-    `/api/v1/users/${encodeURIComponent(CAROL.email)}`,
-    { token: adminToken },
-  );
+  const user = await getUser(request, CAROL.email);
   expect(user.oidc_linked).toBe(true);
+  expect(user.password_set).toBe(false);
   expect(user.role_id).toBe(RoleID.NetworkManager);
+});
+
+test("the role follows the groups from one login to the next", async ({
+  page,
+  request,
+}) => {
+  await configureOIDC(request, {
+    groupRoles: [{ group: OPERATORS, role_id: RoleID.ReadOnly }],
+  });
+
+  await keycloakLogin(page, CAROL.username);
+  await expectSignedIn(page);
+
+  expect((await getUser(request, CAROL.email)).role_id).toBe(RoleID.ReadOnly);
+});
+
+test("a pinned role is kept whatever the groups, until unpinned", async ({
+  page,
+  request,
+}) => {
+  await json(request, "put", userPath(CAROL.email), {
+    token: adminToken,
+    data: { role_id: RoleID.Submitter, role_pinned: true },
+  });
+  await configureOIDC(request, {
+    groupRoles: [{ group: OPERATORS, role_id: RoleID.Admin }],
+  });
+
+  await keycloakLogin(page, CAROL.username);
+  await expectSignedIn(page, "/messages");
+  expect(await getUser(request, CAROL.email)).toMatchObject({
+    role_id: RoleID.Submitter,
+    role_pinned: true,
+  });
+
+  await json(request, "put", userPath(CAROL.email), {
+    token: adminToken,
+    data: { role_id: RoleID.Submitter, role_pinned: false },
+  });
+  await signOutOfKeycloak(page.context());
+  await keycloakLogin(page, CAROL.username);
+  await expectSignedIn(page);
+  expect(await getUser(request, CAROL.email)).toMatchObject({
+    role_id: RoleID.Admin,
+    role_pinned: false,
+  });
 });
 
 test("a user in no mapped group is refused", async ({ page, request }) => {
   await configureOIDC(request, {
-    groupRoles: [{ group: "smsc-operators", role_id: RoleID.NetworkManager }],
+    groupRoles: [{ group: OPERATORS, role_id: RoleID.NetworkManager }],
   });
 
   await keycloakLogin(page, BOB.username);
@@ -198,7 +382,83 @@ test("a user in no mapped group is refused", async ({ page, request }) => {
       "None of your groups gives access to Ella SMSC. Contact an administrator.",
     ),
   ).toBeVisible();
-  expect((await getUser(request, BOB.email)).status()).toBe(404);
+  expect(
+    (
+      await send(request, "get", userPath(BOB.email), { token: adminToken })
+    ).status(),
+  ).toBe(404);
+});
+
+test("a user created in the UI with a pinned role and no password signs in only with single sign-on", async ({
+  page,
+  request,
+}) => {
+  await configureOIDC(request, {
+    groupRoles: [{ group: OPERATORS, role_id: RoleID.NetworkManager }],
+  });
+
+  expect((await passwordLogin(page.request)).ok()).toBe(true);
+  await page.goto("/users");
+  await page.getByRole("button", { name: "Create" }).click();
+  const dialog = page.getByRole("dialog", { name: "Create User" });
+  await dialog.getByLabel("Email").fill(BOB.email);
+  await dialog.getByRole("combobox", { name: /Role/ }).click();
+  await page.getByRole("option", { name: /^Submitter/ }).click();
+  await dialog.getByRole("checkbox", { name: "Pin role" }).check();
+  await dialog.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByText("User created successfully.")).toBeVisible();
+  await page.context().clearCookies();
+
+  expect(await getUser(request, BOB.email)).toMatchObject({
+    role_id: RoleID.Submitter,
+    role_pinned: true,
+    password_set: false,
+    oidc_linked: false,
+  });
+
+  await keycloakLogin(page, BOB.username);
+  await expectSignedIn(page, "/messages");
+
+  expect(await getUser(request, BOB.email)).toMatchObject({
+    role_id: RoleID.Submitter,
+    oidc_linked: true,
+  });
+  expect(
+    (
+      await passwordLogin(request, BOB.email, `${BOB.username}-password`)
+    ).status(),
+  ).toBe(401);
+  expect(
+    (
+      await send(request, "delete", `${userPath(BOB.email)}/password`, {
+        token: adminToken,
+      })
+    ).status(),
+  ).toBe(409);
+});
+
+test("an unlinked user is linked again at their next login", async ({
+  page,
+  request,
+}) => {
+  await configureOIDC(request);
+
+  await json(request, "delete", `${userPath(ALICE.email)}/oidc`, {
+    token: adminToken,
+  });
+  expect((await getUser(request, ALICE.email)).oidc_linked).toBe(false);
+  expect(
+    (
+      await send(request, "delete", `${userPath(ALICE.email)}/oidc`, {
+        token: adminToken,
+      })
+    ).status(),
+  ).toBe(404);
+
+  await keycloakLogin(page, ALICE.username);
+  await expectSignedIn(page);
+
+  expect((await getUser(request, ALICE.email)).oidc_linked).toBe(true);
 });
 
 test("the OIDC session lasts the session lifetime and ends when OIDC is disabled", async ({
@@ -210,6 +470,7 @@ test("the OIDC session lasts the session lifetime and ends when OIDC is disabled
   const before = Date.now() / 1000;
   await keycloakLogin(page, ALICE.username);
   const after = Date.now() / 1000;
+  await expectSignedIn(page);
 
   const cookie = await sessionCookie(page.context());
   expect(cookie).toBeDefined();

@@ -41,7 +41,8 @@ const columns: GridColDef<User>[] = [
   {
     field: "sign_in",
     headerName: "Sign-in",
-    width: 220,
+    flex: 1,
+    minWidth: 280,
     valueGetter: (_value, row) =>
       signInMethods(row).join(", ") || "Single sign-on, not linked yet",
   },

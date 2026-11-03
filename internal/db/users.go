@@ -28,6 +28,7 @@ type User struct {
 type NewUser struct {
 	Email        string
 	Role         Role
+	RolePinned   bool
 	PasswordHash string
 }
 
@@ -42,24 +43,29 @@ func (d *DB) CountUsers(ctx context.Context) (_ int, err error) {
 	return n, nil
 }
 
-func (d *DB) CreateUser(ctx context.Context, u NewUser) (_ int64, err error) {
+func (d *DB) CreateUser(ctx context.Context, u NewUser, maxUsers int) (id int64, err error) {
 	defer d.observe(&err)()
 
-	id, err := createUser(ctx, d.conn, u)
-	if err != nil {
-		return 0, fmt.Errorf("create user: %w", err)
+	err = d.inTx(ctx, "create user", func(tx *sql.Tx) error {
+		id, err = createUser(ctx, tx, u, maxUsers)
+		return err
+	})
+
+	return id, err
+}
+
+func createUser(ctx context.Context, tx *sql.Tx, u NewUser, maxUsers int) (int64, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return 0, err
 	}
 
-	return id, nil
-}
+	if n >= maxUsers {
+		return 0, ErrTooManyUsers
+	}
 
-type execer interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-func createUser(ctx context.Context, conn execer, u NewUser) (int64, error) {
-	res, err := conn.ExecContext(ctx, `INSERT INTO users (email, role_id, password_hash) VALUES (?, ?, ?)`,
-		u.Email, u.Role, nullString(u.PasswordHash))
+	res, err := tx.ExecContext(ctx, `INSERT INTO users (email, role_id, role_pinned, password_hash) VALUES (?, ?, ?, ?)`,
+		u.Email, u.Role, u.RolePinned, nullString(u.PasswordHash))
 	if isUnique(err) {
 		return 0, ErrAlreadyExists
 	}
@@ -163,15 +169,38 @@ func (d *DB) UpdateUserPassword(ctx context.Context, id int64, passwordHash stri
 			}
 		}
 
-		if err := updateUser(ctx, tx, `UPDATE users SET password_hash = ? WHERE id = ?`, nullString(passwordHash),
-			id); err != nil {
+		res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ? AND (? OR password_hash IS NOT NULL)`,
+			nullString(passwordHash), id, passwordHash != "")
+		if err != nil {
 			return err
 		}
 
-		_, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?`, id, keepSession)
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+
+		if n == 0 {
+			return missingPassword(ctx, tx, id)
+		}
+
+		_, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?`, id, keepSession)
 
 		return err
 	})
+}
+
+func missingPassword(ctx context.Context, tx *sql.Tx, id int64) error {
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id = ?)`, id).Scan(&exists); err != nil {
+		return err
+	}
+
+	if exists {
+		return ErrNoPassword
+	}
+
+	return ErrNotFound
 }
 
 func (d *DB) DeleteUser(ctx context.Context, id int64) (err error) {

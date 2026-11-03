@@ -2,13 +2,16 @@ package api_test
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,32 +23,75 @@ import (
 const testClientSecret = "s3cret-value"
 
 func (idp *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
-	user, pass, ok := r.BasicAuth()
-	if !ok {
-		user, pass = r.PostFormValue("client_id"), r.PostFormValue("client_secret")
+	basicUser, basicPass, basic := r.BasicAuth()
+	_ = r.ParseForm()
+	_, inBody := r.PostForm["client_secret"]
+
+	user, pass := r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
+	if basic {
+		user, _ = url.QueryUnescape(basicUser)
+		pass, _ = url.QueryUnescape(basicPass)
 	}
 
 	idp.mu.Lock()
-	issued, found := idp.codes[r.PostFormValue("code")]
-	delete(idp.codes, r.PostFormValue("code"))
+	issued, found := idp.codes[r.PostForm.Get("code")]
+	delete(idp.codes, r.PostForm.Get("code"))
+
+	idp.authMethod = "client_secret_post"
+	if basic {
+		idp.authMethod = "client_secret_basic"
+	}
+
+	tokenType, onToken := idp.tokenType, idp.onToken
 	idp.mu.Unlock()
 
-	sum := sha256.Sum256([]byte(r.PostFormValue("code_verifier")))
+	if onToken != nil {
+		onToken()
+	}
+
+	if tokenType == "" {
+		tokenType = "Bearer"
+	}
+
+	sum := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
 
 	switch {
-	case user != "smsc" || pass != testClientSecret:
+	case basic && inBody || user != "smsc" || pass != testClientSecret:
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error": "invalid_client"}`))
-	case !found || r.PostFormValue("grant_type") != "authorization_code" ||
-		r.PostFormValue("redirect_uri") != "https://smsc.example.com/api/v1/auth/oidc/callback" ||
+	case !found || r.PostForm.Get("grant_type") != "authorization_code" ||
+		r.PostForm.Get("redirect_uri") != "https://smsc.example.com/api/v1/auth/oidc/callback" ||
 		base64.RawURLEncoding.EncodeToString(sum[:]) != issued.challenge:
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error": "invalid_grant"}`))
 	default:
+		access := rand.Text()
+
+		idp.mu.Lock()
+		idp.userInfos[access] = issued.userInfo
+		idp.mu.Unlock()
+
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token": "access", "token_type": "Bearer", "expires_in": 300, "id_token": issued.idToken,
+			"access_token": access, "token_type": tokenType, "expires_in": 300, "id_token": issued.idToken,
 		})
 	}
+}
+
+func (idp *fakeIdP) userInfo(w http.ResponseWriter, r *http.Request) {
+	scheme, access, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+
+	idp.mu.Lock()
+	claims, ok := idp.userInfos[access]
+	idp.mu.Unlock()
+
+	if scheme != "Bearer" || !ok {
+		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+		w.WriteHeader(http.StatusUnauthorized)
+
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(claims)
 }
 
 func (idp *fakeIdP) sign(t *testing.T, signer jose.Signer, claims map[string]any) string {
@@ -88,6 +134,7 @@ func (a *testAPI) configureOIDC(t *testing.T, idp *fakeIdP, change func(map[stri
 
 type oidcLogin struct {
 	claims   map[string]any
+	userInfo map[string]any
 	signer   jose.Signer
 	callback func(q url.Values)
 	cookie   func(c *http.Cookie) *http.Cookie
@@ -95,15 +142,35 @@ type oidcLogin struct {
 }
 
 type oidcResult struct {
-	rec     *httptest.ResponseRecorder
-	session *http.Cookie
-	outcome string
+	rec      *httptest.ResponseRecorder
+	session  *http.Cookie
+	outcome  string
+	callback url.Values
+	cookie   *http.Cookie
+	browser  string
+}
+
+var browsers atomic.Int64
+
+func newBrowser() string {
+	n := browsers.Add(1)
+
+	return fmt.Sprintf("10.%d.%d.%d:40000", n>>16&0xff, n>>8&0xff, n&0xff)
 }
 
 func (a *testAPI) startOIDC(t *testing.T) (url.Values, *http.Cookie) {
 	t.Helper()
 
-	rec := serve(a.handler, request(http.MethodGet, "/api/v1/auth/oidc/login", "", ""))
+	return a.startOIDCFrom(t, newBrowser())
+}
+
+func (a *testAPI) startOIDCFrom(t *testing.T, browser string) (url.Values, *http.Cookie) {
+	t.Helper()
+
+	req := request(http.MethodGet, "/api/v1/auth/oidc/login", "", "")
+	req.RemoteAddr = browser
+
+	rec := serve(a.handler, req)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("start = %d %s, Location %q", rec.Code, rec.Body, rec.Header().Get("Location"))
 	}
@@ -127,7 +194,8 @@ func (a *testAPI) startOIDC(t *testing.T) (url.Values, *http.Cookie) {
 func (a *testAPI) oidcLogin(t *testing.T, idp *fakeIdP, l oidcLogin) oidcResult {
 	t.Helper()
 
-	q, cookie := a.startOIDC(t)
+	browser := newBrowser()
+	q, cookie := a.startOIDCFrom(t, browser)
 
 	claims := map[string]any{
 		"iss": idp.issuer, "sub": "sub-nm", "aud": "smsc", "iat": a.now.Unix(), "exp": a.now.Add(5 * time.Minute).Unix(),
@@ -142,13 +210,31 @@ func (a *testAPI) oidcLogin(t *testing.T, idp *fakeIdP, l oidcLogin) oidcResult 
 		}
 	}
 
+	userInfo := map[string]any{}
+
+	for _, k := range []string{"sub", "email", "email_verified", "groups"} {
+		if v, ok := claims[k]; ok {
+			userInfo[k] = v
+		}
+	}
+
+	for k, v := range l.userInfo {
+		if v == nil {
+			delete(userInfo, k)
+		} else {
+			userInfo[k] = v
+		}
+	}
+
 	signer := idp.signer
 	if l.signer != nil {
 		signer = l.signer
 	}
 
 	idp.mu.Lock()
-	idp.codes["code"] = issuedCode{challenge: q.Get("code_challenge"), idToken: idp.sign(t, signer, claims)}
+	idp.codes["code"] = issuedCode{
+		challenge: q.Get("code_challenge"), idToken: idp.sign(t, signer, claims), userInfo: userInfo,
+	}
 	idp.mu.Unlock()
 
 	if l.between != nil {
@@ -164,7 +250,15 @@ func (a *testAPI) oidcLogin(t *testing.T, idp *fakeIdP, l oidcLogin) oidcResult 
 		cookie = l.cookie(cookie)
 	}
 
+	return a.oidcCallback(t, browser, callback, cookie)
+}
+
+func (a *testAPI) oidcCallback(t *testing.T, browser string, callback url.Values, cookie *http.Cookie) oidcResult {
+	t.Helper()
+
 	req := request(http.MethodGet, "/api/v1/auth/oidc/callback?"+callback.Encode(), "", "")
+	req.RemoteAddr = browser
+
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -174,7 +268,7 @@ func (a *testAPI) oidcLogin(t *testing.T, idp *fakeIdP, l oidcLogin) oidcResult 
 		t.Fatalf("callback = %d %s", rec.Code, rec.Body)
 	}
 
-	res := oidcResult{rec: rec, outcome: "success"}
+	res := oidcResult{rec: rec, outcome: "success", callback: callback, cookie: cookie, browser: browser}
 
 	if location := rec.Header().Get("Location"); location != "/" {
 		u, err := url.Parse(location)
@@ -386,7 +480,19 @@ func TestOIDCLoginRefusals(t *testing.T) {
 		}, "failed"},
 		"several audiences with azp": {func(*testAPI) oidcLogin {
 			return oidcLogin{claims: map[string]any{"aud": []string{"smsc", "other"}, "azp": "smsc"}}
+		}, "failed"},
+		"an audience array with the client alone": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"aud": []string{"smsc"}, "azp": "smsc"}}
 		}, "success"},
+		"a token issued in the future": {func(a *testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"iat": a.now.Add(6 * time.Minute).Unix()}}
+		}, "failed"},
+		"a token issued a little ahead": {func(a *testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"iat": a.now.Add(4 * time.Minute).Unix()}}
+		}, "success"},
+		"an explicitly unverified email as a string": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"email_verified": "false"}}
+		}, "email_not_verified"},
 		"an expired token": {func(a *testAPI) oidcLogin {
 			return oidcLogin{claims: map[string]any{"exp": a.now.Add(-time.Minute).Unix()}}
 		}, "failed"},
@@ -436,6 +542,17 @@ func TestOIDCLoginTrustsUnverifiedEmailOnRequest(t *testing.T) {
 	idp := newFakeIdP(t)
 	a.configureOIDC(t, idp, func(o map[string]any) { o["trust_unverified_email"] = true })
 	a.createUser(t, "nm@example.com", db.RoleNetworkManager)
+
+	for _, verified := range []any{false, "false"} {
+		res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"sub": "sub-attacker", "email": testAdmin, "email_verified": verified}})
+		if res.outcome != "email_not_verified" || res.session != nil {
+			t.Fatalf("email_verified %v with trust: outcome %q, session %v", verified, res.outcome, res.session)
+		}
+	}
+
+	if got := decode[api.User](t, a.get(t, "/api/v1/users/"+testAdmin)); got.OIDCLinked {
+		t.Fatalf("admin after the refused logins = %+v", got)
+	}
 
 	if res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"email_verified": nil}}); res.outcome != "success" {
 		t.Fatalf("outcome %q", res.outcome)
@@ -561,7 +678,7 @@ func TestOIDCLoginCreatesUsersUpToTheLimit(t *testing.T) {
 
 	ctx := context.Background()
 	for i := 1; i < api.MaxNumUsers; i++ {
-		if _, err := a.store.CreateUser(ctx, db.NewUser{Email: "u" + strings.Repeat("x", i) + "@example.com", Role: db.RoleReadOnly}); err != nil {
+		if _, err := a.store.CreateUser(ctx, db.NewUser{Email: "u" + strings.Repeat("x", i) + "@example.com", Role: db.RoleReadOnly}, api.MaxNumUsers); err != nil {
 			t.Fatal(err)
 		}
 	}

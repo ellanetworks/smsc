@@ -1,11 +1,11 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
@@ -25,9 +25,10 @@ type User struct {
 }
 
 type CreateUserParams struct {
-	Email    string  `json:"email"`
-	Password string  `json:"password"`
-	RoleID   db.Role `json:"role_id"`
+	Email      string  `json:"email"`
+	Password   string  `json:"password"`
+	RoleID     db.Role `json:"role_id"`
+	RolePinned bool    `json:"role_pinned"`
 }
 
 type UpdateUserParams struct {
@@ -113,7 +114,7 @@ func UpdateMyPassword(a *auth) http.Handler {
 			return
 		}
 
-		account := strings.ToLower(u.Email)
+		account := lowerASCII(u.Email)
 		if !a.allowAccount(w, r, account) {
 			return
 		}
@@ -217,20 +218,11 @@ func CreateUser(a *auth) http.Handler {
 			return
 		}
 
-		n, err := cfg.Auth.CountUsers(r.Context())
-		if err != nil {
-			writeError(w, r, http.StatusInternalServerError, "Failed to count users", err, cfg.Logger)
-			return
-		}
+		var (
+			hash string
+			err  error
+		)
 
-		if n >= MaxNumUsers {
-			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("Maximum number of users reached (%d)", MaxNumUsers), nil,
-				cfg.Logger)
-
-			return
-		}
-
-		var hash string
 		if params.Password != "" {
 			if hash, err = a.hashPassword(r.Context(), params.Password); err != nil {
 				writeError(w, r, http.StatusInternalServerError, "Failed to hash password", err, cfg.Logger)
@@ -238,9 +230,18 @@ func CreateUser(a *auth) http.Handler {
 			}
 		}
 
-		_, err = cfg.Auth.CreateUser(r.Context(), db.NewUser{Email: email, Role: params.RoleID, PasswordHash: hash})
+		_, err = cfg.Auth.CreateUser(r.Context(), db.NewUser{
+			Email: email, Role: params.RoleID, RolePinned: params.RolePinned, PasswordHash: hash,
+		}, MaxNumUsers)
 		if errors.Is(err, db.ErrAlreadyExists) {
 			writeError(w, r, http.StatusConflict, "User already exists", nil, cfg.Logger)
+			return
+		}
+
+		if errors.Is(err, db.ErrTooManyUsers) {
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("Maximum number of users reached (%d)", MaxNumUsers), nil,
+				cfg.Logger)
+
 			return
 		}
 
@@ -250,7 +251,8 @@ func CreateUser(a *auth) http.Handler {
 		}
 
 		p, _ := PrincipalFrom(r.Context())
-		a.audit(r, "create_user", p.Email, fmt.Sprintf("User %s created with role %d", email, params.RoleID))
+		a.audit(r, "create_user", p.Email, fmt.Sprintf("User %s created with role %d, pinned %t", email, params.RoleID,
+			params.RolePinned))
 		writeResponse(w, r, SuccessResponse{Message: "User created successfully"}, http.StatusCreated, cfg.Logger)
 	})
 }
@@ -315,9 +317,8 @@ func UpdateUser(a *auth) http.Handler {
 		}
 
 		if params.RoleID != u.Role {
-			if err := cfg.SMPP.CloseUser(r.Context(), u.ID); err != nil {
-				cfg.Logger.ErrorContext(r.Context(), "failed to close the SMPP sessions of a user", slog.String("email", u.Email), slog.Any("error", err))
-			}
+			u.Role = params.RoleID
+			a.roleChanged(r.Context(), u)
 		}
 
 		a.audit(r, "update_user", p.Email, fmt.Sprintf("Role of %s set to %d, pinned %t", u.Email, params.RoleID, pinned))
@@ -407,6 +408,13 @@ func userResponse(u db.User) User {
 	}
 }
 
+func (a *auth) roleChanged(ctx context.Context, u db.User) {
+	if err := a.cfg.SMPP.CloseUser(ctx, u.ID); err != nil {
+		a.cfg.Logger.ErrorContext(ctx, "failed to close the SMPP sessions of a user", slog.String("email", u.Email),
+			slog.Any("error", err))
+	}
+}
+
 func (a *auth) roleFromGroups(u db.User) bool {
 	o := a.cfg.OIDC.Get()
 
@@ -433,6 +441,11 @@ func DeleteUserPassword(a *auth) http.Handler {
 			return
 		}
 
+		if errors.Is(err, db.ErrNoPassword) {
+			writeError(w, r, http.StatusConflict, "The user has no password", nil, cfg.Logger)
+			return
+		}
+
 		if err != nil {
 			writeError(w, r, http.StatusInternalServerError, "Failed to remove the password", err, cfg.Logger)
 			return
@@ -453,7 +466,13 @@ func DeleteUserOIDCLink(a *auth) http.Handler {
 			return
 		}
 
-		if err := cfg.Auth.DeleteIdentities(r.Context(), u.ID); err != nil {
+		err := cfg.Auth.DeleteIdentities(r.Context(), u.ID)
+		if errors.Is(err, db.ErrNotFound) {
+			writeError(w, r, http.StatusNotFound, "The user is not linked to the identity provider", nil, cfg.Logger)
+			return
+		}
+
+		if err != nil {
 			writeError(w, r, http.StatusInternalServerError, "Failed to unlink the user", err, cfg.Logger)
 			return
 		}

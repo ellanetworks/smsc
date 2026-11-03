@@ -5,11 +5,12 @@ import {
   FormHelperText,
   TextField,
 } from "@mui/material";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
 import { useSnackbar } from "@/contexts/SnackbarContext";
 import PasswordField from "@/components/PasswordField";
 import RoleField from "@/components/RoleField";
+import { getOIDC } from "@/queries/oidc";
 import {
   createUser,
   passwordError,
@@ -22,15 +23,50 @@ import {
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
+function useGroupMapping() {
+  const oidc = useQuery({ queryKey: ["oidc"], queryFn: getOIDC });
+  return (oidc.data?.group_roles.length ?? 0) > 0;
+}
+
+function PinRoleField({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div>
+      <FormControlLabel
+        control={
+          <Checkbox
+            checked={checked}
+            onChange={(e) => onChange(e.target.checked)}
+            slotProps={{ input: { "aria-describedby": "pin-role-help" } }}
+          />
+        }
+        label="Pin role"
+      />
+      <FormHelperText id="pin-role-help" sx={{ mt: 0 }}>
+        A pinned role stays as set here. Otherwise, it follows the user's
+        identity provider groups at each sign-in.
+      </FormHelperText>
+    </div>
+  );
+}
+
 export function CreateUserDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const { showSnackbar } = useSnackbar();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState(RoleID.ReadOnly);
+  const [pinned, setPinned] = useState(false);
+  const mapped = useGroupMapping();
 
   const mutation = useMutation({
-    mutationFn: () => createUser(email, password, role),
+    mutationFn: () =>
+      createUser(email, password, role, mapped ? pinned : undefined),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["users"] });
       showSnackbar("User created successfully.", "success");
@@ -80,6 +116,7 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
         autoComplete="new-password"
       />
       <RoleField value={role} onChange={setRole} />
+      {mapped && <PinRoleField checked={pinned} onChange={setPinned} />}
     </EditDialog>
   );
 }
@@ -95,14 +132,11 @@ export function EditRoleDialog({
   const { showSnackbar } = useSnackbar();
   const [role, setRole] = useState(user.role_id);
   const [pinned, setPinned] = useState(user.role_pinned);
+  const pinnable = useGroupMapping() || user.role_pinned;
 
   const mutation = useMutation({
     mutationFn: () =>
-      updateUserRole(
-        user.email,
-        role,
-        user.oidc_linked || user.role_pinned ? pinned : undefined,
-      ),
+      updateUserRole(user.email, role, pinnable ? pinned : undefined),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["users"] });
       showSnackbar("User updated successfully.", "success");
@@ -121,23 +155,7 @@ export function EditRoleDialog({
     >
       <TextField label="Email" value={user.email} disabled />
       <RoleField value={role} onChange={setRole} />
-      {(user.oidc_linked || user.role_pinned) && (
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={pinned}
-              onChange={(e) => setPinned(e.target.checked)}
-            />
-          }
-          label="Pin role"
-        />
-      )}
-      {(user.oidc_linked || user.role_pinned) && (
-        <FormHelperText sx={{ mt: "-12px !important" }}>
-          A pinned role stays as set here. Otherwise, it follows the user's
-          identity provider groups when group mapping is on.
-        </FormHelperText>
-      )}
+      {pinnable && <PinRoleField checked={pinned} onChange={setPinned} />}
     </EditDialog>
   );
 }

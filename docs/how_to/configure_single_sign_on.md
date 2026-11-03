@@ -9,7 +9,7 @@ This guide lets users sign in to the Ella SMSC UI through an OpenID Connect iden
 ## Prerequisites
 
 - **Ella SMSC**: served over HTTPS, at a URL with no path.
-- **Identity provider**: an OpenID Connect provider, reachable from Ella SMSC over HTTPS, that puts the user's `email` in the ID token.
+- **Identity provider**: an OpenID Connect provider, reachable from Ella SMSC over HTTPS.
 - **Ella SMSC account**: an Admin that signs in with a password.
 
 The examples use these values:
@@ -30,6 +30,8 @@ The examples use these values:
     3. Turn on **Client authentication**. Keep **Standard flow** checked. Click **Next**.
     4. Set **Valid redirect URIs** to the redirect URL. Click **Save**.
     5. In the client's **Credentials** tab, copy the **Client Secret**.
+
+    In **Users**, turn on **Email verified** for each user.
 
 === "Microsoft Entra ID"
 
@@ -60,7 +62,7 @@ In the UI, go to **Single Sign-On** and click **Edit**. Set:
 | **Client secret** | The secret from step 1 |
 | **External URL** | `https://smsc.example.com` |
 | **Scopes** | `openid email profile` |
-| **Session lifetime (hours)** | `24`, or less to end access sooner after offboarding |
+| **Session lifetime** | `24` hours, or less to end access sooner after offboarding |
 | **CA certificate** | The PEM CA certificate of the identity provider, only if a private CA signs its certificate |
 | **Trust email addresses from this provider** | Off, unless the provider does not mark email addresses as verified, as Entra ID does not. |
 

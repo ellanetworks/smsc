@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -146,6 +147,8 @@ func TestOIDCSettingsAreValidated(t *testing.T) {
 		"no client ID":                func(o map[string]any) { o["client_id"] = "" },
 		"no display name":             func(o map[string]any) { o["display_name"] = "" },
 		"no openid scope":             func(o map[string]any) { o["scopes"] = []string{"email"} },
+		"no email scope":              func(o map[string]any) { o["scopes"] = []string{"openid", "profile"} },
+		"an external URL with //":     func(o map[string]any) { o["external_url"] = "https://smsc.example.com//" },
 		"a repeated scope":            func(o map[string]any) { o["scopes"] = []string{"openid", "openid"} },
 		"a scope with a space":        func(o map[string]any) { o["scopes"] = []string{"openid", "a b"} },
 		"a short session":             func(o map[string]any) { o["session_lifetime_seconds"] = 299 },
@@ -182,7 +185,7 @@ func TestOIDCSettingsAreValidated(t *testing.T) {
 		t.Fatalf("settings after refused updates: %+v", got)
 	}
 
-	disabled := map[string]any{"enabled": false, "scopes": []string{"openid"}, "session_lifetime_seconds": 3600}
+	disabled := map[string]any{"enabled": false, "scopes": []string{"openid", "email"}, "session_lifetime_seconds": 3600}
 	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/oidc", body(t, disabled)); code != http.StatusOK {
 		t.Fatalf("PUT disabled and empty = %d %q", code, msg)
 	}
@@ -216,13 +219,24 @@ type fakeIdP struct {
 	keys     jose.JSONWebKeySet
 	signer   jose.Signer
 
-	mu    sync.Mutex
-	codes map[string]issuedCode
+	mu         sync.Mutex
+	codes      map[string]issuedCode
+	userInfos  map[string]map[string]any
+	authMethod string
+	tokenType  string
+	onToken    func()
+	onDiscover func(w http.ResponseWriter) bool
+	extra      http.HandlerFunc
+
+	discoveries atomic.Int64
+	tokens      atomic.Int64
+	userInfoHit atomic.Int64
 }
 
 type issuedCode struct {
 	challenge string
 	idToken   string
+	userInfo  map[string]any
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -239,18 +253,40 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		t.Fatal(err)
 	}
 
-	idp := &fakeIdP{signer: signer, codes: map[string]issuedCode{}}
+	idp := &fakeIdP{signer: signer, codes: map[string]issuedCode{}, userInfos: map[string]map[string]any{}}
 	idp.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
 		case "/realms/smsc/.well-known/openid-configuration":
-			_ = json.NewEncoder(w).Encode(idp.metadata)
+			idp.discoveries.Add(1)
+
+			idp.mu.Lock()
+			onDiscover := idp.onDiscover
+			metadata := clone(idp.metadata)
+			idp.mu.Unlock()
+
+			if onDiscover == nil || !onDiscover(w) {
+				_ = json.NewEncoder(w).Encode(metadata)
+			}
 		case "/realms/smsc/keys":
 			_ = json.NewEncoder(w).Encode(idp.keys)
 		case "/realms/smsc/token":
+			idp.tokens.Add(1)
 			idp.token(w, r)
+		case "/realms/smsc/userinfo":
+			idp.userInfoHit.Add(1)
+			idp.userInfo(w, r)
 		default:
+			idp.mu.Lock()
+			extra := idp.extra
+			idp.mu.Unlock()
+
+			if extra != nil {
+				extra(w, r)
+				return
+			}
+
 			http.NotFound(w, r)
 		}
 	}))
@@ -262,6 +298,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		"authorization_endpoint":                         idp.issuer + "/auth",
 		"token_endpoint":                                 idp.issuer + "/token",
 		"jwks_uri":                                       idp.issuer + "/keys",
+		"userinfo_endpoint":                              idp.issuer + "/userinfo",
 		"response_types_supported":                       []string{"code", "id_token"},
 		"id_token_signing_alg_values_supported":          []string{"HS256", "ES256"},
 		"code_challenge_methods_supported":               []string{"plain", "S256"},
@@ -294,14 +331,16 @@ func TestDiscoverOIDC(t *testing.T) {
 	}
 
 	want := api.OIDCDiscovery{
-		Issuer:                idp.issuer,
-		AuthorizationEndpoint: idp.issuer + "/auth",
-		TokenEndpoint:         idp.issuer + "/token",
-		JWKSURI:               idp.issuer + "/keys",
-		SigningAlgorithms:     []string{"ES256"},
-		Keys:                  1,
-		PKCE:                  true,
-		IssuerParameter:       true,
+		Issuer:                  idp.issuer,
+		AuthorizationEndpoint:   idp.issuer + "/auth",
+		TokenEndpoint:           idp.issuer + "/token",
+		UserInfoEndpoint:        idp.issuer + "/userinfo",
+		JWKSURI:                 idp.issuer + "/keys",
+		SigningAlgorithms:       []string{"ES256"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+		Keys:                    1,
+		PKCE:                    true,
+		IssuerParameter:         true,
 	}
 	if got := decode[api.OIDCDiscovery](t, result); body(t, got) != body(t, want) {
 		t.Fatalf("discovery = %+v, want %+v", got, want)
@@ -328,6 +367,10 @@ func TestDiscoverOIDC(t *testing.T) {
 		"an http token endpoint":    func() { idp.metadata["token_endpoint"] = "http://idp.example.com/token" },
 		"no jwks_uri":               func() { delete(idp.metadata, "jwks_uri") },
 		"no public signing key":     func() { idp.keys.Keys = idp.keys.Keys[1:] },
+		"an http userinfo endpoint": func() { idp.metadata["userinfo_endpoint"] = "http://idp.example.com/userinfo" },
+		"no client secret authentication": func() {
+			idp.metadata["token_endpoint_auth_methods_supported"] = []string{"private_key_jwt", "tls_client_auth"}
+		},
 	}
 
 	for name, change := range tests {

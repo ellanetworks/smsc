@@ -61,34 +61,8 @@ func (d *DB) CreateIdentity(ctx context.Context, userID int64, i NewIdentity) (_
 	return id, nil
 }
 
-func (d *DB) CreateUserWithIdentity(ctx context.Context, u NewUser, i NewIdentity, maxUsers int) (userID, identityID int64,
-	err error,
-) {
-	defer d.observe(&err)()
-
-	err = d.inTx(ctx, "create user with identity", func(tx *sql.Tx) error {
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
-			return err
-		}
-
-		if n >= maxUsers {
-			return ErrTooManyUsers
-		}
-
-		if userID, err = createUser(ctx, tx, u); err != nil {
-			return err
-		}
-
-		identityID, err = createIdentity(ctx, tx, userID, i)
-
-		return err
-	})
-	if err != nil {
-		return 0, 0, err
-	}
-
-	return userID, identityID, nil
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 func createIdentity(ctx context.Context, conn execer, userID int64, i NewIdentity) (int64, error) {
@@ -106,24 +80,22 @@ func createIdentity(ctx context.Context, conn execer, userID int64, i NewIdentit
 	return res.LastInsertId()
 }
 
-func (d *DB) TouchIdentity(ctx context.Context, id int64, email string, at time.Time) (err error) {
-	defer d.observe(&err)()
-
-	res, err := d.conn.ExecContext(ctx, `UPDATE user_identities SET email = ?, last_login_at = ? WHERE id = ?`,
-		email, at.UnixNano(), id)
-	if err != nil {
-		return fmt.Errorf("touch identity: %w", err)
-	}
-
-	return affectedOne(res, "touch identity")
-}
-
 func (d *DB) DeleteIdentities(ctx context.Context, userID int64) (err error) {
 	defer d.observe(&err)()
 
-	if _, err := d.conn.ExecContext(ctx, `DELETE FROM user_identities WHERE user_id = ?`, userID); err != nil {
-		return fmt.Errorf("delete identities: %w", err)
-	}
+	return d.inTx(ctx, "delete identities", func(tx *sql.Tx) error {
+		var linked bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_identities JOIN oidc
+			ON oidc.issuer = user_identities.issuer WHERE user_identities.user_id = ?)`, userID).Scan(&linked); err != nil {
+			return err
+		}
 
-	return nil
+		if !linked {
+			return ErrNotFound
+		}
+
+		_, err := tx.ExecContext(ctx, `DELETE FROM user_identities WHERE user_id = ?`, userID)
+
+		return err
+	})
 }

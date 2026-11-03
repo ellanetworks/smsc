@@ -12,6 +12,7 @@ These guides manage users who sign in through the identity provider. [Configure 
     - **Email**: the user's email address at the identity provider
     - **Password**: empty
     - **Role**: the user's role
+    - **Pin role**: checked to keep this role, if groups are mapped to roles
 2. Click **Create**.
 
 The user signs in with **Sign in with** the display name. Their first login links their user to their account at the identity provider.

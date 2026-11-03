@@ -43,7 +43,7 @@ const (
 
 type AuthStore interface {
 	CountUsers(ctx context.Context) (int, error)
-	CreateUser(ctx context.Context, u db.NewUser) (int64, error)
+	CreateUser(ctx context.Context, u db.NewUser, maxUsers int) (int64, error)
 	GetUser(ctx context.Context, email string) (db.User, error)
 	GetUserByID(ctx context.Context, id int64) (db.User, error)
 	ListUsers(ctx context.Context, page, perPage int) ([]db.User, int, error)
@@ -51,10 +51,8 @@ type AuthStore interface {
 	UpdateUserPassword(ctx context.Context, id int64, passwordHash string, keepSession []byte) error
 	DeleteUser(ctx context.Context, id int64) error
 	DeleteIdentities(ctx context.Context, userID int64) error
-	GetIdentity(ctx context.Context, issuer, subject string) (db.Identity, error)
-	CreateIdentity(ctx context.Context, userID int64, i db.NewIdentity) (int64, error)
-	CreateUserWithIdentity(ctx context.Context, u db.NewUser, i db.NewIdentity, maxUsers int) (int64, int64, error)
-	TouchIdentity(ctx context.Context, id int64, email string, at time.Time) error
+	LogInWithOIDC(ctx context.Context, l db.OIDCLogin) (db.OIDCLoginResult, error)
+	UseOIDCState(ctx context.Context, stateHash []byte, expiresAt, now time.Time) error
 
 	CreateSession(ctx context.Context, s db.NewSession, maxPerUser int) (int64, error)
 	GetSession(ctx context.Context, id int64) (db.Session, error)
@@ -382,24 +380,31 @@ func (a *auth) needsLogin(next http.Handler) http.Handler {
 	})
 }
 
-func (a *auth) startSession(w http.ResponseWriter, r *http.Request, u db.User, method db.SessionMethod,
-	identityID int64, lifetime time.Duration,
-) (int64, error) {
+func (a *auth) startSession(w http.ResponseWriter, r *http.Request, u db.User) (int64, error) {
+	raw, s := a.newSession(db.SessionPassword, SessionTokenDuration)
+	s.UserID = u.ID
+
+	id, err := a.cfg.Auth.CreateSession(r.Context(), s, MaxSessionsPerUser)
+	if err != nil {
+		return 0, err
+	}
+
+	a.setSessionCookie(w, raw, s.ExpiresAt)
+
+	return id, nil
+}
+
+func (a *auth) newSession(method db.SessionMethod, lifetime time.Duration) ([]byte, db.NewSession) {
 	raw := make([]byte, sessionTokenLength)
 	_, _ = rand.Read(raw)
 
 	hash := sha256.Sum256(raw)
 	now := a.cfg.Now()
-	expiresAt := now.Add(lifetime)
 
-	id, err := a.cfg.Auth.CreateSession(r.Context(), db.NewSession{
-		UserID: u.ID, TokenHash: hash[:], Method: method, IdentityID: identityID, CreatedAt: now,
-		ExpiresAt: expiresAt,
-	}, MaxSessionsPerUser)
-	if err != nil {
-		return 0, err
-	}
+	return raw, db.NewSession{TokenHash: hash[:], Method: method, CreatedAt: now, ExpiresAt: now.Add(lifetime)}
+}
 
+func (a *auth) setSessionCookie(w http.ResponseWriter, raw []byte, expiresAt time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     a.cookieName(),
 		Value:    base64.RawURLEncoding.EncodeToString(raw),
@@ -409,8 +414,6 @@ func (a *auth) startSession(w http.ResponseWriter, r *http.Request, u db.User, m
 		Secure:   a.cfg.SecureCookie,
 		SameSite: http.SameSiteLaxMode,
 	})
-
-	return id, nil
 }
 
 func (a *auth) cookieName() string {

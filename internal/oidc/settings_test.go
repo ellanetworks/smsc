@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -57,7 +58,7 @@ func TestValidate(t *testing.T) {
 	ca := testCA(t)
 
 	accepted := map[string]func(*db.OIDC){
-		"the defaults":              func(o *db.OIDC) { *o = db.OIDC{Scopes: []string{"openid"}, SessionLifetime: 24 * time.Hour} },
+		"the defaults":              func(o *db.OIDC) { *o = db.OIDC{Scopes: []string{"openid", "email"}, SessionLifetime: 24 * time.Hour} },
 		"an external URL with a /":  func(o *db.OIDC) { o.ExternalURL += "/" },
 		"an external URL with port": func(o *db.OIDC) { o.ExternalURL = "https://10.0.0.1:5010" },
 		"an issuer with a /":        func(o *db.OIDC) { o.Issuer += "/" },
@@ -90,10 +91,18 @@ func TestValidate(t *testing.T) {
 		"an external URL with a query":  func(o *db.OIDC) { o.ExternalURL = "https://smsc.example.com/?a=b" },
 		"no client secret":              func(o *db.OIDC) { o.ClientSecret = "" },
 		"a long display name":           func(o *db.OIDC) { o.DisplayName = strings.Repeat("x", 65) },
+		"no email scope":                func(o *db.OIDC) { o.Scopes = []string{"openid", "profile"} },
+		"no openid scope":               func(o *db.OIDC) { o.Scopes = []string{"email", "profile"} },
+		"an external URL with //":       func(o *db.OIDC) { o.ExternalURL = "https://smsc.example.com//" },
+		"an external URL with %2F":      func(o *db.OIDC) { o.ExternalURL = "https://smsc.example.com/%2F" },
 		"a scope with a quote":          func(o *db.OIDC) { o.Scopes = append(o.Scopes, `a"b`) },
 		"a scope with a backslash":      func(o *db.OIDC) { o.Scopes = append(o.Scopes, `a\b`) },
 		"a scope that is not ASCII":     func(o *db.OIDC) { o.Scopes = append(o.Scopes, "é") },
-		"too many scopes":               func(o *db.OIDC) { o.Scopes = append(o.Scopes, strings.Fields(strings.Repeat("s ", 19))...) },
+		"too many scopes": func(o *db.OIDC) {
+			for i := len(o.Scopes); i <= MaxScopes; i++ {
+				o.Scopes = append(o.Scopes, fmt.Sprintf("s%d", i))
+			}
+		},
 		"a lifetime under five minutes": func(o *db.OIDC) { o.SessionLifetime = 5*time.Minute - time.Second },
 		"a lifetime over thirty days":   func(o *db.OIDC) { o.SessionLifetime = 30*24*time.Hour + time.Second },
 		"a CA with trailing text":       func(o *db.OIDC) { o.CACertificate = ca + "junk" },
@@ -159,9 +168,23 @@ func TestLive(t *testing.T) {
 		t.Fatalf("Update with an http issuer: %v, want ErrInvalid", err)
 	}
 
+	for in, want := range map[string]string{
+		"https://smsc.example.com/":      "https://smsc.example.com",
+		"https://SMSC.Example.com:8443/": "https://smsc.example.com:8443",
+		"https://[2001:db8::1]:8443":     "https://[2001:db8::1]:8443",
+		"https://smsc.example.com":       "https://smsc.example.com",
+	} {
+		o := valid()
+		o.ExternalURL = in
+
+		if err := l.Update(ctx, o); err != nil || l.Get().ExternalURL != want || store.saved.ExternalURL != want {
+			t.Errorf("Update with external URL %q: %v, stored %q, want %q", in, err, store.saved.ExternalURL, want)
+		}
+	}
+
 	store.err = errors.New("disk full")
 
-	if err := l.Update(ctx, db.OIDC{Scopes: []string{"openid"}, SessionLifetime: time.Hour}); err == nil {
+	if err := l.Update(ctx, db.OIDC{Scopes: []string{"openid", "email"}, SessionLifetime: time.Hour}); err == nil {
 		t.Fatal("Update with a failing store: no error")
 	}
 

@@ -40,23 +40,29 @@ func (d *DB) CreateSession(ctx context.Context, s NewSession, maxPerUser int) (_
 	var id int64
 
 	err = d.inTx(ctx, "create session", func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `INSERT INTO sessions (user_id, token_hash, method, identity_id, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?)`, s.UserID, s.TokenHash, s.Method, sql.NullInt64{Int64: s.IdentityID, Valid: s.IdentityID != 0},
-			s.CreatedAt.UnixNano(), s.ExpiresAt.UnixNano())
-		if err != nil {
-			return err
-		}
-
-		if id, err = res.LastInsertId(); err != nil {
-			return err
-		}
-
-		_, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id NOT IN
-			(SELECT id FROM sessions WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?)`,
-			s.UserID, s.UserID, maxPerUser)
-
+		id, err = createSession(ctx, tx, s, maxPerUser)
 		return err
 	})
+
+	return id, err
+}
+
+func createSession(ctx context.Context, tx *sql.Tx, s NewSession, maxPerUser int) (int64, error) {
+	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (user_id, token_hash, method, identity_id, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)`, s.UserID, s.TokenHash, s.Method, sql.NullInt64{Int64: s.IdentityID, Valid: s.IdentityID != 0},
+		s.CreatedAt.UnixNano(), s.ExpiresAt.UnixNano())
+	if err != nil {
+		return 0, err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id NOT IN
+		(SELECT id FROM sessions WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?)`,
+		s.UserID, s.UserID, maxPerUser)
 
 	return id, err
 }

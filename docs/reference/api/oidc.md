@@ -27,9 +27,9 @@ This path never returns the client secret.
 | `display_name`             | string  | The name on the login button. |
 | `scopes`                   | array   | The scopes requested. Initially `openid`, `email` and `profile`. |
 | `session_lifetime_seconds` | int     | How long a session started through the identity provider lasts. Initially `86400`. |
-| `trust_unverified_email`   | boolean | Email addresses the identity provider does not mark as verified are accepted. |
+| `trust_unverified_email`   | boolean | Email addresses are accepted when the identity provider does not send `email_verified`. An `email_verified` of `false` is always refused. |
 | `ca_certificate`           | string  | PEM certificates the identity provider's TLS certificate must chain to. Empty: the system's. |
-| `groups_claim`             | string  | The ID token claim that holds the user's groups. |
+| `groups_claim`             | string  | The claim, in the ID token or UserInfo, that holds the user's groups. |
 | `group_roles`              | array   | Group-to-role mappings, in order. |
 
 ### Sample Response
@@ -70,12 +70,12 @@ This path replaces the settings, which take effect at once. Disabling OIDC or ch
 | Field                      | Type    | Required        | Description |
 | -------------------------- | ------- | --------------- | ----------- |
 | `enabled`                  | boolean | Yes             | |
-| `external_url`             | string  | When enabled    | An https URL with no path. |
+| `external_url`             | string  | When enabled    | An https URL with no path. Stored as `https://host[:port]`. |
 | `issuer`                   | string  | When enabled    | An https URL with no query or fragment, as the identity provider gives it. |
 | `client_id`                | string  | When enabled    | At most 255 characters. |
-| `client_secret`            | string  | When enabled and none is stored | At most 255 characters. Empty or absent: the stored secret is kept. |
+| `client_secret`            | string  | When enabled and none is stored, or when `issuer` or `client_id` changes | At most 255 characters. Empty or absent: the stored secret is kept. |
 | `display_name`             | string  | When enabled    | At most 64 characters. |
-| `scopes`                   | array   | Yes             | At most 20, including `openid`. |
+| `scopes`                   | array   | Yes             | At most 20, including `openid` and `email`. |
 | `session_lifetime_seconds` | int     | Yes             | `300` to `2592000` (30 days). |
 | `trust_unverified_email`   | boolean | No              | Default `false`. |
 | `ca_certificate`           | string  | No              | PEM certificates. |
@@ -94,7 +94,7 @@ This path replaces the settings, which take effect at once. Disabling OIDC or ch
 | Code  | Description |
 | ----- | ----------- |
 | `200` | Updated. The response holds the new settings. |
-| `400` | Invalid field. |
+| `400` | Invalid field, or `issuer` or `client_id` changes without a `client_secret`. |
 
 ## Test an Identity Provider
 
@@ -118,6 +118,8 @@ This path checks that Ella SMSC can use an identity provider. It changes no sett
 | `issuer`                 | string  | The provider's issuer. |
 | `authorization_endpoint` | string  | |
 | `token_endpoint`         | string  | |
+| `token_endpoint_auth_method` | string | `client_secret_basic` or `client_secret_post`: how Ella SMSC sends the client secret. |
+| `userinfo_endpoint`      | string  | Empty if the provider has none. |
 | `jwks_uri`               | string  | |
 | `signing_algorithms`     | array   | The algorithms the provider signs ID tokens with. |
 | `keys`                   | int     | The number of signing keys. |
@@ -130,4 +132,4 @@ This path checks that Ella SMSC can use an identity provider. It changes no sett
 | ----- | ----------- |
 | `200` | The provider can be used. |
 | `400` | Invalid issuer or CA certificate. |
-| `502` | The provider cannot be reached or cannot be used. The error says why. |
+| `502` | The provider cannot be reached or cannot be used, for example because its token endpoint supports neither `client_secret_basic` nor `client_secret_post`. The error says why. |

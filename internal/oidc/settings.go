@@ -43,6 +43,8 @@ type Live struct {
 
 	providerMu sync.Mutex
 	cached     *provider
+	failed     *failure
+	fetching   *fetch
 }
 
 func NewLive(store Store, initial db.OIDC) *Live {
@@ -63,6 +65,7 @@ func (l *Live) Update(ctx context.Context, o db.OIDC) error {
 	}
 
 	o = clone(o)
+	o.ExternalURL = externalOrigin(o.ExternalURL)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -126,11 +129,21 @@ func validateExternalURL(s string) error {
 		return fmt.Errorf("external_url %w", err)
 	}
 
-	if u.Path != "" && u.Path != "/" {
+	if u.Path != "" && u.Path != "/" || u.RawPath != "" {
 		return errors.New("external_url must have no path")
 	}
 
 	return nil
+}
+
+func externalOrigin(s string) string {
+	if validateExternalURL(s) != nil {
+		return s
+	}
+
+	u, _ := url.Parse(s)
+
+	return u.Scheme + "://" + strings.ToLower(u.Host)
 }
 
 // OpenID Connect Discovery 1.0 section 3
@@ -161,8 +174,8 @@ func parseHTTPS(s string) (*url.URL, error) {
 
 // RFC 6749 section 3.3
 func validateScopes(scopes []string) error {
-	if !slices.Contains(scopes, "openid") {
-		return errors.New("scopes must include openid")
+	if !slices.Contains(scopes, "openid") || !slices.Contains(scopes, "email") {
+		return errors.New("scopes must include openid and email")
 	}
 
 	if len(scopes) > MaxScopes {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
@@ -15,16 +15,24 @@ import { login, refresh } from "@/queries/auth";
 import {
   getOIDCLogin,
   OIDC_LOGIN_PATH,
-  oidcLoginErrors,
+  oidcLoginError,
   type OIDCLogin,
 } from "@/queries/oidc";
 import { getStatus } from "@/queries/status";
 import { decodeAccessToken } from "@/utils/jwt";
+import {
+  forgetReturnPath,
+  rememberReturnPath,
+  returnPath,
+} from "@/utils/returnPath";
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? "/";
+  const [from] = useState(
+    () =>
+      (location.state as { from?: string } | null)?.from ?? returnPath() ?? "/",
+  );
   const [params] = useSearchParams();
   const oidcError = params.get("error");
 
@@ -35,6 +43,11 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [oidc, setOIDC] = useState<OIDCLogin>({ enabled: false });
   const { showSnackbar } = useSnackbar();
+  const ssoButton = useRef<HTMLAnchorElement>(null);
+
+  useEffect(() => {
+    if (!checking && oidc.enabled) ssoButton.current?.focus();
+  }, [checking, oidc.enabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,14 +58,22 @@ export default function Login() {
           navigate("/initialize", { replace: true });
           return;
         }
-        getOIDCLogin()
-          .then((o) => {
-            if (!cancelled) setOIDC(o);
-          })
-          .catch(() => undefined);
-        const { token } = await refresh();
-        if (!decodeAccessToken(token)) throw new Error("invalid access token");
-        if (!cancelled) navigate(from, { replace: true });
+        const oidcLogin = getOIDCLogin().catch((): OIDCLogin => ({
+          enabled: false,
+        }));
+        const session = await refresh()
+          .then(({ token }) => decodeAccessToken(token) !== null)
+          .catch(() => false);
+        if (cancelled) return;
+        if (session) {
+          forgetReturnPath();
+          navigate(from, { replace: true });
+          return;
+        }
+        const o = await oidcLogin;
+        if (cancelled) return;
+        setOIDC(o);
+        setChecking(false);
       } catch {
         if (!cancelled) setChecking(false);
       }
@@ -66,6 +87,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       await login(email, password);
+      forgetReturnPath();
       navigate(from, { replace: true });
     } catch (err) {
       showSnackbar(
@@ -94,14 +116,16 @@ export default function Login() {
       valid={email !== "" && password !== ""}
       onSubmit={submit}
     >
-      {oidcError && (
-        <Alert severity="error">
-          {oidcLoginErrors[oidcError] ?? oidcLoginErrors.error}
-        </Alert>
-      )}
+      {oidcError && <Alert severity="error">{oidcLoginError(oidcError)}</Alert>}
       {oidc.enabled && (
         <>
-          <Button variant="outlined" fullWidth href={OIDC_LOGIN_PATH}>
+          <Button
+            variant="outlined"
+            fullWidth
+            href={OIDC_LOGIN_PATH}
+            onClick={() => rememberReturnPath(from)}
+            ref={ssoButton}
+          >
             Sign in with {oidc.display_name}
           </Button>
           <Divider>or</Divider>

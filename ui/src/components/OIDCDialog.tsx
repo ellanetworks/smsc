@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  AlertTitle,
   Box,
   Button,
   FormControlLabel,
   IconButton,
+  MenuItem,
   Stack,
   Switch,
   TextField,
@@ -23,19 +25,87 @@ import PasswordField from "@/components/PasswordField";
 import RoleField from "@/components/RoleField";
 import { errorMessage, useSnackbar } from "@/contexts/SnackbarContext";
 import {
+  caCertificateError,
   discoverOIDC,
-  type GroupRole,
+  groupErrors,
+  httpsURLError,
+  MAX_DISPLAY_NAME_BYTES,
+  MAX_GROUP_ROLES,
   MAX_SESSION_LIFETIME_SECONDS,
+  MAX_VALUE_BYTES,
   MIN_SESSION_LIFETIME_SECONDS,
+  type OIDCDiscovery,
   type OIDCSettings,
+  scopesError,
+  splitScopes,
+  textError,
   updateOIDC,
 } from "@/queries/oidc";
 import { RoleID } from "@/queries/users";
 
-const HTTPS_URL = /^https:\/\/[^\s/?#]+(\/[^\s?#]*)?$/;
-const HTTPS_ORIGIN = /^https:\/\/[^\s/?#]+\/?$/;
+const lifetimeUnits = [
+  { label: "days", seconds: 86400 },
+  { label: "hours", seconds: 3600 },
+  { label: "minutes", seconds: 60 },
+  { label: "seconds", seconds: 1 },
+];
 
-const hours = (seconds: number) => String(+(seconds / 3600).toFixed(2));
+const unitsFor = (seconds: number) =>
+  lifetimeUnits.filter((u) => u.seconds >= 60 || seconds % 60 !== 0);
+
+const largestUnit = (seconds: number) =>
+  lifetimeUnits.find((u) => seconds % u.seconds === 0)!.seconds;
+
+interface MappingRow {
+  id: number;
+  group: string;
+  role_id: RoleID;
+}
+
+type Direction = "up" | "down";
+
+function DiscoveryResult({ discovery }: { discovery: OIDCDiscovery }) {
+  const yesNo = (value: boolean) => (value ? "Yes" : "No");
+  const rows: [string, string][] = [
+    ["Signing keys", String(discovery.keys)],
+    ["Signing algorithms", discovery.signing_algorithms.join(", ")],
+    ["PKCE", yesNo(discovery.pkce)],
+    ["Issuer parameter (RFC 9207)", yesNo(discovery.issuer_parameter)],
+    ["Client authentication", discovery.token_endpoint_auth_method],
+    ["UserInfo endpoint", discovery.userinfo_endpoint || "None"],
+  ];
+
+  return (
+    <Alert severity="success" sx={{ mt: 1 }}>
+      <AlertTitle>Ella SMSC can use this identity provider.</AlertTitle>
+      <Box
+        component="dl"
+        sx={{
+          m: 0,
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", sm: "auto 1fr" },
+          columnGap: 2,
+          "& dd": { m: 0, mb: { xs: 0.5, sm: 0 }, overflowWrap: "anywhere" },
+        }}
+      >
+        {rows.map(([label, value]) => (
+          <Box key={label} sx={{ display: "contents" }}>
+            <Typography component="dt" variant="body2">
+              {label}
+            </Typography>
+            <Typography
+              component="dd"
+              variant="body2"
+              sx={{ fontWeight: "medium" }}
+            >
+              {value}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+    </Alert>
+  );
+}
 
 export default function OIDCDialog({
   settings,
@@ -52,18 +122,50 @@ export default function OIDCDialog({
   const [clientID, setClientID] = useState(settings.client_id);
   const [clientSecret, setClientSecret] = useState("");
   const [externalURL, setExternalURL] = useState(
-    settings.external_url || window.location.origin,
+    settings.external_url ||
+      (window.location.protocol === "https:" ? window.location.origin : ""),
   );
   const [scopes, setScopes] = useState(settings.scopes.join(" "));
-  const [lifetime, setLifetime] = useState(
-    hours(settings.session_lifetime_seconds),
+  const [lifetimeUnit, setLifetimeUnit] = useState(() =>
+    largestUnit(settings.session_lifetime_seconds),
+  );
+  const [lifetime, setLifetime] = useState(() =>
+    String(settings.session_lifetime_seconds / lifetimeUnit),
   );
   const [caCertificate, setCACertificate] = useState(settings.ca_certificate);
   const [trustEmail, setTrustEmail] = useState(settings.trust_unverified_email);
   const [groupsClaim, setGroupsClaim] = useState(settings.groups_claim);
-  const [groupRoles, setGroupRoles] = useState<GroupRole[]>(
-    settings.group_roles,
+  const nextID = useRef(settings.group_roles.length);
+  const [rows, setRows] = useState<MappingRow[]>(() =>
+    settings.group_roles.map((g, id) => ({ id, ...g })),
   );
+  const moveButtons = useRef(new Map<string, HTMLButtonElement | null>());
+  const pendingFocus = useRef<{ id: number; direction: Direction } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    const order: Direction[] =
+      target.direction === "up" ? ["up", "down"] : ["down", "up"];
+    for (const direction of order) {
+      const button = moveButtons.current.get(`${target.id}:${direction}`);
+      if (button && !button.disabled) {
+        button.focus();
+        return;
+      }
+    }
+  });
+
+  const lifetimeSeconds = /^\d+$/.test(lifetime.trim())
+    ? Number(lifetime.trim()) * lifetimeUnit
+    : NaN;
+  const trimmedGroups = rows.map((r) => r.group.trim());
+  const scopeList = splitScopes(scopes);
+  const identityChanged =
+    issuer.trim() !== settings.issuer || clientID.trim() !== settings.client_id;
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -74,12 +176,15 @@ export default function OIDCDialog({
         client_id: clientID.trim(),
         client_secret: clientSecret,
         display_name: displayName.trim(),
-        scopes: scopes.split(/\s+/).filter(Boolean),
+        scopes: scopeList,
         session_lifetime_seconds: lifetimeSeconds,
         trust_unverified_email: trustEmail,
         ca_certificate: caCertificate.trim(),
         groups_claim: groupsClaim.trim(),
-        group_roles: groupRoles.map((g) => ({ ...g, group: g.group.trim() })),
+        group_roles: rows.map((r, i) => ({
+          group: trimmedGroups[i],
+          role_id: r.role_id,
+        })),
       }),
     onSuccess: (updated) => {
       queryClient.setQueryData(["oidc"], updated);
@@ -93,59 +198,72 @@ export default function OIDCDialog({
     mutationFn: () => discoverOIDC(issuer.trim(), caCertificate.trim()),
   });
 
-  const lifetimeSeconds = Math.round(Number(lifetime) * 3600);
+  const groups = groupErrors(trimmedGroups);
   const errors = {
-    displayName:
-      enabled && displayName.trim() === ""
-        ? "Enter the name to show on the login page."
-        : undefined,
-    issuer:
-      (enabled || issuer !== "") && !HTTPS_URL.test(issuer.trim())
-        ? "An https URL with no query or fragment."
-        : undefined,
-    clientID:
-      enabled && clientID.trim() === "" ? "Enter the client ID." : undefined,
+    displayName: textError(
+      displayName.trim(),
+      MAX_DISPLAY_NAME_BYTES,
+      enabled ? "Enter the name to show on the login page." : undefined,
+    ),
+    issuer: httpsURLError(issuer.trim(), {
+      missing: enabled ? "Enter the issuer URL." : undefined,
+    }),
+    clientID: textError(
+      clientID.trim(),
+      MAX_VALUE_BYTES,
+      enabled ? "Enter the client ID." : undefined,
+    ),
     clientSecret:
-      enabled && !settings.client_secret_set && clientSecret === ""
-        ? "Enter the client secret."
-        : undefined,
-    externalURL:
-      (enabled || externalURL !== "") && !HTTPS_ORIGIN.test(externalURL.trim())
-        ? "The https address of Ella SMSC, with no path."
-        : undefined,
-    scopes: !scopes.split(/\s+/).includes("openid")
-      ? "Include openid."
-      : undefined,
+      textError(clientSecret, MAX_VALUE_BYTES) ??
+      (clientSecret !== ""
+        ? undefined
+        : settings.client_secret_set
+          ? identityChanged
+            ? "Enter the client secret again: the issuer URL or client ID changed."
+            : undefined
+          : enabled
+            ? "Enter the client secret."
+            : undefined),
+    externalURL: httpsURLError(externalURL.trim(), {
+      origin: true,
+      missing: enabled ? "Enter the external URL." : undefined,
+    }),
+    scopes: scopesError(scopeList),
     lifetime:
-      !Number.isFinite(lifetimeSeconds) ||
+      !Number.isSafeInteger(lifetimeSeconds) ||
       lifetimeSeconds < MIN_SESSION_LIFETIME_SECONDS ||
       lifetimeSeconds > MAX_SESSION_LIFETIME_SECONDS
-        ? "From 5 minutes (0.09) to 30 days (720)."
+        ? "From 5 minutes to 30 days."
         : undefined,
-    groupsClaim:
-      groupRoles.length > 0 && groupsClaim.trim() === ""
-        ? "Enter the claim that holds the groups."
-        : undefined,
-    groups: groupRoles.some(
-      (g, i) =>
-        g.group.trim() === "" ||
-        groupRoles.findIndex((o) => o.group.trim() === g.group.trim()) !== i,
-    )
-      ? "Each group must be named, and appear once."
-      : undefined,
+    caCertificate: caCertificateError(caCertificate.trim()),
+    groupsClaim: textError(
+      groupsClaim.trim(),
+      MAX_VALUE_BYTES,
+      rows.length > 0 ? "Enter the claim that holds the groups." : undefined,
+    ),
   };
-  const valid = Object.values(errors).every((e) => e === undefined);
+  const valid =
+    Object.values(errors).every((e) => e === undefined) &&
+    groups.every((e) => e === undefined) &&
+    rows.length <= MAX_GROUP_ROLES;
 
-  const setGroup = (i: number, change: Partial<GroupRole>) =>
-    setGroupRoles((rows) =>
-      rows.map((row, j) => (j === i ? { ...row, ...change } : row)),
+  const setRow = (i: number, change: Partial<MappingRow>) =>
+    setRows((current) =>
+      current.map((row, j) => (j === i ? { ...row, ...change } : row)),
     );
-  const move = (i: number, by: number) =>
-    setGroupRoles((rows) => {
-      const next = [...rows];
+  const move = (i: number, direction: Direction) => {
+    const by = direction === "up" ? -1 : 1;
+    pendingFocus.current = { id: rows[i].id, direction };
+    setRows((current) => {
+      const next = [...current];
       [next[i], next[i + by]] = [next[i + by], next[i]];
       return next;
     });
+  };
+  const moveButton =
+    (id: number, direction: Direction) => (node: HTMLButtonElement | null) => {
+      moveButtons.current.set(`${id}:${direction}`, node);
+    };
 
   return (
     <EditDialog
@@ -178,7 +296,10 @@ export default function OIDCDialog({
       <TextField
         label="Issuer URL"
         value={issuer}
-        onChange={(e) => setIssuer(e.target.value)}
+        onChange={(e) => {
+          setIssuer(e.target.value);
+          test.reset();
+        }}
         error={errors.issuer !== undefined}
         helperText={
           errors.issuer ??
@@ -214,7 +335,7 @@ export default function OIDCDialog({
         error={errors.externalURL !== undefined}
         helperText={
           errors.externalURL ??
-          "The https address users open Ella SMSC at. It sets the redirect URL."
+          "The https address users open Ella SMSC at, with no path. It sets the redirect URL."
         }
         required={enabled}
       />
@@ -225,23 +346,46 @@ export default function OIDCDialog({
         error={errors.scopes !== undefined}
         helperText={errors.scopes ?? "Separated by spaces."}
       />
-      <TextField
-        label="Session lifetime (hours)"
-        type="number"
-        value={lifetime}
-        onChange={(e) => setLifetime(e.target.value)}
-        error={errors.lifetime !== undefined}
-        helperText={
-          errors.lifetime ??
-          "After this, users sign in through the identity provider again."
-        }
-        slotProps={{ htmlInput: { min: 0.09, max: 720, step: "any" } }}
-      />
+      <Stack direction="row" spacing={1} sx={{ alignItems: "start" }}>
+        <TextField
+          label="Session lifetime"
+          type="number"
+          value={lifetime}
+          onChange={(e) => setLifetime(e.target.value)}
+          error={errors.lifetime !== undefined}
+          helperText={
+            errors.lifetime ??
+            "After this, users sign in through the identity provider again."
+          }
+          slotProps={{ htmlInput: { min: 1, step: 1 } }}
+          sx={{ flex: 1 }}
+        />
+        <TextField
+          select
+          label="Unit"
+          value={lifetimeUnit}
+          onChange={(e) => setLifetimeUnit(Number(e.target.value))}
+          sx={{ width: 130 }}
+        >
+          {unitsFor(settings.session_lifetime_seconds).map((u) => (
+            <MenuItem key={u.seconds} value={u.seconds}>
+              {u.label}
+            </MenuItem>
+          ))}
+        </TextField>
+      </Stack>
       <TextField
         label="CA certificate"
         value={caCertificate}
-        onChange={(e) => setCACertificate(e.target.value)}
-        helperText="Optional. PEM certificates to trust for the identity provider, if a private CA signs its certificate."
+        onChange={(e) => {
+          setCACertificate(e.target.value);
+          test.reset();
+        }}
+        error={errors.caCertificate !== undefined}
+        helperText={
+          errors.caCertificate ??
+          "Optional. PEM certificates to trust for the identity provider, if a private CA signs its certificate."
+        }
         multiline
         minRows={2}
         maxRows={8}
@@ -251,17 +395,21 @@ export default function OIDCDialog({
         <Button
           variant="outlined"
           onClick={() => test.mutate()}
-          disabled={!HTTPS_URL.test(issuer.trim()) || test.isPending}
+          disabled={
+            issuer.trim() === "" ||
+            errors.issuer !== undefined ||
+            errors.caCertificate !== undefined ||
+            test.isPending
+          }
         >
           {test.isPending ? "Testing…" : "Test"}
         </Button>
-        {test.isSuccess && (
-          <Alert severity="success" sx={{ mt: 1 }}>
-            Ella SMSC can use this identity provider.
-          </Alert>
-        )}
+        {test.isSuccess && <DiscoveryResult discovery={test.data} />}
         {test.isError && (
           <Alert severity="error" sx={{ mt: 1 }}>
+            <AlertTitle>
+              Ella SMSC cannot use this identity provider.
+            </AlertTitle>
             {errorMessage(test.error)}
           </Alert>
         )}
@@ -277,10 +425,12 @@ export default function OIDCDialog({
       />
       {trustEmail && (
         <Alert severity="warning">
-          Users are linked by email even when the provider has not verified it.
-          Turn this on only for a provider that does not say whether an email is
-          verified, such as Microsoft Entra ID, and that controls the addresses
-          of its users.
+          When the provider does not say whether an email address is verified,
+          users are linked by it anyway. Anyone who can set an email address at
+          this provider can then take over the Ella SMSC user with that address,
+          Admins included. Turn this on only for a provider that does not say,
+          such as Microsoft Entra ID, and that controls the addresses of its
+          users. An address the provider says is not verified is always refused.
         </Alert>
       )}
       <Typography variant="subtitle1" component="h3">
@@ -298,67 +448,101 @@ export default function OIDCDialog({
         error={errors.groupsClaim !== undefined}
         helperText={errors.groupsClaim ?? "Such as groups."}
       />
-      {groupRoles.map((g, i) => (
-        <Stack key={i} direction="row" spacing={1} sx={{ alignItems: "start" }}>
+      {rows.map((row, i) => (
+        <Stack
+          key={row.id}
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          sx={{
+            alignItems: { xs: "stretch", sm: "start" },
+            borderWidth: { xs: 1, sm: 0 },
+            borderStyle: "solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            p: { xs: 1.5, sm: 0 },
+          }}
+        >
           <TextField
             label={`Group ${i + 1}`}
-            value={g.group}
-            onChange={(e) => setGroup(i, { group: e.target.value })}
-            sx={{ flex: 1 }}
+            value={row.group}
+            onChange={(e) => setRow(i, { group: e.target.value })}
+            error={groups[i] !== undefined}
+            helperText={groups[i]}
+            required
+            sx={{ flex: { sm: 1 } }}
           />
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: { sm: 1 } }}>
             <RoleField
-              value={g.role_id}
-              onChange={(role) => setGroup(i, { role_id: role })}
+              value={row.role_id}
+              onChange={(role) => setRow(i, { role_id: role })}
+              fullWidth
             />
           </Box>
-          <Tooltip title="Move up">
-            <span>
+          <Stack
+            direction="row"
+            sx={{ justifyContent: "flex-end", pt: { sm: 1 } }}
+          >
+            <Tooltip title="Move up">
+              <span>
+                <IconButton
+                  ref={moveButton(row.id, "up")}
+                  aria-label={`Move group ${i + 1} up`}
+                  disabled={i === 0}
+                  onClick={() => move(i, "up")}
+                >
+                  <ArrowUpwardIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Move down">
+              <span>
+                <IconButton
+                  ref={moveButton(row.id, "down")}
+                  aria-label={`Move group ${i + 1} down`}
+                  disabled={i === rows.length - 1}
+                  onClick={() => move(i, "down")}
+                >
+                  <ArrowDownwardIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Remove">
               <IconButton
-                aria-label={`Move group ${i + 1} up`}
-                disabled={i === 0}
-                onClick={() => move(i, -1)}
+                aria-label={`Remove group ${i + 1}`}
+                onClick={() =>
+                  setRows((current) => current.filter((_, j) => j !== i))
+                }
               >
-                <ArrowUpwardIcon fontSize="small" />
+                <DeleteIcon fontSize="small" />
               </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="Move down">
-            <span>
-              <IconButton
-                aria-label={`Move group ${i + 1} down`}
-                disabled={i === groupRoles.length - 1}
-                onClick={() => move(i, 1)}
-              >
-                <ArrowDownwardIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="Remove">
-            <IconButton
-              aria-label={`Remove group ${i + 1}`}
-              onClick={() =>
-                setGroupRoles((rows) => rows.filter((_, j) => j !== i))
-              }
-            >
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+            </Tooltip>
+          </Stack>
         </Stack>
       ))}
-      {errors.groups && <Alert severity="error">{errors.groups}</Alert>}
       <Box>
         <Button
           startIcon={<AddIcon />}
-          onClick={() =>
-            setGroupRoles((rows) => [
-              ...rows,
-              { group: "", role_id: RoleID.ReadOnly },
-            ])
-          }
+          disabled={rows.length >= MAX_GROUP_ROLES}
+          onClick={() => {
+            const id = nextID.current++;
+            setRows((current) => [
+              ...current,
+              { id, group: "", role_id: RoleID.ReadOnly },
+            ]);
+          }}
         >
           Add group
         </Button>
+        {rows.length >= MAX_GROUP_ROLES && (
+          <Typography
+            variant="body2"
+            color="textSecondary"
+            component="span"
+            sx={{ ml: 1 }}
+          >
+            At most {MAX_GROUP_ROLES} groups.
+          </Typography>
+        )}
       </Box>
     </EditDialog>
   );

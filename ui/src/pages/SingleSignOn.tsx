@@ -14,18 +14,16 @@ import OIDCDialog from "@/components/OIDCDialog";
 import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import SettingsTable from "@/components/SettingsTable";
+import { useAuth } from "@/contexts/AuthContext";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { getOIDC } from "@/queries/oidc";
 import { roleLabels } from "@/queries/users";
+import { describeDuration } from "@/utils/durations";
 
 const orNone = (value: string) => value || "None";
 
-const duration = (seconds: number) =>
-  seconds % 3600 === 0
-    ? `${seconds / 3600} hours`
-    : `${Math.round(seconds / 60)} minutes`;
-
 export default function SingleSignOn() {
+  const auth = useAuth();
   const [editing, setEditing] = useState(false);
   const copy = useCopyToClipboard();
   const oidc = useQuery({ queryKey: ["oidc"], queryFn: getOIDC });
@@ -38,14 +36,16 @@ export default function SingleSignOn() {
         title="Single Sign-On"
         description="Let users sign in through your organization's identity provider, with OpenID Connect."
         action={
-          <Button
-            variant="contained"
-            color="success"
-            disabled={!data}
-            onClick={() => setEditing(true)}
-          >
-            Edit
-          </Button>
+          auth.can("oidc:update") && (
+            <Button
+              variant="contained"
+              color="success"
+              disabled={!data}
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </Button>
+          )
         }
       />
       <QueryAlert query={oidc} subject="single sign-on settings" />
@@ -120,7 +120,7 @@ export default function SingleSignOn() {
           {
             label: "Session lifetime",
             help: "After this, users sign in through the identity provider again.",
-            value: data && duration(data.session_lifetime_seconds),
+            value: data && describeDuration(data.session_lifetime_seconds),
           },
           {
             label: "CA certificate",
@@ -129,7 +129,7 @@ export default function SingleSignOn() {
           },
           {
             label: "Trust email addresses",
-            help: "Whether users are linked by an email the provider has not verified.",
+            help: "Whether users are linked by an email address the provider does not say is verified or not.",
             value: data && (data.trust_unverified_email ? "Yes" : "No"),
           },
           {

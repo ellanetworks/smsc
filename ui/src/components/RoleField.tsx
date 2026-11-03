@@ -11,9 +11,11 @@ const roles = [
 export default function RoleField({
   value,
   onChange,
+  fullWidth,
 }: {
   value: RoleID;
   onChange: (role: RoleID) => void;
+  fullWidth?: boolean;
 }) {
   return (
     <TextField
@@ -23,6 +25,7 @@ export default function RoleField({
       onChange={(e) => onChange(Number(e.target.value) as RoleID)}
       helperText={roleDescriptions[value]}
       required
+      fullWidth={fullWidth}
       slotProps={{
         select: { renderValue: (v) => roleLabels[v as RoleID] },
       }}

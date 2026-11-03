@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/oidc"
@@ -15,7 +17,7 @@ import (
 
 const (
 	OIDCLoginCookieName = "__Host-smsc_oidc_login"
-	maxErrorDetail      = 200
+	maxErrorDetail      = 300
 )
 
 const (
@@ -46,7 +48,7 @@ type oidcRefusal struct {
 func (e oidcRefusal) Error() string { return e.outcome + ": " + e.detail }
 
 func refuse(outcome, format string, args ...any) error {
-	return oidcRefusal{outcome: outcome, detail: fmt.Sprintf(format, args...)}
+	return oidcRefusal{outcome: outcome, detail: clip(fmt.Sprintf(format, args...))}
 }
 
 func GetOIDCLogin(cfg Config) http.Handler {
@@ -120,19 +122,14 @@ func OIDCCallback(a *auth) http.Handler {
 			return
 		}
 
-		u, identityID, err := a.oidcUser(r, c, cl)
-		if err != nil {
+		if err := cfg.Auth.DeleteExpiredSessions(r.Context(), cfg.Now()); err != nil {
 			a.oidcDone(w, r, actor(cl), err)
 			return
 		}
 
-		if err := cfg.Auth.DeleteExpiredSessions(r.Context(), cfg.Now()); err != nil {
-			a.oidcDone(w, r, u.Email, err)
-			return
-		}
-
-		if _, err := a.startSession(w, r, u, db.SessionOIDC, identityID, c.Settings().SessionLifetime); err != nil {
-			a.oidcDone(w, r, u.Email, err)
+		u, err := a.oidcLogIn(w, r, c, cl)
+		if err != nil {
+			a.oidcDone(w, r, actor(cl), err)
 			return
 		}
 
@@ -158,6 +155,17 @@ func (a *auth) oidcAuthenticate(r *http.Request) (*oidc.Client, oidc.Claims, err
 		return nil, oidc.Claims{}, refuse(OIDCFailed, "the state does not match the login")
 	}
 
+	state := sha256.Sum256([]byte(l.State))
+
+	err = cfg.Auth.UseOIDCState(r.Context(), state[:], time.Unix(l.ExpiresAt, 0), cfg.Now())
+	if errors.Is(err, db.ErrStateUsed) {
+		return nil, oidc.Claims{}, refuse(OIDCFailed, "the login was already used")
+	}
+
+	if err != nil {
+		return nil, oidc.Claims{}, err
+	}
+
 	c, err := cfg.OIDC.Client(r.Context(), cfg.Now)
 	if err != nil {
 		return nil, oidc.Claims{}, refuse(OIDCUnavailable, "%v", err)
@@ -177,8 +185,7 @@ func (a *auth) oidcAuthenticate(r *http.Request) (*oidc.Client, oidc.Claims, err
 			outcome = OIDCDenied
 		}
 
-		return nil, oidc.Claims{}, refuse(outcome, "the identity provider returned %s: %s", clip(e),
-			clip(q.Get("error_description")))
+		return nil, oidc.Claims{}, refuse(outcome, "the identity provider returned %s: %s", e, q.Get("error_description"))
 	}
 
 	code := q.Get("code")
@@ -194,97 +201,78 @@ func (a *auth) oidcAuthenticate(r *http.Request) (*oidc.Client, oidc.Claims, err
 	return c, cl, nil
 }
 
-func (a *auth) oidcUser(r *http.Request, c *oidc.Client, cl oidc.Claims) (db.User, int64, error) {
-	ctx := r.Context()
-	store := a.cfg.Auth
-	now := a.cfg.Now()
-	issuer := c.Settings().Issuer
-	identity := db.NewIdentity{Issuer: issuer, Subject: cl.Subject, Email: cl.Email, At: now}
+func (a *auth) oidcLogIn(w http.ResponseWriter, r *http.Request, c *oidc.Client, cl oidc.Claims) (db.User, error) {
+	o := c.Settings()
+	role, groupErr := groupRole(c, cl)
 
-	i, err := store.GetIdentity(ctx, issuer, cl.Subject)
-	if err == nil {
-		u, err := store.GetUserByID(ctx, i.UserID)
-		if err != nil {
-			return db.User{}, 0, err
-		}
-
-		if u, err = a.syncRole(r, c, cl, u); err != nil {
-			return db.User{}, 0, err
-		}
-
-		return u, i.ID, store.TouchIdentity(ctx, i.ID, cl.Email, now)
+	l := db.OIDCLogin{
+		Issuer: o.Issuer, ClientID: o.ClientID, Subject: cl.Subject, Email: cl.Email, MapsGroups: c.MapsGroups(),
+		Role: role, MaxUsers: MaxNumUsers, MaxSessionsPerUser: MaxSessionsPerUser,
 	}
 
-	if !errors.Is(err, db.ErrNotFound) {
-		return db.User{}, 0, err
-	}
+	var unlinked error
 
 	email, ok := normalEmail(cl.Email)
-	if !ok {
-		return db.User{}, 0, refuse(OIDCNotSetUp, "the ID token has no email address")
+
+	switch {
+	case !ok:
+		unlinked = refuse(OIDCNotSetUp, "the identity provider gave no email address")
+	case !c.TrustsEmail(cl):
+		unlinked = refuse(OIDCEmailNotVerified, "the identity provider has not verified %s", email)
+	default:
+		l.LinkEmail = email
 	}
 
-	if !c.TrustsEmail(cl) {
-		return db.User{}, 0, refuse(OIDCEmailNotVerified, "the identity provider has not verified %s", email)
+	raw, s := a.newSession(db.SessionOIDC, o.SessionLifetime)
+	l.Session = s
+
+	res, err := a.cfg.Auth.LogInWithOIDC(r.Context(), l)
+
+	switch {
+	case errors.Is(err, db.ErrOIDCDisabled):
+		return db.User{}, refuse(OIDCUnavailable, "%v", oidc.ErrDisabled)
+	case errors.Is(err, db.ErrOIDCChanged):
+		return db.User{}, refuse(OIDCFailed, "the OIDC settings changed during the login")
+	case errors.Is(err, db.ErrNotLinked):
+		return db.User{}, unlinked
+	case errors.Is(err, db.ErrNoUser):
+		return db.User{}, refuse(OIDCNotSetUp, "no user has the email %s", email)
+	case errors.Is(err, db.ErrNoRole):
+		return db.User{}, groupErr
+	case errors.Is(err, db.ErrLinkedElsewhere):
+		return db.User{}, refuse(OIDCLinkedElsewhere, "%s is linked to another account at the identity provider", email)
+	case errors.Is(err, db.ErrTooManyUsers):
+		return db.User{}, refuse(OIDCTooManyUsers, "%d users exist", MaxNumUsers)
+	case err != nil:
+		return db.User{}, err
 	}
 
-	u, err := store.GetUser(ctx, email)
-	if err == nil {
-		id, err := store.CreateIdentity(ctx, u.ID, identity)
-		if errors.Is(err, db.ErrAlreadyExists) {
-			return db.User{}, 0, refuse(OIDCLinkedElsewhere, "%s is linked to another account at the identity provider",
-				u.Email)
-		}
+	u := res.User
 
-		if err != nil {
-			return db.User{}, 0, err
-		}
-
+	switch {
+	case res.Created:
+		a.audit(r, "create_user", u.Email, fmt.Sprintf("User %s created from the identity provider with role %d", u.Email,
+			u.Role))
+	case res.Linked:
 		a.audit(r, "link_user_oidc", u.Email, "User linked to the identity provider account "+cl.Subject)
-
-		if u, err = a.syncRole(r, c, cl, u); err != nil {
-			return db.User{}, 0, err
-		}
-
-		return u, id, nil
 	}
 
-	if !errors.Is(err, db.ErrNotFound) {
-		return db.User{}, 0, err
+	switch {
+	case res.RoleKept:
+		a.audit(r, "update_user", u.Email, fmt.Sprintf("Role %d from the identity provider not applied to %s, the last admin with a password", role, u.Email))
+	case res.RoleChanged():
+		a.audit(r, "update_user", u.Email, fmt.Sprintf("Role of %s set to %d from the identity provider", u.Email, u.Role))
+		a.roleChanged(r.Context(), u)
 	}
 
-	role, err := groupRole(c, cl)
-	if errors.Is(err, errNoMapping) {
-		return db.User{}, 0, refuse(OIDCNotSetUp, "no user has the email %s", email)
-	}
+	a.setSessionCookie(w, raw, s.ExpiresAt)
 
-	if err != nil {
-		return db.User{}, 0, err
-	}
-
-	userID, id, err := store.CreateUserWithIdentity(ctx, db.NewUser{Email: email, Role: role}, identity, MaxNumUsers)
-	if errors.Is(err, db.ErrTooManyUsers) {
-		return db.User{}, 0, refuse(OIDCTooManyUsers, "%d users exist", MaxNumUsers)
-	}
-
-	if errors.Is(err, db.ErrAlreadyExists) {
-		return db.User{}, 0, refuse(OIDCFailed, "the user %s was created during the login", email)
-	}
-
-	if err != nil {
-		return db.User{}, 0, err
-	}
-
-	a.audit(r, "create_user", email, fmt.Sprintf("User %s created from the identity provider with role %d", email, role))
-
-	return db.User{ID: userID, Email: email, Role: role, HasIdentity: true}, id, nil
+	return u, nil
 }
-
-var errNoMapping = errors.New("no group mapping")
 
 func groupRole(c *oidc.Client, cl oidc.Claims) (db.Role, error) {
 	if !c.MapsGroups() {
-		return 0, errNoMapping
+		return 0, nil
 	}
 
 	if cl.GroupsOverage {
@@ -297,36 +285,6 @@ func groupRole(c *oidc.Client, cl oidc.Claims) (db.Role, error) {
 	}
 
 	return role, nil
-}
-
-func (a *auth) syncRole(r *http.Request, c *oidc.Client, cl oidc.Claims, u db.User) (db.User, error) {
-	if u.RolePinned {
-		return u, nil
-	}
-
-	role, err := groupRole(c, cl)
-	if errors.Is(err, errNoMapping) {
-		return u, nil
-	}
-
-	if err != nil || role == u.Role {
-		return u, err
-	}
-
-	err = a.cfg.Auth.UpdateUserRole(r.Context(), u.ID, role, false)
-	if errors.Is(err, db.ErrLastPasswordAdmin) {
-		a.audit(r, "update_user", u.Email, fmt.Sprintf("Role %d from the identity provider not applied to %s, the last admin with a password", role, u.Email))
-		return u, nil
-	}
-
-	if err != nil {
-		return db.User{}, err
-	}
-
-	a.audit(r, "update_user", u.Email, fmt.Sprintf("Role of %s set to %d from the identity provider", u.Email, role))
-	u.Role = role
-
-	return u, nil
 }
 
 func (a *auth) oidcDone(w http.ResponseWriter, r *http.Request, who string, err error) {
@@ -374,7 +332,7 @@ func clip(s string) string {
 	}, s)
 
 	if len(s) > maxErrorDetail {
-		s = s[:maxErrorDetail]
+		s = strings.ToValidUTF8(s[:maxErrorDetail], "")
 	}
 
 	return s

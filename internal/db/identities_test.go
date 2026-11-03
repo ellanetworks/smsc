@@ -55,24 +55,6 @@ func TestIdentityLinksAUser(t *testing.T) {
 		}
 	}
 
-	later := now.Add(time.Hour)
-	if err := d.TouchIdentity(ctx, identityID, "renamed@example.com", later); err != nil {
-		t.Fatalf("TouchIdentity: %v", err)
-	}
-
-	want.Email, want.LastLoginAt = "renamed@example.com", later
-	if got, err := d.GetIdentity(ctx, testIssuer, "sub-1"); err != nil || got != want {
-		t.Fatalf("GetIdentity after TouchIdentity = %+v, %v, want %+v", got, err, want)
-	}
-
-	if u, err := d.GetUserByID(ctx, id); err != nil || u.Email != "nm@example.com" {
-		t.Fatalf("user email after TouchIdentity = %q, %v, want it unchanged", u.Email, err)
-	}
-
-	if err := d.TouchIdentity(ctx, identityID+1, "", now); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("TouchIdentity of an unknown identity: %v, want ErrNotFound", err)
-	}
-
 	if err := d.DeleteUser(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +129,18 @@ func TestUserHasIdentityOfTheCurrentIssuer(t *testing.T) {
 	if hasIdentity() {
 		t.Fatal("HasIdentity after DeleteIdentities")
 	}
+
+	if err := d.DeleteIdentities(ctx, id); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteIdentities of an unlinked user: %v, want ErrNotFound", err)
+	}
+
+	if _, err := d.CreateIdentity(ctx, id, NewIdentity{Issuer: "https://other.example.com", Subject: "sub", At: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.DeleteIdentities(ctx, id); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteIdentities of a user linked to another issuer: %v, want ErrNotFound", err)
+	}
 }
 
 func TestIdentityLinksOnce(t *testing.T) {
@@ -207,66 +201,12 @@ func TestIdentityIsChecked(t *testing.T) {
 	}
 }
 
-func TestCreateUserWithIdentity(t *testing.T) {
+func TestOIDCSessionNeedsAnIdentity(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
 	enableTestOIDC(t, d)
-
-	userID, identityID, err := d.CreateUserWithIdentity(ctx, NewUser{Email: "new@example.com", Role: RoleReadOnly},
-		NewIdentity{Issuer: testIssuer, Subject: "sub-new", Email: "new@example.com", At: now}, 2)
-	if err != nil {
-		t.Fatalf("CreateUserWithIdentity: %v", err)
-	}
-
-	if i, err := d.GetIdentity(ctx, testIssuer, "sub-new"); err != nil || i.ID != identityID || i.UserID != userID {
-		t.Fatalf("GetIdentity = %+v, %v, want identity %d of user %d", i, err, identityID, userID)
-	}
-
-	want := User{ID: userID, Email: "new@example.com", Role: RoleReadOnly, HasIdentity: true}
-	if got, err := d.GetUserByID(ctx, userID); err != nil || got != want {
-		t.Fatalf("GetUserByID = %+v, %v, want %+v", got, err, want)
-	}
-
-	for name, tc := range map[string]struct {
-		email, subject string
-		want           error
-	}{
-		"a taken email":   {"NEW@example.com", "sub-other", ErrAlreadyExists},
-		"a taken subject": {"other@example.com", "sub-new", ErrAlreadyExists},
-	} {
-		_, _, err := d.CreateUserWithIdentity(ctx, NewUser{Email: tc.email, Role: RoleReadOnly},
-			NewIdentity{Issuer: testIssuer, Subject: tc.subject, At: now}, 2)
-		if !errors.Is(err, tc.want) {
-			t.Errorf("CreateUserWithIdentity with %s: %v, want %v", name, err, tc.want)
-		}
-	}
-
-	if n, err := d.CountUsers(ctx); err != nil || n != 1 {
-		t.Fatalf("CountUsers = %d, %v, want 1", n, err)
-	}
-
-	if _, _, err := d.CreateUserWithIdentity(ctx, NewUser{Email: "second@example.com", Role: RoleReadOnly},
-		NewIdentity{Issuer: testIssuer, Subject: "sub-second", At: now}, 2); err != nil {
-		t.Fatalf("CreateUserWithIdentity up to the limit: %v", err)
-	}
-
-	_, _, err = d.CreateUserWithIdentity(ctx, NewUser{Email: "third@example.com", Role: RoleReadOnly},
-		NewIdentity{Issuer: testIssuer, Subject: "sub-third", At: now}, 2)
-	if !errors.Is(err, ErrTooManyUsers) {
-		t.Fatalf("CreateUserWithIdentity past the limit: %v, want ErrTooManyUsers", err)
-	}
-
-	if n, err := d.CountUsers(ctx); err != nil || n != 2 {
-		t.Fatalf("CountUsers = %d, %v, want 2", n, err)
-	}
-}
-
-func TestOIDCSessionNeedsAnIdentity(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
 	id := createTestUser(t, d, "a@example.com", RoleReadOnly)
 

@@ -2,4 +2,4 @@
 services:
   ella-smsc:
     volumes:
-      - ../.build/smsc:/bin/smsc:ro
+      - ${ELLA_E2E_SMSC_BINARY:-../.build/smsc}:/bin/smsc:ro

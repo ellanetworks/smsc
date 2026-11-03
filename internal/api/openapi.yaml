@@ -1011,10 +1011,10 @@ paths:
       operationId: oidcCallback
       summary: Return from the identity provider
       description: >-
-        The redirect URL registered with the identity provider. On success, it sets the session cookie and
-        redirects to /. Otherwise it redirects to /login?error= with one of rate_limited, unavailable, failed,
-        denied, not_set_up, email_not_verified, linked_elsewhere, no_group, groups_overage, too_many_users, or
-        error.
+        The redirect URL registered with the identity provider. Each login completes once. On success, it sets the
+        session cookie and redirects to /. Otherwise it redirects to /login?error= with one of rate_limited,
+        unavailable, failed, denied, not_set_up, email_not_verified, linked_elsewhere, no_group, groups_overage,
+        too_many_users, or error.
       security: []
       parameters:
         - {name: code, in: query, schema: {type: string}}
@@ -1149,8 +1149,9 @@ paths:
       operationId: updateOIDC
       summary: Update the OIDC settings
       description: >-
-        Replaces all the settings. An empty or missing client_secret keeps the current one. Disabling OIDC or
-        changing the issuer ends all OIDC sessions. Needs a login, not an API token.
+        Replaces all the settings. An empty or missing client_secret keeps the current one, unless the issuer or
+        the client ID changes (400). Disabling OIDC or changing the issuer ends all OIDC sessions. Needs a login,
+        not an API token.
       requestBody:
         required: true
         content:
@@ -1175,8 +1176,9 @@ paths:
       operationId: discoverOIDC
       summary: Test an identity provider
       description: >-
-        Fetches the provider's OpenID configuration and signing keys, and checks that the provider can be used.
-        Changes no setting. Needs a login, not an API token.
+        Fetches the provider's OpenID configuration and signing keys, and checks that the provider can be used:
+        502 when it cannot, including when its token endpoint accepts neither client_secret_basic nor
+        client_secret_post. Changes no setting. Needs a login, not an API token.
       requestBody:
         required: true
         content:
@@ -1359,7 +1361,7 @@ paths:
       summary: Remove the password of a user
       description: >-
         The user can then sign in only through OIDC. Ends the sessions of the user. The last admin with a password
-        keeps it.
+        keeps it. 409 when the user has no password.
       parameters:
         - $ref: "#/components/parameters/Email"
       responses:
@@ -1382,7 +1384,8 @@ paths:
       operationId: deleteUserOIDCLink
       summary: Unlink a user from their identity provider account
       description: >-
-        Ends the OIDC sessions of the user. Their next OIDC login links them again by verified email.
+        Ends the OIDC sessions of the user. Their next OIDC login links them again by verified email. 404 when the
+        user is not linked to the current issuer.
       parameters:
         - $ref: "#/components/parameters/Email"
       responses:
@@ -2045,6 +2048,9 @@ components:
           description: Empty or missing for a user who signs in only through OIDC.
         role_id:
           $ref: "#/components/schemas/RoleID"
+        role_pinned:
+          type: boolean
+          description: Keeps the role from being updated from OIDC groups. Missing means false.
 
     UpdateUserParams:
       type: object
@@ -2642,7 +2648,9 @@ components:
           format: int64
         trust_unverified_email:
           type: boolean
-          description: Links accounts by an email the provider does not mark as verified.
+          description: >-
+            Links accounts by email when the provider does not send email_verified. An email_verified of false is
+            always refused.
         ca_certificate:
           type: string
           description: PEM certificates that the provider's TLS certificate must chain to. Empty uses the system's.
@@ -2664,7 +2672,7 @@ components:
           type: boolean
         external_url:
           type: string
-          description: An https URL with no path. Required when enabled.
+          description: An https URL with no path. Stored as scheme://host[:port]. Required when enabled.
         issuer:
           type: string
           description: An https URL with no query or fragment, exactly as the provider names itself. Required when enabled.
@@ -2674,14 +2682,16 @@ components:
         client_secret:
           type: string
           maxLength: 255
-          description: Write-only. Empty or missing keeps the current secret.
+          description: >-
+            Write-only. Empty or missing keeps the current secret. Required when the issuer or the client ID
+            changes.
         display_name:
           type: string
           maxLength: 64
         scopes:
           type: array
           maxItems: 20
-          description: Must include openid.
+          description: Must include openid and email.
           items:
             type: string
         session_lifetime_seconds:
@@ -2715,8 +2725,8 @@ components:
 
     OIDCDiscovery:
       type: object
-      required: [issuer, authorization_endpoint, token_endpoint, jwks_uri, signing_algorithms, keys, pkce,
-        issuer_parameter]
+      required: [issuer, authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri, signing_algorithms,
+        token_endpoint_auth_method, keys, pkce, issuer_parameter]
       properties:
         issuer:
           type: string
@@ -2724,8 +2734,15 @@ components:
           type: string
         token_endpoint:
           type: string
+        userinfo_endpoint:
+          type: string
+          description: Empty when the provider has none.
         jwks_uri:
           type: string
+        token_endpoint_auth_method:
+          type: string
+          enum: [client_secret_basic, client_secret_post]
+          description: How Ella SMSC sends the client secret to the token endpoint.
         signing_algorithms:
           type: array
           description: The asymmetric algorithms the provider signs ID tokens with.

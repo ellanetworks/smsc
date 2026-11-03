@@ -104,7 +104,7 @@ The login page sends the browser to this path, which redirects it to the identit
 
 ## Return From the Identity Provider
 
-The identity provider sends the browser back to this path, the redirect URL. On success, it sets the session cookie, for the [session lifetime](oidc.md#get-the-oidc-settings), and redirects to `/`. Otherwise, it redirects to `/login?error=<error>`, and the `auth_oidc_login` [audit event](../observability.md#audit-events) gives the details.
+The identity provider sends the browser back to this path, the redirect URL. Each login completes once. On success, it sets the session cookie, for the [session lifetime](oidc.md#get-the-oidc-settings), and redirects to `/`. Otherwise, it redirects to `/login?error=<error>`, and the `auth_oidc_login` [audit event](../observability.md#audit-events) gives the details.
 
 | Method | Path                         |
 | ------ | ---------------------------- |
@@ -116,12 +116,12 @@ The identity provider sends the browser back to this path, the redirect URL. On 
 | -------------------- | ----------- |
 | `rate_limited`       | Too many logins from the address. |
 | `unavailable`        | Single sign-on is off, or the identity provider cannot be reached. |
-| `failed`             | The login expired or is invalid, or the identity provider returned an error. |
+| `failed`             | The login expired, was already used or is invalid, the single sign-on settings changed during it, or the identity provider returned an error. |
 | `denied`             | The user or the identity provider refused access. |
-| `not_set_up`         | The ID token has no email, or no user has it and no group mapping is set. |
-| `email_not_verified` | The identity provider does not mark the email as verified. See [`trust_unverified_email`](oidc.md#update-the-oidc-settings). |
+| `not_set_up`         | The identity provider gives no email, or no user has it and no group mapping is set. |
+| `email_not_verified` | The identity provider marks the email as not verified, or does not say and [`trust_unverified_email`](oidc.md#update-the-oidc-settings) is off. |
 | `linked_elsewhere`   | The user with the email is linked to another account at the identity provider. |
 | `no_group`           | None of the user's groups is mapped to a role. |
-| `groups_overage`     | The user is in too many groups for the ID token to list them. |
+| `groups_overage`     | The user is in too many groups for the identity provider to list them. |
 | `too_many_users`     | 50 users exist. |
 | `error`              | Internal error. |

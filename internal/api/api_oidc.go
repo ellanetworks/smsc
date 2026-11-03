@@ -55,14 +55,16 @@ type DiscoverOIDCParams struct {
 }
 
 type OIDCDiscovery struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	JWKSURI               string   `json:"jwks_uri"`
-	SigningAlgorithms     []string `json:"signing_algorithms"`
-	Keys                  int      `json:"keys"`
-	PKCE                  bool     `json:"pkce"`
-	IssuerParameter       bool     `json:"issuer_parameter"`
+	Issuer                  string   `json:"issuer"`
+	AuthorizationEndpoint   string   `json:"authorization_endpoint"`
+	TokenEndpoint           string   `json:"token_endpoint"`
+	UserInfoEndpoint        string   `json:"userinfo_endpoint"`
+	JWKSURI                 string   `json:"jwks_uri"`
+	SigningAlgorithms       []string `json:"signing_algorithms"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	Keys                    int      `json:"keys"`
+	PKCE                    bool     `json:"pkce"`
+	IssuerParameter         bool     `json:"issuer_parameter"`
 }
 
 type OIDC interface {
@@ -99,7 +101,7 @@ func UpdateOIDC(a *auth) http.Handler {
 
 		o := db.OIDC{
 			Enabled:              params.Enabled,
-			ExternalURL:          strings.TrimSuffix(params.ExternalURL, "/"),
+			ExternalURL:          params.ExternalURL,
 			Issuer:               params.Issuer,
 			ClientID:             params.ClientID,
 			ClientSecret:         params.ClientSecret,
@@ -112,7 +114,14 @@ func UpdateOIDC(a *auth) http.Handler {
 			GroupRoles:           []db.GroupRole{},
 		}
 
-		if o.ClientSecret == "" {
+		if o.ClientSecret == "" && current.ClientSecret != "" {
+			if o.Issuer != current.Issuer || o.ClientID != current.ClientID {
+				writeError(w, r, http.StatusBadRequest, "client_secret is required when the issuer or the client ID changes",
+					nil, cfg.Logger)
+
+				return
+			}
+
 			o.ClientSecret = current.ClientSecret
 		}
 
@@ -132,8 +141,9 @@ func UpdateOIDC(a *auth) http.Handler {
 		}
 
 		p, _ := PrincipalFrom(r.Context())
-		a.audit(r, "update_oidc", p.Email, oidcChanges(current, o))
-		writeResponse(w, r, oidcResponse(cfg.OIDC.Get()), http.StatusOK, cfg.Logger)
+		updated := cfg.OIDC.Get()
+		a.audit(r, "update_oidc", p.Email, oidcChanges(current, updated))
+		writeResponse(w, r, oidcResponse(updated), http.StatusOK, cfg.Logger)
 	})
 }
 
@@ -151,19 +161,21 @@ func DiscoverOIDC(cfg Config) http.Handler {
 		}
 
 		if err != nil {
-			writeError(w, r, http.StatusBadGateway, err.Error(), nil, cfg.Logger)
+			writeError(w, r, http.StatusBadGateway, clip(err.Error()), nil, cfg.Logger)
 			return
 		}
 
 		writeResponse(w, r, OIDCDiscovery{
-			Issuer:                d.Issuer,
-			AuthorizationEndpoint: d.AuthorizationEndpoint,
-			TokenEndpoint:         d.TokenEndpoint,
-			JWKSURI:               d.JWKSURI,
-			SigningAlgorithms:     d.SigningAlgorithms,
-			Keys:                  d.Keys,
-			PKCE:                  d.PKCE,
-			IssuerParameter:       d.IssuerParameter,
+			Issuer:                  d.Issuer,
+			AuthorizationEndpoint:   d.AuthorizationEndpoint,
+			TokenEndpoint:           d.TokenEndpoint,
+			UserInfoEndpoint:        d.UserInfoEndpoint,
+			JWKSURI:                 d.JWKSURI,
+			SigningAlgorithms:       d.SigningAlgorithms,
+			TokenEndpointAuthMethod: d.TokenEndpointAuthMethod,
+			Keys:                    d.Keys,
+			PKCE:                    d.PKCE,
+			IssuerParameter:         d.IssuerParameter,
 		}, http.StatusOK, cfg.Logger)
 	})
 }

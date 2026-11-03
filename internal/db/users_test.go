@@ -11,7 +11,7 @@ import (
 func createTestUser(t *testing.T, d *DB, email string, role Role) int64 {
 	t.Helper()
 
-	id, err := d.CreateUser(context.Background(), NewUser{Email: email, Role: role, PasswordHash: "hash-" + email})
+	id, err := d.CreateUser(context.Background(), NewUser{Email: email, Role: role, PasswordHash: "hash-" + email}, 100)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestUserEmailIsUniqueWhateverItsCase(t *testing.T) {
 
 	createTestUser(t, d, "ota@example.com", RoleSubmitter)
 
-	_, err := d.CreateUser(ctx, NewUser{Email: "OTA@example.com", Role: RoleAdmin, PasswordHash: "hash"})
+	_, err := d.CreateUser(ctx, NewUser{Email: "OTA@example.com", Role: RoleAdmin, PasswordHash: "hash"}, 100)
 	if !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("CreateUser with the same email: %v, want ErrAlreadyExists", err)
 	}
@@ -104,7 +104,7 @@ func TestUserRoleIsChecked(t *testing.T) {
 	d := openTestDB(t)
 
 	for _, role := range []Role{0, 5} {
-		if _, err := d.CreateUser(ctx, NewUser{Email: "x@example.com", Role: role, PasswordHash: "hash"}); err == nil {
+		if _, err := d.CreateUser(ctx, NewUser{Email: "x@example.com", Role: role, PasswordHash: "hash"}, 100); err == nil {
 			t.Errorf("CreateUser with role %d: no error", role)
 		}
 	}
@@ -266,7 +266,7 @@ func TestUserWithoutPassword(t *testing.T) {
 
 	createTestUser(t, d, "admin@example.com", RoleAdmin)
 
-	id, err := d.CreateUser(ctx, NewUser{Email: "sso@example.com", Role: RoleAdmin})
+	id, err := d.CreateUser(ctx, NewUser{Email: "sso@example.com", Role: RoleAdmin}, 100)
 	if err != nil {
 		t.Fatalf("CreateUser without a password: %v", err)
 	}
@@ -284,6 +284,14 @@ func TestUserWithoutPassword(t *testing.T) {
 		t.Fatalf("UpdateUserPassword to none: %v", err)
 	}
 
+	if err := d.UpdateUserPassword(ctx, id, "", nil); !errors.Is(err, ErrNoPassword) {
+		t.Fatalf("UpdateUserPassword to none without a password: %v, want ErrNoPassword", err)
+	}
+
+	if err := d.UpdateUserPassword(ctx, id+100, "", nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("UpdateUserPassword to none of an unknown user: %v, want ErrNotFound", err)
+	}
+
 	if got, err := d.GetUserByID(ctx, id); err != nil || got != want {
 		t.Fatalf("after removing the password: %+v, %v, want %+v", got, err, want)
 	}
@@ -291,6 +299,31 @@ func TestUserWithoutPassword(t *testing.T) {
 	var nulls int
 	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE password_hash IS NULL`).Scan(&nulls); err != nil || nulls != 1 {
 		t.Fatalf("users with a NULL password hash = %d, %v, want 1", nulls, err)
+	}
+}
+
+func TestCreateUserIsCapped(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	if _, err := d.CreateUser(ctx, NewUser{Email: "a@example.com", Role: RoleReadOnly, RolePinned: true}, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	if u, err := d.GetUser(ctx, "a@example.com"); err != nil || !u.RolePinned {
+		t.Fatalf("user created pinned = %+v, %v", u, err)
+	}
+
+	if _, err := d.CreateUser(ctx, NewUser{Email: "b@example.com", Role: RoleReadOnly}, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.CreateUser(ctx, NewUser{Email: "c@example.com", Role: RoleReadOnly}, 2); !errors.Is(err, ErrTooManyUsers) {
+		t.Fatalf("CreateUser past the limit: %v, want ErrTooManyUsers", err)
+	}
+
+	if n, err := d.CountUsers(ctx); err != nil || n != 2 {
+		t.Fatalf("CountUsers = %d, %v, want 2", n, err)
 	}
 }
 
@@ -331,7 +364,12 @@ func TestLastAdminWithAPasswordIsKept(t *testing.T) {
 	nm := createTestUser(t, d, "nm@example.com", RoleNetworkManager)
 	ro := createTestUser(t, d, "ro@example.com", RoleReadOnly)
 
-	sso, err := d.CreateUser(ctx, NewUser{Email: "sso@example.com", Role: RoleAdmin})
+	sso, err := d.CreateUser(ctx, NewUser{Email: "sso@example.com", Role: RoleAdmin}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sso2, err := d.CreateUser(ctx, NewUser{Email: "sso2@example.com", Role: RoleAdmin}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +395,7 @@ func TestLastAdminWithAPasswordIsKept(t *testing.T) {
 		"UpdateUserPassword of the admin":           func() error { return d.UpdateUserPassword(ctx, admin, "other", nil) },
 		"UpdateUserPassword to none of a non-admin": func() error { return d.UpdateUserPassword(ctx, nm, "", nil) },
 		"UpdateUserRole of an admin without one":    func() error { return d.UpdateUserRole(ctx, sso, RoleReadOnly, false) },
-		"DeleteUser of a user without one":          func() error { return d.DeleteUser(ctx, sso) },
+		"DeleteUser of a user without one":          func() error { return d.DeleteUser(ctx, sso2) },
 		"DeleteUser of a non-admin":                 func() error { return d.DeleteUser(ctx, ro) },
 	} {
 		if err := call(); err != nil {

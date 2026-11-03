@@ -1,5 +1,5 @@
-import type { ReactElement } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { useEffect, type ReactElement } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { AuthProvider, useAuth, type Permission } from "@/contexts/AuthContext";
 import Diameter from "@/pages/Diameter";
@@ -12,6 +12,7 @@ import SingleSignOn from "@/pages/SingleSignOn";
 import SMPP from "@/pages/SMPP";
 import UserDetail from "@/pages/UserDetail";
 import Users from "@/pages/Users";
+import { forgetReturnPath, returnPath } from "@/utils/returnPath";
 
 export default function App() {
   return (
@@ -68,7 +69,16 @@ function Pages() {
         ))}
       <Route path="/profile" element={<Profile />} />
       <Route path="/cores" element={<Navigate to="/diameter" replace />} />
-      <Route path="*" element={<Navigate to={home} replace />} />
+      <Route path="*" element={<Home home={home} />} />
     </Routes>
   );
+}
+
+function Home({ home }: { home: string }) {
+  const { pathname } = useLocation();
+  const target = (pathname === "/" && returnPath()) || home;
+
+  useEffect(() => forgetReturnPath(), []);
+
+  return <Navigate to={target} replace />;
 }
