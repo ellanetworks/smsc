@@ -162,6 +162,7 @@ func TestCompleteMessageQueuesNotifications(t *testing.T) {
 						answered := a.attempts(t, f, id)
 
 						var visible []int
+
 						f.d.OnNotificationsQueued(func() { visible = append(visible, len(notificationRows(t, f.d, id))) })
 
 						at := f.origin.Add(time.Minute)
@@ -334,6 +335,7 @@ func TestReplacedSMPPMessageGetsADeletedReceipt(t *testing.T) {
 			f.attempt(t, id, "error", []byte{0x00, 0x07})
 
 			var visible []int
+
 			f.d.OnNotificationsQueued(func() { visible = append(visible, len(notificationRows(t, f.d, id))) })
 
 			replacedAt := f.origin.Add(time.Minute)

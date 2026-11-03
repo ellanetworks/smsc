@@ -169,9 +169,11 @@ func (s *Service) reserve(slots []receiverSlot, id int64) *Session {
 
 func (s *Service) release(sess *Session, id int64) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	sess.inflight--
+
 	delete(s.sending, id)
-	s.mu.Unlock()
 }
 
 // SMPP 3.4 section 4.6.2
