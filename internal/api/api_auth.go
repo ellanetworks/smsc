@@ -67,7 +67,7 @@ func Login(a *auth) http.Handler {
 		}
 
 		hash := []byte(u.PasswordHash)
-		if err != nil {
+		if err != nil || u.PasswordHash == "" {
 			hash = a.dummyHash
 		}
 
@@ -77,7 +77,7 @@ func Login(a *auth) http.Handler {
 			return
 		}
 
-		if !ok || err != nil {
+		if !ok || err != nil || u.PasswordHash == "" {
 			a.failures.Allow(account)
 			a.audit(r, "auth_login", params.Email, "User failed to log in")
 			writeError(w, r, http.StatusUnauthorized, "The email or password is incorrect. Try again.", nil, cfg.Logger)
@@ -126,7 +126,7 @@ func (a *auth) allowAccount(w http.ResponseWriter, r *http.Request, account stri
 }
 
 func (a *auth) logIn(w http.ResponseWriter, r *http.Request, u db.User) (string, bool) {
-	sessionID, err := a.startSession(w, r, u)
+	sessionID, err := a.startSession(w, r, u, db.SessionPassword, 0, SessionTokenDuration)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "Failed to start a session", err, a.cfg.Logger)
 		return "", false

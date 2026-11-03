@@ -8,6 +8,7 @@ import Login from "@/pages/Login";
 import Messages from "@/pages/Messages";
 import Operator from "@/pages/Operator";
 import Profile from "@/pages/Profile";
+import SingleSignOn from "@/pages/SingleSignOn";
 import SMPP from "@/pages/SMPP";
 import UserDetail from "@/pages/UserDetail";
 import Users from "@/pages/Users";
@@ -38,6 +39,11 @@ const pages: { path: string; element: ReactElement; permission: Permission }[] =
     { path: "/smpp", element: <SMPP />, permission: "esme:read" },
     { path: "/messages", element: <Messages />, permission: "message:read" },
     { path: "/users", element: <Users />, permission: "user:admin" },
+    {
+      path: "/single-sign-on",
+      element: <SingleSignOn />,
+      permission: "oidc:read",
+    },
     {
       path: "/users/:email",
       element: <UserDetail />,

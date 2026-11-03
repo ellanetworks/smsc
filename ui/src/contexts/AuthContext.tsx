@@ -32,7 +32,9 @@ export type Permission =
   | "delivery:update"
   | "retention:read"
   | "retention:update"
-  | "user:admin";
+  | "user:admin"
+  | "oidc:read"
+  | "oidc:update";
 
 const permissions: Record<RoleID, Permission[]> = {
   [RoleID.Admin]: [
@@ -50,6 +52,8 @@ const permissions: Record<RoleID, Permission[]> = {
     "retention:read",
     "retention:update",
     "user:admin",
+    "oidc:read",
+    "oidc:update",
   ],
   [RoleID.ReadOnly]: [
     "message:read",

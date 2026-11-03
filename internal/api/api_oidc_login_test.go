@@ -1,0 +1,573 @@
+package api_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ellanetworks/smsc/internal/api"
+	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/go-jose/go-jose/v4"
+)
+
+const testClientSecret = "s3cret-value"
+
+func (idp *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
+	user, pass, ok := r.BasicAuth()
+	if !ok {
+		user, pass = r.PostFormValue("client_id"), r.PostFormValue("client_secret")
+	}
+
+	idp.mu.Lock()
+	issued, found := idp.codes[r.PostFormValue("code")]
+	delete(idp.codes, r.PostFormValue("code"))
+	idp.mu.Unlock()
+
+	sum := sha256.Sum256([]byte(r.PostFormValue("code_verifier")))
+
+	switch {
+	case user != "smsc" || pass != testClientSecret:
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error": "invalid_client"}`))
+	case !found || r.PostFormValue("grant_type") != "authorization_code" ||
+		r.PostFormValue("redirect_uri") != "https://smsc.example.com/api/v1/auth/oidc/callback" ||
+		base64.RawURLEncoding.EncodeToString(sum[:]) != issued.challenge:
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error": "invalid_grant"}`))
+	default:
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access", "token_type": "Bearer", "expires_in": 300, "id_token": issued.idToken,
+		})
+	}
+}
+
+func (idp *fakeIdP) sign(t *testing.T, signer jose.Signer, claims map[string]any) string {
+	t.Helper()
+
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jws, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token, err := jws.CompactSerialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return token
+}
+
+func (a *testAPI) configureOIDC(t *testing.T, idp *fakeIdP, change func(map[string]any)) {
+	t.Helper()
+
+	o := validOIDC()
+	o["issuer"] = idp.issuer
+	o["ca_certificate"] = idp.ca()
+	o["group_roles"] = []map[string]any{}
+
+	if change != nil {
+		change(o)
+	}
+
+	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/oidc", body(t, o)); code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/oidc = %d %q", code, msg)
+	}
+}
+
+type oidcLogin struct {
+	claims   map[string]any
+	signer   jose.Signer
+	callback func(q url.Values)
+	cookie   func(c *http.Cookie) *http.Cookie
+	between  func()
+}
+
+type oidcResult struct {
+	rec     *httptest.ResponseRecorder
+	session *http.Cookie
+	outcome string
+}
+
+func (a *testAPI) startOIDC(t *testing.T) (url.Values, *http.Cookie) {
+	t.Helper()
+
+	rec := serve(a.handler, request(http.MethodGet, "/api/v1/auth/oidc/login", "", ""))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("start = %d %s, Location %q", rec.Code, rec.Body, rec.Header().Get("Location"))
+	}
+
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == api.OIDCLoginCookieName {
+			return location.Query(), c
+		}
+	}
+
+	t.Fatal("no login cookie")
+
+	return nil, nil
+}
+
+func (a *testAPI) oidcLogin(t *testing.T, idp *fakeIdP, l oidcLogin) oidcResult {
+	t.Helper()
+
+	q, cookie := a.startOIDC(t)
+
+	claims := map[string]any{
+		"iss": idp.issuer, "sub": "sub-nm", "aud": "smsc", "iat": a.now.Unix(), "exp": a.now.Add(5 * time.Minute).Unix(),
+		"nonce": q.Get("nonce"), "email": "nm@example.com", "email_verified": true,
+	}
+
+	for k, v := range l.claims {
+		if v == nil {
+			delete(claims, k)
+		} else {
+			claims[k] = v
+		}
+	}
+
+	signer := idp.signer
+	if l.signer != nil {
+		signer = l.signer
+	}
+
+	idp.mu.Lock()
+	idp.codes["code"] = issuedCode{challenge: q.Get("code_challenge"), idToken: idp.sign(t, signer, claims)}
+	idp.mu.Unlock()
+
+	if l.between != nil {
+		l.between()
+	}
+
+	callback := url.Values{"code": {"code"}, "state": {q.Get("state")}, "iss": {idp.issuer}}
+	if l.callback != nil {
+		l.callback(callback)
+	}
+
+	if l.cookie != nil {
+		cookie = l.cookie(cookie)
+	}
+
+	req := request(http.MethodGet, "/api/v1/auth/oidc/callback?"+callback.Encode(), "", "")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+
+	rec := serve(a.handler, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("callback = %d %s", rec.Code, rec.Body)
+	}
+
+	res := oidcResult{rec: rec, outcome: "success"}
+
+	if location := rec.Header().Get("Location"); location != "/" {
+		u, err := url.Parse(location)
+		if err != nil || u.Path != "/login" {
+			t.Fatalf("callback redirects to %q", location)
+		}
+
+		res.outcome = u.Query().Get("error")
+	}
+
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "smsc_session" && c.MaxAge >= 0 && c.Value != "" {
+			res.session = c
+		}
+	}
+
+	return res
+}
+
+func TestOIDCLoginInfo(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+
+	info := func() api.OIDCLogin {
+		code, result, msg := a.doAs(t, "", http.MethodGet, "/api/v1/auth/oidc", "")
+		if code != http.StatusOK {
+			t.Fatalf("GET /api/v1/auth/oidc = %d %q", code, msg)
+		}
+
+		return decode[api.OIDCLogin](t, result)
+	}
+
+	if got := info(); got != (api.OIDCLogin{}) {
+		t.Fatalf("disabled = %+v", got)
+	}
+
+	a.configureOIDC(t, idp, nil)
+
+	if got := info(); got != (api.OIDCLogin{Enabled: true, DisplayName: "Keycloak"}) {
+		t.Fatalf("enabled = %+v", got)
+	}
+}
+
+func TestOIDCLoginRequest(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+	a.configureOIDC(t, idp, nil)
+
+	q, cookie := a.startOIDC(t)
+
+	want := map[string]string{
+		"response_type":         "code",
+		"client_id":             "smsc",
+		"redirect_uri":          "https://smsc.example.com/api/v1/auth/oidc/callback",
+		"scope":                 "openid email profile",
+		"code_challenge_method": "S256",
+	}
+	for k, v := range want {
+		if q.Get(k) != v {
+			t.Errorf("%s = %q, want %q", k, q.Get(k), v)
+		}
+	}
+
+	for _, k := range []string{"state", "nonce", "code_challenge"} {
+		if len(q.Get(k)) < 22 {
+			t.Errorf("%s = %q, want at least 128 random bits", k, q.Get(k))
+		}
+	}
+
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" ||
+		cookie.MaxAge != 600 || strings.Contains(cookie.Value, q.Get("state")) {
+		t.Fatalf("login cookie = %+v", cookie)
+	}
+
+	q2, _ := a.startOIDC(t)
+	if q2.Get("state") == q.Get("state") || q2.Get("nonce") == q.Get("nonce") {
+		t.Fatal("two logins share a state or a nonce")
+	}
+}
+
+func TestOIDCLoginLinksByEmailThenBySubject(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+	a.configureOIDC(t, idp, nil)
+	a.createUser(t, "nm@example.com", db.RoleNetworkManager)
+
+	res := a.oidcLogin(t, idp, oidcLogin{})
+	if res.outcome != "success" || res.session == nil {
+		t.Fatalf("first login: outcome %q, session %v", res.outcome, res.session)
+	}
+
+	if want := a.now.Add(8 * time.Hour); !res.session.Expires.Equal(want) {
+		t.Fatalf("session expires %v, want %v", res.session.Expires, want)
+	}
+
+	if code := a.refresh(t, res.session); code != http.StatusOK {
+		t.Fatalf("refresh after an OIDC login = %d", code)
+	}
+
+	if got := decode[api.User](t, a.get(t, "/api/v1/users/nm@example.com")); !got.OIDCLinked || !got.PasswordSet {
+		t.Fatalf("user after linking = %+v", got)
+	}
+
+	res = a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"email": "renamed@example.com", "email_verified": false}})
+	if res.outcome != "success" {
+		t.Fatalf("login with another email: %q", res.outcome)
+	}
+
+	i, err := a.store.GetIdentity(context.Background(), idp.issuer, "sub-nm")
+	if err != nil || i.Email != "renamed@example.com" {
+		t.Fatalf("identity = %+v, %v", i, err)
+	}
+
+	a.createUser(t, "renamed@example.com", db.RoleAdmin)
+
+	res = a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"email": "renamed@example.com"}})
+	if res.outcome != "success" {
+		t.Fatalf("login after another user took the email: %q", res.outcome)
+	}
+
+	code, result, _ := a.doAs(t, "", http.MethodPost, "/api/v1/auth/refresh", "")
+	_ = result
+
+	if code != http.StatusUnauthorized {
+		t.Fatalf("refresh without a cookie = %d", code)
+	}
+
+	if events := strings.Join(a.auditEvents(t, "auth_oidc_login"), "\n"); strings.Count(events, "logged in through OIDC") != 3 {
+		t.Fatalf("audit events = %q", events)
+	}
+
+	if events := a.auditEvents(t, "link_user_oidc"); len(events) != 1 {
+		t.Fatalf("link audit events = %q", events)
+	}
+}
+
+func TestOIDCLoginRefusals(t *testing.T) {
+	idp := newFakeIdP(t)
+
+	hmacSigner, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: []byte("0123456789abcdef0123456789abcdef")},
+		(&jose.SignerOptions{}).WithType("JWT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]struct {
+		login   func(a *testAPI) oidcLogin
+		outcome string
+	}{
+		"an unknown user": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"email": "nobody@example.com"}}
+		}, "not_set_up"},
+		"no email": {func(*testAPI) oidcLogin { return oidcLogin{claims: map[string]any{"email": nil}} }, "not_set_up"},
+		"an unverified email": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"email_verified": false}}
+		}, "email_not_verified"},
+		"no email_verified": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"email_verified": nil}}
+		}, "email_not_verified"},
+		"email_verified as the string true": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"email_verified": "true"}}
+		}, "success"},
+		"a wrong nonce": {func(*testAPI) oidcLogin { return oidcLogin{claims: map[string]any{"nonce": "other"}} }, "failed"},
+		"no nonce":      {func(*testAPI) oidcLogin { return oidcLogin{claims: map[string]any{"nonce": nil}} }, "failed"},
+		"a wrong state": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Set("state", "other") }}
+		}, "failed"},
+		"no state": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Del("state") }}
+		}, "failed"},
+		"no login cookie": {func(*testAPI) oidcLogin {
+			return oidcLogin{cookie: func(*http.Cookie) *http.Cookie { return nil }}
+		}, "failed"},
+		"a forged login cookie": {func(*testAPI) oidcLogin {
+			return oidcLogin{cookie: func(c *http.Cookie) *http.Cookie { c.Value = "A" + c.Value[1:]; return c }}
+		}, "failed"},
+		"an expired login": {func(a *testAPI) oidcLogin {
+			return oidcLogin{between: func() { a.now = a.now.Add(10 * time.Minute) }}
+		}, "failed"},
+		"a wrong iss parameter": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Set("iss", "https://evil.example.com") }}
+		}, "failed"},
+		"no iss parameter": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Del("iss") }}
+		}, "failed"},
+		"no code": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Del("code") }}
+		}, "failed"},
+		"a wrong code": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Set("code", "other") }}
+		}, "failed"},
+		"access denied": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Del("code"); q.Set("error", "access_denied") }}
+		}, "denied"},
+		"another error": {func(*testAPI) oidcLogin {
+			return oidcLogin{callback: func(q url.Values) { q.Del("code"); q.Set("error", "server_error") }}
+		}, "failed"},
+		"a token from another issuer": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"iss": "https://evil.example.com"}}
+		}, "failed"},
+		"a token for another client": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"aud": "other"}}
+		}, "failed"},
+		"a token issued to another party": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"aud": []string{"smsc", "other"}, "azp": "other"}}
+		}, "failed"},
+		"several audiences without azp": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"aud": []string{"smsc", "other"}}}
+		}, "failed"},
+		"several audiences with azp": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"aud": []string{"smsc", "other"}, "azp": "smsc"}}
+		}, "success"},
+		"an expired token": {func(a *testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"exp": a.now.Add(-time.Minute).Unix()}}
+		}, "failed"},
+		"a symmetric signature": {func(*testAPI) oidcLogin { return oidcLogin{signer: hmacSigner} }, "failed"},
+		"a subject too long": {func(*testAPI) oidcLogin {
+			return oidcLogin{claims: map[string]any{"sub": strings.Repeat("s", 256)}}
+		}, "failed"},
+		"settings changed during the login": {func(a *testAPI) oidcLogin {
+			return oidcLogin{between: func() {
+				a.configureOIDC(t, idp, func(o map[string]any) { o["client_id"] = "other" })
+			}}
+		}, "failed"},
+		"OIDC disabled during the login": {func(a *testAPI) oidcLogin {
+			return oidcLogin{between: func() {
+				a.configureOIDC(t, idp, func(o map[string]any) { o["enabled"] = false })
+			}}
+		}, "unavailable"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			a := newTestAPI(t, fakeDiameter{})
+			a.configureOIDC(t, idp, nil)
+			a.createUser(t, "nm@example.com", db.RoleNetworkManager)
+
+			res := a.oidcLogin(t, idp, tc.login(a))
+			if res.outcome != tc.outcome {
+				t.Fatalf("outcome %q, want %q", res.outcome, tc.outcome)
+			}
+
+			if (res.session != nil) != (tc.outcome == "success") {
+				t.Fatalf("session cookie %v with outcome %q", res.session, res.outcome)
+			}
+
+			if tc.outcome != "success" {
+				events := a.auditEvents(t, "auth_oidc_login")
+				if len(events) == 0 || !strings.Contains(events[len(events)-1], tc.outcome+": ") {
+					t.Fatalf("audit events = %q", events)
+				}
+			}
+		})
+	}
+}
+
+func TestOIDCLoginTrustsUnverifiedEmailOnRequest(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+	a.configureOIDC(t, idp, func(o map[string]any) { o["trust_unverified_email"] = true })
+	a.createUser(t, "nm@example.com", db.RoleNetworkManager)
+
+	if res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"email_verified": nil}}); res.outcome != "success" {
+		t.Fatalf("outcome %q", res.outcome)
+	}
+}
+
+func TestOIDCLoginLinksOnce(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+	a.configureOIDC(t, idp, nil)
+	a.createUser(t, "nm@example.com", db.RoleNetworkManager)
+
+	if res := a.oidcLogin(t, idp, oidcLogin{}); res.outcome != "success" {
+		t.Fatalf("first login: %q", res.outcome)
+	}
+
+	if res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"sub": "sub-other"}}); res.outcome != "linked_elsewhere" {
+		t.Fatalf("another account with the same email: %q, want linked_elsewhere", res.outcome)
+	}
+
+	if code, _, msg := a.do(t, http.MethodDelete, "/api/v1/users/nm@example.com/oidc", ""); code != http.StatusOK {
+		t.Fatalf("unlink = %d %q", code, msg)
+	}
+
+	if res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"sub": "sub-other"}}); res.outcome != "success" {
+		t.Fatalf("login after unlinking: %q", res.outcome)
+	}
+}
+
+func TestOIDCLoginEndsWithTheSettings(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+	a.configureOIDC(t, idp, nil)
+	a.createUser(t, "nm@example.com", db.RoleNetworkManager)
+
+	res := a.oidcLogin(t, idp, oidcLogin{})
+	if res.outcome != "success" {
+		t.Fatalf("login: %q", res.outcome)
+	}
+
+	a.configureOIDC(t, idp, func(o map[string]any) { o["enabled"] = false })
+
+	if code := a.refresh(t, res.session); code != http.StatusUnauthorized {
+		t.Fatalf("refresh after disabling OIDC = %d, want %d", code, http.StatusUnauthorized)
+	}
+
+	rec := serve(a.handler, request(http.MethodGet, "/api/v1/auth/oidc/login", "", ""))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login?error=unavailable" {
+		t.Fatalf("start while disabled = %d, Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestOIDCLoginRolesFromGroups(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+	a.configureOIDC(t, idp, func(o map[string]any) {
+		o["group_roles"] = []map[string]any{{"group": "admins", "role_id": 1}, {"group": "noc", "role_id": 3}, {"group": "ops", "role_id": 2}}
+	})
+
+	login := func(sub, email string, groups any) string {
+		t.Helper()
+
+		return a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"sub": sub, "email": email, "groups": groups}}).outcome
+	}
+
+	role := func(email string) api.User {
+		t.Helper()
+
+		return decode[api.User](t, a.get(t, "/api/v1/users/"+email))
+	}
+
+	if got := login("sub-new", "new@example.com", []string{"other", "ops", "noc"}); got != "success" {
+		t.Fatalf("first login of a new user: %q", got)
+	}
+
+	if got := role("new@example.com"); got.RoleID != db.RoleNetworkManager || got.PasswordSet || !got.OIDCLinked {
+		t.Fatalf("new user = %+v, want a network manager without a password", got)
+	}
+
+	if got := login("sub-new", "new@example.com", "ops"); got != "success" || role("new@example.com").RoleID != db.RoleReadOnly {
+		t.Fatalf("login with fewer groups: %q, role %d", got, role("new@example.com").RoleID)
+	}
+
+	if got := login("sub-new", "new@example.com", []string{"other"}); got != "no_group" {
+		t.Fatalf("login with no mapped group: %q, want no_group", got)
+	}
+
+	if got := login("sub-none", "none@example.com", nil); got != "no_group" {
+		t.Fatalf("a new user with no group: %q, want no_group", got)
+	}
+
+	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/users/new@example.com", `{"role_id": 4, "role_pinned": true}`); code != http.StatusOK {
+		t.Fatalf("pin = %d %q", code, msg)
+	}
+
+	if got := login("sub-new", "new@example.com", []string{"other"}); got != "success" || role("new@example.com").RoleID != db.RoleSubmitter {
+		t.Fatalf("login of a pinned user: %q, role %d", got, role("new@example.com").RoleID)
+	}
+
+	res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{
+		"sub": "sub-big", "email": "big@example.com", "groups": nil,
+		"_claim_names": map[string]string{"groups": "src1"}, "_claim_sources": map[string]any{"src1": map[string]string{"endpoint": "https://graph"}},
+	}})
+	if res.outcome != "groups_overage" {
+		t.Fatalf("group overage: %q", res.outcome)
+	}
+
+	if got := login("sub-admin", testAdmin, []string{"ops"}); got != "success" || role(testAdmin).RoleID != db.RoleAdmin {
+		t.Fatalf("login of the last admin with a password as ops: %q, role %d", got, role(testAdmin).RoleID)
+	}
+
+	if events := strings.Join(a.auditEvents(t, "update_user"), "\n"); !strings.Contains(events, "not applied") {
+		t.Fatalf("update_user audit events = %q", events)
+	}
+}
+
+func TestOIDCLoginCreatesUsersUpToTheLimit(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	idp := newFakeIdP(t)
+	a.configureOIDC(t, idp, func(o map[string]any) {
+		o["group_roles"] = []map[string]any{{"group": "ops", "role_id": 2}}
+	})
+
+	ctx := context.Background()
+	for i := 1; i < api.MaxNumUsers; i++ {
+		if _, err := a.store.CreateUser(ctx, db.NewUser{Email: "u" + strings.Repeat("x", i) + "@example.com", Role: db.RoleReadOnly}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"sub": "sub-late", "email": "late@example.com", "groups": []string{"ops"}}})
+	if res.outcome != "too_many_users" {
+		t.Fatalf("outcome %q, want too_many_users", res.outcome)
+	}
+}

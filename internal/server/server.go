@@ -23,6 +23,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
 	"github.com/ellanetworks/smsc/internal/esme"
+	"github.com/ellanetworks/smsc/internal/oidc"
 	smscs6c "github.com/ellanetworks/smsc/internal/s6c"
 	"github.com/ellanetworks/smsc/internal/settings"
 	smscsgd "github.com/ellanetworks/smsc/internal/sgd"
@@ -129,6 +130,18 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
+	oidcSettings, err := database.GetOIDC(ctx)
+	if err != nil {
+		_ = database.Close()
+		return err
+	}
+
+	oidcCookieKey, err := database.OIDCCookieKey(ctx)
+	if err != nil {
+		_ = database.Close()
+		return err
+	}
+
 	live := settings.NewLive(database, initial)
 	m := newMetrics(database)
 
@@ -228,6 +241,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 			Submitter:      submitter,
 			Notify:         deliverer.Notify,
 			ESMEs:          database,
+			OIDC:           oidc.NewLive(database, oidcSettings),
 			SMPP:           smppSessions{esmes},
 			Ready:          func(ctx context.Context) error { return s.ready(ctx, database) },
 			Received:       m.received,
@@ -235,6 +249,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 			Requests:       m.requests,
 			Auth:           database,
 			JWTSecret:      jwtSecret,
+			OIDCCookieKey:  oidcCookieKey,
 			BcryptCost:     s.bcryptCost,
 			SecureCookie:   tlsConfig != nil,
 			TracerProvider: tp,

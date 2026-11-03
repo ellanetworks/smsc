@@ -12,6 +12,7 @@ import (
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/intake"
+	"github.com/ellanetworks/smsc/internal/oidc"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/submission"
 	"github.com/ellanetworks/smsc/internal/tracing"
@@ -97,8 +98,10 @@ type Config struct {
 	Requests       *RequestMetrics
 	Auth           AuthStore
 	ESMEs          ESMEStore
+	OIDC           OIDC
 	SMPP           SMPP
 	JWTSecret      []byte
+	OIDCCookieKey  []byte
 	SecureCookie   bool
 	BcryptCost     int
 	TracerProvider trace.TracerProvider
@@ -123,6 +126,9 @@ func routes(cfg Config, a *auth) []route {
 		{"POST /api/v1/auth/login", public, Login(a)},
 		{"POST /api/v1/auth/refresh", public, Refresh(a)},
 		{"POST /api/v1/auth/logout", public, Logout(a)},
+		{"GET /api/v1/auth/oidc", public, GetOIDCLogin(cfg)},
+		{"GET /api/v1/auth/oidc/login", public, StartOIDCLogin(a)},
+		{"GET " + oidc.CallbackPath, public, OIDCCallback(a)},
 
 		{"POST /api/v1/messages", PermCreateMessage, CreateMessage(cfg)},
 		{"GET /api/v1/messages", PermReadMessage, ListMessages(cfg)},
@@ -146,6 +152,9 @@ func routes(cfg Config, a *auth) []route {
 		{"PUT /api/v1/operator", PermUpdateOperator, UpdateOperator(cfg)},
 		{"GET /api/v1/delivery", PermReadDelivery, GetDelivery(cfg)},
 		{"PUT /api/v1/delivery", PermUpdateDelivery, UpdateDelivery(cfg)},
+		{"GET /api/v1/oidc", PermReadOIDC, a.needsLogin(GetOIDC(cfg))},
+		{"PUT /api/v1/oidc", PermUpdateOIDC, a.needsLogin(UpdateOIDC(a))},
+		{"POST /api/v1/oidc/discovery", PermUpdateOIDC, a.needsLogin(DiscoverOIDC(cfg))},
 
 		{"GET /api/v1/users/me", PermSelf, GetMyUser(a)},
 		{"PUT /api/v1/users/me/password", PermSelf, a.needsLogin(UpdateMyPassword(a))},
@@ -159,6 +168,8 @@ func routes(cfg Config, a *auth) []route {
 		{"PUT /api/v1/users/{email}", PermManageUsers, a.needsLogin(UpdateUser(a))},
 		{"DELETE /api/v1/users/{email}", PermManageUsers, a.needsLogin(DeleteUser(a))},
 		{"PUT /api/v1/users/{email}/password", PermManageUsers, a.needsLogin(UpdateUserPassword(a))},
+		{"DELETE /api/v1/users/{email}/password", PermManageUsers, a.needsLogin(DeleteUserPassword(a))},
+		{"DELETE /api/v1/users/{email}/oidc", PermManageUsers, a.needsLogin(DeleteUserOIDCLink(a))},
 		{"GET /api/v1/users/{email}/api-tokens", PermManageUsers, a.needsLogin(ListAPITokens(a, userOfPath(cfg)))},
 		{"POST /api/v1/users/{email}/api-tokens", PermManageUsers, a.needsLogin(CreateAPIToken(a, userOfPath(cfg)))},
 		{"DELETE /api/v1/users/{email}/api-tokens/{id}", PermManageUsers, a.needsLogin(DeleteAPIToken(a, userOfPath(cfg)))},

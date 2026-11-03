@@ -27,6 +27,7 @@ import {
   Feed as FeedIcon,
   Hub as HubIcon,
   Info as InfoIcon,
+  Key as KeyIcon,
   Lan as LanIcon,
   LightMode as LightModeIcon,
   Logout as LogoutIcon,
@@ -118,6 +119,12 @@ const systemItems: NavItem[] = [
     label: "Users",
     icon: <AdminPanelSettingsIcon color="primary" />,
     permission: "user:admin",
+  },
+  {
+    to: "/single-sign-on",
+    label: "Single Sign-On",
+    icon: <KeyIcon color="primary" />,
+    permission: "oidc:read",
   },
 ];
 

@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { TextField } from "@mui/material";
+import {
+  Checkbox,
+  FormControlLabel,
+  FormHelperText,
+  TextField,
+} from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import EditDialog from "@/components/EditDialog";
 import { useSnackbar } from "@/contexts/SnackbarContext";
@@ -41,7 +46,10 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
   return (
     <EditDialog
       title="Create User"
-      valid={EMAIL.test(email) && passwordError(password) === undefined}
+      valid={
+        EMAIL.test(email) &&
+        (password === "" || passwordError(password) === undefined)
+      }
       pending={mutation.isPending}
       error={mutation.error}
       onSubmit={() => mutation.mutate()}
@@ -65,8 +73,10 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         error={newPasswordError !== undefined}
-        helperText={newPasswordError ?? "8 to 72 characters."}
-        required
+        helperText={
+          newPasswordError ??
+          "8 to 72 characters. Leave empty for a user who signs in only with single sign-on."
+        }
         autoComplete="new-password"
       />
       <RoleField value={role} onChange={setRole} />
@@ -84,9 +94,15 @@ export function EditRoleDialog({
   const queryClient = useQueryClient();
   const { showSnackbar } = useSnackbar();
   const [role, setRole] = useState(user.role_id);
+  const [pinned, setPinned] = useState(user.role_pinned);
 
   const mutation = useMutation({
-    mutationFn: () => updateUserRole(user.email, role),
+    mutationFn: () =>
+      updateUserRole(
+        user.email,
+        role,
+        user.oidc_linked || user.role_pinned ? pinned : undefined,
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["users"] });
       showSnackbar("User updated successfully.", "success");
@@ -97,7 +113,7 @@ export function EditRoleDialog({
   return (
     <EditDialog
       title="Edit Role"
-      valid={role !== user.role_id}
+      valid={role !== user.role_id || pinned !== user.role_pinned}
       pending={mutation.isPending}
       error={mutation.error}
       onSubmit={() => mutation.mutate()}
@@ -105,6 +121,23 @@ export function EditRoleDialog({
     >
       <TextField label="Email" value={user.email} disabled />
       <RoleField value={role} onChange={setRole} />
+      {(user.oidc_linked || user.role_pinned) && (
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={pinned}
+              onChange={(e) => setPinned(e.target.checked)}
+            />
+          }
+          label="Pin role"
+        />
+      )}
+      {(user.oidc_linked || user.role_pinned) && (
+        <FormHelperText sx={{ mt: "-12px !important" }}>
+          A pinned role stays as set here. Otherwise, it follows the user's
+          identity provider groups when group mapping is on.
+        </FormHelperText>
+      )}
     </EditDialog>
   );
 }

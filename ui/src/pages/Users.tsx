@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link as RouterLink } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
+import { signInMethods } from "@/components/UserCards";
 import { CreateUserDialog } from "@/components/UserDialogs";
 import { listUsers, roleLabels, type User } from "@/queries/users";
 import { GRID_SX } from "@/utils/layout";
@@ -34,7 +35,15 @@ const columns: GridColDef<User>[] = [
     field: "role_id",
     headerName: "Role",
     width: 180,
-    valueGetter: (_value, row) => roleLabels[row.role_id],
+    valueGetter: (_value, row) =>
+      roleLabels[row.role_id] + (row.role_pinned ? " (pinned)" : ""),
+  },
+  {
+    field: "sign_in",
+    headerName: "Sign-in",
+    width: 220,
+    valueGetter: (_value, row) =>
+      signInMethods(row).join(", ") || "Single sign-on, not linked yet",
   },
 ];
 

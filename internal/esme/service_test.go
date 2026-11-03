@@ -62,7 +62,7 @@ func TestBindChecks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newTestEnv(t, tc.esme)
 
-			if err := env.store.UpdateUserRole(context.Background(), env.user.ID, tc.role); err != nil {
+			if err := env.store.UpdateUserRole(context.Background(), env.user.ID, tc.role, false); err != nil {
 				t.Fatal(err)
 			}
 

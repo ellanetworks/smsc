@@ -1,10 +1,23 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { Box, CircularProgress, TextField } from "@mui/material";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Divider,
+  TextField,
+} from "@mui/material";
 import AuthLayout, { AuthFrame } from "@/components/AuthLayout";
 import { useSnackbar } from "@/contexts/SnackbarContext";
 import PasswordField from "@/components/PasswordField";
 import { login, refresh } from "@/queries/auth";
+import {
+  getOIDCLogin,
+  OIDC_LOGIN_PATH,
+  oidcLoginErrors,
+  type OIDCLogin,
+} from "@/queries/oidc";
 import { getStatus } from "@/queries/status";
 import { decodeAccessToken } from "@/utils/jwt";
 
@@ -12,12 +25,15 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? "/";
+  const [params] = useSearchParams();
+  const oidcError = params.get("error");
 
   const [checking, setChecking] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [touched, setTouched] = useState({ email: false, password: false });
   const [submitting, setSubmitting] = useState(false);
+  const [oidc, setOIDC] = useState<OIDCLogin>({ enabled: false });
   const { showSnackbar } = useSnackbar();
 
   useEffect(() => {
@@ -29,6 +45,11 @@ export default function Login() {
           navigate("/initialize", { replace: true });
           return;
         }
+        getOIDCLogin()
+          .then((o) => {
+            if (!cancelled) setOIDC(o);
+          })
+          .catch(() => undefined);
         const { token } = await refresh();
         if (!decodeAccessToken(token)) throw new Error("invalid access token");
         if (!cancelled) navigate(from, { replace: true });
@@ -73,6 +94,19 @@ export default function Login() {
       valid={email !== "" && password !== ""}
       onSubmit={submit}
     >
+      {oidcError && (
+        <Alert severity="error">
+          {oidcLoginErrors[oidcError] ?? oidcLoginErrors.error}
+        </Alert>
+      )}
+      {oidc.enabled && (
+        <>
+          <Button variant="outlined" fullWidth href={OIDC_LOGIN_PATH}>
+            Sign in with {oidc.display_name}
+          </Button>
+          <Divider>or</Divider>
+        </>
+      )}
       <TextField
         label="Email"
         type="email"
@@ -85,7 +119,7 @@ export default function Login() {
         }
         fullWidth
         required
-        autoFocus
+        autoFocus={!oidc.enabled}
         autoComplete="email"
       />
       <PasswordField

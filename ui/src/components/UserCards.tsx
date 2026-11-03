@@ -76,12 +76,21 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+export function signInMethods(user: User): string[] {
+  const methods = [];
+  if (user.password_set) methods.push("Password");
+  if (user.oidc_linked) methods.push("Single sign-on");
+  return methods;
+}
+
 export function UserAccountCard({
   user,
   onEditRole,
+  onUnlink,
 }: {
   user: User;
   onEditRole?: () => void;
+  onUnlink?: () => void;
 }) {
   return (
     <Card variant="outlined" sx={{ height: "100%" }}>
@@ -101,6 +110,11 @@ export function UserAccountCard({
             color={roleChipColor(user.role_id)}
             variant="outlined"
           />
+          {user.role_pinned && (
+            <Tooltip title="Set by an admin. Not updated from the identity provider's groups.">
+              <Chip size="small" label="Pinned" sx={{ ml: 1 }} />
+            </Tooltip>
+          )}
           <Box sx={{ flex: 1 }} />
           {onEditRole && (
             <IconButton
@@ -112,6 +126,29 @@ export function UserAccountCard({
             </IconButton>
           )}
         </InfoRow>
+        <InfoRow label="Sign-in">
+          <Stack direction="row" spacing={1}>
+            {signInMethods(user).map((method) => (
+              <Chip
+                key={method}
+                size="small"
+                label={method}
+                variant="outlined"
+              />
+            ))}
+            {signInMethods(user).length === 0 && (
+              <Typography variant="body2" color="textSecondary">
+                Single sign-on, not linked yet
+              </Typography>
+            )}
+          </Stack>
+          <Box sx={{ flex: 1 }} />
+          {onUnlink && user.oidc_linked && (
+            <Button size="small" color="error" onClick={onUnlink}>
+              Unlink
+            </Button>
+          )}
+        </InfoRow>
       </CardContent>
     </Card>
   );
@@ -120,10 +157,14 @@ export function UserAccountCard({
 export function UserPasswordCard({
   description,
   onChangePassword,
+  onRemovePassword,
+  changeLabel = "Change Password",
   disabledReason,
 }: {
   description: string;
-  onChangePassword: () => void;
+  onChangePassword?: () => void;
+  onRemovePassword?: () => void;
+  changeLabel?: string;
   disabledReason?: string;
 }) {
   return (
@@ -135,18 +176,27 @@ export function UserPasswordCard({
         <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
           {disabledReason ?? description}
         </Typography>
-        <Tooltip title={disabledReason ?? ""}>
-          <span>
-            <Button
-              variant="contained"
-              color="success"
-              onClick={onChangePassword}
-              disabled={disabledReason !== undefined}
-            >
-              Change Password
+        <Stack direction="row" spacing={1}>
+          {onChangePassword && (
+            <Tooltip title={disabledReason ?? ""}>
+              <span>
+                <Button
+                  variant="contained"
+                  color="success"
+                  onClick={onChangePassword}
+                  disabled={disabledReason !== undefined}
+                >
+                  {changeLabel}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+          {onRemovePassword && disabledReason === undefined && (
+            <Button variant="outlined" color="error" onClick={onRemovePassword}>
+              Remove Password
             </Button>
-          </span>
-        </Tooltip>
+          )}
+        </Stack>
       </CardContent>
     </Card>
   );

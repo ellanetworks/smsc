@@ -67,7 +67,7 @@ func TestUsers(t *testing.T) {
 	a.createUser(t, "NM@example.com", db.RoleNetworkManager)
 
 	code, result, _ := a.do(t, http.MethodGet, "/api/v1/users/nm@example.com", "")
-	if got := decode[api.User](t, result); code != http.StatusOK || got != (api.User{Email: "nm@example.com", RoleID: 3}) {
+	if got := decode[api.User](t, result); code != http.StatusOK || got != (api.User{Email: "nm@example.com", RoleID: 3, PasswordSet: true}) {
 		t.Fatalf("GET user = %d %+v", code, got)
 	}
 

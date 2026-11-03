@@ -9,10 +9,12 @@ const serve = ({
   initialized = true,
   session = false,
   login = () => json(200, { result: { token: makeToken() } }),
+  oidc = { enabled: false },
 }: {
   initialized?: boolean;
   session?: boolean;
   login?: (init?: RequestInit) => Response;
+  oidc?: { enabled: boolean; display_name?: string };
 } = {}) =>
   vi.stubGlobal(
     "fetch",
@@ -27,14 +29,17 @@ const serve = ({
             ? json(200, { result: { token: makeToken() } })
             : json(401, { error: "No valid session" }),
         "/api/v1/auth/login": (_url, init) => login(init),
+        "/api/v1/auth/oidc": () => json(200, { result: oidc }),
       }),
     ),
   );
 
-const renderLogin = (from?: string) =>
+const renderLogin = (from?: string, search = "") =>
   renderWithClient(
     <MemoryRouter
-      initialEntries={[{ pathname: "/login", state: from ? { from } : null }]}
+      initialEntries={[
+        { pathname: "/login", search, state: from ? { from } : null },
+      ]}
     >
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -108,6 +113,49 @@ describe("Login", () => {
 
     expect(
       await screen.findByText("The email or password is incorrect. Try again."),
+    ).toBeInTheDocument();
+  });
+
+  it("offers single sign-on when it is on", async () => {
+    serve({ oidc: { enabled: true, display_name: "Keycloak" } });
+    renderLogin();
+
+    const button = await screen.findByRole("link", {
+      name: "Sign in with Keycloak",
+    });
+    expect(button).toHaveAttribute("href", "/api/v1/auth/oidc/login");
+    expect(screen.getByRole("button", { name: "Login" })).toBeInTheDocument();
+  });
+
+  it("offers only the password without single sign-on", async () => {
+    serve();
+    renderLogin();
+
+    await screen.findByRole("heading", { name: "Login" });
+    expect(
+      screen.queryByRole("link", { name: /Sign in with/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says why single sign-on failed", async () => {
+    serve({ oidc: { enabled: true, display_name: "Keycloak" } });
+    renderLogin(undefined, "?error=not_set_up");
+
+    expect(
+      await screen.findByText(
+        "Your account has not been set up in Ella SMSC. Contact an administrator.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("gives a general message for an unknown single sign-on error", async () => {
+    serve();
+    renderLogin(undefined, "?error=something_new");
+
+    expect(
+      await screen.findByText(
+        "Single sign-on failed. Try again, or contact an administrator.",
+      ),
     ).toBeInTheDocument();
   });
 });

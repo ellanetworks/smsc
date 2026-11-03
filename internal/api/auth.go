@@ -47,9 +47,14 @@ type AuthStore interface {
 	GetUser(ctx context.Context, email string) (db.User, error)
 	GetUserByID(ctx context.Context, id int64) (db.User, error)
 	ListUsers(ctx context.Context, page, perPage int) ([]db.User, int, error)
-	UpdateUserRole(ctx context.Context, id int64, role db.Role) error
+	UpdateUserRole(ctx context.Context, id int64, role db.Role, pinned bool) error
 	UpdateUserPassword(ctx context.Context, id int64, passwordHash string, keepSession []byte) error
 	DeleteUser(ctx context.Context, id int64) error
+	DeleteIdentities(ctx context.Context, userID int64) error
+	GetIdentity(ctx context.Context, issuer, subject string) (db.Identity, error)
+	CreateIdentity(ctx context.Context, userID int64, i db.NewIdentity) (int64, error)
+	CreateUserWithIdentity(ctx context.Context, u db.NewUser, i db.NewIdentity, maxUsers int) (int64, int64, error)
+	TouchIdentity(ctx context.Context, id int64, email string, at time.Time) error
 
 	CreateSession(ctx context.Context, s db.NewSession, maxPerUser int) (int64, error)
 	GetSession(ctx context.Context, id int64) (db.Session, error)
@@ -86,13 +91,15 @@ const (
 	PermReadProfiles       Permission = "pprof:read"
 	PermReadESME           Permission = "esme:read"
 	PermUpdateESME         Permission = "esme:update"
+	PermReadOIDC           Permission = "oidc:read"
+	PermUpdateOIDC         Permission = "oidc:update"
 )
 
 var permissions = map[db.Role][]Permission{
 	db.RoleAdmin: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
-		PermReadProfiles, PermUpdateDiameter, PermReadESME, PermUpdateESME,
+		PermReadProfiles, PermUpdateDiameter, PermReadESME, PermUpdateESME, PermReadOIDC, PermUpdateOIDC,
 	},
 	db.RoleReadOnly: {
 		PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf, PermReadESME,
@@ -375,16 +382,18 @@ func (a *auth) needsLogin(next http.Handler) http.Handler {
 	})
 }
 
-func (a *auth) startSession(w http.ResponseWriter, r *http.Request, u db.User) (int64, error) {
+func (a *auth) startSession(w http.ResponseWriter, r *http.Request, u db.User, method db.SessionMethod,
+	identityID int64, lifetime time.Duration,
+) (int64, error) {
 	raw := make([]byte, sessionTokenLength)
 	_, _ = rand.Read(raw)
 
 	hash := sha256.Sum256(raw)
 	now := a.cfg.Now()
-	expiresAt := now.Add(SessionTokenDuration)
+	expiresAt := now.Add(lifetime)
 
 	id, err := a.cfg.Auth.CreateSession(r.Context(), db.NewSession{
-		UserID: u.ID, TokenHash: hash[:], CreatedAt: now,
+		UserID: u.ID, TokenHash: hash[:], Method: method, IdentityID: identityID, CreatedAt: now,
 		ExpiresAt: expiresAt,
 	}, MaxSessionsPerUser)
 	if err != nil {

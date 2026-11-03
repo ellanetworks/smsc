@@ -98,6 +98,7 @@ describe("App", () => {
       ["SMPP", "/smpp"],
       ["Messages", "/messages"],
       ["Users", "/users"],
+      ["Single Sign-On", "/single-sign-on"],
     ]);
     expect(
       within(screen.getByRole("navigation", { name: "Main" })).getByText(
