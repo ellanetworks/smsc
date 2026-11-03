@@ -35,11 +35,8 @@ func (s *Service) wakeDispatcher() {
 func (s *Service) Run(ctx context.Context) {
 	s.init()
 
-	inflight := map[int64]bool{}
-	done := make(chan int64)
-
 	for ctx.Err() == nil {
-		wait := s.dispatch(ctx, inflight, done)
+		wait := s.dispatch(ctx)
 
 		timer := time.NewTimer(wait)
 
@@ -47,19 +44,15 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 		case <-s.wake:
 		case <-timer.C:
-		case id := <-done:
-			delete(inflight, id)
 		}
 
 		timer.Stop()
 	}
 
-	for len(inflight) > 0 {
-		delete(inflight, <-done)
-	}
+	s.sends.Wait()
 }
 
-func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done chan<- int64) time.Duration {
+func (s *Service) dispatch(ctx context.Context) time.Duration {
 	now := s.Now()
 
 	expired, err := s.Store.ExpireNotifications(ctx, now)
@@ -72,10 +65,7 @@ func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done ch
 		s.Metrics.notified(t, db.NotificationExpired, n)
 	}
 
-	exclude := make([]int64, 0, len(inflight))
-	for id := range inflight {
-		exclude = append(exclude, id)
-	}
+	exclude := s.sendingIDs()
 
 	wait := maxWait
 
@@ -93,19 +83,16 @@ func (s *Service) dispatch(ctx context.Context, inflight map[int64]bool, done ch
 			}
 
 			for _, n := range due {
-				sess := s.reserve(sessions)
+				sess := s.reserve(sessions, n.ID)
 				if sess == nil {
 					break
 				}
 
-				inflight[n.ID] = true
-
-				go func() {
+				s.sends.Go(func() {
 					s.send(context.WithoutCancel(ctx), sess, n)
-					s.release(sess)
-
-					done <- n.ID
-				}()
+					s.release(sess, n.ID)
+					s.wakeDispatcher()
+				})
 			}
 		}
 
@@ -143,7 +130,19 @@ func (s *Service) receivers() map[int64][]receiverSlot {
 	return out
 }
 
-func (s *Service) reserve(slots []receiverSlot) *Session {
+func (s *Service) sendingIDs() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ids := make([]int64, 0, len(s.sending))
+	for id := range s.sending {
+		ids = append(ids, id)
+	}
+
+	return ids
+}
+
+func (s *Service) reserve(slots []receiverSlot, id int64) *Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -162,14 +161,16 @@ func (s *Service) reserve(slots []receiverSlot) *Session {
 
 	if best != nil {
 		best.inflight++
+		s.sending[id] = true
 	}
 
 	return best
 }
 
-func (s *Service) release(sess *Session) {
+func (s *Service) release(sess *Session, id int64) {
 	s.mu.Lock()
 	sess.inflight--
+	delete(s.sending, id)
 	s.mu.Unlock()
 }
 

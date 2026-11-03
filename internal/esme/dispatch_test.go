@@ -605,3 +605,52 @@ func notificationResult(t *testing.T, env *testEnv, messageID int64, typ db.Noti
 
 	return r.V
 }
+
+type excludeRecorder struct {
+	Store
+
+	mu      sync.Mutex
+	largest int
+}
+
+func (r *excludeRecorder) DueNotifications(ctx context.Context, esmeID int64, now time.Time, exclude []int64,
+	limit int,
+) ([]db.Notification, error) {
+	r.mu.Lock()
+	r.largest = max(r.largest, len(exclude))
+	r.mu.Unlock()
+
+	return r.Store.DueNotifications(ctx, esmeID, now, exclude, limit)
+}
+
+func TestNotificationsInFlightStayWithinTheWindow(t *testing.T) {
+	env := newTestEnv(t, nil)
+	recorder := &excludeRecorder{Store: env.service.Store}
+	env.service.Store = recorder
+	c := env.run(t)
+	conn := env.bind(1, Receiver, env.esme)
+
+	ids := make([]int64, 200)
+	for i := range ids {
+		ids[i] = env.stored(t, with(baseSubmit(0x04, "aabb"), func(m *smpp.Message) { m.RegisteredDelivery = 0x01 }))
+	}
+
+	for _, id := range ids {
+		env.complete(t, id, db.StatusDelivered, 0, "", "", c.Now())
+	}
+
+	for range ids {
+		conn.next(t)
+	}
+
+	for _, id := range ids {
+		waitResult(t, env, id, db.NotificationReceipt, db.NotificationAcknowledged)
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+
+	if recorder.largest > window {
+		t.Fatalf("%d notifications excluded as in flight, want at most the window of %d", recorder.largest, window)
+	}
+}

@@ -23,13 +23,10 @@ func isUnique(err error) bool {
 
 type DB struct {
 	conn    *sql.DB
-	read    *sql.DB
 	path    string
 	metrics metrics
 	queued  func()
 }
-
-const maxReaders = 4
 
 var migrations = []string{
 	`CREATE TABLE users (
@@ -249,24 +246,6 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		return nil, err
 	}
 
-	read, err := sql.Open("sqlite3", "file:"+path+"?_query_only=true&_busy_timeout=5000&_stmt_cache_size=64")
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	read.SetMaxOpenConns(maxReaders)
-	read.SetMaxIdleConns(maxReaders)
-
-	if err := read.PingContext(ctx); err != nil {
-		_ = read.Close()
-		_ = conn.Close()
-
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	d.read = read
-
 	return d, nil
 }
 
@@ -275,7 +254,7 @@ func (d *DB) Ping(ctx context.Context) error {
 }
 
 func (d *DB) Close() error {
-	return errors.Join(d.read.Close(), d.conn.Close())
+	return d.conn.Close()
 }
 
 func (d *DB) migrate(ctx context.Context) error {

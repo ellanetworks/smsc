@@ -46,15 +46,15 @@ Receipt time: from the `submit_sm` to the `deliver_sm` of its delivery receipt.
 
 | Rate (/s) | Messages per hour | Submission success rate | Submission time, p99 | Delivery success rate | Delivery time, mean | Delivery time, p99 | Receipt success rate | Receipt time, mean | Receipt time, p99 | CPU (cores) | Resident memory |
 | --------- | ----------------- | ----------------------- | -------------------- | --------------------- | ------------------- | ------------------ | -------------------- | ------------------ | ----------------- | ----------- | --------------- |
-| 100 | 360,000 | 100% | 16 ms | 100% | 2 ms | 21 ms | 100% | 3 ms | 23 ms | 0.14 | 34 MiB |
-| 200 | 720,000 | 100% | 19 ms | 100% | 3 ms | 22 ms | 100% | 4 ms | 25 ms | 0.31 | 36 MiB |
-| 300 | 1,080,000 | 100% | 18 ms | 100% | 3 ms | 21 ms | 100% | 4 ms | 23 ms | 0.54 | 39 MiB |
-| 400 | 1,440,000 | 100% | 30 ms | 100% | 6 ms | 38 ms | 100% | 9 ms | 45 ms | 0.90 | 51 MiB |
-| 600 | 2,160,000 | 100% | 23 ms | 100% | 6 ms | 31 ms | 100% | 18 ms | 48 ms | 1.11 | 449 MiB |
-| 800 | 2,880,000 | 100% | 62 ms | 100% | 4.5 s | 9.3 s | 100% | 9.1 s | 32.4 s | 0.92 | 829 MiB |
-| 1,000 | 3,600,000 | 100% | 28 ms | 100% | 193 ms | 1.2 s | 36% | 50.5 s | 1 min 19 s | 1.17 | 844 MiB |
+| 100 | 360,000 | 100% | 20 ms | 100% | 2 ms | 25 ms | 100% | 3 ms | 27 ms | 0.15 | 34 MiB |
+| 200 | 720,000 | 100% | 23 ms | 100% | 3 ms | 26 ms | 100% | 4 ms | 29 ms | 0.30 | 34 MiB |
+| 300 | 1,080,000 | 100% | 23 ms | 100% | 3 ms | 26 ms | 100% | 4 ms | 29 ms | 0.48 | 34 MiB |
+| 400 | 1,440,000 | 100% | 25 ms | 100% | 6 ms | 30 ms | 100% | 8 ms | 36 ms | 0.75 | 35 MiB |
+| 600 | 2,160,000 | 100% | 34 ms | 100% | 36 ms | 216 ms | 100% | 43 ms | 227 ms | 0.80 | 36 MiB |
+| 800 | 2,880,000 | 100% | 31 ms | 100% | 3.5 s | 7.1 s | 100% | 3.5 s | 7.1 s | 0.75 | 36 MiB |
+| 1,000 | 3,600,000 | 100% | 28 ms | 100% | 8.0 s | 14.4 s | 100% | 8.0 s | 14.4 s | 0.75 | 37 MiB |
 
-Maximum rate with a delivery time and a receipt time p99 under 100 ms: 600 messages per second.
+Maximum rate with a delivery time and a receipt time p99 under 100 ms: 400 messages per second.
 
 ## Storage
 
@@ -63,7 +63,7 @@ Maximum rate with a delivery time and a receipt time p99 under 100 ms: 600 messa
 | Resident memory, idle | 24 MiB |
 | Database size per message from a phone | About 550 bytes |
 | Database size per message from an ESME | About 550 bytes |
-| Database size per message from an ESME, with a delivery receipt | About 680 bytes |
+| Database size per message from an ESME, with a delivery receipt | About 660 bytes |
 | Messages kept | 30 days after their final status, by default. See [Retention](api/retention.md). |
 
 ## Test Setup

@@ -120,8 +120,10 @@ type Service struct {
 	bcrypt    chan struct{}
 	wake      chan struct{}
 
+	sends    sync.WaitGroup
 	mu       sync.Mutex
 	sessions map[uint64]*Session
+	sending  map[int64]bool
 }
 
 func (s *Service) init() {
@@ -140,6 +142,7 @@ func (s *Service) init() {
 		s.bcrypt = make(chan struct{}, runtime.GOMAXPROCS(0))
 		s.wake = make(chan struct{}, 1)
 		s.sessions = map[uint64]*Session{}
+		s.sending = map[int64]bool{}
 	})
 }
 

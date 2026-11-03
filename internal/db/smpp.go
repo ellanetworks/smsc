@@ -155,7 +155,7 @@ func (d *DB) DueNotifications(ctx context.Context, esmeID int64, now time.Time, 
 
 	args = append(args, limit)
 
-	rows, err := d.read.QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
+	rows, err := d.conn.QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
 		FROM smpp_notifications n
 		CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		JOIN messages m ON m.id = n.message_id
@@ -342,7 +342,7 @@ func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time
 
 	var at sql.Null[int64]
 
-	if err := d.read.QueryRowContext(ctx, `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at,
+	if err := d.conn.QueryRowContext(ctx, `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at,
 		n.expires_at) ELSE n.expires_at END) FROM smpp_notifications n CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		WHERE s.esme_id = ? AND n.result IS NULL`,
 		now.UTC().UnixNano(), esmeID).Scan(&at); err != nil {
