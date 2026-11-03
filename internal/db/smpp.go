@@ -49,25 +49,26 @@ func messageState(status MessageStatus) uint8 {
 
 func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status MessageStatus, tpStatus uint8,
 	at int64,
-) error {
+) (bool, error) {
 	var (
 		receipt   uint8
 		simAnswer bool
+		queued    bool
 	)
 
 	err := tx.QueryRowContext(ctx, `SELECT receipt, sim_answer FROM smpp_messages WHERE message_id = ?`,
 		messageID).Scan(&receipt, &simAnswer)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return false, nil
 	}
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	var validity int64
 	if err := tx.QueryRowContext(ctx, `SELECT default_validity FROM delivery WHERE id = 1`).Scan(&validity); err != nil {
-		return err
+		return false, err
 	}
 
 	expiresAt := at + validity
@@ -81,15 +82,17 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 		err := tx.QueryRowContext(ctx, `SELECT id, deliver_report FROM delivery_attempts WHERE message_id = ?
 			ORDER BY id DESC LIMIT 1`, messageID).Scan(&attemptID, &report)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
+			return false, err
 		}
 
 		if err == nil && len(report) > 0 {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_notifications (message_id, type, attempt_id, expires_at,
 				next_attempt_at, attempts) VALUES (?, ?, ?, ?, ?, 0)`,
 				messageID, NotificationSIMAnswer, attemptID, expiresAt, at); err != nil {
-				return err
+				return false, err
 			}
+
+			queued = true
 		}
 	}
 
@@ -97,11 +100,23 @@ func queueNotifications(ctx context.Context, tx *sql.Tx, messageID int64, status
 		if _, err := tx.ExecContext(ctx, `INSERT INTO smpp_notifications (message_id, type, tp_status, expires_at,
 			next_attempt_at, attempts) VALUES (?, ?, ?, ?, ?, 0)`,
 			messageID, NotificationReceipt, tpStatus, expiresAt, at); err != nil {
-			return err
+			return false, err
 		}
+
+		queued = true
 	}
 
-	return nil
+	return queued, nil
+}
+
+func (d *DB) OnNotificationsQueued(f func()) {
+	d.queued = f
+}
+
+func (d *DB) notificationsQueued(queued bool) {
+	if queued && d.queued != nil {
+		d.queued()
+	}
 }
 
 type Notification struct {
@@ -142,7 +157,7 @@ func (d *DB) DueNotifications(ctx context.Context, esmeID int64, now time.Time, 
 
 	rows, err := d.conn.QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
 		FROM smpp_notifications n
-		JOIN smpp_messages s ON s.message_id = n.message_id
+		CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		JOIN messages m ON m.id = n.message_id
 		LEFT JOIN delivery_attempts a ON a.id = n.attempt_id
 		WHERE s.esme_id = ? AND n.result IS NULL AND n.next_attempt_at <= ? AND n.expires_at > ?
@@ -328,7 +343,7 @@ func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time
 	var at sql.Null[int64]
 
 	if err := d.conn.QueryRowContext(ctx, `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at,
-		n.expires_at) ELSE n.expires_at END) FROM smpp_notifications n JOIN smpp_messages s ON s.message_id = n.message_id
+		n.expires_at) ELSE n.expires_at END) FROM smpp_notifications n CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		WHERE s.esme_id = ? AND n.result IS NULL`,
 		now.UTC().UnixNano(), esmeID).Scan(&at); err != nil {
 		return time.Time{}, false, fmt.Errorf("next notification: %w", err)

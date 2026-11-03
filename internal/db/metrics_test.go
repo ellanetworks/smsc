@@ -100,7 +100,7 @@ func TestMetricsLint(t *testing.T) {
 }
 
 func TestEveryCallIsObserved(t *testing.T) {
-	unobserved := map[string]bool{"Close": true, "Collectors": true, "CreateMessage": true, "Ping": true}
+	unobserved := map[string]bool{"Close": true, "Collectors": true, "CreateMessage": true, "OnNotificationsQueued": true, "Ping": true}
 
 	files, err := filepath.Glob("*.go")
 	if err != nil {

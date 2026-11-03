@@ -77,7 +77,6 @@ type Deliverer struct {
 	Now            func() time.Time
 	Logger         *slog.Logger
 	TracerProvider trace.TracerProvider
-	Completed      func()
 
 	wakeOnce sync.Once
 	wake     chan struct{}
@@ -461,10 +460,6 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 
 	if status == db.StatusDelivered {
 		d.Metrics.delivered(m, at)
-	}
-
-	if d.Completed != nil {
-		d.Completed()
 	}
 
 	return nil

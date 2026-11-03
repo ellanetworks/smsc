@@ -135,10 +135,10 @@ func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int
 
 	ids := make([]int64, 0, len(messages))
 
-	var completed []completion
+	var fx effects
 
 	for _, m := range messages {
-		id, err := createMessage(ctx, tx, m, &completed)
+		id, err := createMessage(ctx, tx, m, &fx)
 		if err != nil {
 			return nil, err
 		}
@@ -150,12 +150,18 @@ func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int
 		return nil, fmt.Errorf("create message: %w", err)
 	}
 
-	d.metrics.count(completed)
+	d.metrics.count(fx.completed)
+	d.notificationsQueued(fx.queued)
 
 	return ids, nil
 }
 
-func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]completion) (int64, error) {
+type effects struct {
+	completed []completion
+	queued    bool
+}
+
+func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage, fx *effects) (int64, error) {
 	if m.RejectDuplicates {
 		duplicate, err := isDuplicate(ctx, tx, m)
 		if err != nil {
@@ -168,7 +174,7 @@ func createMessage(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]c
 	}
 
 	if m.Replace {
-		if err := replacePending(ctx, tx, m, completed); err != nil {
+		if err := replacePending(ctx, tx, m, fx); err != nil {
 			return 0, fmt.Errorf("create message: %w", err)
 		}
 	}
@@ -304,14 +310,15 @@ func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewS
 	return err
 }
 
+// TS 23.040 clause 2.1.1
 // TS 23.040 clause 9.2.3.9
-func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]completion) error {
+func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, fx *effects) error {
 	query := `SELECT ` + messageColumns + ` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
-		AND originator_npi = ? AND protocol_identifier = ? AND status = ?`
+		AND originator_npi = ? AND protocol_identifier = ? AND status = ? AND origin = ?`
 
 	args := []any{
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
-		m.ProtocolIdentifier, StatusPending,
+		m.ProtocolIdentifier, StatusPending, m.Origin,
 	}
 
 	switch m.Origin {
@@ -321,17 +328,17 @@ func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]
 			return nil
 		}
 
-		query += ` AND origin = ? AND id IN (SELECT message_id FROM smpp_messages WHERE esme_id = ?)`
+		query += ` AND id IN (SELECT message_id FROM smpp_messages WHERE esme_id = ?)`
 
-		args = append(args, OriginSMPP, m.SMPP.ESMEID)
+		args = append(args, m.SMPP.ESMEID)
 	default:
 		if m.SubmittedBy == 0 {
 			return nil
 		}
 
-		query += ` AND origin = ? AND submitted_by = ?`
+		query += ` AND submitted_by = ?`
 
-		args = append(args, m.Origin, m.SubmittedBy)
+		args = append(args, m.SubmittedBy)
 	}
 
 	replaced, err := scanMessage(tx.QueryRowContext(ctx, query+` ORDER BY id DESC LIMIT 1`, args...))
@@ -349,12 +356,16 @@ func replacePending(ctx context.Context, tx *sql.Tx, m NewMessage, completed *[]
 	}
 
 	replaced.Status = StatusReplaced
-	*completed = append(*completed, completion{KindMessage, StatusReplaced})
+	fx.completed = append(fx.completed, completion{KindMessage, StatusReplaced})
 
 	const statusReplaced = 0x02
-	if err := queueNotifications(ctx, tx, replaced.ID, StatusReplaced, statusReplaced, m.SubmittedAt.UTC().UnixNano()); err != nil {
+
+	queued, err := queueNotifications(ctx, tx, replaced.ID, StatusReplaced, statusReplaced, m.SubmittedAt.UTC().UnixNano())
+	if err != nil {
 		return err
 	}
+
+	fx.queued = fx.queued || queued
 
 	if m.ReportReplaced == nil {
 		return nil
@@ -821,7 +832,8 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 		}
 	}
 
-	if err := queueNotifications(ctx, tx, id, status, tpStatus, at.UTC().UnixNano()); err != nil {
+	queued, err := queueNotifications(ctx, tx, id, status, tpStatus, at.UTC().UnixNano())
+	if err != nil {
 		return fmt.Errorf("complete message: %w", err)
 	}
 
@@ -830,6 +842,7 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 	}
 
 	d.metrics.count([]completion{{kind, status}})
+	d.notificationsQueued(queued)
 
 	return nil
 }

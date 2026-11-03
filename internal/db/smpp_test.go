@@ -161,6 +161,9 @@ func TestCompleteMessageQueuesNotifications(t *testing.T) {
 						id := f.submit(t, f.esme, receipt, simAnswer)
 						answered := a.attempts(t, f, id)
 
+						var visible []int
+						f.d.OnNotificationsQueued(func() { visible = append(visible, len(notificationRows(t, f.d, id))) })
+
 						at := f.origin.Add(time.Minute)
 						if err := f.d.CompleteMessage(ctx, id, s.status, at, nil, 0x42); err != nil {
 							t.Fatalf("CompleteMessage: %v", err)
@@ -168,6 +171,11 @@ func TestCompleteMessageQueuesNotifications(t *testing.T) {
 
 						wantAnswer := simAnswer && answered != 0
 						wantReceipt := receipt == ReceiptFinal || receipt == ReceiptFailure && s.status != StatusDelivered
+
+						queued := wantAnswer || wantReceipt
+						if queued && (len(visible) != 1 || visible[0] == 0) || !queued && len(visible) != 0 {
+							t.Fatalf("hook saw %v notifications, want one call after commit: %t", visible, queued)
+						}
 
 						rows := notificationRows(t, f.d, id)
 
@@ -325,12 +333,19 @@ func TestReplacedSMPPMessageGetsADeletedReceipt(t *testing.T) {
 
 			f.attempt(t, id, "error", []byte{0x00, 0x07})
 
+			var visible []int
+			f.d.OnNotificationsQueued(func() { visible = append(visible, len(notificationRows(t, f.d, id))) })
+
 			replacedAt := f.origin.Add(time.Minute)
 
 			replacementID, err := f.d.CreateMessage(ctx, replaceType(smppMessage(f.esme, f.user, tt.receipt, true,
 				replacedAt)))
 			if err != nil {
 				t.Fatal(err)
+			}
+
+			if tt.wantReceipt && (len(visible) != 1 || visible[0] != 1) || !tt.wantReceipt && len(visible) != 0 {
+				t.Fatalf("hook saw %v notifications, want one call after commit: %t", visible, tt.wantReceipt)
 			}
 
 			if m, err := f.d.GetMessage(ctx, id); err != nil || m.Status != StatusReplaced {
@@ -839,9 +854,20 @@ func TestReplaceIsScopedToTheAccount(t *testing.T) {
 		t.Fatalf("API message after its user's replace = %s, want replaced", s)
 	}
 
-	create(replaceType(testMessage(0, false, []byte{0x01}, f.origin.Add(7*time.Second))))
+	pendingSMPP := create(replaceType(smppMessage(f.esme, f.user, ReceiptNone, false, f.origin.Add(7*time.Second))))
+	ms := create(replaceType(testMessage(0, false, []byte{0x01}, f.origin.Add(8*time.Second))))
 
-	if s := status(latest); s != StatusReplaced {
-		t.Fatalf("API message after an MS replace = %s, want replaced", s)
+	if s := status(latest); s != StatusPending {
+		t.Fatalf("API message after an MS replace = %s, want pending", s)
+	}
+
+	if s := status(pendingSMPP); s != StatusPending {
+		t.Fatalf("SMPP message after an MS replace = %s, want pending", s)
+	}
+
+	create(replaceType(testMessage(0, false, []byte{0x01}, f.origin.Add(9*time.Second))))
+
+	if s := status(ms); s != StatusReplaced {
+		t.Fatalf("MS message after its MS's replace = %s, want replaced", s)
 	}
 }

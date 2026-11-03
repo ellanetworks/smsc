@@ -1725,17 +1725,17 @@ func TestSessionFallsBackToTheOtherServingNodes(t *testing.T) {
 	}
 }
 
-func TestCompletedIsCalledOncePerCompletion(t *testing.T) {
+func TestCompletionRecordsTPStatus(t *testing.T) {
 	tests := map[string]struct {
-		answer   *diameter.Message
-		status   db.MessageStatus
-		tpStatus uint8
-		calls    int
+		answer    *diameter.Message
+		status    db.MessageStatus
+		tpStatus  uint8
+		completed bool
 	}{
-		"delivered": {answer: success(), status: db.StatusDelivered, tpStatus: uint8(tpdu.StatusReceived), calls: 1},
+		"delivered": {answer: success(), status: db.StatusDelivered, tpStatus: uint8(tpdu.StatusReceived), completed: true},
 		"usim data download error": {
 			answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x00, tpdu.FailureUSIMDataDownloadError, 0x00),
-			status: db.StatusFailed, tpStatus: uint8(tpdu.StatusConnectionRejected), calls: 1,
+			status: db.StatusFailed, tpStatus: uint8(tpdu.StatusConnectionRejected), completed: true,
 		},
 		"retried": {answer: experimental(tgpp.ResultErrorAbsentUser), status: db.StatusPending},
 	}
@@ -1746,20 +1746,13 @@ func TestCompletedIsCalledOncePerCompletion(t *testing.T) {
 			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": tt.answer}}
 			d := newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender)
 
-			calls := 0
-			d.Completed = func() { calls++ }
-
 			process(t, d)
 
 			if got := store.messages[1].Status; got != tt.status {
 				t.Fatalf("status = %s, want %s", got, tt.status)
 			}
 
-			if calls != tt.calls {
-				t.Fatalf("Completed called %d times, want %d", calls, tt.calls)
-			}
-
-			if got, ok := store.tpStatuses[1]; tt.calls > 0 && (!ok || got != tt.tpStatus) {
+			if got, ok := store.tpStatuses[1]; tt.completed && (!ok || got != tt.tpStatus) {
 				t.Fatalf("TP-Status = %#x, want %#x", got, tt.tpStatus)
 			}
 

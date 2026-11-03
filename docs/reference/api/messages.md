@@ -151,7 +151,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | `failed` | The SIM refused a (U)SIM data download message. |
 | `failed` | An attempt failed, and the message is single-shot or retries are off. |
 | `expired` | Its validity period ended before its delivery. |
-| `replaced` | A later message of the same replace type, from the same sender, before its delivery. From the API or an ESME, only by the same user or ESME. |
+| `replaced` | A later message of the same replace type, from the same sender and submitter, before its delivery: the same phone, user or ESME. |
 
 ### Sample Response
 

@@ -284,8 +284,6 @@ func TestReplacedReceipt(t *testing.T) {
 		t.Fatalf("submit_sm = %s", status)
 	}
 
-	env.service.Submitted()
-
 	want := "id:" + strconv.FormatInt(first, 10) +
 		" sub:001 dlvrd:000 submit date:2610281200 done date:2610281205 stat:DELETED err:002 text:"
 	if d := conn.next(t); string(d.ShortMessage) != want || *d.Options.MessageState != smpp.StateDeleted {

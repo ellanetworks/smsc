@@ -181,16 +181,13 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		Now:            time.Now,
 		Logger:         s.Logger,
 	}
-	deliverer.Completed = esmes.NotificationsQueued
+	database.OnNotificationsQueued(esmes.NotificationsQueued)
 
 	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &smscsgd.Handler{
 		Identity: nodes.Identity,
 		Settings: live.Get,
 		Store:    database,
-		Stored: func() {
-			deliverer.Notify()
-			esmes.NotificationsQueued()
-		},
+		Stored:   deliverer.Notify,
 		Received: m.received,
 		Now:      time.Now,
 		Logger:   s.Logger,

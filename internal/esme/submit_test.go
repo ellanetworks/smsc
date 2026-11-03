@@ -86,18 +86,22 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 	received := intake.New()
 	now := func() time.Time { return testNow }
 
+	service := &Service{
+		Store:      store,
+		Submitter:  &submission.Submitter{Store: store, Settings: func() settings.Settings { return current }, Received: received, Now: now},
+		Settings:   func() settings.Settings { return current },
+		Received:   received,
+		BcryptCost: bcrypt.MinCost,
+		Now:        now,
+		Logger:     slog.New(slog.DiscardHandler),
+	}
+
+	store.OnNotificationsQueued(service.NotificationsQueued)
+
 	return &testEnv{
-		store: store,
-		path:  path,
-		service: &Service{
-			Store:      store,
-			Submitter:  &submission.Submitter{Store: store, Settings: func() settings.Settings { return current }, Received: received, Now: now},
-			Settings:   func() settings.Settings { return current },
-			Received:   received,
-			BcryptCost: bcrypt.MinCost,
-			Now:        now,
-			Logger:     slog.New(slog.DiscardHandler),
-		},
+		store:    store,
+		path:     path,
+		service:  service,
 		received: received,
 		esme:     e,
 		user:     user,

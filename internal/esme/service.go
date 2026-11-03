@@ -549,6 +549,4 @@ func (s *Service) Submitted() {
 	if s.Notify != nil {
 		s.Notify()
 	}
-
-	s.NotificationsQueued()
 }

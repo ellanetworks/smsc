@@ -25,6 +25,7 @@ type DB struct {
 	conn    *sql.DB
 	path    string
 	metrics metrics
+	queued  func()
 }
 
 var migrations = []string{
