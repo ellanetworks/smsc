@@ -18,6 +18,7 @@
 - **3GPP compliant**: status reports, replace short message and reject duplicates, per TS 23.040 and TS 29.338.
 - **Application messages**: send text from the web UI or the HTTP API, from a number or a name such as `EllaSMSC`, and binary messages such as SIM OTA updates from the HTTP API.
 - **Delivery visibility**: every routing lookup and delivery attempt is recorded, with why it failed.
+- **Single sign-on**: users log in with your identity provider, such as Google, Microsoft or Okta, over OpenID Connect.
 - **Secure**: users with roles, API tokens, HTTPS, and audited reads of message content.
 - **Easy to operate**: a single binary with an embedded database and configurable retention, a web UI, an HTTP API, and Prometheus metrics. Install with snap, Docker or Kubernetes.
 
