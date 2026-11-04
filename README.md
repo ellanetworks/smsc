@@ -20,6 +20,7 @@
 - **Delivery visibility**: every routing lookup and delivery attempt is recorded, with why it failed.
 - **Single sign-on**: users log in with your identity provider, such as Google, Microsoft or Okta, over OpenID Connect.
 - **Secure**: users with roles, API tokens, HTTPS, and audited reads of message content.
+- **Scalable**: serve SMS to up to 100,000 subscribers.
 - **Easy to operate**: a single binary with an embedded database and configurable retention, a web UI, an HTTP API, and Prometheus metrics. Install with snap, Docker or Kubernetes.
 
 ## Quick Links

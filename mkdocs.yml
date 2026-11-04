@@ -93,6 +93,7 @@ nav:
     - Connectivity: reference/connectivity.md
     - SMPP: reference/smpp.md
     - Performance: reference/performance.md
+    - System Requirements: reference/system_reqs.md
     - 3GPP Compliance: reference/3gpp_compliance.md
   - Explanation:
     - explanation/index.md

@@ -8,4 +8,5 @@ This section provides detailed reference material for Ella SMSC, from configurat
 - [Connectivity](connectivity.md)
 - [SMPP](smpp.md)
 - [Performance](performance.md)
+- [System Requirements](system_reqs.md)
 - [3GPP Compliance](3gpp_compliance.md)
