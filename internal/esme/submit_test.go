@@ -96,7 +96,11 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 		Logger:     slog.New(slog.DiscardHandler),
 	}
 
-	store.OnNotificationsQueued(service.NotificationsQueued)
+	store.OnEvents(func(ev db.Events) {
+		if ev.Notifications {
+			service.NotificationsQueued()
+		}
+	})
 
 	return &testEnv{
 		store:    store,

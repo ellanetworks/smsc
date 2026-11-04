@@ -2,6 +2,7 @@ package sgd
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"log/slog"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
-	"github.com/ellanetworks/smsc/internal/statusreport"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -114,7 +114,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		expiresAt = receivedAt.Add(current.Delivery.DefaultValidity)
 	}
 
-	id, err := h.Store.CreateMessage(ctx, db.NewMessage{
+	id, err := h.Store.CreateMessage(db.WithRequestID(ctx, requestID(req)), db.NewMessage{
 		Originator: db.Address{
 			Digits:        originator,
 			TypeOfNumber:  tpdu.TypeOfNumberInternational,
@@ -135,9 +135,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		SingleShot:         submit.SingleShot(),
 		SubmittedAt:        receivedAt,
 		ExpiresAt:          expiresAt,
-		ReportReplaced: func(replaced db.Message) (*db.NewStatusReport, error) {
-			return h.replacedReport(ctx, replaced, receivedAt, current), nil
-		},
+		ReportReplaced:     true,
 	})
 	if errors.Is(err, db.ErrDuplicate) {
 		return h.submitRejected(ctx, req, tpdu.FailureRejectedDuplicate, receivedAt)
@@ -161,16 +159,6 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		slog.Int64("message_id", id), slog.String("originator", originator), slog.String("recipient", recipient))
 
 	return h.answer(req, diameter.ResultSuccess)
-}
-
-func (h *Handler) replacedReport(ctx context.Context, replaced db.Message, at time.Time, current settings.Settings) *db.NewStatusReport {
-	report, err := statusreport.For(replaced, tpdu.StatusReplaced, at, current)
-	if err != nil {
-		h.Logger.ErrorContext(ctx, "failed to make the status report on a replaced short message",
-			slog.Int64("message_id", replaced.ID), slog.Any("error", err))
-	}
-
-	return report
 }
 
 func submitFailureCause(b []byte, err error) byte {
@@ -226,4 +214,14 @@ func (h *Handler) deliveryFailure(req *diameter.Message, cause sgd.DeliveryFailu
 	}
 
 	return ans
+}
+
+func requestID(req *diameter.Message) db.RequestID {
+	sessionID, _ := req.Find(diameter.AVPSessionID, 0)
+	originHost, _ := req.Find(diameter.AVPOriginHost, 0)
+
+	var e2e [4]byte
+	binary.BigEndian.PutUint32(e2e[:], req.EndToEndID)
+
+	return db.RequestIDOf(originHost.Data, sessionID.Data, e2e[:])
 }

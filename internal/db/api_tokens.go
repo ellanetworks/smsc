@@ -31,14 +31,27 @@ type NewAPIToken struct {
 func (d *DB) CreateAPIToken(ctx context.Context, t NewAPIToken) (_ int64, err error) {
 	defer d.observe(&err)()
 
-	res, err := d.conn.ExecContext(ctx, `INSERT INTO api_tokens (token_id, name, token_hash, user_id, created_at, expires_at)
+	id, err := submit[int64](ctx, d, cmdCreateAPIToken, t)
+	if errors.Is(err, ErrAlreadyExists) {
+		return 0, err
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("create API token: %w", err)
+	}
+
+	return id, nil
+}
+
+func applyCreateAPIToken(a *applyCtx, t NewAPIToken) (int64, error) {
+	res, err := a.tx.ExecContext(a.ctx, `INSERT INTO api_tokens (token_id, name, token_hash, user_id, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)`, t.TokenID, t.Name, t.TokenHash, t.UserID, t.CreatedAt.UnixNano(), nullTime(t.ExpiresAt))
 	if isUnique(err) {
 		return 0, ErrAlreadyExists
 	}
 
 	if err != nil {
-		return 0, fmt.Errorf("create API token: %w", err)
+		return 0, err
 	}
 
 	return res.LastInsertId()
@@ -47,7 +60,7 @@ func (d *DB) CreateAPIToken(ctx context.Context, t NewAPIToken) (_ int64, err er
 func (d *DB) GetAPITokenByTokenID(ctx context.Context, tokenID string) (_ APIToken, err error) {
 	defer d.observe(&err)()
 
-	t, err := scanAPIToken(d.conn.QueryRowContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE token_id = ?`,
+	t, err := scanAPIToken(d.reader.QueryRowContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE token_id = ?`,
 		tokenID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return APIToken{}, ErrNotFound
@@ -64,12 +77,12 @@ func (d *DB) ListAPITokens(ctx context.Context, userID int64, page, perPage int)
 	defer d.observe(&err)()
 
 	var total int
-	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
+	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
 		Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list API tokens: %w", err)
 	}
 
-	rows, err := d.conn.QueryContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE user_id = ?
+	rows, err := d.reader.QueryContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE user_id = ?
 		ORDER BY id LIMIT ? OFFSET ?`, userID, perPage, (page-1)*perPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list API tokens: %w", err)
@@ -99,7 +112,7 @@ func (d *DB) CountAPITokens(ctx context.Context, userID int64) (_ int, err error
 	defer d.observe(&err)()
 
 	var n int
-	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
+	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
 		Scan(&n); err != nil {
 		return 0, fmt.Errorf("count API tokens: %w", err)
 	}
@@ -107,26 +120,53 @@ func (d *DB) CountAPITokens(ctx context.Context, userID int64) (_ int, err error
 	return n, nil
 }
 
+type deleteAPIToken struct {
+	UserID  int64
+	TokenID string
+}
+
 func (d *DB) DeleteAPIToken(ctx context.Context, userID int64, tokenID string) (err error) {
 	defer d.observe(&err)()
 
-	res, err := d.conn.ExecContext(ctx, `DELETE FROM api_tokens WHERE token_id = ? AND user_id = ?`, tokenID, userID)
+	_, err = submit[struct{}](ctx, d, cmdDeleteAPIToken, deleteAPIToken{UserID: userID, TokenID: tokenID})
+	if errors.Is(err, ErrNotFound) {
+		return err
+	}
+
 	if err != nil {
 		return fmt.Errorf("delete API token: %w", err)
 	}
 
-	return affectedOne(res, "delete API token")
+	return nil
+}
+
+func applyDeleteAPIToken(a *applyCtx, p deleteAPIToken) (struct{}, error) {
+	res, err := a.tx.ExecContext(a.ctx, `DELETE FROM api_tokens WHERE token_id = ? AND user_id = ?`, p.TokenID, p.UserID)
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	return struct{}{}, affectedOne(res, "delete API token")
+}
+
+type touchAPIToken struct {
+	ID int64
+	At time.Time
 }
 
 func (d *DB) TouchAPIToken(ctx context.Context, id int64, at time.Time) (err error) {
 	defer d.observe(&err)()
 
-	if _, err := d.conn.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE id = ?`, at.UnixNano(),
-		id); err != nil {
+	if _, err := submit[struct{}](ctx, d, cmdTouchAPIToken, touchAPIToken{ID: id, At: at}); err != nil {
 		return fmt.Errorf("touch API token: %w", err)
 	}
 
 	return nil
+}
+
+func applyTouchAPIToken(a *applyCtx, p touchAPIToken) (struct{}, error) {
+	_, err := a.tx.ExecContext(a.ctx, `UPDATE api_tokens SET last_used_at = ? WHERE id = ?`, p.At.UnixNano(), p.ID)
+	return struct{}{}, err
 }
 
 const apiTokenColumns = `id, token_id, name, token_hash, user_id, created_at, expires_at, last_used_at`

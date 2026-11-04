@@ -36,22 +36,31 @@ func (d *DB) CountUsers(ctx context.Context) (_ int, err error) {
 	defer d.observe(&err)()
 
 	var n int
-	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count users: %w", err)
 	}
 
 	return n, nil
 }
 
+type createUserCmd struct {
+	User     NewUser
+	MaxUsers int
+}
+
 func (d *DB) CreateUser(ctx context.Context, u NewUser, maxUsers int) (id int64, err error) {
 	defer d.observe(&err)()
 
-	err = d.inTx(ctx, "create user", func(tx *sql.Tx) error {
-		id, err = createUser(ctx, tx, u, maxUsers)
-		return err
-	})
+	id, err = submit[int64](ctx, d, cmdCreateUser, createUserCmd{User: u, MaxUsers: maxUsers})
+	if err != nil {
+		return 0, fmt.Errorf("create user: %w", err)
+	}
 
-	return id, err
+	return id, nil
+}
+
+func applyCreateUser(a *applyCtx, p createUserCmd) (int64, error) {
+	return createUser(a.ctx, a.tx, p.User, p.MaxUsers)
 }
 
 func createUser(ctx context.Context, tx *sql.Tx, u NewUser, maxUsers int) (int64, error) {
@@ -80,24 +89,24 @@ func createUser(ctx context.Context, tx *sql.Tx, u NewUser, maxUsers int) (int64
 func (d *DB) GetUser(ctx context.Context, email string) (_ User, err error) {
 	defer d.observe(&err)()
 
-	return getUser(d.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email))
+	return getUser(d.reader.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email))
 }
 
 func (d *DB) GetUserByID(ctx context.Context, id int64) (_ User, err error) {
 	defer d.observe(&err)()
 
-	return getUser(d.conn.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))
+	return getUser(d.reader.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))
 }
 
 func (d *DB) ListUsers(ctx context.Context, page, perPage int) (_ []User, _ int, err error) {
 	defer d.observe(&err)()
 
 	var total int
-	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list users: %w", err)
 	}
 
-	rows, err := d.conn.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY id LIMIT ? OFFSET ?`,
+	rows, err := d.reader.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY id LIMIT ? OFFSET ?`,
 		perPage, (page-1)*perPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list users: %w", err)
@@ -123,71 +132,114 @@ func (d *DB) ListUsers(ctx context.Context, page, perPage int) (_ []User, _ int,
 	return users, total, nil
 }
 
+type updateUserRole struct {
+	ID     int64
+	Role   Role
+	Pinned bool
+}
+
 func (d *DB) UpdateUserRole(ctx context.Context, id int64, role Role, pinned bool) (err error) {
 	defer d.observe(&err)()
 
-	return d.inTx(ctx, "update user role", func(tx *sql.Tx) error {
-		var current Role
+	if _, err := submit[struct{}](ctx, d, cmdUpdateUserRole, updateUserRole{ID: id, Role: role, Pinned: pinned}); err != nil {
+		return fmt.Errorf("update user role: %w", err)
+	}
 
-		err := tx.QueryRowContext(ctx, `SELECT role_id FROM users WHERE id = ?`, id).Scan(&current)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
+	return nil
+}
+
+func applyUpdateUserRole(a *applyCtx, p updateUserRole) (struct{}, error) {
+	ctx, tx := a.ctx, a.tx
+
+	var current Role
+
+	err := tx.QueryRowContext(ctx, `SELECT role_id FROM users WHERE id = ?`, p.ID).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return struct{}{}, ErrNotFound
+	}
+
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	if p.Role != RoleAdmin {
+		if err := keepPasswordAdmin(ctx, tx, p.ID); err != nil {
+			return struct{}{}, err
 		}
+	}
 
-		if err != nil {
-			return err
-		}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET role_id = ?, role_pinned = ? WHERE id = ?`, p.Role, p.Pinned,
+		p.ID); err != nil {
+		return struct{}{}, err
+	}
 
-		if role != RoleAdmin {
-			if err := keepPasswordAdmin(ctx, tx, id); err != nil {
-				return err
-			}
-		}
+	if p.Role == current {
+		return struct{}{}, nil
+	}
 
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET role_id = ?, role_pinned = ? WHERE id = ?`, role, pinned,
-			id); err != nil {
-			return err
-		}
+	return struct{}{}, roleChanged(a, p.ID)
+}
 
-		if role == current {
-			return nil
-		}
-
-		_, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id)
-
+func roleChanged(a *applyCtx, userID int64) error {
+	if _, err := a.tx.ExecContext(a.ctx, `DELETE FROM sessions WHERE user_id = ?`, userID); err != nil {
 		return err
-	})
+	}
+
+	esmes, err := esmesOfUser(a.ctx, a.tx, userID)
+	if err != nil {
+		return err
+	}
+
+	a.events.ClosedESMEs = append(a.events.ClosedESMEs, esmes...)
+
+	return nil
+}
+
+type updateUserPassword struct {
+	ID           int64
+	PasswordHash string
+	KeepSession  []byte
 }
 
 func (d *DB) UpdateUserPassword(ctx context.Context, id int64, passwordHash string, keepSession []byte) (err error) {
 	defer d.observe(&err)()
 
-	return d.inTx(ctx, "update user password", func(tx *sql.Tx) error {
-		if passwordHash == "" {
-			if err := keepPasswordAdmin(ctx, tx, id); err != nil {
-				return err
-			}
+	if _, err := submit[struct{}](ctx, d, cmdUpdateUserPassword, updateUserPassword{
+		ID: id, PasswordHash: passwordHash, KeepSession: keepSession,
+	}); err != nil {
+		return fmt.Errorf("update user password: %w", err)
+	}
+
+	return nil
+}
+
+func applyUpdateUserPassword(a *applyCtx, p updateUserPassword) (struct{}, error) {
+	ctx, tx := a.ctx, a.tx
+
+	if p.PasswordHash == "" {
+		if err := keepPasswordAdmin(ctx, tx, p.ID); err != nil {
+			return struct{}{}, err
 		}
+	}
 
-		res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ? AND (? OR password_hash IS NOT NULL)`,
-			nullString(passwordHash), id, passwordHash != "")
-		if err != nil {
-			return err
-		}
+	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ? AND (? OR password_hash IS NOT NULL)`,
+		nullString(p.PasswordHash), p.ID, p.PasswordHash != "")
+	if err != nil {
+		return struct{}{}, err
+	}
 
-		n, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return struct{}{}, err
+	}
 
-		if n == 0 {
-			return missingPassword(ctx, tx, id)
-		}
+	if n == 0 {
+		return struct{}{}, missingPassword(ctx, tx, p.ID)
+	}
 
-		_, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?`, id, keepSession)
+	_, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?`, p.ID, p.KeepSession)
 
-		return err
-	})
+	return struct{}{}, err
 }
 
 func missingPassword(ctx context.Context, tx *sql.Tx, id int64) error {
@@ -206,13 +258,30 @@ func missingPassword(ctx context.Context, tx *sql.Tx, id int64) error {
 func (d *DB) DeleteUser(ctx context.Context, id int64) (err error) {
 	defer d.observe(&err)()
 
-	return d.inTx(ctx, "delete user", func(tx *sql.Tx) error {
-		if err := keepPasswordAdmin(ctx, tx, id); err != nil {
-			return err
-		}
+	if _, err := submit[struct{}](ctx, d, cmdDeleteUser, id); err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
 
-		return updateUser(ctx, tx, `DELETE FROM users WHERE id = ?`, id)
-	})
+	return nil
+}
+
+func applyDeleteUser(a *applyCtx, id int64) (struct{}, error) {
+	if err := keepPasswordAdmin(a.ctx, a.tx, id); err != nil {
+		return struct{}{}, err
+	}
+
+	esmes, err := esmesOfUser(a.ctx, a.tx, id)
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	if err := updateUser(a.ctx, a.tx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+		return struct{}{}, err
+	}
+
+	a.events.ClosedESMEs = append(a.events.ClosedESMEs, esmes...)
+
+	return struct{}{}, nil
 }
 
 func keepPasswordAdmin(ctx context.Context, tx *sql.Tx, id int64) error {

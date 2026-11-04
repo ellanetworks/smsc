@@ -124,19 +124,13 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	jwtSecret, err := database.JWTSecret(ctx)
+	secrets, err := database.Secrets(ctx)
 	if err != nil {
 		_ = database.Close()
 		return err
 	}
 
 	oidcSettings, err := database.GetOIDC(ctx)
-	if err != nil {
-		_ = database.Close()
-		return err
-	}
-
-	oidcCookieKey, err := database.OIDCCookieKey(ctx)
 	if err != nil {
 		_ = database.Close()
 		return err
@@ -194,7 +188,11 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		Now:            time.Now,
 		Logger:         s.Logger,
 	}
-	database.OnNotificationsQueued(esmes.NotificationsQueued)
+	oidcLive := oidc.NewLive(database, oidcSettings)
+
+	database.OnEvents(func(ev db.Events) {
+		s.applyEvents(context.WithoutCancel(ctx), ev, database, live, oidcLive, deliverer, esmes)
+	})
 
 	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &smscsgd.Handler{
 		Identity: nodes.Identity,
@@ -238,15 +236,15 @@ func (s *Server) Start(ctx context.Context) (err error) {
 			Submitter:      submitter,
 			Notify:         deliverer.Notify,
 			ESMEs:          database,
-			OIDC:           oidc.NewLive(database, oidcSettings),
+			OIDC:           oidcLive,
 			SMPP:           smppSessions{esmes},
 			Ready:          func(ctx context.Context) error { return s.ready(ctx, database) },
 			Received:       m.received,
 			Metrics:        m.registry,
 			Requests:       m.requests,
 			Auth:           database,
-			JWTSecret:      jwtSecret,
-			OIDCCookieKey:  oidcCookieKey,
+			JWTSecret:      secrets.JWT,
+			OIDCCookieKey:  secrets.OIDCCookieKey,
 			BcryptCost:     s.bcryptCost,
 			SecureCookie:   tlsConfig != nil,
 			TracerProvider: tp,
@@ -636,12 +634,6 @@ func (d diameterStatus) Routes() []api.Route {
 func (h hssSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
 
 type smppSessions struct{ esmes *esme.Service }
-
-func (s smppSessions) CloseESME(id int64) { s.esmes.CloseESME(id) }
-
-func (s smppSessions) CloseUser(ctx context.Context, id int64) error {
-	return s.esmes.CloseUser(ctx, id)
-}
 
 func (s smppSessions) Sessions(id int64) []api.SMPPSession {
 	var out []api.SMPPSession

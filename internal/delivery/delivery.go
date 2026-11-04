@@ -194,6 +194,12 @@ func (d *Deliverer) Alert(ctx context.Context, msisdn string) error {
 		return err
 	}
 
+	d.Alerted(recipients)
+
+	return nil
+}
+
+func (d *Deliverer) Alerted(recipients []string) {
 	d.mu.Lock()
 
 	for _, r := range recipients {
@@ -205,8 +211,6 @@ func (d *Deliverer) Alert(ctx context.Context, msisdn string) error {
 	d.mu.Unlock()
 
 	d.Notify()
-
-	return nil
 }
 
 func (d *Deliverer) Run(ctx context.Context) {

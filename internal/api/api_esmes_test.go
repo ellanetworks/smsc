@@ -22,14 +22,6 @@ import (
 type fakeSMPP struct {
 	sessions    map[int64][]api.SMPPSession
 	closedESMEs []int64
-	closedUsers []int64
-}
-
-func (f *fakeSMPP) CloseESME(id int64) { f.closedESMEs = append(f.closedESMEs, id) }
-
-func (f *fakeSMPP) CloseUser(_ context.Context, id int64) error {
-	f.closedUsers = append(f.closedUsers, id)
-	return nil
 }
 
 func (f *fakeSMPP) Sessions(id int64) []api.SMPPSession { return f.sessions[id] }
@@ -39,6 +31,10 @@ func newSMPPTestAPI(t *testing.T, smpp api.SMPP) *testAPI {
 
 	store := openStore(t)
 	a := &testAPI{store: store, now: testNow}
+
+	if f, ok := smpp.(*fakeSMPP); ok {
+		store.OnEvents(func(ev db.Events) { f.closedESMEs = append(f.closedESMEs, ev.ClosedESMEs...) })
+	}
 
 	cfg := testConfig(t, store)
 	cfg.SMPP = smpp
@@ -495,8 +491,8 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 
 	ota, other := a.storedESME(t, "ota").ID, a.storedESME(t, "other").ID
 
-	if len(smpp.closedESMEs) != 0 || len(smpp.closedUsers) != 0 {
-		t.Fatalf("creating ESMEs closed sessions: %v %v", smpp.closedESMEs, smpp.closedUsers)
+	if len(smpp.closedESMEs) != 0 {
+		t.Fatalf("creating ESMEs closed sessions: %v", smpp.closedESMEs)
 	}
 
 	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["10.0.0.1"]}`); code != http.StatusBadRequest {
@@ -519,18 +515,12 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("closed ESMEs after DELETE = %v, want [%d %d]", smpp.closedESMEs, ota, other)
 	}
 
-	if len(smpp.closedUsers) != 0 {
-		t.Fatalf("closed users = %v, want none", smpp.closedUsers)
-	}
-
-	otaUser := a.userID(t, "ota@example.com")
-
 	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/users/ota@example.com", `{"role_id": 2}`); code != http.StatusOK {
 		t.Fatalf("role change = %d", code)
 	}
 
-	if !slices.Equal(smpp.closedUsers, []int64{otaUser}) {
-		t.Fatalf("closed users after a role change = %v, want [%d]", smpp.closedUsers, otaUser)
+	if !slices.Equal(smpp.closedESMEs, []int64{ota, other, ota}) {
+		t.Fatalf("closed ESMEs after a role change = %v, want [%d %d %d]", smpp.closedESMEs, ota, other, ota)
 	}
 
 	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/users/other@example.com/password",
@@ -538,7 +528,7 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("password change = %d", code)
 	}
 
-	if !slices.Equal(smpp.closedESMEs, []int64{ota, other}) {
+	if !slices.Equal(smpp.closedESMEs, []int64{ota, other, ota}) {
 		t.Fatalf("closed ESMEs after a password change = %v, want no more", smpp.closedESMEs)
 	}
 
@@ -549,12 +539,8 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("delete user = %d", code)
 	}
 
-	if !slices.Equal(smpp.closedESMEs, []int64{ota, other, other2}) {
-		t.Fatalf("closed ESMEs after a deletion = %v, want [%d %d %d]", smpp.closedESMEs, ota, other, other2)
-	}
-
-	if !slices.Equal(smpp.closedUsers, []int64{otaUser}) {
-		t.Fatalf("closed users = %v, want [%d]", smpp.closedUsers, otaUser)
+	if !slices.Equal(smpp.closedESMEs, []int64{ota, other, ota, other2}) {
+		t.Fatalf("closed ESMEs after a deletion = %v, want [%d %d %d %d]", smpp.closedESMEs, ota, other, ota, other2)
 	}
 }
 

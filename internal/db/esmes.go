@@ -40,7 +40,7 @@ func (d *DB) CountESMEs(ctx context.Context) (_ int, err error) {
 	defer d.observe(&err)()
 
 	var n int
-	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM esmes`).Scan(&n); err != nil {
+	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM esmes`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count ESMEs: %w", err)
 	}
 
@@ -50,50 +50,81 @@ func (d *DB) CountESMEs(ctx context.Context) (_ int, err error) {
 func (d *DB) CreateESME(ctx context.Context, e ESME) (_ int64, err error) {
 	defer d.observe(&err)()
 
-	var id int64
-
-	err = d.inTx(ctx, "create ESME", func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `INSERT INTO esmes (system_id, user_id, password_hash, created_at)
-			VALUES (?, ?, ?, ?)`, e.SystemID, e.UserID, e.PasswordHash, e.CreatedAt.UTC().UnixNano())
-		if err != nil {
-			return err
-		}
-
-		if id, err = res.LastInsertId(); err != nil {
-			return err
-		}
-
-		return insertNetworks(ctx, tx, id, e.AllowedNetworks)
-	})
-	if isUnique(err) {
-		return 0, fmt.Errorf("create ESME: %w", ErrAlreadyExists)
+	id, err := submit[int64](ctx, d, cmdCreateESME, e)
+	if err != nil {
+		return 0, fmt.Errorf("create ESME: %w", err)
 	}
 
-	return id, err
+	return id, nil
+}
+
+func applyCreateESME(a *applyCtx, e ESME) (int64, error) {
+	res, err := a.tx.ExecContext(a.ctx, `INSERT INTO esmes (system_id, user_id, password_hash, created_at)
+		VALUES (?, ?, ?, ?)`, e.SystemID, e.UserID, e.PasswordHash, e.CreatedAt.UTC().UnixNano())
+	if isUnique(err) {
+		return 0, ErrAlreadyExists
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	if err := insertNetworks(a.ctx, a.tx, id, e.AllowedNetworks); err != nil {
+		if isUnique(err) {
+			return 0, ErrAlreadyExists
+		}
+
+		return 0, err
+	}
+
+	return id, nil
 }
 
 func (d *DB) UpdateESME(ctx context.Context, e ESME) (err error) {
 	defer d.observe(&err)()
 
-	return d.inTx(ctx, "update ESME", func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE esmes SET password_hash = COALESCE(NULLIF(?, ''), password_hash)
-			WHERE id = ?`, e.PasswordHash, e.ID)
-		if err != nil {
-			return err
+	if _, err := submit[struct{}](ctx, d, cmdUpdateESME, e); err != nil {
+		return fmt.Errorf("update ESME: %w", err)
+	}
+
+	return nil
+}
+
+func applyUpdateESME(a *applyCtx, e ESME) (struct{}, error) {
+	ctx, tx := a.ctx, a.tx
+
+	res, err := tx.ExecContext(ctx, `UPDATE esmes SET password_hash = COALESCE(NULLIF(?, ''), password_hash)
+		WHERE id = ?`, e.PasswordHash, e.ID)
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	if n, err := res.RowsAffected(); err != nil {
+		return struct{}{}, err
+	} else if n == 0 {
+		return struct{}{}, ErrNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM esme_networks WHERE esme_id = ?`, e.ID); err != nil {
+		return struct{}{}, err
+	}
+
+	if err := insertNetworks(ctx, tx, e.ID, e.AllowedNetworks); err != nil {
+		if isUnique(err) {
+			return struct{}{}, ErrAlreadyExists
 		}
 
-		if n, err := res.RowsAffected(); err != nil {
-			return err
-		} else if n == 0 {
-			return ErrNotFound
-		}
+		return struct{}{}, err
+	}
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM esme_networks WHERE esme_id = ?`, e.ID); err != nil {
-			return err
-		}
+	a.events.ClosedESMEs = append(a.events.ClosedESMEs, e.ID)
 
-		return insertNetworks(ctx, tx, e.ID, e.AllowedNetworks)
-	})
+	return struct{}{}, nil
 }
 
 func insertNetworks(ctx context.Context, tx *sql.Tx, id int64, networks []netip.Prefix) error {
@@ -110,24 +141,56 @@ func insertNetworks(ctx context.Context, tx *sql.Tx, id int64, networks []netip.
 func (d *DB) DeleteESME(ctx context.Context, id int64) (err error) {
 	defer d.observe(&err)()
 
-	res, err := d.conn.ExecContext(ctx, `DELETE FROM esmes WHERE id = ?`, id)
-	if err != nil {
+	if _, err := submit[struct{}](ctx, d, cmdDeleteESME, id); err != nil {
 		return fmt.Errorf("delete ESME: %w", err)
-	}
-
-	if n, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("delete ESME: %w", err)
-	} else if n == 0 {
-		return fmt.Errorf("delete ESME: %w", ErrNotFound)
 	}
 
 	return nil
 }
 
+func applyDeleteESME(a *applyCtx, id int64) (struct{}, error) {
+	res, err := a.tx.ExecContext(a.ctx, `DELETE FROM esmes WHERE id = ?`, id)
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	if n, err := res.RowsAffected(); err != nil {
+		return struct{}{}, err
+	} else if n == 0 {
+		return struct{}{}, ErrNotFound
+	}
+
+	a.events.ClosedESMEs = append(a.events.ClosedESMEs, id)
+
+	return struct{}{}, nil
+}
+
+func esmesOfUser(ctx context.Context, q querier, userID int64) ([]int64, error) {
+	rows, err := q.QueryContext(ctx, `SELECT id FROM esmes WHERE user_id = ? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var ids []int64
+
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+
+		ids = append(ids, id)
+	}
+
+	return ids, rows.Err()
+}
+
 func (d *DB) GetESMEBySystemID(ctx context.Context, systemID string) (_ ESME, err error) {
 	defer d.observe(&err)()
 
-	e, err := scanESME(d.conn.QueryRowContext(ctx, `SELECT `+esmeColumns+` FROM esmes WHERE system_id = ?`, systemID))
+	e, err := scanESME(d.reader.QueryRowContext(ctx, `SELECT `+esmeColumns+` FROM esmes WHERE system_id = ?`, systemID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ESME{}, ErrNotFound
 	}
@@ -156,7 +219,7 @@ func (d *DB) ListESMEsOfUser(ctx context.Context, userID int64) (_ []ESME, err e
 }
 
 func (d *DB) listESMEs(ctx context.Context, where string, args ...any) ([]ESME, error) {
-	rows, err := d.conn.QueryContext(ctx, `SELECT `+esmeColumns+` FROM esmes`+where+` ORDER BY id`, args...)
+	rows, err := d.reader.QueryContext(ctx, `SELECT `+esmeColumns+` FROM esmes`+where+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list ESMEs: %w", err)
 	}
@@ -203,7 +266,7 @@ func (d *DB) esmeNetworks(ctx context.Context, esmes []*ESME) error {
 		e.AllowedNetworks = []netip.Prefix{}
 	}
 
-	rows, err := d.conn.QueryContext(ctx, `SELECT esme_id, prefix FROM esme_networks WHERE esme_id IN (?`+
+	rows, err := d.reader.QueryContext(ctx, `SELECT esme_id, prefix FROM esme_networks WHERE esme_id IN (?`+
 		strings.Repeat(`, ?`, len(esmes)-1)+`) ORDER BY esme_id, rowid`, args...)
 	if err != nil {
 		return fmt.Errorf("get ESME networks: %w", err)

@@ -181,12 +181,10 @@ func TestRevocation(t *testing.T) {
 		t.Fatal("closing another ESME closed the session")
 	}
 
-	if err := env.service.CloseUser(context.Background(), env.user.ID); err != nil {
-		t.Fatal(err)
-	}
+	env.service.CloseESME(env.esme.ID)
 
 	if !conn.closed.Load() || len(accounts.closed) != 2 || accounts.closed[1] != strconv.FormatInt(env.esme.ID, 10) {
-		t.Fatalf("CloseUser: session closed %t, accounts closed %v", conn.closed.Load(), accounts.closed)
+		t.Fatalf("CloseESME: session closed %t, accounts closed %v", conn.closed.Load(), accounts.closed)
 	}
 
 	conn2 := env.bind(2, Receiver, env.esme)
@@ -275,22 +273,14 @@ func TestSubmitStoresSMPP(t *testing.T) {
 	}
 }
 
-func TestCloseUserWithoutABind(t *testing.T) {
+func TestCloseESMEWithoutABind(t *testing.T) {
 	env := newTestEnv(t, nil)
 	accounts := &fakeAccounts{}
 	env.service.Accounts = accounts
 
-	if err := env.service.CloseUser(context.Background(), env.user.ID); err != nil {
-		t.Fatal(err)
-	}
+	env.service.CloseESME(env.esme.ID)
 
 	if want := strconv.FormatInt(env.esme.ID, 10); len(accounts.closed) != 1 || accounts.closed[0] != want {
 		t.Fatalf("accounts closed = %v, want [%s]", accounts.closed, want)
-	}
-
-	accounts.closed = nil
-
-	if err := env.service.CloseUser(context.Background(), env.user.ID+1); err != nil || len(accounts.closed) != 0 {
-		t.Fatalf("CloseUser of another user = %v, closed %v", err, accounts.closed)
 	}
 }

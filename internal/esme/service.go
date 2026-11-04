@@ -90,7 +90,6 @@ type SessionInfo struct {
 type Store interface {
 	GetESMEBySystemID(ctx context.Context, systemID string) (db.ESME, error)
 	GetUserByID(ctx context.Context, id int64) (db.User, error)
-	ListESMEsOfUser(ctx context.Context, userID int64) ([]db.ESME, error)
 	DueNotifications(ctx context.Context, esmeID int64, now time.Time, exclude []int64, limit int) ([]db.Notification, error)
 	CloseNotification(ctx context.Context, id int64, result db.NotificationResult) error
 	RetryNotification(ctx context.Context, id int64, next time.Time) error
@@ -441,21 +440,6 @@ func (s *Service) CloseESME(esmeID int64) {
 	}
 
 	s.closeWhere(func(sess *Session) bool { return sess.ESME.ID == esmeID })
-}
-
-func (s *Service) CloseUser(ctx context.Context, userID int64) error {
-	s.init()
-
-	esmes, err := s.Store.ListESMEsOfUser(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("list the user's ESMEs: %w", err)
-	}
-
-	for _, e := range esmes {
-		s.CloseESME(e.ID)
-	}
-
-	return nil
 }
 
 func (s *Service) closeWhere(match func(*Session) bool) {

@@ -265,7 +265,6 @@ func (a *auth) oidcLogIn(w http.ResponseWriter, r *http.Request, c *oidc.Client,
 		a.audit(r, "update_user", u.Email, fmt.Sprintf("Role %d from the identity provider not applied to %s, the last admin with a password", role, u.Email))
 	case res.RoleChanged():
 		a.audit(r, "update_user", u.Email, fmt.Sprintf("Role of %s set to %d from the identity provider", u.Email, u.Role))
-		a.roleChanged(r.Context(), u)
 	}
 
 	a.setSessionCookie(w, raw, s.ExpiresAt)

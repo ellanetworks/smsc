@@ -40,12 +40,9 @@ type ESMEStore interface {
 	DeleteESME(ctx context.Context, id int64) error
 	GetESMEBySystemID(ctx context.Context, systemID string) (db.ESME, error)
 	ListESMEs(ctx context.Context) ([]db.ESME, error)
-	ListESMEsOfUser(ctx context.Context, userID int64) ([]db.ESME, error)
 }
 
 type SMPP interface {
-	CloseESME(esmeID int64)
-	CloseUser(ctx context.Context, userID int64) error
 	Sessions(esmeID int64) []SMPPSession
 }
 
@@ -57,9 +54,7 @@ type SMPPSession struct {
 
 type noSMPP struct{}
 
-func (noSMPP) CloseESME(int64)                        {}
-func (noSMPP) CloseUser(context.Context, int64) error { return nil }
-func (noSMPP) Sessions(int64) []SMPPSession           { return nil }
+func (noSMPP) Sessions(int64) []SMPPSession { return nil }
 
 type Diameter interface {
 	Identity() diameter.Identity

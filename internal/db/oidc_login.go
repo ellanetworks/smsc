@@ -48,12 +48,27 @@ func (r OIDCLoginResult) RoleChanged() bool {
 func (d *DB) LogInWithOIDC(ctx context.Context, l OIDCLogin) (res OIDCLoginResult, err error) {
 	defer d.observe(&err)()
 
-	err = d.inTx(ctx, "OIDC login", func(tx *sql.Tx) error {
-		res, err = logInWithOIDC(ctx, tx, l)
-		return err
-	})
+	res, err = submit[OIDCLoginResult](ctx, d, cmdLogInWithOIDC, l)
+	if err != nil {
+		return OIDCLoginResult{}, fmt.Errorf("OIDC login: %w", err)
+	}
+
+	return res, nil
+}
+
+func applyLogInWithOIDC(a *applyCtx, l OIDCLogin) (OIDCLoginResult, error) {
+	res, err := logInWithOIDC(a.ctx, a.tx, l)
 	if err != nil {
 		return OIDCLoginResult{}, err
+	}
+
+	if res.RoleChanged() {
+		esmes, err := esmesOfUser(a.ctx, a.tx, res.User.ID)
+		if err != nil {
+			return OIDCLoginResult{}, err
+		}
+
+		a.events.ClosedESMEs = append(a.events.ClosedESMEs, esmes...)
 	}
 
 	return res, nil
@@ -204,24 +219,34 @@ func syncRole(ctx context.Context, tx *sql.Tx, u User, l OIDCLogin) (User, bool,
 	return u, false, nil
 }
 
+type useOIDCState struct {
+	StateHash []byte
+	ExpiresAt time.Time
+	Now       time.Time
+}
+
 func (d *DB) UseOIDCState(ctx context.Context, stateHash []byte, expiresAt, now time.Time) (err error) {
 	defer d.observe(&err)()
 
-	return d.inTx(ctx, "use OIDC state", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM oidc_used_states WHERE expires_at <= ?`, now.UnixNano()); err != nil {
-			return err
-		}
+	if _, err := submit[struct{}](ctx, d, cmdUseOIDCState, useOIDCState{
+		StateHash: stateHash, ExpiresAt: expiresAt, Now: now,
+	}); err != nil {
+		return fmt.Errorf("use OIDC state: %w", err)
+	}
 
-		_, err := tx.ExecContext(ctx, `INSERT INTO oidc_used_states (state_hash, expires_at) VALUES (?, ?)`, stateHash,
-			expiresAt.UnixNano())
-		if isUnique(err) {
-			return ErrStateUsed
-		}
+	return nil
+}
 
-		if err != nil {
-			return fmt.Errorf("record the state: %w", err)
-		}
+func applyUseOIDCState(a *applyCtx, p useOIDCState) (struct{}, error) {
+	if _, err := a.tx.ExecContext(a.ctx, `DELETE FROM oidc_used_states WHERE expires_at <= ?`, p.Now.UnixNano()); err != nil {
+		return struct{}{}, err
+	}
 
-		return nil
-	})
+	_, err := a.tx.ExecContext(a.ctx, `INSERT INTO oidc_used_states (state_hash, expires_at) VALUES (?, ?)`, p.StateHash,
+		p.ExpiresAt.UnixNano())
+	if isUnique(err) {
+		return struct{}{}, ErrStateUsed
+	}
+
+	return struct{}{}, err
 }

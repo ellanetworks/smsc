@@ -237,8 +237,6 @@ func UpdateESME(a *auth) http.Handler {
 			return
 		}
 
-		cfg.SMPP.CloseESME(e.ID)
-
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "update_esme", p.Email, fmt.Sprintf("ESME %q updated", e.SystemID))
 
@@ -271,8 +269,6 @@ func DeleteESME(a *auth) http.Handler {
 			writeError(w, r, http.StatusInternalServerError, "Failed to delete ESME", err, cfg.Logger)
 			return
 		}
-
-		cfg.SMPP.CloseESME(e.ID)
 
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "delete_esme", p.Email, fmt.Sprintf("ESME %q deleted", e.SystemID))

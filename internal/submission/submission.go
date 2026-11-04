@@ -13,7 +13,6 @@ import (
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
-	"github.com/ellanetworks/smsc/internal/statusreport"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
@@ -155,9 +154,7 @@ func (s *Submitter) Submit(ctx context.Context, r Request) ([]int64, error) {
 
 		if tpdu.IsReplaceType(submit.ProtocolIdentifier) {
 			m.Replace = true
-			m.ReportReplaced = func(replaced db.Message) (*db.NewStatusReport, error) {
-				return statusreport.For(replaced, tpdu.StatusReplaced, now, current)
-			}
+			m.ReportReplaced = true
 		}
 
 		messages = append(messages, m)

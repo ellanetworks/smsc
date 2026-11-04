@@ -1,10 +1,8 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -316,11 +314,6 @@ func UpdateUser(a *auth) http.Handler {
 			return
 		}
 
-		if params.RoleID != u.Role {
-			u.Role = params.RoleID
-			a.roleChanged(r.Context(), u)
-		}
-
 		a.audit(r, "update_user", p.Email, fmt.Sprintf("Role of %s set to %d, pinned %t", u.Email, params.RoleID, pinned))
 		writeResponse(w, r, SuccessResponse{Message: "User updated successfully"}, http.StatusOK, cfg.Logger)
 	})
@@ -368,13 +361,7 @@ func DeleteUser(a *auth) http.Handler {
 			return
 		}
 
-		esmes, err := cfg.ESMEs.ListESMEsOfUser(r.Context(), u.ID)
-		if err != nil {
-			writeError(w, r, http.StatusInternalServerError, "Failed to delete user", err, cfg.Logger)
-			return
-		}
-
-		err = cfg.Auth.DeleteUser(r.Context(), u.ID)
+		err := cfg.Auth.DeleteUser(r.Context(), u.ID)
 		if errors.Is(err, db.ErrNotFound) {
 			writeError(w, r, http.StatusNotFound, "User not found", nil, cfg.Logger)
 			return
@@ -390,10 +377,6 @@ func DeleteUser(a *auth) http.Handler {
 			return
 		}
 
-		for _, e := range esmes {
-			cfg.SMPP.CloseESME(e.ID)
-		}
-
 		a.audit(r, "delete_user", p.Email, "User "+u.Email+" deleted")
 		writeResponse(w, r, SuccessResponse{Message: "User deleted successfully"}, http.StatusOK, cfg.Logger)
 	})
@@ -405,13 +388,6 @@ func userResponse(u db.User) User {
 	return User{
 		Email: u.Email, RoleID: u.Role, RolePinned: u.RolePinned, PasswordSet: u.PasswordHash != "",
 		OIDCLinked: u.HasIdentity,
-	}
-}
-
-func (a *auth) roleChanged(ctx context.Context, u db.User) {
-	if err := a.cfg.SMPP.CloseUser(ctx, u.ID); err != nil {
-		a.cfg.Logger.ErrorContext(ctx, "failed to close the SMPP sessions of a user", slog.String("email", u.Email),
-			slog.Any("error", err))
 	}
 }
 

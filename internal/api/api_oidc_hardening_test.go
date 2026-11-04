@@ -471,15 +471,16 @@ func TestOIDCRoleChangeClosesSMPPBinds(t *testing.T) {
 		o["group_roles"] = []map[string]any{{"group": "noc", "role_id": 3}, {"group": "ops", "role_id": 2}}
 	})
 	a.createUser(t, "nm@example.com", db.RoleNetworkManager)
-	id := a.userID(t, "nm@example.com")
+	a.createESME(t, `{"system_id": "nm", "user": "nm@example.com", "password": "x", "allowed_networks": []}`)
+	esme := a.storedESME(t, "nm").ID
 
-	if res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"groups": []string{"noc"}}}); res.outcome != "success" || len(smpp.closedUsers) != 0 {
-		t.Fatalf("login with the same role: %q, closed %v", res.outcome, smpp.closedUsers)
+	if res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"groups": []string{"noc"}}}); res.outcome != "success" || len(smpp.closedESMEs) != 0 {
+		t.Fatalf("login with the same role: %q, closed %v", res.outcome, smpp.closedESMEs)
 	}
 
 	if res := a.oidcLogin(t, idp, oidcLogin{claims: map[string]any{"groups": []string{"ops"}}}); res.outcome != "success" ||
-		!slices.Equal(smpp.closedUsers, []int64{id}) {
-		t.Fatalf("login with another role: %q, closed %v, want [%d]", res.outcome, smpp.closedUsers, id)
+		!slices.Equal(smpp.closedESMEs, []int64{esme}) {
+		t.Fatalf("login with another role: %q, closed %v, want [%d]", res.outcome, smpp.closedESMEs, esme)
 	}
 }
 

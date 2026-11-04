@@ -212,7 +212,7 @@ func TestSchemaKeepsStatusReportsConsistent(t *testing.T) {
 		"report on a missing message": `UPDATE messages SET report_for = 42 WHERE kind = 'status_report'`,
 		"unknown kind":                `UPDATE messages SET kind = 'command' WHERE kind = 'message'`,
 	} {
-		if _, err := d.conn.ExecContext(ctx, statement); err == nil {
+		if _, err := d.writer.ExecContext(ctx, statement); err == nil {
 			t.Errorf("%s: no constraint failed", name)
 		}
 	}

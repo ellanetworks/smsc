@@ -128,10 +128,12 @@ func TestPeerHostIsUnique(t *testing.T) {
 		t.Fatalf("UpdatePeer to the host of another = %v", err)
 	}
 
-	for range 2 {
-		if _, err := d.CreatePeer(ctx, settings.Peer{Addresses: other.Addresses, Port: 3868}); err != nil {
-			t.Fatalf("CreatePeer without a host: %v", err)
-		}
+	if _, err := d.CreatePeer(ctx, settings.Peer{Addresses: other.Addresses, Port: 3868}); err != nil {
+		t.Fatalf("CreatePeer without a host: %v", err)
+	}
+
+	if _, err := d.CreatePeer(ctx, settings.Peer{Addresses: other.Addresses, Port: 3868}); !errors.Is(err, settings.ErrConflict) {
+		t.Fatalf("second CreatePeer without a host at the same address = %v, want a conflict", err)
 	}
 }
 
@@ -158,7 +160,7 @@ func TestDeletePeer(t *testing.T) {
 
 	for _, table := range []string{"diameter_peer_addresses", "diameter_routes"} {
 		var n int
-		if err := d.conn.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil || n != 0 {
+		if err := d.writer.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s has %d rows, %v", table, n, err)
 		}
 	}
@@ -176,7 +178,7 @@ func TestDefaultRouteIsStoredWithoutARealm(t *testing.T) {
 	}
 
 	var realm string
-	if err := d.conn.QueryRowContext(ctx, "SELECT realm FROM diameter_routes").Scan(&realm); err != nil || realm != "" {
+	if err := d.writer.QueryRowContext(ctx, "SELECT realm FROM diameter_routes").Scan(&realm); err != nil || realm != "" {
 		t.Fatalf("realm = %q, %v", realm, err)
 	}
 

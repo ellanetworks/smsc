@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/mattn/go-sqlite3"
 )
@@ -25,10 +28,14 @@ func isUnique(err error) bool {
 }
 
 type DB struct {
-	conn    *sql.DB
-	path    string
-	metrics metrics
-	queued  func()
+	writer      *sql.DB
+	reader      *sql.DB
+	path        string
+	metrics     metrics
+	proposer    Proposer
+	applyMu     sync.Mutex
+	applied     atomic.Uint64
+	subscribers []func(Events)
 }
 
 var migrations = []string{
@@ -270,46 +277,104 @@ var migrations = []string{
 			OR type = 'sim_answer' AND attempt_id IS NOT NULL AND tp_status IS NULL)
 	);
 	CREATE INDEX smpp_notifications_due ON smpp_notifications (next_attempt_at) WHERE result IS NULL;
-	CREATE INDEX smpp_notifications_message_id ON smpp_notifications (message_id);`,
+	CREATE INDEX smpp_notifications_message_id ON smpp_notifications (message_id);
+	CREATE TABLE fsm_state (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		applied_index INTEGER NOT NULL,
+		applied_term INTEGER NOT NULL,
+		hash BLOB NOT NULL,
+		leader_time INTEGER NOT NULL
+	);
+	INSERT INTO fsm_state VALUES (1, 0, 0, zeroblob(32), 0);
+	CREATE TABLE applied_requests (
+		request_id BLOB PRIMARY KEY CHECK (length(request_id) = 16),
+		result BLOB NOT NULL,
+		applied_index INTEGER NOT NULL
+	) WITHOUT ROWID;
+	CREATE INDEX applied_requests_applied_index ON applied_requests (applied_index);`,
 }
 
-func Open(ctx context.Context, path string) (*DB, error) {
+type Option func(*DB)
+
+func WithClock(now func() time.Time) Option {
+	return func(d *DB) {
+		if l, ok := d.proposer.(*localProposer); ok {
+			l.now = now
+		}
+	}
+}
+
+func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 	if err := restrict(path); err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	conn, err := sql.Open("sqlite3", "file:"+path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_stmt_cache_size=64")
+	const params = "_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_stmt_cache_size=64"
+
+	writer, err := sql.Open("sqlite3", "file:"+path+"?"+params+"&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	conn.SetMaxOpenConns(1)
+	writer.SetMaxOpenConns(1)
 
-	if err := conn.PingContext(ctx); err != nil {
-		_ = conn.Close()
+	if err := writer.PingContext(ctx); err != nil {
+		_ = writer.Close()
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	d := &DB{conn: conn, path: path, metrics: newMetrics()}
+	d := &DB{writer: writer, path: path, metrics: newMetrics()}
 	if err := d.migrate(ctx); err != nil {
-		_ = conn.Close()
+		_ = writer.Close()
 		return nil, err
+	}
+
+	reader, err := sql.Open("sqlite3", "file:"+path+"?"+params+"&_query_only=1")
+	if err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	reader.SetMaxOpenConns(readConns)
+
+	if err := reader.PingContext(ctx); err != nil {
+		_ = writer.Close()
+		_ = reader.Close()
+
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	d.reader = reader
+
+	state, err := readFSMState(ctx, writer)
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("open database: read state: %w", err)
+	}
+
+	d.applied.Store(state.appliedIndex)
+	d.proposer = &localProposer{d: d, now: time.Now, last: state.leaderTime}
+
+	for _, opt := range opts {
+		opt(d)
 	}
 
 	return d, nil
 }
 
+const readConns = 8
+
 func (d *DB) Ping(ctx context.Context) error {
-	return d.conn.PingContext(ctx)
+	return d.reader.PingContext(ctx)
 }
 
 func (d *DB) Close() error {
-	return d.conn.Close()
+	return errors.Join(d.reader.Close(), d.writer.Close())
 }
 
 func (d *DB) migrate(ctx context.Context) error {
 	var version int
-	if err := d.conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	if err := d.writer.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 
@@ -318,7 +383,7 @@ func (d *DB) migrate(ctx context.Context) error {
 	}
 
 	for i := version; i < len(migrations); i++ {
-		tx, err := d.conn.BeginTx(ctx, nil)
+		tx, err := d.writer.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}

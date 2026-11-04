@@ -136,7 +136,7 @@ func TestSubmitReplaceType(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if m := store.messages[0]; !m.Replace || m.ReportReplaced == nil {
+	if m := store.messages[0]; !m.Replace || !m.ReportReplaced {
 		t.Fatalf("a replace type message is stored with Replace %t", m.Replace)
 	}
 }

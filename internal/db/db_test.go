@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
 var (
@@ -643,6 +645,26 @@ func TestReplaceShortMessage(t *testing.T) {
 	}
 }
 
+func reportedSubmit(t *testing.T, reference uint8) []byte {
+	t.Helper()
+
+	b, err := tpdu.Submit{
+		StatusReportRequest: true,
+		MessageReference:    reference,
+		ProtocolIdentifier:  0x41,
+		Destination: tpdu.Address{
+			TypeOfNumber:  tpdu.TypeOfNumberInternational,
+			NumberingPlan: tpdu.NumberingPlanISDN,
+			Digits:        testMSISDN,
+		},
+	}.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return b
+}
+
 func TestReplacedMessageStatusReport(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
@@ -650,44 +672,44 @@ func TestReplacedMessageStatusReport(t *testing.T) {
 	t.Run("stored with the replacement", func(t *testing.T) {
 		d := openTestDB(t)
 
-		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, []byte{0x01}, now)))
+		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, reportedSubmit(t, 1), now)))
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		var seen Message
-
-		replacement := replaceType(testMessage(2, false, []byte{0x02}, now.Add(time.Minute)))
-		replacement.ReportReplaced = func(replaced Message) (*NewStatusReport, error) {
-			seen = replaced
-			return testReport(now.Add(time.Minute)), nil
-		}
+		replacement := replaceType(testMessage(2, false, reportedSubmit(t, 2), now.Add(time.Minute)))
+		replacement.ReportReplaced = true
 
 		if _, err := d.CreateMessage(ctx, replacement); err != nil {
 			t.Fatal(err)
 		}
 
-		if seen.ID != id || seen.Status != StatusReplaced || !bytes.Equal(seen.TPDU, []byte{0x01}) {
-			t.Fatalf("ReportReplaced got %+v", seen)
+		reports, err := listStatusReports(ctx, d, id)
+		if err != nil || len(reports) != 1 {
+			t.Fatalf("reports = %+v, %v; want one", reports, err)
 		}
 
-		if reports, err := listStatusReports(ctx, d, id); err != nil || len(reports) != 1 {
-			t.Fatalf("reports = %+v, %v; want one", reports, err)
+		s, err := d.GetSettings(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		r := reports[0]
+		if r.ReportStatus != uint8(tpdu.StatusReplaced) || r.Originator.Digits != s.Operator.ServiceCentreAddress ||
+			!r.ExpiresAt.Equal(now.Add(time.Minute).Add(s.Delivery.DefaultValidity)) {
+			t.Fatalf("report = %+v", r)
 		}
 	})
 
 	t.Run("none when not wanted", func(t *testing.T) {
 		d := openTestDB(t)
 
-		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, []byte{0x01}, now)))
+		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, reportedSubmit(t, 1), now)))
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		replacement := replaceType(testMessage(2, false, []byte{0x02}, now))
-		replacement.ReportReplaced = func(Message) (*NewStatusReport, error) { return nil, nil }
-
-		if _, err := d.CreateMessage(ctx, replacement); err != nil {
+		if _, err := d.CreateMessage(ctx, replaceType(testMessage(2, false, reportedSubmit(t, 2), now))); err != nil {
 			t.Fatal(err)
 		}
 
@@ -696,7 +718,7 @@ func TestReplacedMessageStatusReport(t *testing.T) {
 		}
 	})
 
-	t.Run("a failure stores nothing", func(t *testing.T) {
+	t.Run("none for an undecodable original", func(t *testing.T) {
 		d := openTestDB(t)
 
 		id, err := d.CreateMessage(ctx, replaceType(testMessage(1, false, []byte{0x01}, now)))
@@ -704,19 +726,19 @@ func TestReplacedMessageStatusReport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		replacement := replaceType(testMessage(2, false, []byte{0x02}, now))
-		replacement.ReportReplaced = func(Message) (*NewStatusReport, error) { return nil, errors.New("no report") }
+		replacement := replaceType(testMessage(2, false, reportedSubmit(t, 2), now))
+		replacement.ReportReplaced = true
 
-		if _, err := d.CreateMessage(ctx, replacement); err == nil {
-			t.Fatal("expected an error")
+		if _, err := d.CreateMessage(ctx, replacement); err != nil {
+			t.Fatal(err)
 		}
 
-		if m, err := d.GetMessage(ctx, id); err != nil || m.Status != StatusPending {
-			t.Fatalf("message = %+v, %v; want it still pending", m, err)
+		if m, err := d.GetMessage(ctx, id); err != nil || m.Status != StatusReplaced {
+			t.Fatalf("message = %+v, %v; want it replaced", m, err)
 		}
 
-		if messages, total, err := d.ListMessages(ctx, MessageFilter{}, 1, 10); err != nil || total != 1 {
-			t.Fatalf("messages = %+v, %d, %v; want only the original", messages, total, err)
+		if reports, err := listStatusReports(ctx, d, id); err != nil || len(reports) != 0 {
+			t.Fatalf("reports = %+v, %v; want none", reports, err)
 		}
 	})
 }
@@ -1284,7 +1306,7 @@ func TestMessagesSubmittedBy(t *testing.T) {
 		"message from an MS with a submitter": `UPDATE messages SET submitted_by = 1 WHERE origin = 'mobile'`,
 		"unknown submitter":                   `UPDATE messages SET submitted_by = 42 WHERE origin = 'api'`,
 	} {
-		if _, err := d.conn.ExecContext(ctx, statement); err == nil {
+		if _, err := d.writer.ExecContext(ctx, statement); err == nil {
 			t.Errorf("%s: no constraint failed", name)
 		}
 	}

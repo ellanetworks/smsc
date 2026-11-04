@@ -79,6 +79,11 @@ func (l *Live) Update(ctx context.Context, o db.OIDC) error {
 	return nil
 }
 
+func (l *Live) Reload(o db.OIDC) {
+	o = clone(o)
+	l.current.Store(&o)
+}
+
 func clone(o db.OIDC) db.OIDC {
 	o.Scopes = slices.Clone(o.Scopes)
 	o.GroupRoles = slices.Clone(o.GroupRoles)

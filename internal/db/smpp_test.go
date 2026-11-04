@@ -24,7 +24,7 @@ type notificationRow struct {
 func notificationRows(t *testing.T, d *DB, messageID int64) []notificationRow {
 	t.Helper()
 
-	rows, err := d.conn.QueryContext(context.Background(), `SELECT n.id, n.message_id, s.esme_id, n.type, n.tp_status,
+	rows, err := d.writer.QueryContext(context.Background(), `SELECT n.id, n.message_id, s.esme_id, n.type, n.tp_status,
 		n.attempt_id, n.expires_at, n.next_attempt_at, n.attempts, n.result
 		FROM smpp_notifications n JOIN smpp_messages s ON s.message_id = n.message_id
 		WHERE n.message_id = ? ORDER BY n.id`, messageID)
@@ -57,7 +57,7 @@ func notificationByID(t *testing.T, d *DB, id int64) notificationRow {
 	t.Helper()
 
 	var messageID int64
-	if err := d.conn.QueryRowContext(context.Background(), `SELECT message_id FROM smpp_notifications WHERE id = ?`,
+	if err := d.writer.QueryRowContext(context.Background(), `SELECT message_id FROM smpp_notifications WHERE id = ?`,
 		id).Scan(&messageID); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,11 @@ func TestCompleteMessageQueuesNotifications(t *testing.T) {
 
 						var visible []int
 
-						f.d.OnNotificationsQueued(func() { visible = append(visible, len(notificationRows(t, f.d, id))) })
+						f.d.OnEvents(func(ev Events) {
+							if ev.Notifications {
+								visible = append(visible, len(notificationRows(t, f.d, id)))
+							}
+						})
 
 						at := f.origin.Add(time.Minute)
 						if err := f.d.CompleteMessage(ctx, id, s.status, at, nil, 0x42); err != nil {
@@ -226,7 +230,7 @@ func TestCompleteMessageNotificationsExpireAfterTheDefaultValidity(t *testing.T)
 	ctx := context.Background()
 	f := newSMPPFixture(t)
 
-	if _, err := f.d.conn.ExecContext(ctx, `UPDATE delivery SET default_validity = ?`, int64(time.Hour)); err != nil {
+	if _, err := f.d.writer.ExecContext(ctx, `UPDATE delivery SET default_validity = ?`, int64(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -272,7 +276,7 @@ func TestCompleteMessageQueuesInItsTransaction(t *testing.T) {
 	id := f.submit(t, f.esme, ReceiptFinal, true)
 	f.attempt(t, id, "success", []byte{0x00, 0x07})
 
-	if _, err := f.d.conn.ExecContext(ctx, `CREATE TRIGGER fail_receipt BEFORE INSERT ON smpp_notifications
+	if _, err := f.d.writer.ExecContext(ctx, `CREATE TRIGGER fail_receipt BEFORE INSERT ON smpp_notifications
 		WHEN NEW.type = 'receipt' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +295,7 @@ func TestCompleteMessageQueuesInItsTransaction(t *testing.T) {
 		t.Fatalf("notifications = %d, want 0: the SIM answer must roll back with the receipt", n)
 	}
 
-	if _, err := f.d.conn.ExecContext(ctx, `DROP TRIGGER fail_receipt`); err != nil {
+	if _, err := f.d.writer.ExecContext(ctx, `DROP TRIGGER fail_receipt`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -336,7 +340,11 @@ func TestReplacedSMPPMessageGetsADeletedReceipt(t *testing.T) {
 
 			var visible []int
 
-			f.d.OnNotificationsQueued(func() { visible = append(visible, len(notificationRows(t, f.d, id))) })
+			f.d.OnEvents(func(ev Events) {
+				if ev.Notifications {
+					visible = append(visible, len(notificationRows(t, f.d, id)))
+				}
+			})
 
 			replacedAt := f.origin.Add(time.Minute)
 
@@ -744,7 +752,7 @@ func TestPurgeKeepsMessagesWithNotificationsToSend(t *testing.T) {
 			f.origin = before.Add(-time.Hour)
 
 			if tt.validity != 0 {
-				if _, err := f.d.conn.ExecContext(ctx, `UPDATE delivery SET default_validity = ?`,
+				if _, err := f.d.writer.ExecContext(ctx, `UPDATE delivery SET default_validity = ?`,
 					int64(tt.validity)); err != nil {
 					t.Fatal(err)
 				}

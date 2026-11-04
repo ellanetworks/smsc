@@ -33,7 +33,7 @@ func (d *DB) GetIdentity(ctx context.Context, issuer, subject string) (_ Identit
 		createdAt, lastLogin int64
 	)
 
-	err = d.conn.QueryRowContext(ctx, `SELECT id, user_id, issuer, subject, email, created_at, last_login_at
+	err = d.reader.QueryRowContext(ctx, `SELECT id, user_id, issuer, subject, email, created_at, last_login_at
 		FROM user_identities WHERE issuer = ? AND subject = ?`, issuer, subject).Scan(&i.ID, &i.UserID, &i.Issuer,
 		&i.Subject, &i.Email, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -50,15 +50,24 @@ func (d *DB) GetIdentity(ctx context.Context, issuer, subject string) (_ Identit
 	return i, nil
 }
 
+type createIdentityCmd struct {
+	UserID   int64
+	Identity NewIdentity
+}
+
 func (d *DB) CreateIdentity(ctx context.Context, userID int64, i NewIdentity) (_ int64, err error) {
 	defer d.observe(&err)()
 
-	id, err := createIdentity(ctx, d.conn, userID, i)
+	id, err := submit[int64](ctx, d, cmdCreateIdentity, createIdentityCmd{UserID: userID, Identity: i})
 	if err != nil {
 		return 0, fmt.Errorf("create identity: %w", err)
 	}
 
 	return id, nil
+}
+
+func applyCreateIdentity(a *applyCtx, p createIdentityCmd) (int64, error) {
+	return createIdentity(a.ctx, a.tx, p.UserID, p.Identity)
 }
 
 type execer interface {
@@ -83,19 +92,25 @@ func createIdentity(ctx context.Context, conn execer, userID int64, i NewIdentit
 func (d *DB) DeleteIdentities(ctx context.Context, userID int64) (err error) {
 	defer d.observe(&err)()
 
-	return d.inTx(ctx, "delete identities", func(tx *sql.Tx) error {
-		var linked bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_identities JOIN oidc
-			ON oidc.issuer = user_identities.issuer WHERE user_identities.user_id = ?)`, userID).Scan(&linked); err != nil {
-			return err
-		}
+	if _, err := submit[struct{}](ctx, d, cmdDeleteIdentities, userID); err != nil {
+		return fmt.Errorf("delete identities: %w", err)
+	}
 
-		if !linked {
-			return ErrNotFound
-		}
+	return nil
+}
 
-		_, err := tx.ExecContext(ctx, `DELETE FROM user_identities WHERE user_id = ?`, userID)
+func applyDeleteIdentities(a *applyCtx, userID int64) (struct{}, error) {
+	var linked bool
+	if err := a.tx.QueryRowContext(a.ctx, `SELECT EXISTS (SELECT 1 FROM user_identities JOIN oidc
+		ON oidc.issuer = user_identities.issuer WHERE user_identities.user_id = ?)`, userID).Scan(&linked); err != nil {
+		return struct{}{}, err
+	}
 
-		return err
-	})
+	if !linked {
+		return struct{}{}, ErrNotFound
+	}
+
+	_, err := a.tx.ExecContext(a.ctx, `DELETE FROM user_identities WHERE user_id = ?`, userID)
+
+	return struct{}{}, err
 }

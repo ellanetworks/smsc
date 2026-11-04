@@ -46,7 +46,7 @@ func TestMetricsCountFailuresOnly(t *testing.T) {
 		t.Errorf("duration has %d observations, want 4", got)
 	}
 
-	if err := d.conn.Close(); err != nil {
+	if err := d.reader.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,7 +100,10 @@ func TestMetricsLint(t *testing.T) {
 }
 
 func TestEveryCallIsObserved(t *testing.T) {
-	unobserved := map[string]bool{"Close": true, "Collectors": true, "CreateMessage": true, "OnNotificationsQueued": true, "Ping": true}
+	unobserved := map[string]bool{
+		"Close": true, "Collectors": true, "CreateMessage": true, "Ping": true, "Apply": true, "AppliedIndex": true,
+		"OnEvents": true, "SetProposer": true, "JWTSecret": true, "OIDCCookieKey": true,
+	}
 
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -219,18 +222,13 @@ func TestMetricsCountWhatMessagesBecome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	replaced, err := d.CreateMessage(ctx, replaceType(testMessage(3, false, []byte{0x03}, now)))
+	replaced, err := d.CreateMessage(ctx, replaceType(testMessage(3, false, reportedSubmit(t, 3), now)))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	replacement := replaceType(testMessage(4, false, []byte{0x04}, now))
-	replacement.ReportReplaced = func(Message) (*NewStatusReport, error) {
-		r := testReport(now)
-		r.Status = 0x02
-
-		return r, nil
-	}
+	replacement := replaceType(testMessage(4, false, reportedSubmit(t, 4), now))
+	replacement.ReportReplaced = true
 
 	if _, err := d.CreateMessage(ctx, replacement); err != nil {
 		t.Fatal(err)

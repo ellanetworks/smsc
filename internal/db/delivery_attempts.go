@@ -58,7 +58,16 @@ const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, 
 func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ int64, err error) {
 	defer d.observe(&err)()
 
-	res, err := d.conn.ExecContext(ctx,
+	id, err := submit[int64](ctx, d, cmdRecordAttempt, a)
+	if err != nil {
+		return 0, fmt.Errorf("create delivery attempt: %w", err)
+	}
+
+	return id, nil
+}
+
+func applyRecordAttempt(ax *applyCtx, a DeliveryAttempt) (int64, error) {
+	res, err := ax.tx.ExecContext(ax.ctx,
 		`INSERT INTO delivery_attempts (message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 			failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
 			absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp, deliver_report)
@@ -70,22 +79,17 @@ func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ in
 		nullableString(a.AbsentUserDiagnostics.IPSMGW), nullableString(a.AbsentUserDiagnostics.SMSF3GPP), nullableString(a.AbsentUserDiagnostics.SMSFNon3GPP),
 		a.DeliverReport)
 	if err != nil {
-		return 0, fmt.Errorf("create delivery attempt: %w", err)
+		return 0, err
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("create delivery attempt: %w", err)
-	}
-
-	return id, nil
+	return res.LastInsertId()
 }
 
 func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) (_ []DeliveryAttempt, _ int, err error) {
 	defer d.observe(&err)()
 
 	var total int
-	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM delivery_attempts WHERE message_id = ?`, messageID).Scan(&total); err != nil {
+	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM delivery_attempts WHERE message_id = ?`, messageID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
 	}
 
@@ -109,7 +113,7 @@ func (d *DB) ListDeliverReports(ctx context.Context, messageID int64) (_ []Deliv
 }
 
 func (d *DB) queryDeliveryAttempts(ctx context.Context, where string, args ...any) ([]DeliveryAttempt, error) {
-	rows, err := d.conn.QueryContext(ctx, `SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE `+where, args...)
+	rows, err := d.reader.QueryContext(ctx, `SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE `+where, args...)
 	if err != nil {
 		return nil, err
 	}

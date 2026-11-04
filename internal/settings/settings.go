@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -57,7 +58,7 @@ func (s Settings) Validate() error {
 	errs := []error{s.Operator.Validate(), s.Delivery.Validate(), s.Retention.Validate()}
 
 	for i, p := range s.Peers {
-		errs = append(errs, p.Validate(), p.conflict(s.Peers[:i], s.Operator.Host()))
+		errs = append(errs, p.Validate(), p.Conflict(s.Peers[:i], s.Operator.Host()))
 	}
 
 	return errors.Join(errs...)
@@ -118,6 +119,7 @@ type Live struct {
 	current atomic.Pointer[Settings]
 
 	mu      sync.Mutex
+	stateMu sync.Mutex
 	changed chan struct{}
 }
 
@@ -136,6 +138,16 @@ func NewLive(store Store, initial Settings) *Live {
 	return l
 }
 
+func (o Operator) Conflict(peers []Peer) error {
+	for _, p := range peers {
+		if strings.EqualFold(p.Host, o.Host()) {
+			return fmt.Errorf("%w: host %s is peer %d's", ErrConflict, o.Host(), p.ID)
+		}
+	}
+
+	return nil
+}
+
 func (l *Live) Get() Settings {
 	return *l.current.Load()
 }
@@ -146,10 +158,8 @@ func (l *Live) UpdateOperator(ctx context.Context, o Operator) error {
 	}
 
 	return l.change(func(s *Settings) error {
-		for _, p := range s.Peers {
-			if strings.EqualFold(p.Host, o.Host()) {
-				return fmt.Errorf("%w: host %s is peer %d's", ErrConflict, o.Host(), p.ID)
-			}
+		if err := o.Conflict(s.Peers); err != nil {
+			return err
 		}
 
 		if err := l.store.UpdateOperator(ctx, o); err != nil {
@@ -201,17 +211,39 @@ func (l *Live) change(fn func(*Settings) error) error {
 		return err
 	}
 
-	l.current.Store(&next)
-
-	close(l.changed)
-	l.changed = make(chan struct{})
+	l.swap(next)
 
 	return nil
 }
 
+func (l *Live) Reload(next Settings) {
+	next.Delivery.RetryIntervals = slices.Clone(next.Delivery.RetryIntervals)
+	next.Peers = slices.Clone(next.Peers)
+
+	for i, p := range next.Peers {
+		next.Peers[i] = clonePeer(p)
+	}
+
+	l.swap(next)
+}
+
+func (l *Live) swap(next Settings) {
+	l.stateMu.Lock()
+	defer l.stateMu.Unlock()
+
+	if reflect.DeepEqual(*l.current.Load(), next) {
+		return
+	}
+
+	l.current.Store(&next)
+
+	close(l.changed)
+	l.changed = make(chan struct{})
+}
+
 func (l *Live) Changed() <-chan struct{} {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.stateMu.Lock()
+	defer l.stateMu.Unlock()
 
 	return l.changed
 }

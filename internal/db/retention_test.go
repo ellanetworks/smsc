@@ -44,7 +44,7 @@ func TestPurgeMessages(t *testing.T) {
 			name: "replaced before the cutoff",
 			setup: func(t *testing.T, d *DB) (int64, int64) {
 				id := create(t, d, submitted)
-				if _, err := d.conn.ExecContext(context.Background(), `UPDATE messages SET status = ?, updated_at = ? WHERE id = ?`,
+				if _, err := d.writer.ExecContext(context.Background(), `UPDATE messages SET status = ?, updated_at = ? WHERE id = ?`,
 					StatusReplaced, before.UnixNano(), id); err != nil {
 					t.Fatal(err)
 				}
@@ -126,7 +126,7 @@ func TestPurgeMessagesInBatches(t *testing.T) {
 	d := openTestDB(t)
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 
-	tx, err := d.conn.BeginTx(ctx, nil)
+	tx, err := d.writer.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestPurgeMessagesInBatches(t *testing.T) {
 func TestPurgeMessagesUsesItsIndex(t *testing.T) {
 	d := openTestDB(t)
 
-	rows, err := d.conn.QueryContext(context.Background(), `EXPLAIN QUERY PLAN `+purgeableMessages, 0, 1000)
+	rows, err := d.writer.QueryContext(context.Background(), `EXPLAIN QUERY PLAN `+purgeableMessages, 0, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func count(t *testing.T, d *DB, table string) int {
 	t.Helper()
 
 	var n int
-	if err := d.conn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
+	if err := d.writer.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 
