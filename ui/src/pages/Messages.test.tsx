@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { authFor, type Auth } from "@/contexts/AuthContext";
 import Messages from "@/pages/Messages";
 import { RoleID } from "@/queries/users";
@@ -38,13 +38,27 @@ const rowCells = (to: string) =>
     .getAllByRole("gridcell")
     .map((c) => c.textContent);
 
+function Address() {
+  const { search } = useLocation();
+  const navigate = useNavigate();
+  return (
+    <>
+      <output data-testid="search">{search}</output>
+      <button onClick={() => navigate("/messages")}>Open Messages</button>
+    </>
+  );
+}
+
 const renderMessages = (path = "/messages", auth?: Auth) =>
   renderWithClient(
     <MemoryRouter initialEntries={[path]}>
       <Messages />
+      <Address />
     </MemoryRouter>,
     auth,
   );
+
+const search = () => screen.getByTestId("search").textContent;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -97,6 +111,64 @@ describe("Messages", () => {
     );
     expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent(
       "Failed",
+    );
+  });
+
+  it("keeps the status and time range chosen in the address", async () => {
+    serveMessages();
+
+    renderMessages();
+    await listed();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Failed" }));
+    await waitFor(() => expect(search()).toBe("?status=failed"));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Time range: Any time" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Last 24 hours" }),
+    );
+    await waitFor(() => expect(search()).toBe("?status=failed&range=24h"));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Time range: Last 24 hours" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Any time" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(await screen.findByRole("option", { name: "All" }));
+    await waitFor(() => expect(search()).toBe(""));
+  });
+
+  it("filters by the custom time range of the address", async () => {
+    const requests = serveMessages();
+    const start = "2026-09-30T10:00:00.000Z";
+    const end = "2026-09-30T11:30:00.000Z";
+
+    renderMessages(`/messages?range=custom&start=${start}&end=${end}`);
+
+    await listed();
+    expect(lastQuery(requests)).toMatchObject({ start, end });
+  });
+
+  it("returns to the first page when the address changes", async () => {
+    const requests = serveMessages([message()], 60);
+
+    renderMessages("/messages?status=failed");
+    await listed();
+
+    fireEvent.click(screen.getByRole("button", { name: "Go to next page" }));
+    await waitFor(() =>
+      expect(lastQuery(requests)).toMatchObject({
+        page: "2",
+        status: "failed",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Messages" }));
+    await waitFor(() =>
+      expect(lastQuery(requests)).toEqual({ page: "1", per_page: "25" }),
     );
   });
 

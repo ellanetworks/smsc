@@ -2,11 +2,11 @@ import type { ReactNode } from "react";
 import {
   Box,
   Card,
+  type CardProps,
   CardActionArea,
   CardContent,
   CardHeader,
   Chip,
-  LinearProgress,
   Skeleton,
   Table,
   TableBody,
@@ -28,7 +28,12 @@ import {
   messageStatusColors,
 } from "@/components/chips";
 import { useAuth } from "@/contexts/AuthContext";
-import { getDiameterStatus, hssPeers } from "@/queries/diameter";
+import {
+  type DiameterPeer,
+  getDiameterStatus,
+  hssPeers,
+  listPeers,
+} from "@/queries/diameter";
 import { getMessageCounts, type MessageStatus } from "@/queries/messages";
 import { getMetrics, sumOf } from "@/queries/metrics";
 import { getOIDCLogin } from "@/queries/oidc";
@@ -37,6 +42,8 @@ import { listESMEs } from "@/queries/smpp";
 import { formatDateTime } from "@/utils/dates";
 
 export const DASHBOARD_REFRESH_MS = 5000;
+
+export const COUNTS_REFRESH_MS = 30_000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -49,17 +56,20 @@ const ALWAYS_SHOWN: MessageStatus[] = [
 
 const nf = new Intl.NumberFormat();
 
-const MEMORY_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
+const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
 
-const formatMemory = (bytes: number): string => {
+const sizeFormat = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 2,
+});
+
+const formatBytes = (bytes: number): string => {
   let n = bytes;
   let i = 0;
-  while (n >= 1024 && i < MEMORY_UNITS.length - 1) {
+  while (n >= 1024 && i < BYTE_UNITS.length - 1) {
     n /= 1024;
     i++;
   }
-  const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
-  return `${fmt.format(n)} ${MEMORY_UNITS[i]}`;
+  return `${sizeFormat.format(n)} ${BYTE_UNITS[i]}`;
 };
 
 const lastDayLink = (status?: MessageStatus) =>
@@ -80,7 +90,7 @@ const titleLinkSx = {
 
 const headSx = { fontWeight: 600, whiteSpace: "nowrap" };
 
-interface PanelProps {
+interface PanelProps extends Omit<CardProps, "title"> {
   title: string;
   to?: string;
   loading?: boolean;
@@ -98,9 +108,11 @@ function Panel({
   minHeight = 160,
   alignTop,
   children,
+  ...cardProps
 }: PanelProps) {
   return (
     <Card
+      {...cardProps}
       sx={{
         height: "100%",
         display: "flex",
@@ -160,10 +172,8 @@ interface KpiCardProps {
 }
 
 function KpiCard({ title, hint, value, caption, to, ...state }: KpiCardProps) {
-  const navigate = useNavigate();
-
-  const card = (
-    <Panel title={title} {...state}>
+  const content = (
+    <>
       <Box sx={{ textAlign: "center" }}>
         {typeof value === "string" ? (
           <Typography variant="h4">{value}</Typography>
@@ -176,23 +186,30 @@ function KpiCard({ title, hint, value, caption, to, ...state }: KpiCardProps) {
           </Typography>
         )}
       </Box>
-    </Panel>
+    </>
   );
 
+  if (to) {
+    return (
+      <Tooltip title={hint} arrow describeChild>
+        <CardActionArea
+          component={RouterLink}
+          to={to}
+          sx={{ height: "100%", borderRadius: 3 }}
+        >
+          <Panel title={title} {...state}>
+            {content}
+          </Panel>
+        </CardActionArea>
+      </Tooltip>
+    );
+  }
+
   return (
-    <Tooltip title={hint} arrow>
-      <Box sx={{ height: "100%" }}>
-        {to ? (
-          <CardActionArea
-            onClick={() => navigate(to)}
-            sx={{ height: "100%", borderRadius: 3 }}
-          >
-            {card}
-          </CardActionArea>
-        ) : (
-          card
-        )}
-      </Box>
+    <Tooltip title={hint} arrow describeChild>
+      <Panel title={title} tabIndex={0} {...state}>
+        {content}
+      </Panel>
     </Tooltip>
   );
 }
@@ -270,11 +287,25 @@ export default function Dashboard() {
     queryKey: ["messages", "counts", "lastDay"],
     queryFn: () =>
       getMessageCounts({ start: new Date(Date.now() - DAY_MS).toISOString() }),
+    refetchInterval: COUNTS_REFRESH_MS,
+  });
+  const configured = useQuery({
+    queryKey: ["diameter", "peers"],
+    queryFn: listPeers,
     refetchInterval: DASHBOARD_REFRESH_MS,
   });
 
   const peers = diameter.data?.peers ?? [];
   const hss = diameter.data ? hssPeers(diameter.data) : [];
+  const addressesOf = new Map(
+    (configured.data ?? []).map((p) => [p.id, p.addresses.join(", ")]),
+  );
+  const peerName = (peer: DiameterPeer) =>
+    peer.host ? (
+      <DomainName name={peer.host} />
+    ) : (
+      peer.address || (peer.id !== undefined && addressesOf.get(peer.id)) || "—"
+    );
 
   const samples = metrics.data ?? [];
   const due = sumOf(samples, "ellasmsc_messages_pending", { state: "due" });
@@ -305,7 +336,7 @@ export default function Dashboard() {
       <PageHeader id="dashboard-title" title="Dashboard" />
 
       <Section title="Overview" first>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+        <Grid size={QUARTER}>
           <Panel
             title="This SMSC"
             to="/operator"
@@ -341,13 +372,9 @@ export default function Dashboard() {
                 </TableHead>
                 <TableBody>
                   {peers.map((peer) => (
-                    <TableRow key={`${peer.host}|${peer.address}`}>
+                    <TableRow key={peer.id ?? `${peer.host}|${peer.address}`}>
                       <TableCell>
-                        {peer.host ? (
-                          <DomainName name={peer.host} />
-                        ) : (
-                          peer.address || "—"
-                        )}
+                        {peerName(peer)}
                         {hss.includes(peer.host) && (
                           <Chip
                             label="HSS"
@@ -370,7 +397,7 @@ export default function Dashboard() {
             </TableContainer>
           </Panel>
         </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+        <Grid size={QUARTER}>
           <Panel
             title="SMPP"
             to="/smpp"
@@ -466,13 +493,27 @@ export default function Dashboard() {
                                 gap: 1,
                               }}
                             >
-                              <LinearProgress
-                                variant="determinate"
-                                value={share}
-                                color={color === "default" ? "inherit" : color}
-                                aria-label={`${status} share`}
-                                sx={{ flexGrow: 1, height: 8, borderRadius: 4 }}
-                              />
+                              <Box
+                                aria-hidden
+                                sx={{
+                                  flexGrow: 1,
+                                  height: 8,
+                                  borderRadius: 4,
+                                  bgcolor: "action.hover",
+                                  overflow: "hidden",
+                                }}
+                              >
+                                <Box
+                                  sx={{
+                                    width: `${share}%`,
+                                    height: "100%",
+                                    bgcolor:
+                                      color === "default"
+                                        ? "grey.500"
+                                        : `${color}.main`,
+                                  }}
+                                />
+                              </Box>
                               <Typography
                                 variant="body2"
                                 color="textSecondary"
@@ -501,34 +542,33 @@ export default function Dashboard() {
           <Tooltip
             title="Short messages and status reports waiting for delivery, whatever their age. Due ones are being delivered now; if they stay due, delivery is falling behind. Waiting ones wait for a retry or for the phone to be reachable."
             arrow
+            describeChild
           >
-            <Box sx={{ height: "100%" }}>
-              <Panel title="Delivery Queue" {...metricCard}>
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "space-around",
-                    width: "100%",
-                    textAlign: "center",
-                  }}
-                >
-                  <Box>
-                    <Typography variant="h4">{nf.format(due ?? 0)}</Typography>
-                    <Typography variant="body2" color="textSecondary">
-                      Due
-                    </Typography>
-                  </Box>
-                  <Box>
-                    <Typography variant="h4">
-                      {nf.format(waiting ?? 0)}
-                    </Typography>
-                    <Typography variant="body2" color="textSecondary">
-                      Waiting
-                    </Typography>
-                  </Box>
+            <Panel title="Delivery Queue" tabIndex={0} {...metricCard}>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-around",
+                  width: "100%",
+                  textAlign: "center",
+                }}
+              >
+                <Box>
+                  <Typography variant="h4">{nf.format(due ?? 0)}</Typography>
+                  <Typography variant="body2" color="textSecondary">
+                    Due
+                  </Typography>
                 </Box>
-              </Panel>
-            </Box>
+                <Box>
+                  <Typography variant="h4">
+                    {nf.format(waiting ?? 0)}
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary">
+                    Waiting
+                  </Typography>
+                </Box>
+              </Box>
+            </Panel>
           </Tooltip>
         </Grid>
       </Section>
@@ -539,7 +579,7 @@ export default function Dashboard() {
             title="Process Memory"
             hint="RAM used by the SMSC process (resident set size): what the operating system and a container memory limit count."
             {...metricCard}
-            value={memory === undefined ? "N/A" : formatMemory(memory)}
+            value={memory === undefined ? "N/A" : formatBytes(memory)}
           />
         </Grid>
         <Grid size={QUARTER}>
@@ -547,7 +587,7 @@ export default function Dashboard() {
             title="Database Size"
             hint="Size of the database on disk, its write-ahead log included."
             {...metricCard}
-            value={database === undefined ? "N/A" : formatMemory(database)}
+            value={database === undefined ? "N/A" : formatBytes(database)}
           />
         </Grid>
         <Grid size={QUARTER}>

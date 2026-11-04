@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { authFor } from "@/contexts/AuthContext";
 import Dashboard from "@/pages/Dashboard";
 import { RoleID } from "@/queries/users";
+import { formatDateTime } from "@/utils/dates";
 import { json, renderWithClient, stubApi } from "@/test/render";
 
 const peer = (host: string, state: string, address: string) => ({
@@ -59,9 +60,12 @@ process_resident_memory_bytes 36700160
 process_start_time_seconds 1.7e+09
 `;
 
+type Route = (url: URL) => Response;
+
 const serve = ({
   replaced = 0,
   sso = { enabled: false } as { enabled: boolean; display_name?: string },
+  routes = {} as Record<string, Route>,
 } = {}) => {
   const counts: URL[] = [];
   vi.stubGlobal(
@@ -102,6 +106,8 @@ const serve = ({
             },
           });
         },
+        "/api/v1/diameter/peers": () => json(200, { result: { items: [] } }),
+        ...routes,
       }),
     ),
   );
@@ -211,6 +217,7 @@ describe("Dashboard", () => {
       ["Expired", "4", "4%"],
       ["Total", "100", ""],
     ]);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     const start = Date.parse(counts[0].searchParams.get("start") ?? "");
     expect(before - start).toBeGreaterThan(24 * 60 * 60_000 - 1000);
     expect(before - start).toBeLessThan(24 * 60 * 60_000 + 1000);
@@ -292,6 +299,173 @@ describe("Dashboard", () => {
     expect(screen.getByRole("link", { name: "Last 24 Hours" })).toHaveAttribute(
       "href",
       "/messages?range=24h",
+    );
+  });
+
+  it("names a configured peer that has not connected by its addresses", async () => {
+    serve({
+      routes: {
+        "/api/v1/diameter": () =>
+          json(200, {
+            result: {
+              ...diameter,
+              peers: [
+                { ...peer("", "connecting", ""), id: 1, configured: true },
+                { ...peer("", "connecting", ""), id: 2, configured: true },
+              ],
+            },
+          }),
+        "/api/v1/diameter/peers": () =>
+          json(200, {
+            result: {
+              items: [
+                {
+                  id: 1,
+                  host: "",
+                  addresses: ["192.0.2.10"],
+                  port: 3868,
+                  routes: [],
+                },
+                {
+                  id: 2,
+                  host: "",
+                  addresses: ["192.0.2.20", "2001:db8::20"],
+                  port: 3868,
+                  routes: [],
+                },
+              ],
+            },
+          }),
+      },
+    });
+    render();
+
+    await screen.findByText("192.0.2.10");
+    expect(rows("Diameter Peers")).toEqual([
+      ["192.0.2.10", "Connecting"],
+      ["192.0.2.20, 2001:db8::20", "Connecting"],
+    ]);
+  });
+
+  it("says when there are no peers and no ESMEs", async () => {
+    serve({
+      routes: {
+        "/api/v1/diameter": () =>
+          json(200, { result: { ...diameter, peers: [] } }),
+        "/api/v1/esmes": () => json(200, { result: { items: [] } }),
+      },
+    });
+    render();
+
+    expect(await screen.findByText("No Diameter peers.")).toBeInTheDocument();
+    expect(await screen.findByText("No ESMEs.")).toBeInTheDocument();
+  });
+
+  it("shows no share when there are no messages", async () => {
+    serve({
+      routes: {
+        "/api/v1/messages/counts": () =>
+          json(200, {
+            result: {
+              pending: 0,
+              delivered: 0,
+              failed: 0,
+              expired: 0,
+              replaced: 0,
+            },
+          }),
+      },
+    });
+    render();
+
+    await screen.findByRole("table", { name: LAST_DAY });
+    expect(rows(LAST_DAY).map((r) => r.slice(0, 3))).toEqual([
+      ["Delivered", "0", "0%"],
+      ["Pending", "0", "0%"],
+      ["Failed", "0", "0%"],
+      ["Expired", "0", "0%"],
+      ["Total", "0", ""],
+    ]);
+  });
+
+  it("says when a card fails to load", async () => {
+    serve({
+      routes: {
+        "/api/v1/messages/counts": () => json(500, { error: "boom" }),
+        "/api/v1/metrics": () => new Response("", { status: 500 }),
+      },
+    });
+    render();
+
+    expect(
+      await within(card("Last 24 Hours")).findByText("Failed to load data."),
+    ).toBeInTheDocument();
+    expect(
+      await within(card("Delivery Queue")).findByText("Failed to load data."),
+    ).toBeInTheDocument();
+    expect(
+      within(card("Process Memory")).getByText("Failed to load data."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows N/A for metrics the SMSC does not report", async () => {
+    serve({ routes: { "/api/v1/metrics": () => new Response("") } });
+    render();
+
+    expect(
+      await within(card("Process Memory")).findByText("N/A"),
+    ).toBeInTheDocument();
+    expect(within(card("Database Size")).getByText("N/A")).toBeInTheDocument();
+    expect(within(card("Up Since")).getByText("N/A")).toBeInTheDocument();
+  });
+
+  it("shows when the SMSC started", async () => {
+    serve();
+    render();
+
+    expect(
+      await within(card("Up Since")).findByText(
+        formatDateTime(new Date(1.7e12).toISOString()),
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("opens Single Sign-On for an Admin", async () => {
+    serve();
+    render();
+
+    await within(card("Single Sign-On")).findByText("Off");
+    fireEvent.click(screen.getByRole("link", { name: /Single Sign-On/ }));
+
+    expect(await screen.findByText("At /single-sign-on")).toBeInTheDocument();
+  });
+
+  it("opens the messages of a status from its chip", async () => {
+    serve();
+    render();
+
+    await screen.findByRole("table", { name: LAST_DAY });
+    fireEvent.click(screen.getByRole("link", { name: "Expired" }));
+
+    expect(
+      await screen.findByText("At /messages?status=expired&range=24h"),
+    ).toBeInTheDocument();
+  });
+
+  it("describes the cards to assistive technologies", async () => {
+    serve();
+    render();
+
+    await within(card("Process Memory")).findByText("35 MiB");
+    expect(card("Process Memory")).toHaveAttribute("tabindex", "0");
+    expect(card("Process Memory")).not.toHaveAttribute("aria-label");
+    fireEvent.mouseOver(card("Process Memory"));
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "resident set size",
+    );
+    expect(card("Process Memory")).toHaveAccessibleDescription(
+      /resident set size/,
     );
   });
 });

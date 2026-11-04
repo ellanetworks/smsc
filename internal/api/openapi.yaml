@@ -2331,6 +2331,7 @@ components:
           type: integer
         replaced:
           type: integer
+
     ListMessagesResponse:
       type: object
       required: [items, page, per_page, total_count]

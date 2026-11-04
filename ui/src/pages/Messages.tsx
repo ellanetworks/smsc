@@ -27,6 +27,7 @@ import TimeRangePicker, {
   ANY_RANGE,
   AUDIT_RANGES,
   CUSTOM_RANGE,
+  EMPTY_TIME_RANGE,
   timeRangeFilter,
   timeRangeParams,
   type TimeRangeValue,
@@ -145,7 +146,7 @@ const timeRangeOf = (params: URLSearchParams): TimeRangeValue => {
   if (AUDIT_RANGES.some((r) => r.value === range)) {
     return { preset: range, from: "", to: "" };
   }
-  return { preset: ANY_RANGE, from: "", to: "" };
+  return EMPTY_TIME_RANGE;
 };
 
 export default function Messages() {
@@ -159,6 +160,12 @@ export default function Messages() {
     page: 0,
     pageSize: PAGE_SIZE_OPTIONS[0],
   });
+  const filterKey = searchParams.toString();
+  const [pagedFilters, setPagedFilters] = useState(filterKey);
+  if (pagedFilters !== filterKey) {
+    setPagedFilters(filterKey);
+    setPagination((p) => ({ ...p, page: 0 }));
+  }
   const [selected, setSelected] = useState<Message | null>(null);
   const closeDrawer = useCallback(() => setSelected(null), []);
   const [editingDelivery, setEditingDelivery] = useState(false);
@@ -258,7 +265,6 @@ export default function Messages() {
               start: next.preset === CUSTOM_RANGE ? next.from : "",
               end: next.preset === CUSTOM_RANGE ? next.to : "",
             });
-            resetPage();
           }}
           ranges={AUDIT_RANGES}
         />
@@ -293,7 +299,6 @@ export default function Messages() {
           value={status}
           onChange={(e) => {
             setFilter({ status: e.target.value });
-            resetPage();
           }}
           sx={{ minWidth: 160 }}
         >
