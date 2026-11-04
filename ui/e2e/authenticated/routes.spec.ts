@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { assertNoA11yViolations } from "../a11y";
 
 const ROUTES = [
+  { label: "Dashboard", route: "/dashboard", heading: "Dashboard" },
   { label: "Operator", route: "/operator", heading: "Operator" },
   { label: "Diameter", route: "/diameter", heading: "Diameter" },
   { label: "SMPP", route: "/smpp", heading: /^SMPP/ },

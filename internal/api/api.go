@@ -26,6 +26,7 @@ type Store interface {
 	CreateMessages(ctx context.Context, messages []db.NewMessage) ([]int64, error)
 	GetMessage(ctx context.Context, id int64) (db.Message, error)
 	ListMessages(ctx context.Context, f db.MessageFilter, page, perPage int) ([]db.Message, int, error)
+	CountMessages(ctx context.Context, f db.MessageFilter) (map[db.MessageStatus]int, error)
 	ListDeliveryAttempts(ctx context.Context, messageID int64, page, perPage int) ([]db.DeliveryAttempt, int, error)
 	ListDeliverReports(ctx context.Context, messageID int64) ([]db.DeliveryAttempt, error)
 	StatusReportsFor(ctx context.Context, messageIDs []int64) (map[int64][]db.Message, error)
@@ -132,6 +133,7 @@ func routes(cfg Config, a *auth) []route {
 
 		{"POST /api/v1/messages", PermCreateMessage, CreateMessage(cfg)},
 		{"GET /api/v1/messages", PermReadMessage, ListMessages(cfg)},
+		{"GET /api/v1/messages/counts", PermReadMessage, CountMessages(cfg)},
 		{"GET /api/v1/messages/retention", PermReadRetention, GetRetention(cfg)},
 		{"PUT /api/v1/messages/retention", PermUpdateRetention, UpdateRetention(cfg)},
 		{"GET /api/v1/messages/{id}", PermReadMessage, GetMessage(cfg)},

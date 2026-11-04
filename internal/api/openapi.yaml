@@ -118,6 +118,45 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/messages/counts:
+    get:
+      tags: [Messages]
+      operationId: countMessages
+      summary: Count messages by status
+      description: For a Submitter, only the messages it sent.
+      parameters:
+        - name: start
+          in: query
+          description: Counts the messages created at or after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          description: Counts the messages created before this time. Must not be before start.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/MessageCounts"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/messages/retention:
     get:
       tags: [Messages]
@@ -2278,6 +2317,20 @@ components:
           items:
             $ref: "#/components/schemas/Message"
 
+    MessageCounts:
+      type: object
+      required: [pending, delivered, failed, expired, replaced]
+      properties:
+        pending:
+          type: integer
+        delivered:
+          type: integer
+        failed:
+          type: integer
+        expired:
+          type: integer
+        replaced:
+          type: integer
     ListMessagesResponse:
       type: object
       required: [items, page, per_page, total_count]

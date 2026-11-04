@@ -2,6 +2,7 @@ import { useEffect, type ReactElement } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { AuthProvider, useAuth, type Permission } from "@/contexts/AuthContext";
+import Dashboard from "@/pages/Dashboard";
 import Diameter from "@/pages/Diameter";
 import Initialize from "@/pages/Initialize";
 import Login from "@/pages/Login";
@@ -35,6 +36,7 @@ export default function App() {
 
 const pages: { path: string; element: ReactElement; permission: Permission }[] =
   [
+    { path: "/dashboard", element: <Dashboard />, permission: "diameter:read" },
     { path: "/operator", element: <Operator />, permission: "operator:read" },
     { path: "/diameter", element: <Diameter />, permission: "diameter:read" },
     { path: "/smpp", element: <SMPP />, permission: "esme:read" },
@@ -55,7 +57,7 @@ const pages: { path: string; element: ReactElement; permission: Permission }[] =
 function Pages() {
   const auth = useAuth();
   const home = auth.can("diameter:read")
-    ? "/diameter"
+    ? "/dashboard"
     : auth.can("message:read")
       ? "/messages"
       : "/profile";

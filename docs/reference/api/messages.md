@@ -187,6 +187,45 @@ This path returns the list of messages, most recent first. For a Submitter, only
 }
 ```
 
+## Count Messages
+
+This path returns the number of messages in each status. For a Submitter, only the messages it sent.
+
+| Method | Path                      |
+| ------ | ------------------------- |
+| GET    | `/api/v1/messages/counts` |
+
+### Query Parameters
+
+| Name    | In    | Type | Default | Allowed | Description |
+| ------- | ----- | ---- | ------- | ------- | ----------- |
+| `start` | query | str  |         | RFC 3339 time | Created at or after. |
+| `end`   | query | str  |         | RFC 3339 time, not before `start` | Created before. |
+
+### Response Fields
+
+| Field       | Type | Description |
+| ----------- | ---- | ----------- |
+| `pending`   | int  | Messages `pending`. See [Statuses](#statuses). |
+| `delivered` | int  | Messages `delivered`. |
+| `failed`    | int  | Messages `failed`. |
+| `expired`   | int  | Messages `expired`. |
+| `replaced`  | int  | Messages `replaced`. |
+
+### Sample Response
+
+```json
+{
+    "result": {
+        "pending": 11,
+        "delivered": 105,
+        "failed": 6,
+        "expired": 4,
+        "replaced": 0
+    }
+}
+```
+
 ## Get a Message
 
 This path returns a specific message. For a Submitter, a message it did not send is not found.

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { authFor } from "@/contexts/AuthContext";
+import { MemoryRouter } from "react-router-dom";
+import { authFor, type Auth } from "@/contexts/AuthContext";
 import Messages from "@/pages/Messages";
 import { RoleID } from "@/queries/users";
 import { json, renderWithClient, stubApi } from "@/test/render";
@@ -37,6 +38,14 @@ const rowCells = (to: string) =>
     .getAllByRole("gridcell")
     .map((c) => c.textContent);
 
+const renderMessages = (path = "/messages", auth?: Auth) =>
+  renderWithClient(
+    <MemoryRouter initialEntries={[path]}>
+      <Messages />
+    </MemoryRouter>,
+    auth,
+  );
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -55,7 +64,7 @@ describe("Messages", () => {
       message({ id: 8, to: "+15551230008", encoding: "binary" }),
     ]);
 
-    renderWithClient(<Messages />);
+    renderMessages();
 
     await screen.findByText("+15551230007");
     expect(rowCells("+15551230007")).toEqual([
@@ -74,10 +83,36 @@ describe("Messages", () => {
     }
   });
 
+  it("filters by the status and time range of the address", async () => {
+    const requests = serveMessages();
+    const before = Date.now();
+
+    renderMessages("/messages?status=failed&range=24h");
+
+    await listed();
+    const query = lastQuery(requests);
+    expect(query).toMatchObject({ status: "failed" });
+    expect(Date.parse(query.start)).toBeGreaterThanOrEqual(
+      before - 24 * 60 * 60_000 - 1000,
+    );
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent(
+      "Failed",
+    );
+  });
+
+  it("ignores an unknown status in the address", async () => {
+    const requests = serveMessages();
+
+    renderMessages("/messages?status=lost");
+
+    await listed();
+    expect(lastQuery(requests)).toEqual({ page: "1", per_page: "25" });
+  });
+
   it("requests the first page by default", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<Messages />);
+    renderMessages();
 
     await listed();
     expect(lastQuery(requests)).toEqual({ page: "1", per_page: "25" });
@@ -86,7 +121,7 @@ describe("Messages", () => {
   it("filters by all or part of the recipient's number", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<Messages />);
+    renderMessages();
     await listed();
 
     const input = screen.getByRole("textbox", { name: "To" });
@@ -121,7 +156,7 @@ describe("Messages", () => {
   it("filters by sender, a number or a name", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<Messages />);
+    renderMessages();
     await listed();
 
     const input = screen.getByRole("textbox", { name: "From" });
@@ -162,7 +197,7 @@ describe("Messages", () => {
   it("filters by time range", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<Messages />);
+    renderMessages();
     await listed();
 
     fireEvent.click(
@@ -210,7 +245,7 @@ describe("Messages", () => {
   it("filters by status", async () => {
     const requests = serveMessages();
 
-    renderWithClient(<Messages />);
+    renderMessages();
     await listed();
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Status" }));
@@ -224,7 +259,7 @@ describe("Messages", () => {
   it("opens the message detail when a row is clicked", async () => {
     serveMessages();
 
-    renderWithClient(<Messages />);
+    renderMessages();
     fireEvent.click(await listed());
 
     const drawer = await screen.findByRole("complementary", {
@@ -266,7 +301,7 @@ describe("Messages", () => {
       ),
     );
 
-    renderWithClient(<Messages />);
+    renderMessages();
     await listed();
     const listedBefore = lists.length;
 
@@ -300,7 +335,7 @@ describe("Messages", () => {
   it("shows an empty list", async () => {
     serveMessages([]);
 
-    renderWithClient(<Messages />);
+    renderMessages();
 
     expect(await screen.findByText("No messages.")).toBeInTheDocument();
   });
@@ -316,7 +351,7 @@ describe("Messages", () => {
       ),
     );
 
-    renderWithClient(<Messages />);
+    renderMessages();
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Failed to load messages");
@@ -365,7 +400,7 @@ describe("Messages delivery settings", () => {
   it("shows and updates the validity and retries", async () => {
     const bodies = serveDelivery();
 
-    renderWithClient(<Messages />);
+    renderMessages();
 
     const line = screen.getByTestId("delivery-settings");
     await waitFor(() =>
@@ -429,7 +464,7 @@ describe("Messages retention", () => {
       ),
     );
 
-    renderWithClient(<Messages />);
+    renderMessages();
 
     const line = screen.getByTestId("delivery-settings");
     await waitFor(() => expect(line).toHaveTextContent("Retention: 30 days"));
@@ -451,7 +486,7 @@ describe("Messages by role", () => {
   it("lets a Read Only user read, but not send or edit", async () => {
     serveMessages();
 
-    renderWithClient(<Messages />, authFor("ro@example.com", RoleID.ReadOnly));
+    renderMessages("/messages", authFor("ro@example.com", RoleID.ReadOnly));
 
     await listed();
     expect(
@@ -469,10 +504,7 @@ describe("Messages by role", () => {
   it("shows a Submitter its messages, without delivery settings or submitters", async () => {
     serveMessages();
 
-    renderWithClient(
-      <Messages />,
-      authFor("ota@example.com", RoleID.Submitter),
-    );
+    renderMessages("/messages", authFor("ota@example.com", RoleID.Submitter));
 
     await listed();
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();

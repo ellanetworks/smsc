@@ -16,6 +16,7 @@ import {
   type GridPaginationModel,
 } from "@mui/x-data-grid";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import EditDeliveryDialog from "@/components/EditDeliveryDialog";
 import EditRetentionDialog from "@/components/EditRetentionDialog";
 import MessageDrawer from "@/components/MessageDrawer";
@@ -23,8 +24,9 @@ import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import SendMessageDialog from "@/components/SendMessageDialog";
 import TimeRangePicker, {
+  ANY_RANGE,
   AUDIT_RANGES,
-  EMPTY_TIME_RANGE,
+  CUSTOM_RANGE,
   timeRangeFilter,
   timeRangeParams,
   type TimeRangeValue,
@@ -128,12 +130,31 @@ const hiddenByDefault = {
   encoding: false,
 };
 
+const statusParam = (value: string | null): MessageStatus | "" =>
+  STATUSES.includes(value as MessageStatus) ? (value as MessageStatus) : "";
+
+const timeRangeOf = (params: URLSearchParams): TimeRangeValue => {
+  const range = params.get("range") ?? "";
+  if (range === CUSTOM_RANGE) {
+    return {
+      preset: CUSTOM_RANGE,
+      from: params.get("start") ?? "",
+      to: params.get("end") ?? "",
+    };
+  }
+  if (AUDIT_RANGES.some((r) => r.value === range)) {
+    return { preset: range, from: "", to: "" };
+  }
+  return { preset: ANY_RANGE, from: "", to: "" };
+};
+
 export default function Messages() {
   const auth = useAuth();
   const { showSnackbar } = useSnackbar();
   const [to, setTo] = useState("");
   const [from, setFrom] = useState("");
-  const [status, setStatus] = useState<MessageStatus | "">("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const status = statusParam(searchParams.get("status"));
   const [pagination, setPagination] = useState<GridPaginationModel>({
     page: 0,
     pageSize: PAGE_SIZE_OPTIONS[0],
@@ -153,8 +174,20 @@ export default function Messages() {
     enabled: auth.can("retention:read"),
   });
   const [editingRetention, setEditingRetention] = useState(false);
-  const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
+  const timeRange = useMemo(() => timeRangeOf(searchParams), [searchParams]);
   const timeFilter = useMemo(() => timeRangeFilter(timeRange), [timeRange]);
+  const setFilter = (next: Record<string, string>) =>
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        for (const [key, value] of Object.entries(next)) {
+          if (value) params.set(key, value);
+          else params.delete(key);
+        }
+        return params;
+      },
+      { replace: true },
+    );
 
   const toInvalid = to !== "" && !numberStarted(to) && !isPartialNumber(to);
   const sender = from.trim();
@@ -220,7 +253,11 @@ export default function Messages() {
         <TimeRangePicker
           value={timeRange}
           onChange={(next) => {
-            setTimeRange(next);
+            setFilter({
+              range: next.preset === ANY_RANGE ? "" : next.preset,
+              start: next.preset === CUSTOM_RANGE ? next.from : "",
+              end: next.preset === CUSTOM_RANGE ? next.to : "",
+            });
             resetPage();
           }}
           ranges={AUDIT_RANGES}
@@ -255,7 +292,7 @@ export default function Messages() {
           size="small"
           value={status}
           onChange={(e) => {
-            setStatus(e.target.value as MessageStatus | "");
+            setFilter({ status: e.target.value });
             resetPage();
           }}
           sx={{ minWidth: 160 }}

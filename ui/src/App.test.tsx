@@ -57,6 +57,7 @@ const serve = (role: RoleID | null = RoleID.Admin) => {
             result: { version: "v0.0.1", revision: "", initialized: true },
           }),
         "/api/v1/esmes": () => json(200, { result: { items: [] } }),
+        "/api/v1/metrics": () => new Response(""),
         "/api/v1/messages": () =>
           json(200, {
             result: { items: [], page: 1, per_page: 25, total_count: 0 },
@@ -95,6 +96,7 @@ describe("App", () => {
         .getAllByRole("link")
         .map((link) => [link.textContent, link.getAttribute("href")]),
     ).toEqual([
+      ["Dashboard", "/dashboard"],
       ["Operator", "/operator"],
       ["Diameter", "/diameter"],
       ["SMPP", "/smpp"],
@@ -121,18 +123,18 @@ describe("App", () => {
     expect(bug).toHaveAttribute("target", "_blank");
   });
 
-  it("opens the Diameter page by default", async () => {
+  it("opens the Dashboard by default", async () => {
     serve();
     renderAt("/");
 
     expect(
-      await screen.findByRole("heading", { level: 1, name: "Diameter" }),
+      await screen.findByRole("heading", { level: 1, name: "Dashboard" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Diameter" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(document.title).toBe("Diameter · Ella SMSC");
+    expect(document.title).toBe("Dashboard · Ella SMSC");
   });
 
   it("returns to the page asked for before single sign-on", async () => {
@@ -165,7 +167,7 @@ describe("App", () => {
     renderAt("/");
 
     expect(
-      await screen.findByRole("heading", { level: 1, name: "Diameter" }),
+      await screen.findByRole("heading", { level: 1, name: "Dashboard" }),
     ).toBeInTheDocument();
   });
 
@@ -214,7 +216,7 @@ describe("App", () => {
       within(screen.getByRole("navigation", { name: "Main" }))
         .getAllByRole("link")
         .map((link) => link.textContent),
-    ).toEqual(["Operator", "Diameter", "SMPP", "Messages"]);
+    ).toEqual(["Dashboard", "Operator", "Diameter", "SMPP", "Messages"]);
   });
 
   it("goes to the login page without a session", async () => {

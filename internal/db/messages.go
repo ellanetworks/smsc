@@ -475,9 +475,7 @@ type MessageFilter struct {
 	Start, End         time.Time
 }
 
-func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) (_ []Message, _ int, err error) {
-	defer d.observe(&err)()
-
+func (f MessageFilter) where() (string, []any) {
 	where, args := []string{"kind = ?"}, []any{KindMessage}
 
 	if f.MSISDN != "" {
@@ -511,7 +509,13 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 		where, args = append(where, "submitted_at < ?"), append(args, f.End.UTC().UnixNano())
 	}
 
-	clause := " WHERE " + strings.Join(where, " AND ")
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage int) (_ []Message, _ int, err error) {
+	defer d.observe(&err)()
+
+	clause, args := f.where()
 
 	var total int
 	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`+clause, args...).Scan(&total); err != nil {
@@ -542,6 +546,40 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 	}
 
 	return messages, total, nil
+}
+
+func (d *DB) CountMessages(ctx context.Context, f MessageFilter) (_ map[MessageStatus]int, err error) {
+	defer d.observe(&err)()
+
+	clause, args := f.where()
+
+	rows, err := d.conn.QueryContext(ctx, `SELECT status, COUNT(*) FROM messages`+clause+` GROUP BY status`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count messages: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	counts := map[MessageStatus]int{}
+
+	for rows.Next() {
+		var (
+			status MessageStatus
+			n      int
+		)
+
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, fmt.Errorf("count messages: %w", err)
+		}
+
+		counts[status] = n
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count messages: %w", err)
+	}
+
+	return counts, nil
 }
 
 func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (_ Message, _ bool, err error) {

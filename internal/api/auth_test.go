@@ -168,6 +168,7 @@ func TestRoles(t *testing.T) {
 	routes := map[string]int{
 		"POST /api/v1/messages":                                admin | networkManager | submitter,
 		"GET /api/v1/messages":                                 all,
+		"GET /api/v1/messages/counts":                          all,
 		"GET /api/v1/messages/1":                               all,
 		"GET /api/v1/messages/1/attempts":                      all,
 		"GET /api/v1/messages/1/content":                       admin | networkManager | submitter,

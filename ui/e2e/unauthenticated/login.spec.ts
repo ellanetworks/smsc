@@ -12,14 +12,14 @@ test("an initialized SMSC routes the root path to login", async ({ page }) => {
   await expect(page).toHaveURL(/\/login$/);
 });
 
-test("logging in lands on the Diameter page", async ({ page }) => {
+test("logging in lands on the Dashboard", async ({ page }) => {
   await page.goto("/login");
 
   await page.getByLabel(/^Email/).fill(ADMIN_EMAIL);
   await page.getByLabel(/^Password/).fill(ADMIN_PASSWORD);
   await page.getByRole("button", { name: "Login" }).click();
 
-  await expect(page).toHaveURL(/\/diameter$/);
+  await expect(page).toHaveURL(/\/dashboard$/);
 });
 
 test("bad credentials keep the user on the login page", async ({ page }) => {

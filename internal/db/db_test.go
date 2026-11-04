@@ -417,6 +417,52 @@ func TestListMessages(t *testing.T) {
 	}
 }
 
+func TestCountMessages(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Now()
+	yesterday := now.Add(-25 * time.Hour)
+
+	ids, err := d.CreateMessages(ctx, []NewMessage{
+		testMessage(1, false, []byte{0x01}, now),
+		testMessage(2, false, []byte{0x01}, now),
+		testMessage(3, false, []byte{0x01}, now),
+		testMessage(4, false, []byte{0x01}, yesterday),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []int64{ids[0], ids[1], ids[3]} {
+		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := map[string]struct {
+		filter MessageFilter
+		want   map[MessageStatus]int
+	}{
+		"all":          {MessageFilter{}, map[MessageStatus]int{StatusDelivered: 3, StatusPending: 1}},
+		"since start":  {MessageFilter{Start: now.Add(-time.Hour)}, map[MessageStatus]int{StatusDelivered: 2, StatusPending: 1}},
+		"before end":   {MessageFilter{End: now.Add(-time.Hour)}, map[MessageStatus]int{StatusDelivered: 1}},
+		"by submitter": {MessageFilter{SubmittedBy: 42}, map[MessageStatus]int{}},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := d.CountMessages(ctx, tc.filter)
+			if err != nil {
+				t.Fatalf("CountMessages: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("counts = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRejectDuplicates(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()

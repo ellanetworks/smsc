@@ -587,6 +587,51 @@ func ListMessages(cfg Config) http.Handler {
 	})
 }
 
+type MessageCounts struct {
+	Pending   int `json:"pending"`
+	Delivered int `json:"delivered"`
+	Failed    int `json:"failed"`
+	Expired   int `json:"expired"`
+	Replaced  int `json:"replaced"`
+}
+
+func CountMessages(cfg Config) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+
+		filter := db.MessageFilter{SubmittedBy: ownSubmissions(r.Context())}
+
+		var ok bool
+
+		if filter.Start, ok = timeParam(w, r, q.Get("start"), "start", cfg); !ok {
+			return
+		}
+
+		if filter.End, ok = timeParam(w, r, q.Get("end"), "end", cfg); !ok {
+			return
+		}
+
+		if !filter.Start.IsZero() && !filter.End.IsZero() && filter.End.Before(filter.Start) {
+			writeError(w, r, http.StatusBadRequest, "end must not be before start", nil, cfg.Logger)
+			return
+		}
+
+		counts, err := cfg.Store.CountMessages(r.Context(), filter)
+		if err != nil {
+			writeError(w, r, http.StatusInternalServerError, "Failed to count messages", err, cfg.Logger)
+			return
+		}
+
+		writeResponse(w, r, MessageCounts{
+			Pending:   counts[db.StatusPending],
+			Delivered: counts[db.StatusDelivered],
+			Failed:    counts[db.StatusFailed],
+			Expired:   counts[db.StatusExpired],
+			Replaced:  counts[db.StatusReplaced],
+		}, http.StatusOK, cfg.Logger)
+	})
+}
+
 func messagesOf(ctx context.Context, cfg Config, messages []db.Message) ([]Message, error) {
 	ids := make([]int64, 0, len(messages))
 	for _, m := range messages {

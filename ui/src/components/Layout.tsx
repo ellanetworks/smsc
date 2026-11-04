@@ -22,6 +22,7 @@ import {
   AccountCircle as AccountCircleIcon,
   Brightness6 as ThemeIcon,
   BugReport as BugReportIcon,
+  Dashboard as DashboardIcon,
   Check as CheckIcon,
   DarkMode as DarkModeIcon,
   Feed as FeedIcon,
@@ -86,6 +87,12 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  {
+    to: "/dashboard",
+    label: "Dashboard",
+    icon: <DashboardIcon color="primary" />,
+    permission: "diameter:read",
+  },
   {
     to: "/operator",
     label: "Operator",

@@ -29,6 +29,13 @@ export interface DiameterStatus {
   routes: DiameterRoute[];
 }
 
+export const hssPeers = (status: DiameterStatus): string[] =>
+  status.routes.find(
+    (route) =>
+      route.application === "s6c" &&
+      route.realm.toLowerCase() === status.realm.toLowerCase(),
+  )?.peers ?? [];
+
 export const getDiameterStatus = (): Promise<DiameterStatus> =>
   apiFetch<DiameterStatus>("/api/v1/diameter");
 

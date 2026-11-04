@@ -775,6 +775,82 @@ func TestListMessagesRejectsInvalidFilters(t *testing.T) {
 	}
 }
 
+func TestCountMessages(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	for i := range 3 {
+		at := testNow.Add(time.Duration(i) * time.Hour)
+		if _, err := a.store.CreateMessage(context.Background(), db.NewMessage{
+			Originator: db.Address{Digits: "15550001111", TypeOfNumber: 1, NumberingPlan: 1},
+			Recipient:  db.Address{Digits: "15551230002", TypeOfNumber: 1, NumberingPlan: 1},
+			MSISDN:     "15551230002", Origin: db.OriginAPI,
+			MessageReference: uint8(i),
+			TPDU:             []byte{0x01, 0x00, 0x0b, 0x91, 0x51, 0x55, 0x21, 0x03, 0x00, 0xf2, 0x00, 0x00, 0x02, 0xe8, 0x34},
+			SubmittedAt:      at, ExpiresAt: at.Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := a.store.CompleteMessage(context.Background(), 1, db.StatusDelivered, testNow, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.store.CompleteMessage(context.Background(), 2, db.StatusFailed, testNow, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]struct {
+		query string
+		want  api.MessageCounts
+	}{
+		"all":   {"", api.MessageCounts{Pending: 1, Delivered: 1, Failed: 1}},
+		"start": {"?start=2026-09-29T11:00:00Z", api.MessageCounts{Pending: 1, Failed: 1}},
+		"end":   {"?end=2026-09-29T11:00:00Z", api.MessageCounts{Delivered: 1}},
+		"none":  {"?start=2026-09-30T00:00:00Z", api.MessageCounts{}},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			code, result, errMsg := a.do(t, http.MethodGet, "/api/v1/messages/counts"+tc.query, "")
+			if code != http.StatusOK {
+				t.Fatalf("code = %d %q", code, errMsg)
+			}
+
+			if got := decode[api.MessageCounts](t, result); got != tc.want {
+				t.Fatalf("counts = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCountMessagesOfSubmitter(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	a.create(t, "+15550001111", "+15551230002", "admin's")
+
+	submitter := a.userLogin(t, "ota@example.com", db.RoleSubmitter)
+
+	code, result, errMsg := a.doAs(t, submitter, http.MethodGet, "/api/v1/messages/counts", "")
+	if code != http.StatusOK {
+		t.Fatalf("code = %d %q", code, errMsg)
+	}
+
+	if got := decode[api.MessageCounts](t, result); got != (api.MessageCounts{}) {
+		t.Fatalf("counts = %+v, want none", got)
+	}
+}
+
+func TestCountMessagesRejectsInvalidTimes(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	for _, query := range []string{"?start=yesterday", "?end=2026-09-29", "?start=2026-09-29T11:00:00Z&end=2026-09-29T10:00:00Z"} {
+		if code, _, errMsg := a.do(t, http.MethodGet, "/api/v1/messages/counts"+query, ""); code != http.StatusBadRequest || errMsg == "" {
+			t.Fatalf("%s: code = %d, error = %q", query, code, errMsg)
+		}
+	}
+}
+
 func TestGetDiameterStatus(t *testing.T) {
 	since := time.Date(2026, 9, 29, 9, 59, 0, 0, time.UTC)
 

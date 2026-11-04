@@ -1,8 +1,9 @@
 import { Chip, type ChipProps } from "@mui/material";
+import type { DiameterPeerState } from "@/queries/diameter";
 import type { MessageStatus } from "@/queries/messages";
 import { capitalized } from "@/utils/labels";
 
-const statusColors: Record<MessageStatus, ChipProps["color"]> = {
+export const messageStatusColors: Record<MessageStatus, ChipProps["color"]> = {
   pending: "info",
   delivered: "success",
   failed: "error",
@@ -14,7 +15,7 @@ export function MessageStatusChip({ status }: { status: MessageStatus }) {
   return (
     <Chip
       label={capitalized(status)}
-      color={statusColors[status]}
+      color={messageStatusColors[status]}
       size="small"
     />
   );
@@ -50,6 +51,29 @@ export function OutcomeChip({ outcome }: { outcome: string }) {
         outcomeLabels[outcome] ?? capitalized(outcome.replaceAll("_", " "))
       }
       color={outcomeColor(outcome)}
+      size="small"
+    />
+  );
+}
+
+export const diameterStateColor = (
+  state: DiameterPeerState,
+): ChipProps["color"] => {
+  switch (state) {
+    case "open":
+      return "success";
+    case "down":
+      return "error";
+    default:
+      return "warning";
+  }
+};
+
+export function DiameterStateChip({ state }: { state: DiameterPeerState }) {
+  return (
+    <Chip
+      label={capitalized(state)}
+      color={diameterStateColor(state)}
       size="small"
     />
   );

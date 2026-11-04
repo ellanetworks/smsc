@@ -2,8 +2,6 @@ import { useState } from "react";
 import {
   Box,
   Button,
-  Chip,
-  type ChipProps,
   IconButton,
   Skeleton,
   Stack,
@@ -21,14 +19,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deletePeer,
   type DiameterPeer,
-  type DiameterPeerState,
-  type DiameterStatus,
   getDiameterStatus,
+  hssPeers,
   listPeers,
   type Peer,
   type PeerRoute,
 } from "@/queries/diameter";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { DiameterStateChip } from "@/components/chips";
 import DomainName from "@/components/DomainName";
 import PageHeader from "@/components/PageHeader";
 import PeerDialog from "@/components/PeerDialog";
@@ -37,20 +35,8 @@ import SettingsTable from "@/components/SettingsTable";
 import { useAuth } from "@/contexts/AuthContext";
 import { errorMessage, useSnackbar } from "@/contexts/SnackbarContext";
 import { formatTimestamp } from "@/utils/dates";
-import { capitalized } from "@/utils/labels";
 
 export const DIAMETER_REFRESH_MS = 5000;
-
-const stateColor = (state: DiameterPeerState): ChipProps["color"] => {
-  switch (state) {
-    case "open":
-      return "success";
-    case "down":
-      return "error";
-    default:
-      return "warning";
-  }
-};
 
 const applicationLabels: Record<string, string> = {
   s6c: "S6c",
@@ -58,13 +44,6 @@ const applicationLabels: Record<string, string> = {
 };
 
 const applicationLabel = (name: string) => applicationLabels[name] ?? name;
-
-const hssPeers = (status: DiameterStatus): string[] =>
-  status.routes.find(
-    (route) =>
-      route.application === "s6c" &&
-      route.realm.toLowerCase() === status.realm.toLowerCase(),
-  )?.peers ?? [];
 
 const endpoint = (address: string, port: number) =>
   address.includes(":") ? `[${address}]:${port}` : `${address}:${port}`;
@@ -83,7 +62,9 @@ function PeerStateChip({ peer }: { peer: Peer }) {
 
   return (
     <Tooltip title={tooltip} arrow>
-      <Chip label={capitalized(state)} color={stateColor(state)} size="small" />
+      <span>
+        <DiameterStateChip state={state} />
+      </span>
     </Tooltip>
   );
 }
@@ -118,13 +99,7 @@ const connectedColumns: GridColDef<ConnectedRow>[] = [
     headerName: "State",
     flex: 0.4,
     minWidth: 110,
-    renderCell: ({ row }) => (
-      <Chip
-        label={capitalized(row.state)}
-        color={stateColor(row.state)}
-        size="small"
-      />
-    ),
+    renderCell: ({ row }) => <DiameterStateChip state={row.state} />,
   },
   {
     field: "hss",

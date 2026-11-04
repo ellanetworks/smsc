@@ -159,3 +159,15 @@ export const listMessageAttempts = (
       per_page: params.perPage,
     }),
   );
+
+export type MessageCounts = Record<MessageStatus, number>;
+
+export const getMessageCounts = (
+  params: { start?: string; end?: string } = {},
+): Promise<MessageCounts> =>
+  apiFetch<MessageCounts>(
+    withQuery("/api/v1/messages/counts", {
+      start: params.start,
+      end: params.end,
+    }),
+  );

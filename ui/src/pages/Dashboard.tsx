@@ -1,0 +1,585 @@
+import type { ReactNode } from "react";
+import {
+  Box,
+  Card,
+  CardActionArea,
+  CardContent,
+  CardHeader,
+  Chip,
+  LinearProgress,
+  Skeleton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import Grid from "@mui/material/Grid";
+import { useQuery } from "@tanstack/react-query";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
+import DomainName from "@/components/DomainName";
+import PageHeader from "@/components/PageHeader";
+import {
+  DiameterStateChip,
+  MessageStatusChip,
+  messageStatusColors,
+} from "@/components/chips";
+import { useAuth } from "@/contexts/AuthContext";
+import { getDiameterStatus, hssPeers } from "@/queries/diameter";
+import { getMessageCounts, type MessageStatus } from "@/queries/messages";
+import { getMetrics, sumOf } from "@/queries/metrics";
+import { getOIDCLogin } from "@/queries/oidc";
+import { getOperator } from "@/queries/operator";
+import { listESMEs } from "@/queries/smpp";
+import { formatDateTime } from "@/utils/dates";
+
+export const DASHBOARD_REFRESH_MS = 5000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const ALWAYS_SHOWN: MessageStatus[] = [
+  "delivered",
+  "pending",
+  "failed",
+  "expired",
+];
+
+const nf = new Intl.NumberFormat();
+
+const MEMORY_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
+
+const formatMemory = (bytes: number): string => {
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < MEMORY_UNITS.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+  return `${fmt.format(n)} ${MEMORY_UNITS[i]}`;
+};
+
+const lastDayLink = (status?: MessageStatus) =>
+  `/messages?${status ? `status=${status}&` : ""}range=24h`;
+
+const headerSx = {
+  backgroundColor: "backgroundSubtle",
+  borderTopLeftRadius: 8,
+  borderTopRightRadius: 8,
+  "& .MuiCardHeader-title": { fontWeight: 600, fontSize: "1rem" },
+};
+
+const titleLinkSx = {
+  textDecoration: "none",
+  color: "inherit",
+  "&:hover": { textDecoration: "underline" },
+};
+
+const headSx = { fontWeight: 600, whiteSpace: "nowrap" };
+
+interface PanelProps {
+  title: string;
+  to?: string;
+  loading?: boolean;
+  error?: boolean;
+  minHeight?: number;
+  alignTop?: boolean;
+  children?: ReactNode;
+}
+
+function Panel({
+  title,
+  to,
+  loading,
+  error,
+  minHeight = 160,
+  alignTop,
+  children,
+}: PanelProps) {
+  return (
+    <Card
+      sx={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        borderRadius: 3,
+        boxShadow: 2,
+      }}
+    >
+      <CardHeader
+        title={
+          to ? (
+            <Box component={RouterLink} to={to} sx={titleLinkSx}>
+              {title}
+            </Box>
+          ) : (
+            title
+          )
+        }
+        slotProps={{ title: { component: "h3" } }}
+        sx={headerSx}
+      />
+      <CardContent
+        sx={{
+          flexGrow: 1,
+          display: "flex",
+          alignItems: alignTop ? "flex-start" : "center",
+          justifyContent: alignTop ? "flex-start" : "center",
+          minHeight,
+        }}
+      >
+        {loading ? (
+          <Skeleton
+            variant="rounded"
+            width={alignTop ? "100%" : 120}
+            height={alignTop ? minHeight - 32 : 40}
+          />
+        ) : error ? (
+          <Typography variant="body2" color="error">
+            Failed to load data.
+          </Typography>
+        ) : (
+          children
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface KpiCardProps {
+  title: string;
+  hint: string;
+  value?: ReactNode;
+  caption?: ReactNode;
+  loading?: boolean;
+  error?: boolean;
+  to?: string;
+}
+
+function KpiCard({ title, hint, value, caption, to, ...state }: KpiCardProps) {
+  const navigate = useNavigate();
+
+  const card = (
+    <Panel title={title} {...state}>
+      <Box sx={{ textAlign: "center" }}>
+        {typeof value === "string" ? (
+          <Typography variant="h4">{value}</Typography>
+        ) : (
+          value
+        )}
+        {caption && (
+          <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+            {caption}
+          </Typography>
+        )}
+      </Box>
+    </Panel>
+  );
+
+  return (
+    <Tooltip title={hint} arrow>
+      <Box sx={{ height: "100%" }}>
+        {to ? (
+          <CardActionArea
+            onClick={() => navigate(to)}
+            sx={{ height: "100%", borderRadius: 3 }}
+          >
+            {card}
+          </CardActionArea>
+        ) : (
+          card
+        )}
+      </Box>
+    </Tooltip>
+  );
+}
+
+function Section({
+  title,
+  first,
+  children,
+}: {
+  title: string;
+  first?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Box component="section" aria-label={title}>
+      <Typography variant="h5" component="h2" sx={{ mt: first ? 0 : 4, mb: 2 }}>
+        {title}
+      </Typography>
+      <Grid container spacing={4} sx={{ alignItems: "stretch" }}>
+        {children}
+      </Grid>
+    </Box>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Box>
+      <Typography variant="body2" color="textSecondary">
+        {label}
+      </Typography>
+      <Typography variant="body1" sx={{ overflowWrap: "anywhere" }}>
+        {children}
+      </Typography>
+    </Box>
+  );
+}
+
+function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
+  return (
+    <TableRow>
+      <TableCell colSpan={colSpan}>
+        <Typography variant="body2" color="textSecondary">
+          {text}
+        </Typography>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+const QUARTER = { xs: 12, sm: 6, md: 3 };
+
+export default function Dashboard() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+
+  const operator = useQuery({ queryKey: ["operator"], queryFn: getOperator });
+  const sso = useQuery({ queryKey: ["oidcLogin"], queryFn: getOIDCLogin });
+  const diameter = useQuery({
+    queryKey: ["diameter"],
+    queryFn: getDiameterStatus,
+    refetchInterval: DASHBOARD_REFRESH_MS,
+  });
+  const esmes = useQuery({
+    queryKey: ["esmes"],
+    queryFn: listESMEs,
+    refetchInterval: DASHBOARD_REFRESH_MS,
+  });
+  const metrics = useQuery({
+    queryKey: ["metrics"],
+    queryFn: getMetrics,
+    refetchInterval: DASHBOARD_REFRESH_MS,
+  });
+  const counts = useQuery({
+    queryKey: ["messages", "counts", "lastDay"],
+    queryFn: () =>
+      getMessageCounts({ start: new Date(Date.now() - DAY_MS).toISOString() }),
+    refetchInterval: DASHBOARD_REFRESH_MS,
+  });
+
+  const peers = diameter.data?.peers ?? [];
+  const hss = diameter.data ? hssPeers(diameter.data) : [];
+
+  const samples = metrics.data ?? [];
+  const due = sumOf(samples, "ellasmsc_messages_pending", { state: "due" });
+  const waiting = sumOf(samples, "ellasmsc_messages_pending", {
+    state: "waiting",
+  });
+  const memory = sumOf(samples, "process_resident_memory_bytes");
+  const database = sumOf(samples, "ellasmsc_database_storage_bytes");
+  const startedAt = sumOf(samples, "process_start_time_seconds");
+
+  const byStatus = counts.data;
+  const statuses: MessageStatus[] = byStatus
+    ? [...ALWAYS_SHOWN, ...(byStatus.replaced > 0 ? ["replaced" as const] : [])]
+    : [];
+  const total = byStatus
+    ? Object.values(byStatus).reduce((sum, n) => sum + n, 0)
+    : 0;
+
+  const failedToLoad = (q: { error: Error | null; data: unknown }) =>
+    !!q.error && q.data === undefined;
+  const metricCard = {
+    loading: metrics.isPending,
+    error: failedToLoad(metrics),
+  };
+
+  return (
+    <Box component="section" aria-labelledby="dashboard-title">
+      <PageHeader id="dashboard-title" title="Dashboard" />
+
+      <Section title="Overview" first>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Panel
+            title="This SMSC"
+            to="/operator"
+            loading={operator.isPending}
+            error={failedToLoad(operator)}
+            alignTop
+          >
+            <Box sx={{ display: "grid", gap: 2 }}>
+              <Field label="Operator ID (MCC/MNC)">
+                {operator.data && `${operator.data.mcc} / ${operator.data.mnc}`}
+              </Field>
+              <Field label="Service Centre Address">
+                {operator.data?.service_centre_address}
+              </Field>
+            </Box>
+          </Panel>
+        </Grid>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Panel
+            title="Diameter Peers"
+            to="/diameter"
+            loading={diameter.isPending}
+            error={failedToLoad(diameter)}
+            alignTop
+          >
+            <TableContainer>
+              <Table size="small" aria-label="Diameter Peers">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={headSx}>Host</TableCell>
+                    <TableCell sx={headSx}>State</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {peers.map((peer) => (
+                    <TableRow key={`${peer.host}|${peer.address}`}>
+                      <TableCell>
+                        {peer.host ? (
+                          <DomainName name={peer.host} />
+                        ) : (
+                          peer.address || "—"
+                        )}
+                        {hss.includes(peer.host) && (
+                          <Chip
+                            label="HSS"
+                            size="small"
+                            variant="outlined"
+                            sx={{ ml: 1 }}
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <DiameterStateChip state={peer.state} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {peers.length === 0 && (
+                    <EmptyRow colSpan={2} text="No Diameter peers." />
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Panel>
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Panel
+            title="SMPP"
+            to="/smpp"
+            loading={esmes.isPending}
+            error={failedToLoad(esmes)}
+            alignTop
+          >
+            <TableContainer>
+              <Table size="small" aria-label="ESMEs">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={headSx}>ESME</TableCell>
+                    <TableCell sx={headSx}>State</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {(esmes.data ?? []).map((esme) => (
+                    <TableRow key={esme.system_id}>
+                      <TableCell>{esme.system_id}</TableCell>
+                      <TableCell>
+                        {esme.sessions.length > 0 ? (
+                          <Chip label="Bound" color="success" size="small" />
+                        ) : (
+                          <Chip label="Not bound" size="small" />
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {esmes.data?.length === 0 && (
+                    <EmptyRow colSpan={2} text="No ESMEs." />
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Panel>
+        </Grid>
+      </Section>
+
+      <Section title="Messages">
+        <Grid size={{ xs: 12, md: 8 }}>
+          <Panel
+            title="Last 24 Hours"
+            to={lastDayLink()}
+            loading={counts.isPending}
+            error={failedToLoad(counts)}
+            alignTop
+          >
+            <TableContainer>
+              <Table size="small" aria-label="Messages in the last 24 hours">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={headSx}>Status</TableCell>
+                    <TableCell sx={headSx} align="right">
+                      Messages
+                    </TableCell>
+                    <TableCell sx={{ ...headSx, width: "50%" }}>
+                      Share
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {byStatus &&
+                    statuses.map((status) => {
+                      const share = total
+                        ? (100 * byStatus[status]) / total
+                        : 0;
+                      const color = messageStatusColors[status];
+                      return (
+                        <TableRow
+                          key={status}
+                          hover
+                          onClick={() => navigate(lastDayLink(status))}
+                          sx={{ cursor: "pointer" }}
+                        >
+                          <TableCell>
+                            <Box
+                              component={RouterLink}
+                              to={lastDayLink(status)}
+                              onClick={(e) => e.stopPropagation()}
+                              sx={{ textDecoration: "none" }}
+                            >
+                              <MessageStatusChip status={status} />
+                            </Box>
+                          </TableCell>
+                          <TableCell align="right">
+                            {nf.format(byStatus[status])}
+                          </TableCell>
+                          <TableCell>
+                            <Box
+                              sx={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 1,
+                              }}
+                            >
+                              <LinearProgress
+                                variant="determinate"
+                                value={share}
+                                color={color === "default" ? "inherit" : color}
+                                aria-label={`${status} share`}
+                                sx={{ flexGrow: 1, height: 8, borderRadius: 4 }}
+                              />
+                              <Typography
+                                variant="body2"
+                                color="textSecondary"
+                                sx={{ minWidth: 40, textAlign: "right" }}
+                              >
+                                {Math.round(share)}%
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>
+                      {nf.format(total)}
+                    </TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Panel>
+        </Grid>
+        <Grid size={{ xs: 12, md: 4 }}>
+          <Tooltip
+            title="Short messages and status reports waiting for delivery, whatever their age. Due ones are being delivered now; if they stay due, delivery is falling behind. Waiting ones wait for a retry or for the phone to be reachable."
+            arrow
+          >
+            <Box sx={{ height: "100%" }}>
+              <Panel title="Delivery Queue" {...metricCard}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-around",
+                    width: "100%",
+                    textAlign: "center",
+                  }}
+                >
+                  <Box>
+                    <Typography variant="h4">{nf.format(due ?? 0)}</Typography>
+                    <Typography variant="body2" color="textSecondary">
+                      Due
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="h4">
+                      {nf.format(waiting ?? 0)}
+                    </Typography>
+                    <Typography variant="body2" color="textSecondary">
+                      Waiting
+                    </Typography>
+                  </Box>
+                </Box>
+              </Panel>
+            </Box>
+          </Tooltip>
+        </Grid>
+      </Section>
+
+      <Section title="System">
+        <Grid size={QUARTER}>
+          <KpiCard
+            title="Process Memory"
+            hint="RAM used by the SMSC process (resident set size): what the operating system and a container memory limit count."
+            {...metricCard}
+            value={memory === undefined ? "N/A" : formatMemory(memory)}
+          />
+        </Grid>
+        <Grid size={QUARTER}>
+          <KpiCard
+            title="Database Size"
+            hint="Size of the database on disk, its write-ahead log included."
+            {...metricCard}
+            value={database === undefined ? "N/A" : formatMemory(database)}
+          />
+        </Grid>
+        <Grid size={QUARTER}>
+          <KpiCard
+            title="Single Sign-On"
+            hint="Whether users can log in with your identity provider over OpenID Connect."
+            loading={sso.isPending}
+            error={failedToLoad(sso)}
+            value={
+              sso.data?.enabled ? (
+                <Chip label="On" color="success" />
+              ) : (
+                <Chip label="Off" />
+              )
+            }
+            caption={sso.data?.enabled ? sso.data.display_name : undefined}
+            to={auth.can("oidc:read") ? "/single-sign-on" : undefined}
+          />
+        </Grid>
+        <Grid size={QUARTER}>
+          <KpiCard
+            title="Up Since"
+            hint="Time when the SMSC process was started."
+            {...metricCard}
+            value={
+              startedAt === undefined
+                ? "N/A"
+                : formatDateTime(new Date(startedAt * 1000).toISOString())
+            }
+          />
+        </Grid>
+      </Section>
+    </Box>
+  );
+}
