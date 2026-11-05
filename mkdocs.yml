@@ -85,6 +85,7 @@ nav:
       - Operator: reference/api/operator.md
       - Delivery: reference/api/delivery.md
       - Retention: reference/api/retention.md
+      - Backup: reference/api/backup.md
       - Status: reference/api/status.md
       - Metrics: reference/api/metrics.md
       - Pprof: reference/api/pprof.md

@@ -17,6 +17,7 @@ import (
 const appliedRequestsWindow = 1_000_000
 
 type Events struct {
+	Replaced      bool
 	Messages      bool
 	Notifications bool
 	Settings      bool
@@ -26,6 +27,7 @@ type Events struct {
 }
 
 func (e *Events) merge(o Events) {
+	e.Replaced = e.Replaced || o.Replaced
 	e.Messages = e.Messages || o.Messages
 	e.Notifications = e.Notifications || o.Notifications
 	e.Settings = e.Settings || o.Settings
@@ -35,13 +37,14 @@ func (e *Events) merge(o Events) {
 }
 
 func (e Events) empty() bool {
-	return !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && len(e.ClosedESMEs) == 0 && len(e.Alerted) == 0
+	return !e.Replaced && !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && len(e.ClosedESMEs) == 0 && len(e.Alerted) == 0
 }
 
 type applyCtx struct {
 	ctx        context.Context
 	tx         *sql.Tx
 	index      uint64
+	term       uint64
 	leaderTime int64
 	events     *Events
 }
@@ -97,7 +100,7 @@ func (d *DB) AppliedIndex() uint64 {
 func (d *DB) Hash(ctx context.Context) (_ []byte, _ uint64, err error) {
 	defer d.observe(&err)()
 
-	s, err := readFSMState(ctx, d.reader)
+	s, err := readFSMState(ctx, d.reader())
 	if err != nil {
 		return nil, 0, fmt.Errorf("read state: %w", err)
 	}
@@ -121,11 +124,7 @@ func (d *DB) Apply(index, term uint64, entry []byte) ([]Result, error) {
 		return nil, &FatalError{Index: index, Err: err}
 	}
 
-	if !events.empty() {
-		for _, f := range d.subscribers {
-			f(events)
-		}
-	}
+	d.publish(events)
 
 	return results, nil
 }
@@ -148,6 +147,10 @@ func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
 	results := make([]Result, len(b.Commands))
 
 	if index <= state.appliedIndex {
+		for i := range results {
+			results[i] = Result{Code: "already_applied", Message: ErrAlreadyApplied.Error()}
+		}
+
 		return results, Events{}, nil
 	}
 
@@ -156,7 +159,7 @@ func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
 	hash := state.hash
 
 	for i, c := range b.Commands {
-		a := &applyCtx{ctx: ctx, tx: tx, index: index, leaderTime: b.LeaderTime}
+		a := &applyCtx{ctx: ctx, tx: tx, index: index, term: term, leaderTime: b.LeaderTime}
 
 		r, ev, err := applyCommand(a, c)
 		if err != nil {
@@ -164,7 +167,9 @@ func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
 		}
 
 		results[i] = r
+
 		events.merge(ev)
+
 		hash = chain(hash, index, c, r)
 	}
 
@@ -192,7 +197,7 @@ func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
 func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 	ctx, tx := a.ctx, a.tx
 
-	if c.RequestID != (RequestID{}) {
+	if c.Retryable {
 		var stored []byte
 
 		err := tx.QueryRowContext(ctx, `SELECT result FROM applied_requests WHERE request_id = ?`, c.RequestID[:]).
@@ -202,6 +207,8 @@ func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 			if err := json.Unmarshal(stored, &r); err != nil {
 				return Result{}, Events{}, err
 			}
+
+			r.Replayed = true
 
 			return r, Events{}, nil
 		}
@@ -253,7 +260,7 @@ func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 		return Result{}, Events{}, err
 	}
 
-	if c.RequestID != (RequestID{}) {
+	if c.Retryable {
 		stored, err := json.Marshal(r)
 		if err != nil {
 			return Result{}, Events{}, err
@@ -279,8 +286,9 @@ func chain(prev []byte, index uint64, c Command, r Result) []byte {
 	h.Write(head[:])
 	h.Write(c.RequestID[:])
 
-	result, _ := json.Marshal(r)
-	h.Write(result)
+	h.Write([]byte(r.Code))
+	h.Write([]byte{0})
+	h.Write(r.Value)
 
 	return h.Sum(nil)
 }
@@ -289,6 +297,16 @@ func isConstraint(err error) bool {
 	var e sqlite3.Error
 
 	return errors.As(err, &e) && e.Code == sqlite3.ErrConstraint
+}
+
+func (d *DB) publish(ev Events) {
+	if ev.empty() {
+		return
+	}
+
+	for _, f := range d.subscribers {
+		f(ev)
+	}
 }
 
 func (d *DB) OnEvents(f func(Events)) {
@@ -321,35 +339,46 @@ func (l *localProposer) Propose(_ context.Context, cmds []Command) ([]Result, er
 }
 
 func submit[R any](ctx context.Context, d *DB, t CommandType, payload any) (R, error) {
+	r, _, err := submitVia[R](ctx, d.proposer, t, payload)
+	return r, err
+}
+
+func submitReplay[R any](ctx context.Context, d *DB, t CommandType, payload any) (R, bool, error) {
+	return submitVia[R](ctx, d.proposer, t, payload)
+}
+
+func submitVia[R any](ctx context.Context, p Proposer, t CommandType, payload any) (R, bool, error) {
 	var zero R
 
-	p, err := json.Marshal(payload)
+	raw, err := json.Marshal(payload)
 	if err != nil {
-		return zero, fmt.Errorf("encode command: %w", err)
+		return zero, false, fmt.Errorf("encode command: %w", err)
 	}
 
-	results, err := d.proposer.Propose(ctx, []Command{{Type: t, Version: 1, RequestID: requestID(ctx, t), Payload: p}})
+	id, retryable := requestID(ctx, t)
+
+	results, err := p.Propose(ctx, []Command{{Type: t, Version: 1, RequestID: id, Retryable: retryable, Payload: raw}})
 	if err != nil {
-		return zero, err
+		return zero, false, err
 	}
 
 	if len(results) != 1 {
-		return zero, fmt.Errorf("command %d: %d results", t, len(results))
+		return zero, false, fmt.Errorf("command %d: %d results", t, len(results))
 	}
 
 	if err := results[0].Err(); err != nil {
-		return zero, err
+		return zero, results[0].Replayed, err
 	}
 
 	var r R
 
 	if len(results[0].Value) > 0 {
 		if err := json.Unmarshal(results[0].Value, &r); err != nil {
-			return zero, fmt.Errorf("decode result: %w", err)
+			return zero, false, fmt.Errorf("decode result: %w", err)
 		}
 	}
 
-	return r, nil
+	return r, results[0].Replayed, nil
 }
 
 type querier interface {
@@ -367,4 +396,3 @@ func register(t CommandType, h handler) {
 
 	handlers[t] = h
 }
-

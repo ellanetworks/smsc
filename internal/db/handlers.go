@@ -36,4 +36,5 @@ func init() {
 	register(cmdUseOIDCState, handle(applyUseOIDCState))
 	register(cmdCreateIdentity, handle(applyCreateIdentity))
 	register(cmdDeleteIdentities, handle(applyDeleteIdentities))
+	register(cmdLeaderStart, handle(applyLeaderStart))
 }

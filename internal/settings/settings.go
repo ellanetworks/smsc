@@ -231,7 +231,7 @@ func (l *Live) swap(next Settings) {
 	l.stateMu.Lock()
 	defer l.stateMu.Unlock()
 
-	if reflect.DeepEqual(*l.current.Load(), next) {
+	if reflect.DeepEqual(normalized(*l.current.Load()), normalized(next)) {
 		return
 	}
 
@@ -239,6 +239,34 @@ func (l *Live) swap(next Settings) {
 
 	close(l.changed)
 	l.changed = make(chan struct{})
+}
+
+func normalized(s Settings) Settings {
+	if len(s.Delivery.RetryIntervals) == 0 {
+		s.Delivery.RetryIntervals = nil
+	}
+
+	peers := make([]Peer, len(s.Peers))
+
+	for i, p := range s.Peers {
+		if len(p.Addresses) == 0 {
+			p.Addresses = nil
+		}
+
+		if len(p.Routes) == 0 {
+			p.Routes = nil
+		}
+
+		peers[i] = p
+	}
+
+	if len(peers) == 0 {
+		peers = nil
+	}
+
+	s.Peers = peers
+
+	return s
 }
 
 func (l *Live) Changed() <-chan struct{} {

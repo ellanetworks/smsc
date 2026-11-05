@@ -40,7 +40,7 @@ func (d *DB) CountESMEs(ctx context.Context) (_ int, err error) {
 	defer d.observe(&err)()
 
 	var n int
-	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM esmes`).Scan(&n); err != nil {
+	if err := d.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM esmes`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count ESMEs: %w", err)
 	}
 
@@ -190,7 +190,7 @@ func esmesOfUser(ctx context.Context, q querier, userID int64) ([]int64, error) 
 func (d *DB) GetESMEBySystemID(ctx context.Context, systemID string) (_ ESME, err error) {
 	defer d.observe(&err)()
 
-	e, err := scanESME(d.reader.QueryRowContext(ctx, `SELECT `+esmeColumns+` FROM esmes WHERE system_id = ?`, systemID))
+	e, err := scanESME(d.reader().QueryRowContext(ctx, `SELECT `+esmeColumns+` FROM esmes WHERE system_id = ?`, systemID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ESME{}, ErrNotFound
 	}
@@ -219,7 +219,7 @@ func (d *DB) ListESMEsOfUser(ctx context.Context, userID int64) (_ []ESME, err e
 }
 
 func (d *DB) listESMEs(ctx context.Context, where string, args ...any) ([]ESME, error) {
-	rows, err := d.reader.QueryContext(ctx, `SELECT `+esmeColumns+` FROM esmes`+where+` ORDER BY id`, args...)
+	rows, err := d.reader().QueryContext(ctx, `SELECT `+esmeColumns+` FROM esmes`+where+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list ESMEs: %w", err)
 	}
@@ -266,7 +266,7 @@ func (d *DB) esmeNetworks(ctx context.Context, esmes []*ESME) error {
 		e.AllowedNetworks = []netip.Prefix{}
 	}
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT esme_id, prefix FROM esme_networks WHERE esme_id IN (?`+
+	rows, err := d.reader().QueryContext(ctx, `SELECT esme_id, prefix FROM esme_networks WHERE esme_id IN (?`+
 		strings.Repeat(`, ?`, len(esmes)-1)+`) ORDER BY esme_id, rowid`, args...)
 	if err != nil {
 		return fmt.Errorf("get ESME networks: %w", err)

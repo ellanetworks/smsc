@@ -50,6 +50,7 @@ const (
 	cmdUseOIDCState
 	cmdCreateIdentity
 	cmdDeleteIdentities
+	cmdLeaderStart
 )
 
 const entryBatch uint16 = 1
@@ -60,6 +61,7 @@ type Command struct {
 	Type      CommandType     `json:"t"`
 	Version   uint16          `json:"v"`
 	RequestID RequestID       `json:"r"`
+	Retryable bool            `json:"x,omitempty"`
 	Payload   json.RawMessage `json:"p"`
 }
 
@@ -69,9 +71,10 @@ type Batch struct {
 }
 
 type Result struct {
-	Value   json.RawMessage `json:"v,omitempty"`
-	Code    string          `json:"c,omitempty"`
-	Message string          `json:"m,omitempty"`
+	Value    json.RawMessage `json:"v,omitempty"`
+	Code     string          `json:"c,omitempty"`
+	Message  string          `json:"m,omitempty"`
+	Replayed bool            `json:"-"`
 }
 
 func EncodeBatch(b Batch) ([]byte, error) {
@@ -103,7 +106,11 @@ func DecodeBatch(entry []byte) (Batch, error) {
 	return b, nil
 }
 
-var ErrConstraint = errors.New("constraint violated")
+var (
+	ErrConstraint     = errors.New("constraint violated")
+	ErrBusy           = errors.New("too busy")
+	ErrAlreadyApplied = errors.New("the entry was already applied")
+)
 
 var resultCodes = []struct {
 	code string
@@ -126,6 +133,7 @@ var resultCodes = []struct {
 	{"conflict", settings.ErrConflict},
 	{"invalid", ErrInvalid},
 	{"constraint", ErrConstraint},
+	{"already_applied", ErrAlreadyApplied},
 }
 
 var ErrInvalid = errors.New("invalid command")
@@ -190,17 +198,17 @@ func RequestIDOf(parts ...[]byte) RequestID {
 	return id
 }
 
-func requestID(ctx context.Context, t CommandType) RequestID {
+func requestID(ctx context.Context, t CommandType) (RequestID, bool) {
 	if id, ok := ctx.Value(requestIDKey{}).(RequestID); ok && id != (RequestID{}) {
 		var typ [2]byte
 		binary.BigEndian.PutUint16(typ[:], uint16(t))
 
-		return RequestIDOf(id[:], typ[:])
+		return RequestIDOf(id[:], typ[:]), true
 	}
 
 	var id RequestID
 
 	_, _ = rand.Read(id[:])
 
-	return id
+	return id, false
 }

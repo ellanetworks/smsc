@@ -192,6 +192,8 @@ func TestRoles(t *testing.T) {
 		"GET /api/v1/oidc":                                     admin,
 		"PUT /api/v1/oidc":                                     admin,
 		"POST /api/v1/oidc/discovery":                          admin,
+		"GET /api/v1/backup":                                   admin,
+		"POST /api/v1/restore":                                 admin,
 		"GET /api/v1/users/me":                                 all,
 		"PUT /api/v1/users/me/password":                        all,
 		"GET /api/v1/users/me/api-tokens":                      all,

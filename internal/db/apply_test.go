@@ -158,7 +158,7 @@ func dump(t *testing.T, d *DB) string {
 
 	ctx := context.Background()
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+	rows, err := d.reader().QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
 		ORDER BY name`)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func dump(t *testing.T, d *DB) string {
 	var b strings.Builder
 
 	for _, table := range tables {
-		rows, err := d.reader.QueryContext(ctx, `SELECT * FROM `+table+` ORDER BY 1`)
+		rows, err := d.reader().QueryContext(ctx, `SELECT * FROM `+table+` ORDER BY 1`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -245,15 +245,15 @@ func must2(h []byte, i uint64, err error) ([]byte, uint64) {
 	return h, i
 }
 
-func command(t *testing.T, typ CommandType, id RequestID, payload any) Command {
+func store(t *testing.T, id RequestID, messages ...NewMessage) Command {
 	t.Helper()
 
-	p, err := json.Marshal(payload)
+	p, err := json.Marshal(storeMessages{Messages: messages})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return Command{Type: typ, Version: 1, RequestID: id, Payload: p}
+	return Command{Type: cmdStoreMessages, Version: 1, RequestID: id, Payload: p}
 }
 
 func applyBatch(t *testing.T, d *DB, cmds ...Command) []Result {
@@ -281,9 +281,9 @@ func TestFailedCommandLeavesNoTrace(t *testing.T) {
 	bad.Origin = "nowhere"
 
 	results := applyBatch(t, d,
-		command(t, cmdStoreMessages, RequestID{1}, storeMessages{Messages: []NewMessage{testMessage(1, false, []byte{0x01}, now)}}),
-		command(t, cmdStoreMessages, RequestID{2}, storeMessages{Messages: []NewMessage{bad}}),
-		command(t, cmdStoreMessages, RequestID{3}, storeMessages{Messages: []NewMessage{testMessage(3, false, []byte{0x03}, now)}}),
+		store(t, RequestID{1}, testMessage(1, false, []byte{0x01}, now)),
+		store(t, RequestID{2}, bad),
+		store(t, RequestID{3}, testMessage(3, false, []byte{0x03}, now)),
 	)
 
 	if results[0].Err() != nil || !errors.Is(results[1].Err(), ErrConstraint) || results[2].Err() != nil {
@@ -345,7 +345,7 @@ func TestApplySkipsAppliedEntries(t *testing.T) {
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	entry, err := EncodeBatch(Batch{LeaderTime: 1, Commands: []Command{
-		command(t, cmdStoreMessages, RequestID{}, storeMessages{Messages: []NewMessage{testMessage(1, false, []byte{0x01}, now)}}),
+		store(t, RequestID{}, testMessage(1, false, []byte{0x01}, now)),
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +368,7 @@ func TestUnknownCommandIsFatal(t *testing.T) {
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	entry, err := EncodeBatch(Batch{LeaderTime: 1, Commands: []Command{
-		command(t, cmdStoreMessages, RequestID{}, storeMessages{Messages: []NewMessage{testMessage(1, false, []byte{0x01}, now)}}),
+		store(t, RequestID{}, testMessage(1, false, []byte{0x01}, now)),
 		{Type: 9999, Version: 1, Payload: json.RawMessage(`{}`)},
 	}})
 	if err != nil {

@@ -36,7 +36,7 @@ func (d *DB) GetOIDC(ctx context.Context) (_ OIDC, err error) {
 		lifetime int64
 	)
 
-	if err := d.reader.QueryRowContext(ctx, `SELECT enabled, external_url, issuer, client_id, client_secret,
+	if err := d.reader().QueryRowContext(ctx, `SELECT enabled, external_url, issuer, client_id, client_secret,
 		display_name, scopes, session_lifetime, trust_unverified_email, ca_certificate, groups_claim
 		FROM oidc WHERE id = 1`).Scan(&o.Enabled, &o.ExternalURL, &o.Issuer, &o.ClientID, &o.ClientSecret,
 		&o.DisplayName, &scopes, &lifetime, &o.TrustUnverifiedEmail, &o.CACertificate, &o.GroupsClaim); err != nil {
@@ -46,7 +46,7 @@ func (d *DB) GetOIDC(ctx context.Context) (_ OIDC, err error) {
 	o.Scopes = strings.Fields(scopes)
 	o.SessionLifetime = time.Duration(lifetime)
 
-	if o.GroupRoles, err = groupRoles(ctx, d.reader); err != nil {
+	if o.GroupRoles, err = groupRoles(ctx, d.reader()); err != nil {
 		return OIDC{}, err
 	}
 

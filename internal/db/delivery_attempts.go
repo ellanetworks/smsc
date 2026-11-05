@@ -89,7 +89,7 @@ func (d *DB) ListDeliveryAttempts(ctx context.Context, messageID int64, page, pe
 	defer d.observe(&err)()
 
 	var total int
-	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM delivery_attempts WHERE message_id = ?`, messageID).Scan(&total); err != nil {
+	if err := d.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM delivery_attempts WHERE message_id = ?`, messageID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list delivery attempts: %w", err)
 	}
 
@@ -113,7 +113,7 @@ func (d *DB) ListDeliverReports(ctx context.Context, messageID int64) (_ []Deliv
 }
 
 func (d *DB) queryDeliveryAttempts(ctx context.Context, where string, args ...any) ([]DeliveryAttempt, error) {
-	rows, err := d.reader.QueryContext(ctx, `SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE `+where, args...)
+	rows, err := d.reader().QueryContext(ctx, `SELECT `+deliveryAttemptColumns+` FROM delivery_attempts WHERE `+where, args...)
 	if err != nil {
 		return nil, err
 	}

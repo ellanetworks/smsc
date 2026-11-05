@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+
+	"github.com/ellanetworks/smsc/internal/db"
 )
 
 type Response struct {
@@ -19,6 +22,13 @@ func writeResponse(w http.ResponseWriter, r *http.Request, v any, status int, lo
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, message string, err error, logger *slog.Logger) {
+	if status == http.StatusInternalServerError && errors.Is(err, db.ErrBusy) {
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, r, ErrorResponse{Error: "Too busy, retry later"}, http.StatusServiceUnavailable, logger)
+
+		return
+	}
+
 	if status >= 500 {
 		logger.ErrorContext(r.Context(), message, slog.Any("error", err))
 	} else {

@@ -145,7 +145,7 @@ func (d *DB) DueNotifications(ctx context.Context, esmeID int64, now time.Time, 
 
 	args = append(args, limit)
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
+	rows, err := d.reader().QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
 		FROM smpp_notifications n
 		CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		JOIN messages m ON m.id = n.message_id
@@ -285,8 +285,6 @@ func applyRetryNotification(a *applyCtx, p retryNotification) (struct{}, error) 
 	_, err := a.tx.ExecContext(a.ctx, `UPDATE smpp_notifications SET attempts = attempts + 1, next_attempt_at = ?
 		WHERE id = ? AND result IS NULL`, p.Next.UTC().UnixNano(), p.ID)
 
-	a.events.Notifications = true
-
 	return struct{}{}, err
 }
 
@@ -335,7 +333,7 @@ func applyExpireNotifications(a *applyCtx, p expireNotifications) (map[Notificat
 func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ map[NotificationType]int, err error) {
 	defer d.observe(&err)()
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT type, COUNT(*) FROM smpp_notifications
+	rows, err := d.reader().QueryContext(ctx, `SELECT type, COUNT(*) FROM smpp_notifications
 		WHERE result IS NULL AND expires_at > ? GROUP BY type`, now.UTC().UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("count pending notifications: %w", err)
@@ -370,7 +368,7 @@ func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time
 
 	var at sql.Null[int64]
 
-	if err := d.reader.QueryRowContext(ctx, `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at,
+	if err := d.reader().QueryRowContext(ctx, `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at,
 		n.expires_at) ELSE n.expires_at END) FROM smpp_notifications n CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		WHERE s.esme_id = ? AND n.result IS NULL`,
 		now.UTC().UnixNano(), esmeID).Scan(&at); err != nil {
@@ -397,7 +395,7 @@ func (d *DB) SystemIDsFor(ctx context.Context, messageIDs []int64) (_ map[int64]
 		args[i] = id
 	}
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT s.message_id, e.system_id FROM smpp_messages s
+	rows, err := d.reader().QueryContext(ctx, `SELECT s.message_id, e.system_id FROM smpp_messages s
 		JOIN esmes e ON e.id = s.esme_id WHERE s.message_id IN (?`+strings.Repeat(`, ?`, len(messageIDs)-1)+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get system IDs: %w", err)

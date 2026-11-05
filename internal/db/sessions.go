@@ -77,14 +77,14 @@ func createSession(ctx context.Context, tx *sql.Tx, s NewSession, maxPerUser int
 func (d *DB) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (_ Session, err error) {
 	defer d.observe(&err)()
 
-	return getSession(d.reader.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE token_hash = ?`,
+	return getSession(d.reader().QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE token_hash = ?`,
 		tokenHash))
 }
 
 func (d *DB) GetSession(ctx context.Context, id int64) (_ Session, err error) {
 	defer d.observe(&err)()
 
-	return getSession(d.reader.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, id))
+	return getSession(d.reader().QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, id))
 }
 
 const sessionColumns = `id, user_id, token_hash, method, identity_id, created_at, expires_at`

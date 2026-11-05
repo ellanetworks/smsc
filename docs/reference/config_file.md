@@ -13,7 +13,7 @@ The operator and delivery settings are not in this file: they are in the databas
 - `logging` (object, optional): The logging configuration.
     - `level` (string, optional): The log level: `debug`, `info`, `warn`, or `error`. Default `info`.
 - `db` (object): The database configuration.
-    - `path` (string): The path to the SQLite database file. Created if absent.
+    - `path` (string): The path to the SQLite database file. Created if absent. Ella SMSC also keeps its replicated log in a `raft` directory next to it: back up with the [API](api/backup.md), not by copying files.
 - `api` (object): The HTTP API and UI.
     - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
     - `port` (int, optional): The TCP port to listen on. Default `5010`.

@@ -10,8 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/smsc/internal/api"
+	"github.com/ellanetworks/smsc/internal/cluster"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
@@ -55,14 +58,11 @@ type Server struct {
 	stopFollowing context.CancelFunc
 	apiServer     *http.Server
 	apiListener   net.Listener
-	stopDelivery  context.CancelFunc
-	deliveryDone  chan struct{}
-	stopPurging   context.CancelFunc
-	purgeDone     chan struct{}
+	node          *cluster.Node
+	stopLeading   context.CancelFunc
+	engines       sync.WaitGroup
 	smppServer    *smpp.Server
 	smppListener  net.Listener
-	stopSMPP      context.CancelFunc
-	smppDone      chan struct{}
 }
 
 const tracingShutdownTimeout = 5 * time.Second
@@ -118,21 +118,37 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	initial, err := database.GetSettings(ctx)
+	node, err := cluster.Open(ctx, cluster.Config{
+		Dir: filepath.Join(filepath.Dir(cfg.DB.Path), "raft"), Now: time.Now, Logger: s.Logger,
+	}, database)
 	if err != nil {
 		_ = database.Close()
+		return err
+	}
+
+	database.SetProposer(node)
+
+	closeStore := func() {
+		if err := errors.Join(node.Close(), database.Close()); err != nil {
+			s.Logger.ErrorContext(ctx, "failed to close the database", slog.Any("error", err))
+		}
+	}
+
+	initial, err := database.GetSettings(ctx)
+	if err != nil {
+		closeStore()
 		return err
 	}
 
 	secrets, err := database.Secrets(ctx)
 	if err != nil {
-		_ = database.Close()
+		closeStore()
 		return err
 	}
 
 	oidcSettings, err := database.GetOIDC(ctx)
 	if err != nil {
-		_ = database.Close()
+		closeStore()
 		return err
 	}
 
@@ -211,7 +227,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	})
 
 	if err := nodes.start(ctx, initial.Operator, initial.Peers); err != nil {
-		_ = database.Close()
+		closeStore()
 		return err
 	}
 
@@ -221,7 +237,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	if err != nil {
 		nodes.shutdown(ctx)
 
-		_ = database.Close()
+		closeStore()
 
 		return fmt.Errorf("listen for the API: %w", err)
 	}
@@ -237,6 +253,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 			Notify:         deliverer.Notify,
 			ESMEs:          database,
 			OIDC:           oidcLive,
+			Backups:        node,
 			SMPP:           smppSessions{esmes},
 			Ready:          func(ctx context.Context) error { return s.ready(ctx, database) },
 			Received:       m.received,
@@ -268,12 +285,12 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	base := context.WithoutCancel(ctx)
 
 	if cfg.SMPP != nil {
-		if err := s.startSMPP(ctx, base, esmes, smppTLS); err != nil {
+		if err := s.startSMPP(ctx, esmes, smppTLS); err != nil {
 			_ = s.apiServer.Close()
 
 			nodes.shutdown(ctx)
 
-			_ = database.Close()
+			closeStore()
 
 			return err
 		}
@@ -282,16 +299,6 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	followCtx, stopFollowing := context.WithCancel(base)
 	go nodes.follow(followCtx, live)
 
-	deliveryCtx, stopDelivery := context.WithCancel(base)
-	deliveryDone := make(chan struct{})
-
-	go func() {
-		deliverer.Run(deliveryCtx)
-		close(deliveryDone)
-	}()
-
-	purgeCtx, stopPurging := context.WithCancel(base)
-	purgeDone := make(chan struct{})
 	p := &purger{
 		store:    database,
 		settings: live.Get,
@@ -304,19 +311,36 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		p.now = time.Now
 	}
 
-	go func() {
-		p.run(purgeCtx)
-		close(purgeDone)
-	}()
+	leadCtx, stopLeading := context.WithCancel(base)
+
+	node.Lead(func(ctx context.Context, _ uint64) {
+		s.engines.Add(1)
+		defer s.engines.Done()
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		stop := context.AfterFunc(leadCtx, cancel)
+		defer stop()
+
+		var wg sync.WaitGroup
+
+		wg.Go(func() { deliverer.Run(ctx) })
+		wg.Go(func() { p.run(ctx) })
+
+		if cfg.SMPP != nil {
+			wg.Go(func() { esmes.Run(ctx) })
+		}
+
+		wg.Wait()
+	})
 
 	s.database = database
+	s.node = node
 	s.shutdownTracing = shutdownTracing
 	s.nodes = nodes
 	s.stopFollowing = stopFollowing
-	s.stopDelivery = stopDelivery
-	s.deliveryDone = deliveryDone
-	s.stopPurging = stopPurging
-	s.purgeDone = purgeDone
+	s.stopLeading = stopLeading
 
 	v := version.Get()
 
@@ -332,7 +356,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	return nil
 }
 
-func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsConfig *tls.Config) error {
+func (s *Server) startSMPP(ctx context.Context, esmes *esme.Service, tlsConfig *tls.Config) error {
 	srv, err := smpp.NewServer(smpp.ServerConfig{
 		SystemID:      smppSystemID,
 		TLS:           tlsConfig,
@@ -360,15 +384,7 @@ func (s *Server) startSMPP(ctx, base context.Context, esmes *esme.Service, tlsCo
 
 	go func() { _ = srv.Serve(ln) }()
 
-	dispatchCtx, stop := context.WithCancel(base)
-	done := make(chan struct{})
-
-	go func() {
-		esmes.Run(dispatchCtx)
-		close(done)
-	}()
-
-	s.smppServer, s.smppListener, s.stopSMPP, s.smppDone = srv, ln, stop, done
+	s.smppServer, s.smppListener = srv, ln
 
 	return nil
 }
@@ -406,8 +422,7 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.draining.Store(true)
 
-	s.stopDelivery()
-	s.stopPurging()
+	s.stopLeading()
 
 	if d := s.Config.API.DrainDelay; d > 0 {
 		s.Logger.InfoContext(ctx, "draining the API", slog.Duration("delay", d))
@@ -427,32 +442,28 @@ func (s *Server) Shutdown(ctx context.Context) {
 		}
 
 		cancel()
-		s.stopSMPP()
-
-		select {
-		case <-s.smppDone:
-		case <-ctx.Done():
-		}
 	}
 
 	if err := s.apiServer.Shutdown(ctx); err != nil {
 		s.Logger.WarnContext(ctx, "failed to stop the API cleanly", slog.Any("error", err))
 	}
 
+	engines := make(chan struct{})
+
+	go func() {
+		s.engines.Wait()
+		close(engines)
+	}()
+
 	select {
-	case <-s.deliveryDone:
+	case <-engines:
 	case <-ctx.Done():
 		s.Logger.WarnContext(ctx, "shutting down with short message deliveries still in flight")
 	}
 
-	select {
-	case <-s.purgeDone:
-	case <-ctx.Done():
-	}
-
 	s.nodes.shutdown(ctx)
 
-	if err := s.database.Close(); err != nil {
+	if err := errors.Join(s.node.Close(), s.database.Close()); err != nil {
 		s.Logger.ErrorContext(ctx, "failed to close the database", slog.Any("error", err))
 	}
 

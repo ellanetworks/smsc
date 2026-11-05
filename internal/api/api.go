@@ -96,6 +96,7 @@ type Config struct {
 	ESMEs          ESMEStore
 	OIDC           OIDC
 	SMPP           SMPP
+	Backups        Backups
 	JWTSecret      []byte
 	OIDCCookieKey  []byte
 	SecureCookie   bool
@@ -152,6 +153,9 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/oidc", PermReadOIDC, a.needsLogin(GetOIDC(cfg))},
 		{"PUT /api/v1/oidc", PermUpdateOIDC, a.needsLogin(UpdateOIDC(a))},
 		{"POST /api/v1/oidc/discovery", PermUpdateOIDC, a.needsLogin(DiscoverOIDC(cfg))},
+
+		{"GET /api/v1/backup", PermBackup, Backup(a)},
+		{"POST /api/v1/restore", PermBackup, a.needsLogin(Restore(a))},
 
 		{"GET /api/v1/users/me", PermSelf, GetMyUser(a)},
 		{"PUT /api/v1/users/me/password", PermSelf, a.needsLogin(UpdateMyPassword(a))},

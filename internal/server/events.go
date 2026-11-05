@@ -42,11 +42,11 @@ func (s *Server) applyEvents(ctx context.Context, ev db.Events, database *db.DB,
 		esmes.NotificationsQueued()
 	}
 
-	if len(ev.ClosedESMEs) > 0 {
-		go func() {
-			for _, id := range ev.ClosedESMEs {
-				esmes.CloseESME(id)
-			}
-		}()
+	for _, id := range ev.ClosedESMEs {
+		esmes.CloseESME(id)
+	}
+
+	if ev.Replaced {
+		esmes.CloseAll()
 	}
 }

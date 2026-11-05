@@ -36,7 +36,7 @@ func (d *DB) CountUsers(ctx context.Context) (_ int, err error) {
 	defer d.observe(&err)()
 
 	var n int
-	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+	if err := d.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count users: %w", err)
 	}
 
@@ -89,24 +89,24 @@ func createUser(ctx context.Context, tx *sql.Tx, u NewUser, maxUsers int) (int64
 func (d *DB) GetUser(ctx context.Context, email string) (_ User, err error) {
 	defer d.observe(&err)()
 
-	return getUser(d.reader.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email))
+	return getUser(d.reader().QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email))
 }
 
 func (d *DB) GetUserByID(ctx context.Context, id int64) (_ User, err error) {
 	defer d.observe(&err)()
 
-	return getUser(d.reader.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))
+	return getUser(d.reader().QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))
 }
 
 func (d *DB) ListUsers(ctx context.Context, page, perPage int) (_ []User, _ int, err error) {
 	defer d.observe(&err)()
 
 	var total int
-	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+	if err := d.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list users: %w", err)
 	}
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY id LIMIT ? OFFSET ?`,
+	rows, err := d.reader().QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY id LIMIT ? OFFSET ?`,
 		perPage, (page-1)*perPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list users: %w", err)

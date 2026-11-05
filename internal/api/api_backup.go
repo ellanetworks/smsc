@@ -1,0 +1,69 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+
+	"github.com/ellanetworks/smsc/internal/cluster"
+)
+
+type Backups interface {
+	Backup(ctx context.Context, w io.Writer) error
+	Restore(ctx context.Context, r io.Reader) error
+}
+
+func Backup(a *auth) http.Handler {
+	cfg := a.cfg
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg.Backups == nil {
+			writeError(w, r, http.StatusServiceUnavailable, "Backups are not available", nil, cfg.Logger)
+			return
+		}
+
+		p, _ := PrincipalFrom(r.Context())
+		name := fmt.Sprintf("smsc-backup-%s.tar.gz", cfg.Now().UTC().Format("20060102T150405Z"))
+
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+
+		if err := cfg.Backups.Backup(r.Context(), w); err != nil {
+			cfg.Logger.ErrorContext(r.Context(), "failed to back up the database", "error", err)
+			panic(http.ErrAbortHandler)
+		}
+
+		a.audit(r, "backup", p.Email, "Database backed up")
+	})
+}
+
+func Restore(a *auth) http.Handler {
+	cfg := a.cfg
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg.Backups == nil {
+			writeError(w, r, http.StatusServiceUnavailable, "Backups are not available", nil, cfg.Logger)
+			return
+		}
+
+		err := cfg.Backups.Restore(r.Context(), r.Body)
+
+		switch {
+		case errors.Is(err, cluster.ErrInvalidBackup):
+			writeError(w, r, http.StatusBadRequest, err.Error(), err, cfg.Logger)
+			return
+		case errors.Is(err, cluster.ErrNotLeader):
+			writeError(w, r, http.StatusServiceUnavailable, "Not ready to restore, retry later", err, cfg.Logger)
+			return
+		case err != nil:
+			writeError(w, r, http.StatusInternalServerError, "Failed to restore the backup", err, cfg.Logger)
+			return
+		}
+
+		p, _ := PrincipalFrom(r.Context())
+		a.audit(r, "restore", p.Email, "Database restored from a backup")
+		writeResponse(w, r, SuccessResponse{Message: "Backup restored successfully"}, http.StatusOK, cfg.Logger)
+	})
+}

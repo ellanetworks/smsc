@@ -60,7 +60,7 @@ func applyCreateAPIToken(a *applyCtx, t NewAPIToken) (int64, error) {
 func (d *DB) GetAPITokenByTokenID(ctx context.Context, tokenID string) (_ APIToken, err error) {
 	defer d.observe(&err)()
 
-	t, err := scanAPIToken(d.reader.QueryRowContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE token_id = ?`,
+	t, err := scanAPIToken(d.reader().QueryRowContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE token_id = ?`,
 		tokenID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return APIToken{}, ErrNotFound
@@ -77,12 +77,12 @@ func (d *DB) ListAPITokens(ctx context.Context, userID int64, page, perPage int)
 	defer d.observe(&err)()
 
 	var total int
-	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
+	if err := d.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
 		Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list API tokens: %w", err)
 	}
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE user_id = ?
+	rows, err := d.reader().QueryContext(ctx, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE user_id = ?
 		ORDER BY id LIMIT ? OFFSET ?`, userID, perPage, (page-1)*perPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list API tokens: %w", err)
@@ -112,7 +112,7 @@ func (d *DB) CountAPITokens(ctx context.Context, userID int64) (_ int, err error
 	defer d.observe(&err)()
 
 	var n int
-	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
+	if err := d.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = ?`, userID).
 		Scan(&n); err != nil {
 		return 0, fmt.Errorf("count API tokens: %w", err)
 	}

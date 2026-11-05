@@ -11,7 +11,7 @@ import (
 func (d *DB) GetSettings(ctx context.Context) (_ settings.Settings, err error) {
 	defer d.observe(&err)()
 
-	return getSettings(ctx, d.reader)
+	return getSettings(ctx, d.reader())
 }
 
 func getSettings(ctx context.Context, q querier) (_ settings.Settings, err error) {
@@ -163,4 +163,3 @@ func applyUpdateRetention(a *applyCtx, r settings.Retention) (struct{}, error) {
 
 	return struct{}{}, nil
 }
-

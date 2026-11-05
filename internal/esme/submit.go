@@ -498,6 +498,8 @@ func submissionStatus(err error) smpp.CommandStatus {
 	switch {
 	case errors.Is(err, submission.ErrUserDataTooLong):
 		return smpp.StatusInvMsgLen
+	case errors.Is(err, db.ErrBusy):
+		return smpp.StatusThrottled
 	case errors.Is(err, submission.ErrStore), errors.Is(err, submission.ErrEncode), errors.Is(err, submission.ErrEncodeText):
 		return smpp.StatusSysErr
 	default:

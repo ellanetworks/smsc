@@ -46,7 +46,7 @@ func TestMetricsCountFailuresOnly(t *testing.T) {
 		t.Errorf("duration has %d observations, want 4", got)
 	}
 
-	if err := d.reader.Close(); err != nil {
+	if err := d.reader().Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,7 +102,7 @@ func TestMetricsLint(t *testing.T) {
 func TestEveryCallIsObserved(t *testing.T) {
 	unobserved := map[string]bool{
 		"Close": true, "Collectors": true, "CreateMessage": true, "Ping": true, "Apply": true, "AppliedIndex": true,
-		"OnEvents": true, "SetProposer": true, "JWTSecret": true, "OIDCCookieKey": true,
+		"OnEvents": true, "SetProposer": true, "RecordConfiguration": true, "MakeDurable": true, "ResetPosition": true, "JWTSecret": true, "OIDCCookieKey": true,
 	}
 
 	files, err := filepath.Glob("*.go")

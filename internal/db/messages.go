@@ -145,7 +145,7 @@ func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int
 		}
 	}
 
-	r, err := submit[storedMessages](ctx, d, cmdStoreMessages, storeMessages{Messages: messages})
+	r, replayed, err := submitReplay[storedMessages](ctx, d, cmdStoreMessages, storeMessages{Messages: messages})
 	if err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			return nil, err
@@ -154,8 +154,10 @@ func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int
 		return nil, fmt.Errorf("create message: %w", err)
 	}
 
-	for range r.Replaced {
-		d.metrics.count([]completion{{KindMessage, StatusReplaced}})
+	if !replayed {
+		for range r.Replaced {
+			d.metrics.count([]completion{{KindMessage, StatusReplaced}})
+		}
 	}
 
 	return r.IDs, nil
@@ -503,7 +505,7 @@ func scanMessage(row rowScanner) (Message, error) {
 func (d *DB) GetMessage(ctx context.Context, id int64) (_ Message, err error) {
 	defer d.observe(&err)()
 
-	m, err := scanMessage(d.reader.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE id = ?`, id))
+	m, err := scanMessage(d.reader().QueryRowContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrNotFound
 	}
@@ -568,11 +570,11 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 	clause, args := f.where()
 
 	var total int
-	if err := d.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`+clause, args...).Scan(&total); err != nil {
+	if err := d.reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM messages`+clause, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("list messages: %w", err)
 	}
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT `+messageColumns+` FROM messages`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+	rows, err := d.reader().QueryContext(ctx, `SELECT `+messageColumns+` FROM messages`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`,
 		append(args, perPage, (page-1)*perPage)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list messages: %w", err)
@@ -603,7 +605,7 @@ func (d *DB) CountMessages(ctx context.Context, f MessageFilter) (_ map[MessageS
 
 	clause, args := f.where()
 
-	rows, err := d.reader.QueryContext(ctx, `SELECT status, COUNT(*) FROM messages`+clause+` GROUP BY status`, args...)
+	rows, err := d.reader().QueryContext(ctx, `SELECT status, COUNT(*) FROM messages`+clause+` GROUP BY status`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("count messages: %w", err)
 	}
@@ -637,7 +639,7 @@ func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (_ Messa
 
 	exclude, args := excludeMSISDNs(busy)
 
-	m, err := scanMessage(d.reader.QueryRowContext(ctx,
+	m, err := scanMessage(d.reader().QueryRowContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE status = ? AND next_attempt_at <= ?`+exclude+`
 		ORDER BY next_attempt_at, id LIMIT 1`, append([]any{StatusPending, now.UTC().UnixNano()}, args...)...))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -658,7 +660,7 @@ func (d *DB) NextWakeup(ctx context.Context, busy []string) (_ time.Time, _ bool
 
 	exclude, args := excludeMSISDNs(busy)
 
-	err = d.reader.QueryRowContext(ctx,
+	err = d.reader().QueryRowContext(ctx,
 		`SELECT MIN(next_attempt_at) FROM messages WHERE status = ?`+exclude,
 		append([]any{StatusPending}, args...)...).Scan(&at)
 	if err != nil {
@@ -729,8 +731,6 @@ func applyScheduleRetry(a *applyCtx, p scheduleRetry) (struct{}, error) {
 		}
 	}
 
-	a.events.Messages = true
-
 	return struct{}{}, nil
 }
 
@@ -742,7 +742,7 @@ type PendingCount struct {
 func (d *DB) CountPending(ctx context.Context, now time.Time) (_ map[MessageKind]PendingCount, err error) {
 	defer d.observe(&err)()
 
-	rows, err := d.reader.QueryContext(ctx,
+	rows, err := d.reader().QueryContext(ctx,
 		`SELECT kind, COALESCE(SUM(next_attempt_at <= ?), 0), COUNT(*) FROM messages WHERE status = ? GROUP BY kind`,
 		now.UTC().UnixNano(), StatusPending)
 	if err != nil {
@@ -778,7 +778,7 @@ func (d *DB) NextDueFor(ctx context.Context, msisdn string, excludeID int64, now
 
 	at := now.UTC().UnixNano()
 
-	m, err := scanMessage(d.reader.QueryRowContext(ctx,
+	m, err := scanMessage(d.reader().QueryRowContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE msisdn = ? AND status = ? AND next_attempt_at <= ? AND expires_at > ?
 		AND id != ? ORDER BY next_attempt_at, id LIMIT 1`, msisdn, StatusPending, at, at, excludeID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -918,7 +918,7 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 ) (err error) {
 	defer d.observe(&err)()
 
-	kind, err := submit[MessageKind](ctx, d, cmdCompleteMessage, completeMessage{
+	kind, replayed, err := submitReplay[MessageKind](ctx, d, cmdCompleteMessage, completeMessage{
 		ID: id, Status: status, At: at, Report: report, TPStatus: tpStatus, TraceParent: tracing.TraceParent(ctx),
 	})
 	if errors.Is(err, ErrNotPending) || errors.Is(err, ErrNotFound) {
@@ -929,7 +929,9 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 		return fmt.Errorf("complete message: %w", err)
 	}
 
-	d.metrics.count([]completion{{kind, status}})
+	if !replayed {
+		d.metrics.count([]completion{{kind, status}})
+	}
 
 	return nil
 }
@@ -1034,7 +1036,7 @@ func (d *DB) StatusReportsFor(ctx context.Context, messageIDs []int64) (_ map[in
 		args[i] = id
 	}
 
-	rows, err := d.reader.QueryContext(ctx,
+	rows, err := d.reader().QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE report_for IN (?`+strings.Repeat(`, ?`, len(messageIDs)-1)+`)
 		ORDER BY id`, args...)
 	if err != nil {

@@ -1,0 +1,473 @@
+package db
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/mattn/go-sqlite3"
+)
+
+type Position struct {
+	Index              uint64
+	Term               uint64
+	Configuration      []byte
+	ConfigurationIndex uint64
+}
+
+func readPosition(ctx context.Context, q querier) (Position, error) {
+	var p Position
+
+	err := q.QueryRowContext(ctx, `SELECT applied_index, applied_term, configuration, configuration_index
+		FROM fsm_state WHERE id = 1`).Scan(&p.Index, &p.Term, &p.Configuration, &p.ConfigurationIndex)
+
+	return p, err
+}
+
+func (d *DB) Position(ctx context.Context) (_ Position, err error) {
+	defer d.observe(&err)()
+
+	return readPosition(ctx, d.reader())
+}
+
+func (d *DB) RecordConfiguration(index, term uint64, configuration []byte) error {
+	d.applyMu.Lock()
+	defer d.applyMu.Unlock()
+
+	if index <= d.applied.Load() {
+		return nil
+	}
+
+	if _, err := d.writer.ExecContext(context.Background(), `UPDATE fsm_state SET applied_index = ?, applied_term = ?,
+		configuration = ?, configuration_index = ? WHERE id = 1`, index, term, configuration, index); err != nil {
+		return &FatalError{Index: index, Err: err}
+	}
+
+	d.applied.Store(index)
+
+	return nil
+}
+
+func (d *DB) MakeDurable(ctx context.Context, p Position) error {
+	d.applyMu.Lock()
+	defer d.applyMu.Unlock()
+
+	conn, err := d.writer.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("make durable: %w", err)
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, `PRAGMA synchronous = FULL`); err != nil {
+		return fmt.Errorf("make durable: %w", err)
+	}
+
+	defer func() { _, _ = conn.ExecContext(context.Background(), `PRAGMA synchronous = NORMAL`) }()
+
+	if _, err := conn.ExecContext(ctx, `UPDATE fsm_state SET
+		applied_term = CASE WHEN applied_index < ?1 THEN ?2 ELSE applied_term END,
+		applied_index = MAX(applied_index, ?1),
+		configuration = CASE WHEN ?3 IS NOT NULL AND configuration_index <= ?4 THEN ?3 ELSE configuration END,
+		configuration_index = CASE WHEN ?3 IS NOT NULL AND configuration_index <= ?4 THEN ?4 ELSE configuration_index END,
+		durable_writes = durable_writes + 1
+		WHERE id = 1`, p.Index, p.Term, p.Configuration, p.ConfigurationIndex); err != nil {
+		return fmt.Errorf("make durable: %w", err)
+	}
+
+	d.applied.Store(max(d.applied.Load(), p.Index))
+
+	return nil
+}
+
+func (d *DB) ResetPosition(ctx context.Context) error {
+	d.applyMu.Lock()
+	defer d.applyMu.Unlock()
+
+	if _, err := d.writer.ExecContext(ctx, `UPDATE fsm_state SET applied_index = 0, applied_term = 0, configuration = NULL,
+		configuration_index = 0 WHERE id = 1`); err != nil {
+		return fmt.Errorf("reset position: %w", err)
+	}
+
+	if _, err := d.writer.ExecContext(ctx, `DELETE FROM applied_requests`); err != nil {
+		return fmt.Errorf("reset position: %w", err)
+	}
+
+	d.applied.Store(0)
+
+	return nil
+}
+
+func (d *DB) LeaderStart(ctx context.Context, via Proposer, nodeID string) (_ uint64, err error) {
+	defer d.observe(&err)()
+
+	term, _, err := submitVia[uint64](ctx, via, cmdLeaderStart, nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("leader start: %w", err)
+	}
+
+	return term, nil
+}
+
+func applyLeaderStart(a *applyCtx, _ string) (uint64, error) {
+	return a.term, nil
+}
+
+const (
+	snapshotMagic         = "SMSN"
+	snapshotHeaderSize    = 16
+	snapshotFormatVersion = 1
+	ProtocolVersion       = 1
+)
+
+var ErrSnapshotHeader = errors.New("unsupported snapshot")
+
+func SnapshotHeader() []byte {
+	h := make([]byte, snapshotHeaderSize)
+	copy(h, snapshotMagic)
+	binary.BigEndian.PutUint32(h[4:], snapshotFormatVersion)
+	binary.BigEndian.PutUint32(h[8:], uint32(len(migrations)))
+	binary.BigEndian.PutUint32(h[12:], ProtocolVersion)
+
+	return h
+}
+
+func checkSnapshotHeader(h []byte) error {
+	switch {
+	case len(h) != snapshotHeaderSize || !bytes.Equal(h[:4], []byte(snapshotMagic)):
+		return fmt.Errorf("%w: not an SMSC snapshot", ErrSnapshotHeader)
+	case binary.BigEndian.Uint32(h[4:]) > snapshotFormatVersion:
+		return fmt.Errorf("%w: format %d", ErrSnapshotHeader, binary.BigEndian.Uint32(h[4:]))
+	case binary.BigEndian.Uint32(h[8:]) > uint32(len(migrations)):
+		return fmt.Errorf("%w: schema %d is newer than this binary's %d", ErrSnapshotHeader,
+			binary.BigEndian.Uint32(h[8:]), len(migrations))
+	case binary.BigEndian.Uint32(h[12:]) > ProtocolVersion:
+		return fmt.Errorf("%w: protocol %d", ErrSnapshotHeader, binary.BigEndian.Uint32(h[12:]))
+	}
+
+	return nil
+}
+
+type Copy struct {
+	Position Position
+	Path     string
+}
+
+func (d *DB) CopyTo(ctx context.Context, dir string) (_ Copy, err error) {
+	defer d.observe(&err)()
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return Copy{}, fmt.Errorf("copy database: %w", err)
+	}
+
+	f, err := os.CreateTemp(dir, "copy-*.db")
+	if err != nil {
+		return Copy{}, fmt.Errorf("copy database: %w", err)
+	}
+
+	dest := f.Name()
+	_ = f.Close()
+
+	c := Copy{Path: dest}
+
+	if err := d.copyPinned(ctx, dest, &c.Position); err != nil {
+		_ = os.Remove(dest)
+		return Copy{}, fmt.Errorf("copy database: %w", err)
+	}
+
+	return c, nil
+}
+
+func (d *DB) copyPinned(ctx context.Context, dest string, p *Position) error {
+	conn, err := d.reader().Conn(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN`); err != nil {
+		return err
+	}
+
+	defer func() { _, _ = conn.ExecContext(context.Background(), `ROLLBACK`) }()
+
+	if *p, err = readPosition(ctx, conn); err != nil {
+		return err
+	}
+
+	destDB, err := sql.Open("sqlite3", "file:"+dest)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = destDB.Close() }()
+
+	destConn, err := destDB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = destConn.Close() }()
+
+	return conn.Raw(func(src any) error {
+		srcRaw, ok := src.(*sqlite3.SQLiteConn)
+		if !ok {
+			return fmt.Errorf("unexpected driver connection %T", src)
+		}
+
+		return destConn.Raw(func(dst any) error {
+			dstRaw, ok := dst.(*sqlite3.SQLiteConn)
+			if !ok {
+				return fmt.Errorf("unexpected driver connection %T", dst)
+			}
+
+			backup, err := dstRaw.Backup("main", srcRaw, "main")
+			if err != nil {
+				return err
+			}
+
+			done, err := backup.Step(-1)
+			if err != nil {
+				_ = backup.Finish()
+				return err
+			}
+
+			if !done {
+				_ = backup.Finish()
+				return errors.New("backup did not copy every page")
+			}
+
+			return backup.Finish()
+		})
+	})
+}
+
+func WriteSnapshot(w io.Writer, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = f.Close() }()
+
+	if _, err := w.Write(SnapshotHeader()); err != nil {
+		return err
+	}
+
+	_, err = io.Copy(w, f)
+
+	return err
+}
+
+func ReadSnapshot(r io.Reader, dir string) (string, error) {
+	h := make([]byte, snapshotHeaderSize)
+	if _, err := io.ReadFull(r, h); err != nil {
+		return "", fmt.Errorf("read snapshot header: %w", err)
+	}
+
+	if err := checkSnapshotHeader(h); err != nil {
+		return "", err
+	}
+
+	f, err := os.CreateTemp(dir, "install-*.db")
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := io.Copy(f, r); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+
+		return "", fmt.Errorf("write snapshot: %w", err)
+	}
+
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+
+		return "", fmt.Errorf("write snapshot: %w", err)
+	}
+
+	return f.Name(), f.Close()
+}
+
+func (d *DB) Install(ctx context.Context, src string, at *Position) (err error) {
+	defer d.observe(&err)()
+
+	if err := d.install(ctx, src, at); err != nil {
+		return err
+	}
+
+	d.publish(Events{Replaced: true, Messages: true, Notifications: true, Settings: true, OIDC: true})
+
+	return nil
+}
+
+func (d *DB) install(ctx context.Context, src string, at *Position) error {
+	d.applyMu.Lock()
+	defer d.applyMu.Unlock()
+
+	if at != nil {
+		if err := stampPosition(ctx, src, *at); err != nil {
+			return fmt.Errorf("install database: %w", err)
+		}
+	}
+
+	backup := d.path + ".replaced"
+
+	if err := errors.Join(d.reader().Close(), d.writer.Close()); err != nil {
+		_ = d.openConns(ctx)
+		return fmt.Errorf("install database: %w", err)
+	}
+
+	if err := os.Rename(d.path, backup); err != nil {
+		_ = d.openConns(ctx)
+		return fmt.Errorf("install database: %w", err)
+	}
+
+	restore := func(cause error) error {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(d.path + suffix)
+		}
+
+		_ = os.Rename(backup, d.path)
+
+		if err := d.openConns(ctx); err != nil {
+			return errors.Join(fmt.Errorf("install database: %w", cause), err)
+		}
+
+		return fmt.Errorf("install database: %w", cause)
+	}
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Remove(d.path + suffix)
+	}
+
+	if err := os.Rename(src, d.path); err != nil {
+		return restore(err)
+	}
+
+	syncDir(filepath.Dir(d.path))
+
+	if err := d.openConns(ctx); err != nil {
+		return restore(err)
+	}
+
+	_ = os.Remove(backup)
+
+	state, err := readFSMState(ctx, d.writer)
+	if err != nil {
+		return fmt.Errorf("install database: %w", err)
+	}
+
+	d.applied.Store(state.appliedIndex)
+
+	if l, ok := d.proposer.(*localProposer); ok {
+		l.mu.Lock()
+		l.last = max(l.last, state.leaderTime)
+		l.mu.Unlock()
+	}
+
+	return nil
+}
+
+func stampPosition(ctx context.Context, path string, p Position) error {
+	db, err := sql.Open("sqlite3", "file:"+path)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = db.Close() }()
+
+	_, err = db.ExecContext(ctx, `UPDATE fsm_state SET applied_index = ?, applied_term = ?, configuration = ?,
+		configuration_index = ? WHERE id = 1`, p.Index, p.Term, p.Configuration, p.ConfigurationIndex)
+
+	return err
+}
+
+func syncDir(dir string) {
+	if f, err := os.Open(dir); err == nil {
+		_ = f.Sync()
+		_ = f.Close()
+	}
+}
+
+func SchemaVersion() int {
+	return len(migrations)
+}
+
+func Sequences(ctx context.Context, path string) (map[string]int64, error) {
+	conn, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	return sequences(ctx, conn)
+}
+
+func (d *DB) Sequences(ctx context.Context) (_ map[string]int64, err error) {
+	defer d.observe(&err)()
+
+	return sequences(ctx, d.reader())
+}
+
+func sequences(ctx context.Context, q querier) (map[string]int64, error) {
+	rows, err := q.QueryContext(ctx, `SELECT name, seq FROM sqlite_sequence ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]int64{}
+
+	for rows.Next() {
+		var (
+			name string
+			seq  int64
+		)
+
+		if err := rows.Scan(&name, &seq); err != nil {
+			return nil, err
+		}
+
+		out[name] = seq
+	}
+
+	return out, rows.Err()
+}
+
+func RaiseSequences(ctx context.Context, path string, floor map[string]int64) error {
+	conn, err := sql.Open("sqlite3", "file:"+path)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	for name, seq := range floor {
+		res, err := conn.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?`, seq, name)
+		if err != nil {
+			return err
+		}
+
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			if _, err := conn.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)`, name, seq); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}

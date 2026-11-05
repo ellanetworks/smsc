@@ -306,6 +306,8 @@ func submitError(err error) (int, string) {
 		return http.StatusBadRequest, "text is too long"
 	case errors.Is(err, submission.ErrEncodeText):
 		return http.StatusInternalServerError, "Failed to encode text"
+	case errors.Is(err, db.ErrBusy):
+		return http.StatusServiceUnavailable, "Too busy, retry later"
 	case errors.Is(err, submission.ErrStore):
 		return http.StatusInternalServerError, "Failed to store message"
 	default:

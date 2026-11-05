@@ -33,7 +33,7 @@ func (d *DB) GetIdentity(ctx context.Context, issuer, subject string) (_ Identit
 		createdAt, lastLogin int64
 	)
 
-	err = d.reader.QueryRowContext(ctx, `SELECT id, user_id, issuer, subject, email, created_at, last_login_at
+	err = d.reader().QueryRowContext(ctx, `SELECT id, user_id, issuer, subject, email, created_at, last_login_at
 		FROM user_identities WHERE issuer = ? AND subject = ?`, issuer, subject).Scan(&i.ID, &i.UserID, &i.Issuer,
 		&i.Subject, &i.Email, &createdAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {

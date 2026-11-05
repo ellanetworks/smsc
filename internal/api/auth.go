@@ -91,13 +91,14 @@ const (
 	PermUpdateESME         Permission = "esme:update"
 	PermReadOIDC           Permission = "oidc:read"
 	PermUpdateOIDC         Permission = "oidc:update"
+	PermBackup             Permission = "backup:manage"
 )
 
 var permissions = map[db.Role][]Permission{
 	db.RoleAdmin: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
-		PermReadProfiles, PermUpdateDiameter, PermReadESME, PermUpdateESME, PermReadOIDC, PermUpdateOIDC,
+		PermReadProfiles, PermUpdateDiameter, PermReadESME, PermUpdateESME, PermReadOIDC, PermUpdateOIDC, PermBackup,
 	},
 	db.RoleReadOnly: {
 		PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf, PermReadESME,

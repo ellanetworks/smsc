@@ -442,6 +442,11 @@ func (s *Service) CloseESME(esmeID int64) {
 	s.closeWhere(func(sess *Session) bool { return sess.ESME.ID == esmeID })
 }
 
+func (s *Service) CloseAll() {
+	s.init()
+	s.closeWhere(func(*Session) bool { return true })
+}
+
 func (s *Service) closeWhere(match func(*Session) bool) {
 	var conns []Conn
 

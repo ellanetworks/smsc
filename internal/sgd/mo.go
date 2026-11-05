@@ -114,7 +114,7 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		expiresAt = receivedAt.Add(current.Delivery.DefaultValidity)
 	}
 
-	id, err := h.Store.CreateMessage(db.WithRequestID(ctx, requestID(req)), db.NewMessage{
+	id, err := h.Store.CreateMessage(withRequestID(ctx, req), db.NewMessage{
 		Originator: db.Address{
 			Digits:        originator,
 			TypeOfNumber:  tpdu.TypeOfNumberInternational,
@@ -216,12 +216,19 @@ func (h *Handler) deliveryFailure(req *diameter.Message, cause sgd.DeliveryFailu
 	return ans
 }
 
-func requestID(req *diameter.Message) db.RequestID {
-	sessionID, _ := req.Find(diameter.AVPSessionID, 0)
-	originHost, _ := req.Find(diameter.AVPOriginHost, 0)
+func withRequestID(ctx context.Context, req *diameter.Message) context.Context {
+	sessionID, ok := req.Find(diameter.AVPSessionID, 0)
+	if !ok || len(sessionID.Data) == 0 {
+		return ctx
+	}
+
+	originHost, ok := req.Find(diameter.AVPOriginHost, 0)
+	if !ok || len(originHost.Data) == 0 {
+		return ctx
+	}
 
 	var e2e [4]byte
 	binary.BigEndian.PutUint32(e2e[:], req.EndToEndID)
 
-	return db.RequestIDOf(originHost.Data, sessionID.Data, e2e[:])
+	return db.WithRequestID(ctx, db.RequestIDOf(originHost.Data, sessionID.Data, e2e[:]))
 }

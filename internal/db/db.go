@@ -29,7 +29,7 @@ func isUnique(err error) bool {
 
 type DB struct {
 	writer      *sql.DB
-	reader      *sql.DB
+	readers     atomic.Pointer[sql.DB]
 	path        string
 	metrics     metrics
 	proposer    Proposer
@@ -283,9 +283,12 @@ var migrations = []string{
 		applied_index INTEGER NOT NULL,
 		applied_term INTEGER NOT NULL,
 		hash BLOB NOT NULL,
-		leader_time INTEGER NOT NULL
+		leader_time INTEGER NOT NULL,
+		configuration BLOB,
+		configuration_index INTEGER NOT NULL,
+		durable_writes INTEGER NOT NULL
 	);
-	INSERT INTO fsm_state VALUES (1, 0, 0, zeroblob(32), 0);
+	INSERT INTO fsm_state VALUES (1, 0, 0, zeroblob(32), 0, NULL, 0, 0);
 	CREATE TABLE applied_requests (
 		request_id BLOB PRIMARY KEY CHECK (length(request_id) = 16),
 		result BLOB NOT NULL,
@@ -309,44 +312,13 @@ func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	const params = "_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_stmt_cache_size=64"
+	d := &DB{path: path, metrics: newMetrics()}
 
-	writer, err := sql.Open("sqlite3", "file:"+path+"?"+params+"&_txlock=immediate")
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	writer.SetMaxOpenConns(1)
-
-	if err := writer.PingContext(ctx); err != nil {
-		_ = writer.Close()
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	d := &DB{writer: writer, path: path, metrics: newMetrics()}
-	if err := d.migrate(ctx); err != nil {
-		_ = writer.Close()
+	if err := d.openConns(ctx); err != nil {
 		return nil, err
 	}
 
-	reader, err := sql.Open("sqlite3", "file:"+path+"?"+params+"&_query_only=1")
-	if err != nil {
-		_ = writer.Close()
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	reader.SetMaxOpenConns(readConns)
-
-	if err := reader.PingContext(ctx); err != nil {
-		_ = writer.Close()
-		_ = reader.Close()
-
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	d.reader = reader
-
-	state, err := readFSMState(ctx, writer)
+	state, err := readFSMState(ctx, d.writer)
 	if err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("open database: read state: %w", err)
@@ -362,14 +334,62 @@ func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 	return d, nil
 }
 
+const dsnParams = "_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_stmt_cache_size=64"
+
+func (d *DB) openConns(ctx context.Context) error {
+	writer, err := sql.Open("sqlite3", "file:"+d.path+"?"+dsnParams+"&_txlock=immediate")
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+
+	writer.SetMaxOpenConns(1)
+
+	if err := writer.PingContext(ctx); err != nil {
+		_ = writer.Close()
+		return fmt.Errorf("open database: %w", err)
+	}
+
+	d.writer = writer
+
+	if err := d.migrate(ctx); err != nil {
+		_ = writer.Close()
+		return err
+	}
+
+	reader, err := sql.Open("sqlite3", "file:"+d.path+"?"+dsnParams+"&_query_only=1")
+	if err != nil {
+		_ = writer.Close()
+		return fmt.Errorf("open database: %w", err)
+	}
+
+	reader.SetMaxOpenConns(readConns)
+
+	if err := reader.PingContext(ctx); err != nil {
+		_ = writer.Close()
+		_ = reader.Close()
+
+		return fmt.Errorf("open database: %w", err)
+	}
+
+	if old := d.readers.Swap(reader); old != nil {
+		_ = old.Close()
+	}
+
+	return nil
+}
+
+func (d *DB) reader() *sql.DB {
+	return d.readers.Load()
+}
+
 const readConns = 8
 
 func (d *DB) Ping(ctx context.Context) error {
-	return d.reader.PingContext(ctx)
+	return d.reader().PingContext(ctx)
 }
 
 func (d *DB) Close() error {
-	return errors.Join(d.reader.Close(), d.writer.Close())
+	return errors.Join(d.reader().Close(), d.writer.Close())
 }
 
 func (d *DB) migrate(ctx context.Context) error {

@@ -27,6 +27,7 @@ tags:
   - name: Status
   - name: Metrics
   - name: Profiling
+  - name: Backup
   - name: Specification
 
 paths:
@@ -1244,6 +1245,58 @@ paths:
         "502":
           $ref: "#/components/responses/BadGateway"
 
+  /api/v1/backup:
+    get:
+      tags: [Backup]
+      operationId: backup
+      summary: Back up the database
+      description: >-
+        Streams a gzipped tar archive of a consistent copy of the database, with a manifest of its schema version,
+        position and ID sequences, and the SHA-256 checksums of both. The archive holds message content, user
+        accounts and the single sign-on client secret.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/restore:
+    post:
+      tags: [Backup]
+      operationId: restore
+      summary: Restore the database from a backup
+      description: >-
+        Replaces every message, user and setting with those of an archive from GET /api/v1/backup, after checking
+        its checksums and that its schema is not newer than this version's. IDs keep increasing: a message ID
+        already returned is never reused. SMPP sessions are closed. Needs a login, not an API token.
+      requestBody:
+        required: true
+        content:
+          application/gzip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/users:
     get:
       tags: [Users]
@@ -1886,6 +1939,12 @@ components:
         Set-Cookie:
           schema:
             type: string
+    ServiceUnavailable:
+      description: Too busy, or not ready. Retry later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     BadGateway:
       description: The identity provider cannot be reached or cannot be used.
       content:
