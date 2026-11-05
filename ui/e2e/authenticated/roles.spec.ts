@@ -2,8 +2,22 @@ import { expect, test } from "@playwright/test";
 import { ROLES } from "../roles";
 
 const NAVIGATION = {
-  "Read Only": ["Dashboard", "Operator", "Diameter", "SMPP", "Messages"],
-  "Network Manager": ["Dashboard", "Operator", "Diameter", "SMPP", "Messages"],
+  "Read Only": [
+    "Dashboard",
+    "Operator",
+    "Diameter",
+    "SMPP",
+    "Messages",
+    "Cluster",
+  ],
+  "Network Manager": [
+    "Dashboard",
+    "Operator",
+    "Diameter",
+    "SMPP",
+    "Messages",
+    "Cluster",
+  ],
   Submitter: ["Messages"],
 } as const;
 
