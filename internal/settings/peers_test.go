@@ -232,7 +232,7 @@ func TestOperatorCannotTakeAPeersHost(t *testing.T) {
 	next.MNC = "02"
 
 	p := validPeer()
-	p.Host = next.Host()
+	p.Host = next.Host(DefaultLabel)
 
 	if _, err := live.CreatePeer(ctx, p); err != nil {
 		t.Fatal(err)

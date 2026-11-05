@@ -51,6 +51,12 @@ const (
 	cmdCreateIdentity
 	cmdDeleteIdentities
 	cmdLeaderStart
+	cmdRegisterMember
+	cmdCreateJoinToken
+	cmdAdmitMember
+	cmdRemoveMember
+	cmdSetDiameterLabel
+	cmdDeleteExpiredJoinTokens
 )
 
 const entryBatch uint16 = 1
@@ -61,7 +67,6 @@ type Command struct {
 	Type      CommandType     `json:"t"`
 	Version   uint16          `json:"v"`
 	RequestID RequestID       `json:"r"`
-	Retryable bool            `json:"x,omitempty"`
 	Payload   json.RawMessage `json:"p"`
 }
 
@@ -131,12 +136,19 @@ var resultCodes = []struct {
 	{"linked_elsewhere", ErrLinkedElsewhere},
 	{"state_used", ErrStateUsed},
 	{"conflict", settings.ErrConflict},
+	{"token_used", ErrTokenUsed},
+	{"token_expired", ErrTokenExpired},
 	{"invalid", ErrInvalid},
 	{"constraint", ErrConstraint},
 	{"already_applied", ErrAlreadyApplied},
 }
 
 var ErrInvalid = errors.New("invalid command")
+
+func CodeOf(err error) string {
+	code, _ := codeOf(err)
+	return code
+}
 
 func codeOf(err error) (string, bool) {
 	for _, c := range resultCodes {
@@ -198,17 +210,21 @@ func RequestIDOf(parts ...[]byte) RequestID {
 	return id
 }
 
-func requestID(ctx context.Context, t CommandType) (RequestID, bool) {
+func requestID(ctx context.Context, t CommandType) RequestID {
 	if id, ok := ctx.Value(requestIDKey{}).(RequestID); ok && id != (RequestID{}) {
 		var typ [2]byte
 		binary.BigEndian.PutUint16(typ[:], uint16(t))
 
-		return RequestIDOf(id[:], typ[:]), true
+		return RequestIDOf(id[:], typ[:])
 	}
 
 	var id RequestID
 
 	_, _ = rand.Read(id[:])
 
-	return id, false
+	return id
+}
+
+func (t CommandType) recorded() bool {
+	return t != cmdInitSecrets && t != cmdLeaderStart
 }

@@ -49,7 +49,7 @@ func (d *DB) RecordConfiguration(index, term uint64, configuration []byte) error
 		return &FatalError{Index: index, Err: err}
 	}
 
-	d.applied.Store(index)
+	d.setApplied(index)
 
 	return nil
 }
@@ -81,7 +81,7 @@ func (d *DB) MakeDurable(ctx context.Context, p Position) error {
 		return fmt.Errorf("make durable: %w", err)
 	}
 
-	d.applied.Store(max(d.applied.Load(), p.Index))
+	d.setApplied(max(d.applied.Load(), p.Index))
 
 	return nil
 }
@@ -99,7 +99,7 @@ func (d *DB) ResetPosition(ctx context.Context) error {
 		return fmt.Errorf("reset position: %w", err)
 	}
 
-	d.applied.Store(0)
+	d.setApplied(0)
 
 	return nil
 }
@@ -305,7 +305,7 @@ func (d *DB) Install(ctx context.Context, src string, at *Position) (err error) 
 		return err
 	}
 
-	d.publish(Events{Replaced: true, Messages: true, Notifications: true, Settings: true, OIDC: true})
+	d.publish(Events{Replaced: true, Messages: true, Notifications: true, Settings: true, OIDC: true, Members: true})
 
 	return nil
 }
@@ -367,7 +367,7 @@ func (d *DB) install(ctx context.Context, src string, at *Position) error {
 		return fmt.Errorf("install database: %w", err)
 	}
 
-	d.applied.Store(state.appliedIndex)
+	d.setApplied(state.appliedIndex)
 
 	if l, ok := d.proposer.(*localProposer); ok {
 		l.mu.Lock()
@@ -470,4 +470,91 @@ func RaiseSequences(ctx context.Context, path string, floor map[string]int64) er
 	}
 
 	return nil
+}
+
+func (d *DB) Wipe(ctx context.Context, scratch string) (err error) {
+	defer d.observe(&err)()
+
+	path := filepath.Join(scratch, "empty.db")
+
+	_ = os.Remove(path)
+
+	fresh, err := Open(ctx, path)
+	if err != nil {
+		return fmt.Errorf("create an empty database: %w", err)
+	}
+
+	if err := fresh.Close(); err != nil {
+		return fmt.Errorf("create an empty database: %w", err)
+	}
+
+	return d.Install(ctx, path, &Position{})
+}
+
+var clusterTables = []string{"cluster", "cluster_members", "cluster_join_tokens"}
+
+func (d *DB) KeepClusterState(ctx context.Context, path string) (err error) {
+	defer d.observe(&err)()
+
+	conn, err := sql.Open("sqlite3", "file:"+path)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	c, err := conn.Conn(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = c.Close() }()
+
+	if _, err := c.ExecContext(ctx, `ATTACH DATABASE ? AS live`, "file:"+d.path+"?mode=ro"); err != nil {
+		return err
+	}
+
+	defer func() { _, _ = c.ExecContext(context.Background(), `DETACH DATABASE live`) }()
+
+	tx, err := c.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	for _, t := range clusterTables {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM main.`+t); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `INSERT INTO main.`+t+` SELECT * FROM live.`+t); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (d *DB) ForceConfiguration(ctx context.Context, configuration []byte, survivor string) error {
+	d.applyMu.Lock()
+	defer d.applyMu.Unlock()
+
+	tx, err := d.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("force the configuration: %w", err)
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `UPDATE fsm_state SET configuration = ?, configuration_index = applied_index
+		WHERE id = 1`, configuration); err != nil {
+		return fmt.Errorf("force the configuration: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_members WHERE node_id != ?`, survivor); err != nil {
+		return fmt.Errorf("forget the lost members: %w", err)
+	}
+
+	return tx.Commit()
 }

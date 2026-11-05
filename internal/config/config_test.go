@@ -245,3 +245,32 @@ func TestLoadTelemetry(t *testing.T) {
 		t.Fatal("Load without telemetry.otlp_endpoint succeeded")
 	}
 }
+
+func TestLoadCluster(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validConfig+"cluster:\n  address: 10.0.0.1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := cfg.Cluster
+	if c == nil || c.Port != defaultClusterPort || c.PerformanceMultiplier != 1 || c.AdvertiseAddress() != "10.0.0.1:7000" {
+		t.Fatalf("cluster = %+v", c)
+	}
+
+	cfg, err = Load(writeConfig(t, validConfig+"cluster:\n  address: 0.0.0.0\n  advertise: smsc-0.smsc:7000\n"))
+	if err != nil || cfg.Cluster.AdvertiseAddress() != "smsc-0.smsc:7000" {
+		t.Fatalf("cluster = %+v, %v", cfg.Cluster, err)
+	}
+
+	for name, block := range map[string]string{
+		"no address":             "cluster:\n  port: 7000\n",
+		"unspecified, no advert": "cluster:\n  address: 0.0.0.0\n",
+		"advertise without port": "cluster:\n  address: 10.0.0.1\n  advertise: smsc-0\n",
+		"unspecified advertise":  "cluster:\n  address: 10.0.0.1\n  advertise: 0.0.0.0:7000\n",
+		"multiplier too high":    "cluster:\n  address: 10.0.0.1\n  performance_multiplier: 11\n",
+	} {
+		if _, err := Load(writeConfig(t, validConfig+block)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}

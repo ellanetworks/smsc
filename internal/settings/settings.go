@@ -19,7 +19,10 @@ type Settings struct {
 	Delivery  Delivery
 	Retention Retention
 	Peers     []Peer
+	Labels    []string
 }
+
+const DefaultLabel = "smsc"
 
 type Operator struct {
 	MCC                  string
@@ -29,8 +32,22 @@ type Operator struct {
 }
 
 // TS 23.003 clause 19.4.2.8
-func (o Operator) Host() string {
-	return "smsc.node." + o.Realm()
+func (o Operator) Host(label string) string {
+	return label + ".node." + o.Realm()
+}
+
+func (s Settings) Hosts() []string {
+	labels := s.Labels
+	if len(labels) == 0 {
+		labels = []string{DefaultLabel}
+	}
+
+	hosts := make([]string, len(labels))
+	for i, l := range labels {
+		hosts[i] = s.Operator.Host(l)
+	}
+
+	return hosts
 }
 
 // TS 23.003 clause 19.2
@@ -58,7 +75,7 @@ func (s Settings) Validate() error {
 	errs := []error{s.Operator.Validate(), s.Delivery.Validate(), s.Retention.Validate()}
 
 	for i, p := range s.Peers {
-		errs = append(errs, p.Validate(), p.Conflict(s.Peers[:i], s.Operator.Host()))
+		errs = append(errs, p.Validate(), p.Conflict(s.Peers[:i], s.Hosts()))
 	}
 
 	return errors.Join(errs...)
@@ -138,10 +155,14 @@ func NewLive(store Store, initial Settings) *Live {
 	return l
 }
 
-func (o Operator) Conflict(peers []Peer) error {
-	for _, p := range peers {
-		if strings.EqualFold(p.Host, o.Host()) {
-			return fmt.Errorf("%w: host %s is peer %d's", ErrConflict, o.Host(), p.ID)
+func (o Operator) Conflict(peers []Peer, labels []string) error {
+	s := Settings{Operator: o, Labels: labels}
+
+	for _, host := range s.Hosts() {
+		for _, p := range peers {
+			if strings.EqualFold(p.Host, host) {
+				return fmt.Errorf("%w: host %s is peer %d's", ErrConflict, host, p.ID)
+			}
 		}
 	}
 
@@ -158,7 +179,7 @@ func (l *Live) UpdateOperator(ctx context.Context, o Operator) error {
 	}
 
 	return l.change(func(s *Settings) error {
-		if err := o.Conflict(s.Peers); err != nil {
+		if err := o.Conflict(s.Peers, s.Labels); err != nil {
 			return err
 		}
 

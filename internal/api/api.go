@@ -97,8 +97,9 @@ type Config struct {
 	OIDC           OIDC
 	SMPP           SMPP
 	Backups        Backups
-	JWTSecret      []byte
-	OIDCCookieKey  []byte
+	Cluster        Cluster
+	JWTSecret      func() []byte
+	OIDCCookieKey  func() []byte
 	SecureCookie   bool
 	BcryptCost     int
 	TracerProvider trace.TracerProvider
@@ -153,6 +154,12 @@ func routes(cfg Config, a *auth) []route {
 		{"GET /api/v1/oidc", PermReadOIDC, a.needsLogin(GetOIDC(cfg))},
 		{"PUT /api/v1/oidc", PermUpdateOIDC, a.needsLogin(UpdateOIDC(a))},
 		{"POST /api/v1/oidc/discovery", PermUpdateOIDC, a.needsLogin(DiscoverOIDC(cfg))},
+
+		{"GET /api/v1/cluster", PermReadCluster, GetCluster(cfg)},
+		{"POST /api/v1/cluster/tokens", PermManageCluster, a.needsLogin(CreateJoinToken(a))},
+		{"POST /api/v1/cluster/join", public, JoinCluster(a)},
+		{"PUT /api/v1/cluster/members/{node_id}", PermManageCluster, a.needsLogin(UpdateMember(a))},
+		{"DELETE /api/v1/cluster/members/{node_id}", PermManageCluster, a.needsLogin(RemoveMember(a))},
 
 		{"GET /api/v1/backup", PermBackup, Backup(a)},
 		{"POST /api/v1/restore", PermBackup, a.needsLogin(Restore(a))},

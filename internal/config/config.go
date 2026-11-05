@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os"
 	"time"
@@ -16,6 +17,8 @@ const (
 	defaultDiameterPort = 3868
 	defaultAPIPort      = 5010
 	defaultSMPPPort     = 2775
+	defaultClusterPort  = 7000
+	maxMultiplier       = 10
 )
 
 type Config struct {
@@ -24,6 +27,7 @@ type Config struct {
 	API       API       `yaml:"api"`
 	Diameter  Diameter  `yaml:"diameter"`
 	SMPP      *SMPP     `yaml:"smpp"`
+	Cluster   *Cluster  `yaml:"cluster"`
 	Telemetry Telemetry `yaml:"telemetry"`
 }
 
@@ -51,6 +55,21 @@ type SMPP struct {
 	Address netip.Addr `yaml:"address"`
 	Port    int        `yaml:"port"`
 	TLS     *TLS       `yaml:"tls"`
+}
+
+type Cluster struct {
+	Address               netip.Addr `yaml:"address"`
+	Port                  int        `yaml:"port"`
+	Advertise             string     `yaml:"advertise"`
+	PerformanceMultiplier int        `yaml:"performance_multiplier"`
+}
+
+func (c Cluster) AdvertiseAddress() string {
+	if c.Advertise != "" {
+		return c.Advertise
+	}
+
+	return netip.AddrPortFrom(c.Address, uint16(c.Port)).String()
 }
 
 type Telemetry struct {
@@ -88,6 +107,16 @@ func Load(path string) (Config, error) {
 
 	if cfg.SMPP != nil && cfg.SMPP.Port == 0 {
 		cfg.SMPP.Port = defaultSMPPPort
+	}
+
+	if c := cfg.Cluster; c != nil {
+		if c.Port == 0 {
+			c.Port = defaultClusterPort
+		}
+
+		if c.PerformanceMultiplier == 0 {
+			c.PerformanceMultiplier = 1
+		}
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -136,6 +165,40 @@ func (c Config) validate() error {
 		if err := s.TLS.validate("smpp"); err != nil {
 			return err
 		}
+	}
+
+	if c := c.Cluster; c != nil {
+		if err := c.validate(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c Cluster) validate() error {
+	switch {
+	case !c.Address.IsValid():
+		return errors.New("cluster.address is required")
+	case c.Port < 1 || c.Port > 65535:
+		return fmt.Errorf("cluster.port %d is out of range", c.Port)
+	case c.PerformanceMultiplier < 1 || c.PerformanceMultiplier > maxMultiplier:
+		return fmt.Errorf("cluster.performance_multiplier %d is not between 1 and %d", c.PerformanceMultiplier, maxMultiplier)
+	case c.Advertise == "" && c.Address.IsUnspecified():
+		return errors.New("cluster.advertise is required when cluster.address is unspecified")
+	}
+
+	if c.Advertise == "" {
+		return nil
+	}
+
+	host, port, err := net.SplitHostPort(c.Advertise)
+	if err != nil || host == "" || port == "" {
+		return fmt.Errorf("cluster.advertise %q is not a host:port", c.Advertise)
+	}
+
+	if ip, err := netip.ParseAddr(host); err == nil && ip.IsUnspecified() {
+		return fmt.Errorf("cluster.advertise %q must be a specific address", c.Advertise)
 	}
 
 	return nil

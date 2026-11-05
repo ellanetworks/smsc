@@ -142,7 +142,7 @@ func peerConflict(a *applyCtx, p settings.Peer) error {
 		}
 	}
 
-	return p.Conflict(others, o.Operator.Host())
+	return p.Conflict(others, o.Hosts())
 }
 
 func applyCreatePeer(a *applyCtx, p settings.Peer) (int64, error) {

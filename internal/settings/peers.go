@@ -120,9 +120,11 @@ func (p Peer) Equal(q Peer) bool {
 		slices.Equal(p.Routes, q.Routes)
 }
 
-func (p Peer) Conflict(peers []Peer, self string) error {
-	if strings.EqualFold(p.Host, self) {
-		return fmt.Errorf("%w: host %s is the SMSC's own", ErrConflict, p.Host)
+func (p Peer) Conflict(peers []Peer, selves []string) error {
+	for _, self := range selves {
+		if strings.EqualFold(p.Host, self) {
+			return fmt.Errorf("%w: host %s is the SMSC's own", ErrConflict, p.Host)
+		}
 	}
 
 	for _, o := range peers {
@@ -179,7 +181,7 @@ func (l *Live) CreatePeer(ctx context.Context, p Peer) (Peer, error) {
 	p = clonePeer(p)
 
 	err := l.change(func(s *Settings) error {
-		if err := p.Conflict(s.Peers, s.Operator.Host()); err != nil {
+		if err := p.Conflict(s.Peers, s.Hosts()); err != nil {
 			return err
 		}
 
@@ -210,7 +212,7 @@ func (l *Live) UpdatePeer(ctx context.Context, p Peer) error {
 			return fmt.Errorf("peer %d: %w", p.ID, ErrNotFound)
 		}
 
-		if err := p.Conflict(s.Peers, s.Operator.Host()); err != nil {
+		if err := p.Conflict(s.Peers, s.Hosts()); err != nil {
 			return err
 		}
 

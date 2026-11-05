@@ -2,17 +2,18 @@ package cluster
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ellanetworks/smsc/internal/cluster/listener"
+	"github.com/ellanetworks/smsc/internal/cluster/pki"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
@@ -26,26 +27,55 @@ const (
 	trailingLogs     = 10240
 	snapshotEntries  = 8192
 	soleVoterTimeout = 100 * time.Millisecond
+	commitTimeout    = 5 * time.Millisecond
+	maxPool          = 3
+	transportTimeout = 10 * time.Second
+	retryEstablish   = 5 * time.Second
+
+	idFile      = "node-id"
+	joinedFile  = "joined"
+	joiningFile = "joining"
+	removedFile = "removed"
+	logFile     = "raft.db"
 )
 
-var ErrNotLeader = errors.New("not the leader")
+var (
+	ErrNotLeader    = errors.New("not the leader")
+	ErrRemoved      = errors.New("this node was removed from the cluster: delete its data directory to join it again")
+	ErrNotClustered = errors.New("this node has no cluster address: set cluster in its configuration file")
+)
 
 type Config struct {
 	Dir                   string
-	Clustered             bool
+	Address               string
+	Advertise             string
 	PerformanceMultiplier int
+	Version               string
 	Now                   func() time.Time
 	Logger                *slog.Logger
 }
 
+func (c Config) clustered() bool {
+	return c.Address != ""
+}
+
 type Node struct {
-	cfg     Config
-	id      string
-	db      *db.DB
-	raft    *raft.Raft
-	store   *raftboltdb.BoltStore
-	batcher *batcher
-	notify  chan bool
+	cfg   Config
+	id    string
+	db    *db.DB
+	certs *certs
+
+	ln     *listener.Listener
+	rpc    *http.Server
+	peers  *peerClient
+	health *health
+
+	raftMu    sync.RWMutex
+	raft      *raft.Raft
+	store     *raftboltdb.BoltStore
+	transport raft.Transport
+	batcher   *batcher
+	notify    chan bool
 
 	mu      sync.Mutex
 	term    uint64
@@ -55,9 +85,13 @@ type Node struct {
 	cancel  context.CancelFunc
 	runs    sync.WaitGroup
 
+	joinMu       sync.Mutex
 	checkpointed bool
+	removed      chan struct{}
+	removedOnce  sync.Once
 	done         chan struct{}
 	stopped      chan struct{}
+	background   sync.WaitGroup
 }
 
 func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
@@ -73,8 +107,16 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 		cfg.PerformanceMultiplier = 1
 	}
 
+	if cfg.Advertise == "" {
+		cfg.Advertise = cfg.Address
+	}
+
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create the raft directory: %w", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(cfg.Dir, removedFile)); err == nil {
+		return nil, ErrRemoved
 	}
 
 	id, err := nodeID(cfg.Dir)
@@ -82,42 +124,146 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 		return nil, err
 	}
 
-	store, err := raftboltdb.New(raftboltdb.Options{Path: filepath.Join(cfg.Dir, "raft.db")})
+	c, err := loadCerts(cfg.Dir, id)
 	if err != nil {
-		return nil, fmt.Errorf("open the raft log: %w", err)
+		return nil, err
 	}
 
 	n := &Node{
-		cfg: cfg, id: id, db: d, store: store, notify: make(chan bool, 16), ready: make(chan struct{}),
-		done: make(chan struct{}), stopped: make(chan struct{}),
+		cfg: cfg, id: id, db: d, certs: c, notify: make(chan bool, 16), ready: make(chan struct{}),
+		removed: make(chan struct{}), done: make(chan struct{}), stopped: make(chan struct{}),
 	}
 
-	if err := n.start(ctx); err != nil {
-		_ = store.Close()
+	n.health = newHealth(n)
+
+	if _, err := os.Stat(filepath.Join(cfg.Dir, joiningFile)); err == nil {
+		if err := n.finishJoin(); err != nil {
+			return nil, fmt.Errorf("finish an interrupted join: %w", err)
+		}
+	}
+
+	d.OnEvents(n.onEvents)
+
+	if err := n.certs.refresh(ctx, d); err != nil {
 		return nil, err
 	}
+
+	if cfg.clustered() {
+		n.ln = listener.New(listener.Config{
+			Address: cfg.Address, Cert: n.certs.leaf, Pins: n.certs.pin, Logger: cfg.Logger,
+		})
+		n.peers = newPeerClient(n)
+		n.serveRPC()
+
+		if err := n.ln.Start(ctx); err != nil {
+			n.abandon()
+			return nil, err
+		}
+	}
+
+	if err := n.startRaft(ctx); err != nil {
+		n.abandon()
+		return nil, err
+	}
+
+	go n.watch()
+
+	n.background.Go(n.maintain)
 
 	return n, nil
 }
 
-func (n *Node) start(ctx context.Context) error {
-	snapshots, err := newSnapshotStore(n.db, filepath.Join(n.cfg.Dir, "snapshots"))
+func nodeID(dir string) (string, error) {
+	path := filepath.Join(dir, idFile)
+
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		id := strings.TrimSpace(string(raw))
+		if !pki.ValidID(id) {
+			return "", fmt.Errorf("node ID %q in %s is not a UUID: delete the raft directory", id, path)
+		}
+
+		return id, nil
+	}
+
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read the node ID: %w", err)
+	}
+
+	id := pki.NewID()
+
+	if err := writeFile(path, []byte(id+"\n")); err != nil {
+		return "", fmt.Errorf("write the node ID: %w", err)
+	}
+
+	return id, nil
+}
+
+func writeFile(path string, data []byte) error {
+	tmp := path + ".tmp"
+
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+
+	return syncDir(filepath.Dir(path))
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 
-	logs, err := raft.NewLogCache(logCacheSize, timeoutLogStore{LogStore: n.store, timeout: logStoreTimeout})
+	defer func() { _ = dir.Close() }()
+
+	return dir.Sync()
+}
+
+func (n *Node) electionTimeout() time.Duration {
+	if !n.cfg.clustered() {
+		return soleVoterTimeout
+	}
+
+	return raft.DefaultConfig().ElectionTimeout * time.Duration(n.cfg.PerformanceMultiplier)
+}
+
+func (n *Node) startRaft(ctx context.Context) error {
+	store, err := raftboltdb.New(raftboltdb.Options{Path: filepath.Join(n.cfg.Dir, logFile)})
 	if err != nil {
 		return fmt.Errorf("open the raft log: %w", err)
 	}
 
-	existing, err := raft.HasExistingState(logs, n.store, raft.NewInmemSnapshotStore())
+	snapshots, err := newSnapshotStore(n.db, filepath.Join(n.cfg.Dir, "snapshots"))
 	if err != nil {
+		_ = store.Close()
+		return err
+	}
+
+	logs, err := raft.NewLogCache(logCacheSize, timeoutLogStore{LogStore: store, timeout: logStoreTimeout})
+	if err != nil {
+		_ = store.Close()
+		return fmt.Errorf("open the raft log: %w", err)
+	}
+
+	existing, err := raft.HasExistingState(logs, store, raft.NewInmemSnapshotStore())
+	if err != nil {
+		_ = store.Close()
 		return fmt.Errorf("read the raft state: %w", err)
 	}
 
 	if !existing {
-		if err := n.db.ResetPosition(ctx); err != nil {
+		reset := n.db.ResetPosition
+		if n.joined() {
+			reset = func(ctx context.Context) error { return n.db.Wipe(ctx, mkdirAll(n.scratch())) }
+		}
+
+		if err := reset(ctx); err != nil {
+			_ = store.Close()
 			return err
 		}
 	}
@@ -129,11 +275,12 @@ func (n *Node) start(ctx context.Context) error {
 	conf.ElectionTimeout *= m
 	conf.LeaderLeaseTimeout *= m
 
-	if !n.cfg.Clustered {
+	if !n.cfg.clustered() {
 		conf.HeartbeatTimeout, conf.ElectionTimeout, conf.LeaderLeaseTimeout = soleVoterTimeout, soleVoterTimeout,
 			soleVoterTimeout/2
 	}
 
+	conf.CommitTimeout = commitTimeout
 	conf.BatchApplyCh = true
 	conf.MaxAppendEntries = 64
 	conf.NoSnapshotRestoreOnStart = true
@@ -144,54 +291,94 @@ func (n *Node) start(ctx context.Context) error {
 	conf.Logger = hclog.FromStandardLogger(slog.NewLogLogger(n.cfg.Logger.Handler(), slog.LevelWarn),
 		&hclog.LoggerOptions{Name: "raft", Level: hclog.Warn})
 
-	addr, transport := raft.NewInmemTransport(raft.ServerAddress(n.id))
+	var (
+		transport raft.Transport
+		addr      raft.ServerAddress
+	)
 
-	r, err := raft.NewRaft(conf, &fsm{db: n.db, dir: filepath.Join(n.cfg.Dir, "snapshots")}, logs, n.store, snapshots,
+	if n.cfg.clustered() {
+		transport = raft.NewNetworkTransportWithConfig(&raft.NetworkTransportConfig{
+			Stream:          n.ln.Stream(listener.ALPNRaft, n.cfg.Advertise),
+			MaxPool:         maxPool,
+			MaxRPCsInFlight: 1,
+			Timeout:         transportTimeout,
+			Logger:          conf.Logger,
+		})
+		addr = raft.ServerAddress(n.cfg.Advertise)
+	} else {
+		addr, transport = raft.NewInmemTransport(raft.ServerAddress(n.id))
+	}
+
+	r, err := raft.NewRaft(conf, &fsm{db: n.db, dir: filepath.Join(n.cfg.Dir, "snapshots")}, logs, store, snapshots,
 		transport)
 	if err != nil {
+		_ = store.Close()
 		return fmt.Errorf("start raft: %w", err)
 	}
 
-	n.raft = r
-
-	if !existing {
+	if !existing && !n.joined() {
 		err := r.BootstrapCluster(raft.Configuration{Servers: []raft.Server{
 			{Suffrage: raft.Voter, ID: conf.LocalID, Address: addr},
 		}}).Error()
 		if err != nil {
 			_ = r.Shutdown().Error()
+			_ = store.Close()
+
 			return fmt.Errorf("bootstrap: %w", err)
 		}
 	}
 
-	n.batcher = newBatcher(r, n.cfg.Now)
+	n.raftMu.Lock()
+	defer n.raftMu.Unlock()
 
-	go n.watch()
+	select {
+	case <-n.done:
+		_ = r.Shutdown().Error()
+		_ = store.Close()
+
+		if c, ok := transport.(raft.WithClose); ok {
+			_ = c.Close()
+		}
+
+		return raft.ErrRaftShutdown
+	default:
+	}
+
+	n.raft, n.store, n.transport, n.batcher = r, store, transport, newBatcher(r, n.cfg.Now)
 
 	return nil
 }
 
-func nodeID(dir string) (string, error) {
-	path := filepath.Join(dir, "node-id")
+func (n *Node) stopRaft() error {
+	n.raftMu.Lock()
+	defer n.raftMu.Unlock()
 
-	raw, err := os.ReadFile(path)
-	if err == nil {
-		return strings.TrimSpace(string(raw)), nil
+	if n.batcher == nil {
+		return nil
 	}
 
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("read the node ID: %w", err)
+	n.batcher.close()
+	n.batcher = nil
+
+	err := errors.Join(n.raft.Shutdown().Error(), n.store.Close())
+
+	if c, ok := n.transport.(raft.WithClose); ok {
+		err = errors.Join(err, c.Close())
 	}
 
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	id := hex.EncodeToString(b)
+	return err
+}
 
-	if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
-		return "", fmt.Errorf("write the node ID: %w", err)
-	}
+func (n *Node) joined() bool {
+	_, err := os.Stat(filepath.Join(n.cfg.Dir, joinedFile))
+	return err == nil
+}
 
-	return id, nil
+func (n *Node) current() (*raft.Raft, *batcher) {
+	n.raftMu.RLock()
+	defer n.raftMu.RUnlock()
+
+	return n.raft, n.batcher
 }
 
 type batcherProposer struct{ b *batcher }
@@ -204,20 +391,8 @@ func (n *Node) ID() string {
 	return n.id
 }
 
-func (n *Node) Propose(ctx context.Context, cmds []db.Command) ([]db.Result, error) {
-	n.mu.Lock()
-	ready := n.ready
-	n.mu.Unlock()
-
-	select {
-	case <-ready:
-	case <-ctx.Done():
-		return nil, fmt.Errorf("%w: %w", ErrNotLeader, ctx.Err())
-	case <-n.done:
-		return nil, raft.ErrRaftShutdown
-	}
-
-	return n.batcher.propose(ctx, cmds)
+func (n *Node) Clustered() bool {
+	return n.cfg.clustered()
 }
 
 func (n *Node) Lead(f func(ctx context.Context, term uint64)) {
@@ -278,7 +453,10 @@ func (n *Node) becomeLeader() {
 			if ctx.Err() == nil {
 				n.cfg.Logger.ErrorContext(ctx, "failed to establish leadership, handing it over", slog.Any("error", err))
 
-				_ = n.raft.LeadershipTransfer().Error()
+				r, _ := n.current()
+				if err := r.LeadershipTransfer().Error(); err != nil {
+					n.retryLeadership(ctx)
+				}
 			}
 
 			return
@@ -297,14 +475,38 @@ func (n *Node) becomeLeader() {
 		for _, f := range n.lead {
 			n.run(ctx, term, f)
 		}
+
+		n.run(ctx, term, n.runAutopilot)
 	}()
 }
 
+func (n *Node) retryLeadership(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(retryEstablish):
+		r, _ := n.current()
+
+		select {
+		case n.notify <- r.State() == raft.Leader:
+		default:
+		}
+	}
+}
+
 func (n *Node) establish(ctx context.Context) (uint64, error) {
+	_, b := n.current()
+	if b == nil {
+		return 0, raft.ErrRaftShutdown
+	}
+
 	for {
-		term, err := n.db.LeaderStart(ctx, batcherProposer{n.batcher}, n.id)
+		term, err := n.db.LeaderStart(ctx, batcherProposer{b}, n.id)
 		if err == nil {
 			if err := n.checkpoint(); err != nil {
+				return 0, err
+			}
+
+			if err := n.registerSelf(ctx, batcherProposer{b}); err != nil {
 				return 0, err
 			}
 
@@ -330,7 +532,9 @@ func (n *Node) checkpoint() error {
 		return nil
 	}
 
-	future := n.raft.GetConfiguration()
+	r, _ := n.current()
+
+	future := r.GetConfiguration()
 	if err := future.Error(); err != nil {
 		return fmt.Errorf("read the raft configuration: %w", err)
 	}
@@ -340,17 +544,17 @@ func (n *Node) checkpoint() error {
 		return nil
 	}
 
-	retention := n.raft.ReloadableConfig()
+	retention := r.ReloadableConfig()
 	compacting := retention
 	compacting.TrailingLogs = 0
 
-	if err := n.raft.ReloadConfig(compacting); err != nil {
+	if err := r.ReloadConfig(compacting); err != nil {
 		return fmt.Errorf("checkpoint: %w", err)
 	}
 
-	snapErr := n.raft.Snapshot().Error()
+	snapErr := r.Snapshot().Error()
 
-	if err := n.raft.ReloadConfig(retention); err != nil {
+	if err := r.ReloadConfig(retention); err != nil {
 		return errors.Join(fmt.Errorf("checkpoint: %w", err), snapErr)
 	}
 
@@ -396,15 +600,64 @@ func (n *Node) Leader() (bool, uint64) {
 	}
 }
 
+func (n *Node) readyCh() <-chan struct{} {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	return n.ready
+}
+
 func (n *Node) Snapshot() error {
-	return n.raft.Snapshot().Error()
+	r, _ := n.current()
+
+	return r.Snapshot().Error()
+}
+
+func (n *Node) Removed() <-chan struct{} {
+	return n.removed
+}
+
+func (n *Node) markRemoved() {
+	n.removedOnce.Do(func() {
+		if err := writeFile(filepath.Join(n.cfg.Dir, removedFile), nil); err != nil {
+			n.cfg.Logger.Error("failed to record the removal", slog.Any("error", err))
+		}
+
+		n.cfg.Logger.Warn("this node was removed from the cluster")
+
+		close(n.removed)
+	})
+}
+
+func (n *Node) closeListener() {
+	if n.rpc != nil {
+		_ = n.rpc.Close()
+	}
+
+	if n.peers != nil {
+		n.peers.close()
+	}
+
+	if n.ln != nil {
+		n.ln.Close()
+	}
+}
+
+func (n *Node) abandon() {
+	close(n.done)
+	n.closeListener()
+	n.background.Wait()
 }
 
 func (n *Node) Close() error {
 	close(n.done)
 	<-n.stopped
 
-	n.batcher.close()
+	n.background.Wait()
 
-	return errors.Join(n.raft.Shutdown().Error(), n.store.Close())
+	err := n.stopRaft()
+
+	n.closeListener()
+
+	return err
 }

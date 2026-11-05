@@ -49,6 +49,10 @@ func getSettings(ctx context.Context, q querier) (_ settings.Settings, err error
 		return settings.Settings{}, err
 	}
 
+	if s.Labels, err = memberLabels(ctx, q); err != nil {
+		return settings.Settings{}, err
+	}
+
 	return s, nil
 }
 
@@ -94,7 +98,12 @@ func applyUpdateOperator(a *applyCtx, o settings.Operator) (struct{}, error) {
 		return struct{}{}, err
 	}
 
-	if err := o.Conflict(peers); err != nil {
+	labels, err := memberLabels(a.ctx, a.tx)
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	if err := o.Conflict(peers, labels); err != nil {
 		return struct{}{}, err
 	}
 

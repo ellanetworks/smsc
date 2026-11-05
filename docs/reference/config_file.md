@@ -31,6 +31,11 @@ The operator and delivery settings are not in this file: they are in the databas
     - `tls` (object, optional): Wrap each connection in TLS, 1.2 or later, from its first octet. SMPP 3.4 has no TLS: this is a common convention, which the ESME must support. Default: plain TCP, for a private link or a lab only.
         - `cert` (string): The path to the PEM certificate chain, the server's certificate first.
         - `key` (string): The path to the PEM private key.
+- `cluster` (object, optional): The port for the other nodes of a cluster. Without it, the node runs alone and cannot [join](api/cluster.md#join-a-cluster) or be joined.
+    - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses, with `advertise` set.
+    - `port` (int, optional): The TCP port to listen on. Default `7000`.
+    - `advertise` (string, optional): The `host:port` the other nodes reach this node at, such as a DNS name in Kubernetes. Default `address:port`.
+    - `performance_multiplier` (int, optional): Multiplies the raft heartbeat and election timeouts, 1 to 10, for slow networks or disks. A higher value tolerates more delay, and takes longer to replace a failed leader. Default `1`, a failover within a few seconds.
 - `telemetry` (object, optional): The [traces](observability.md#traces).
     - `enabled` (boolean, optional): Export traces. Default `false`.
     - `otlp_endpoint` (string): The `host:port` of an OTLP/gRPC collector, over plain gRPC. Required when `enabled` is `true`.
@@ -48,6 +53,9 @@ api:
 diameter:
   address: 127.0.0.1
   port: 3868
+cluster:
+  address: 10.0.0.1
+  port: 7000
 smpp:
   address: 0.0.0.0
   port: 2775

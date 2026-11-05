@@ -92,6 +92,8 @@ const (
 	PermReadOIDC           Permission = "oidc:read"
 	PermUpdateOIDC         Permission = "oidc:update"
 	PermBackup             Permission = "backup:manage"
+	PermReadCluster        Permission = "cluster:read"
+	PermManageCluster      Permission = "cluster:manage"
 )
 
 var permissions = map[db.Role][]Permission{
@@ -99,14 +101,16 @@ var permissions = map[db.Role][]Permission{
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
 		PermReadProfiles, PermUpdateDiameter, PermReadESME, PermUpdateESME, PermReadOIDC, PermUpdateOIDC, PermBackup,
+		PermReadCluster, PermManageCluster,
 	},
 	db.RoleReadOnly: {
 		PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf, PermReadESME,
+		PermReadCluster,
 	},
 	db.RoleNetworkManager: {
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermUpdateDiameter,
-		PermReadESME,
+		PermReadESME, PermReadCluster,
 	},
 	db.RoleSubmitter: {PermCreateMessage, PermReadMessage, PermReadMessageContent, PermSelf},
 }
@@ -335,13 +339,13 @@ func (a *auth) accessToken(u db.User, sessionID int64) (string, error) {
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(AccessTokenDuration)),
 		},
-	}).SignedString(a.cfg.JWTSecret)
+	}).SignedString(a.cfg.JWTSecret())
 }
 
 func (a *auth) checkAccessToken(ctx context.Context, token string) (int64, error) {
 	var c claims
 
-	if _, err := jwt.ParseWithClaims(token, &c, func(*jwt.Token) (any, error) { return a.cfg.JWTSecret, nil },
+	if _, err := jwt.ParseWithClaims(token, &c, func(*jwt.Token) (any, error) { return a.cfg.JWTSecret(), nil },
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(), jwt.WithTimeFunc(a.cfg.Now)); err != nil {
 		return 0, err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/ellanetworks/smsc/internal/cluster"
 )
@@ -23,6 +24,8 @@ func Backup(a *auth) http.Handler {
 			writeError(w, r, http.StatusServiceUnavailable, "Backups are not available", nil, cfg.Logger)
 			return
 		}
+
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 		p, _ := PrincipalFrom(r.Context())
 		name := fmt.Sprintf("smsc-backup-%s.tar.gz", cfg.Now().UTC().Format("20060102T150405Z"))
@@ -47,6 +50,10 @@ func Restore(a *auth) http.Handler {
 			writeError(w, r, http.StatusServiceUnavailable, "Backups are not available", nil, cfg.Logger)
 			return
 		}
+
+		rc := http.NewResponseController(w)
+		_ = rc.SetReadDeadline(time.Time{})
+		_ = rc.SetWriteDeadline(time.Time{})
 
 		err := cfg.Backups.Restore(r.Context(), r.Body)
 

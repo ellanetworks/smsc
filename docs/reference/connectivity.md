@@ -11,8 +11,11 @@ description: Reference of the network interfaces and ports of Ella SMSC.
 | Diameter: SGd and Gdd | MME, SMSF, IP-SM-GW over SGd; SGSN over Gdd | SCTP | `diameter.address`, or the addresses of `diameter.name` | `diameter.port` (`3868`) |
 | Diameter: S6c and SGd, outbound | [Configured peers](api/diameter.md#create-a-peer): DEA, DRA | SCTP | The peer's `addresses` | The peer's `port` (`3868`) |
 | [SMPP 3.4](smpp.md) | ESMEs, such as OTA platforms | TCP, or TLS with `smpp.tls` | `smpp.address` | `smpp.port` (`2775`) |
+| Cluster | The other Ella SMSC nodes | TCP, mutual TLS 1.3 | `cluster.address`, advertised as `cluster.advertise` | `cluster.port` (`7000`) |
 
-Defaults are in parentheses. SMPP listens only when the configuration file has an `smpp` block.
+Defaults are in parentheses. SMPP listens only when the configuration file has an `smpp` block, and the cluster port only when it has a `cluster` block.
+
+Nodes authenticate each other on the cluster port with self-signed certificates that each node creates, pinned by their SHA-256 fingerprints in the replicated database. A [join token](api/cluster.md#create-a-join-token) carries the fingerprints a new node trusts until it has the database.
 
 Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the configured peers, and reconnects after 1 to 30 seconds.
 
@@ -20,7 +23,7 @@ Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the
 
 | Item | Value |
 | ---- | ----- |
-| Host | `smsc.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
+| Host | `<label>.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
 | Realm | `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
 
-`<MCC>` and `<MNC>` are the operator's, with a 2-digit MNC padded to 3.
+`<MCC>` and `<MNC>` are the operator's, with a 2-digit MNC padded to 3. `<label>` is the node's [Diameter label](api/cluster.md#update-a-member): `smsc` on a single node or the first node of a cluster, and `smsc2`, `smsc3`, and so on for the nodes that join it. Every node of a cluster has its own host and shares the realm and the service centre address.

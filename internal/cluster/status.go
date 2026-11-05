@@ -1,0 +1,158 @@
+package cluster
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"time"
+
+	"github.com/hashicorp/raft"
+)
+
+const (
+	readyLag        = 1000
+	healthCallLimit = 2 * time.Second
+)
+
+type MemberStatus struct {
+	NodeID        string    `json:"node_id"`
+	Address       string    `json:"address"`
+	DiameterLabel string    `json:"diameter_label"`
+	Version       string    `json:"version"`
+	JoinedAt      time.Time `json:"joined_at"`
+	Suffrage      string    `json:"suffrage"`
+	Leader        bool      `json:"leader"`
+	Healthy       *bool     `json:"healthy,omitempty"`
+	LastContact   string    `json:"last_contact,omitempty"`
+	AppliedIndex  uint64    `json:"applied_index,omitempty"`
+}
+
+type Status struct {
+	NodeID           string         `json:"node_id"`
+	ClusterID        string         `json:"cluster_id"`
+	Clustered        bool           `json:"clustered"`
+	LeaderID         string         `json:"leader_id,omitempty"`
+	Term             uint64         `json:"term"`
+	AppliedIndex     uint64         `json:"applied_index"`
+	CommitIndex      uint64         `json:"commit_index"`
+	Healthy          *bool          `json:"healthy,omitempty"`
+	FailureTolerance *int           `json:"failure_tolerance,omitempty"`
+	Members          []MemberStatus `json:"members"`
+}
+
+func (n *Node) Status(ctx context.Context) (Status, error) {
+	r, _ := n.current()
+
+	_, leaderID := r.LeaderWithID()
+
+	st := Status{
+		NodeID: n.id, Clustered: n.cfg.clustered(), LeaderID: string(leaderID), Term: r.CurrentTerm(),
+		AppliedIndex: n.db.AppliedIndex(), CommitIndex: r.CommitIndex(),
+	}
+
+	secrets, err := n.db.ReadSecrets(ctx)
+	if err == nil {
+		st.ClusterID = secrets.ClusterID
+	}
+
+	members, err := n.db.Members(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+
+	future := r.GetConfiguration()
+	if err := future.Error(); err != nil && !errors.Is(err, raft.ErrRaftShutdown) {
+		return Status{}, err
+	}
+
+	servers := future.Configuration().Servers
+
+	h, known := n.leaderHealth(ctx)
+	if known {
+		st.Healthy, st.FailureTolerance = &h.Healthy, &h.FailureTolerance
+	}
+
+	for _, m := range members {
+		ms := MemberStatus{
+			NodeID: m.NodeID, Address: m.Address, DiameterLabel: m.DiameterLabel, Version: m.Version,
+			JoinedAt: m.JoinedAt, Suffrage: "none", Leader: m.NodeID == string(leaderID),
+		}
+
+		if i := slices.IndexFunc(servers, func(s raft.Server) bool { return string(s.ID) == m.NodeID }); i >= 0 {
+			ms.Suffrage = "voter"
+			if servers[i].Suffrage != raft.Voter {
+				ms.Suffrage = "nonvoter"
+			}
+		}
+
+		if i := slices.IndexFunc(h.Servers, func(s ServerHealth) bool { return s.NodeID == m.NodeID }); i >= 0 {
+			s := h.Servers[i]
+			ms.Healthy, ms.LastContact, ms.AppliedIndex = &s.Healthy, s.LastContact, s.AppliedIndex
+		}
+
+		st.Members = append(st.Members, ms)
+	}
+
+	return st, nil
+}
+
+func (n *Node) leaderHealth(ctx context.Context) (Health, bool) {
+	if leading, _ := n.Leader(); leading {
+		h := n.health.snapshot()
+		return h, h.Servers != nil
+	}
+
+	if n.peers == nil {
+		return Health{}, false
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, healthCallLimit)
+	defer cancel()
+
+	addr, id, err := n.peers.leader()
+	if err != nil {
+		return Health{}, false
+	}
+
+	resp, err := n.peers.do(ctx, addr, id, "GET", "/cluster/v1/health", nil)
+	if err != nil {
+		return Health{}, false
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	var h Health
+	if err := decodeReply(resp, &h); err != nil {
+		return Health{}, false
+	}
+
+	return h, h.Servers != nil
+}
+
+func (n *Node) Ready() error {
+	select {
+	case <-n.removed:
+		return ErrRemoved
+	default:
+	}
+
+	r, _ := n.current()
+
+	if lag := r.CommitIndex() - min(r.CommitIndex(), n.db.AppliedIndex()); lag > readyLag {
+		return errors.New("the database is behind the cluster")
+	}
+
+	if r.State() == raft.Leader {
+		return nil
+	}
+
+	if last := r.LastContact(); last.IsZero() || n.cfg.Now().Sub(last) > 2*n.electionTimeout() {
+		return errors.New("no contact with the cluster leader")
+	}
+
+	return nil
+}
+
+func (n *Node) SetDiameterLabel(ctx context.Context, nodeID, label string) error {
+	return n.db.SetDiameterLabel(ctx, nodeID, label)
+}

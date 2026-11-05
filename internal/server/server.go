@@ -118,9 +118,18 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	node, err := cluster.Open(ctx, cluster.Config{
-		Dir: filepath.Join(filepath.Dir(cfg.DB.Path), "raft"), Now: time.Now, Logger: s.Logger,
-	}, database)
+	clusterCfg := cluster.Config{
+		Dir: filepath.Join(filepath.Dir(cfg.DB.Path), "raft"), Version: version.Get().Version, Now: time.Now,
+		Logger: s.Logger,
+	}
+
+	if c := cfg.Cluster; c != nil {
+		clusterCfg.Address = netip.AddrPortFrom(c.Address, uint16(c.Port)).String()
+		clusterCfg.Advertise = c.AdvertiseAddress()
+		clusterCfg.PerformanceMultiplier = c.PerformanceMultiplier
+	}
+
+	node, err := cluster.Open(ctx, clusterCfg, database)
 	if err != nil {
 		_ = database.Close()
 		return err
@@ -140,7 +149,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	secrets, err := database.Secrets(ctx)
+	secrets, err := newSecrets(ctx, database)
 	if err != nil {
 		closeStore()
 		return err
@@ -164,6 +173,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		metrics:        m.peers,
 		tracerProvider: tp,
 		logger:         s.Logger,
+		label:          memberLabel(database, node.ID()),
 	}
 
 	if tp == nil {
@@ -207,7 +217,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	oidcLive := oidc.NewLive(database, oidcSettings)
 
 	database.OnEvents(func(ev db.Events) {
-		s.applyEvents(context.WithoutCancel(ctx), ev, database, live, oidcLive, deliverer, esmes)
+		s.applyEvents(context.WithoutCancel(ctx), ev, database, live, oidcLive, deliverer, esmes, secrets)
 	})
 
 	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &smscsgd.Handler{
@@ -254,14 +264,15 @@ func (s *Server) Start(ctx context.Context) (err error) {
 			ESMEs:          database,
 			OIDC:           oidcLive,
 			Backups:        node,
+			Cluster:        node,
 			SMPP:           smppSessions{esmes},
-			Ready:          func(ctx context.Context) error { return s.ready(ctx, database) },
+			Ready:          func(ctx context.Context) error { return s.ready(ctx, database, node) },
 			Received:       m.received,
 			Metrics:        m.registry,
 			Requests:       m.requests,
 			Auth:           database,
-			JWTSecret:      secrets.JWT,
-			OIDCCookieKey:  secrets.OIDCCookieKey,
+			JWTSecret:      secrets.jwt,
+			OIDCCookieKey:  secrets.cookieKey,
 			BcryptCost:     s.bcryptCost,
 			SecureCookie:   tlsConfig != nil,
 			TracerProvider: tp,
@@ -334,6 +345,8 @@ func (s *Server) Start(ctx context.Context) (err error) {
 
 		wg.Wait()
 	})
+
+	go s.fenceOnRemoval(base, node, nodes, s.smppServer)
 
 	s.database = database
 	s.node = node
@@ -493,9 +506,13 @@ func (s *Server) newTracerProvider(ctx context.Context) (trace.TracerProvider, f
 	return tp, tp.Shutdown, nil
 }
 
-func (s *Server) ready(ctx context.Context, database *db.DB) error {
+func (s *Server) ready(ctx context.Context, database *db.DB, node *cluster.Node) error {
 	if s.draining.Load() {
 		return errors.New("shutting down")
+	}
+
+	if err := node.Ready(); err != nil {
+		return err
 	}
 
 	return database.Ping(ctx)

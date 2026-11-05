@@ -106,7 +106,7 @@ func TestRealm(t *testing.T) {
 }
 
 func TestHost(t *testing.T) {
-	if got := (Operator{MCC: "234", MNC: "15"}).Host(); got != "smsc.node.epc.mnc015.mcc234.3gppnetwork.org" {
+	if got := (Operator{MCC: "234", MNC: "15"}).Host(DefaultLabel); got != "smsc.node.epc.mnc015.mcc234.3gppnetwork.org" {
 		t.Fatalf("Host = %q", got)
 	}
 }

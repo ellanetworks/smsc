@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,54 @@ type Manifest struct {
 	CreatedAt    time.Time        `json:"created_at"`
 }
 
+const maxRestoreBytes = 64 << 30
+
 func (n *Node) Backup(ctx context.Context, w io.Writer) error {
+	if leading, _ := n.Leader(); leading || n.peers == nil {
+		return n.backupLocal(ctx, w)
+	}
+
+	resp, err := n.toLeader(ctx, http.MethodGet, "/cluster/v1/backup", nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return decodeReply(resp, nil)
+	}
+
+	_, err = io.Copy(w, resp.Body)
+
+	return err
+}
+
+func (n *Node) toLeader(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	deadline, cancel := context.WithTimeout(ctx, n.forwardBudget())
+	defer cancel()
+
+	for attempt := 0; ; attempt++ {
+		addr, id, err := n.peers.leader()
+		if err == nil && id != n.id {
+			return n.peers.stream(ctx, addr, id, method, path, body)
+		}
+
+		select {
+		case <-deadline.Done():
+			return nil, ErrNoLeader
+		case <-time.After(backoff(attempt)):
+		}
+	}
+}
+
+func (n *Node) backupLocal(ctx context.Context, w io.Writer) error {
+	if r, _ := n.current(); r.State() == raft.Leader {
+		if err := r.Barrier(restoreTimeout).Error(); err != nil {
+			return classify(err)
+		}
+	}
+
 	c, err := n.db.CopyTo(ctx, n.scratch())
 	if err != nil {
 		return err
@@ -127,6 +175,25 @@ func fileDigest(path string) (string, int64, error) {
 }
 
 func (n *Node) Restore(ctx context.Context, r io.Reader) error {
+	if leading, _ := n.Leader(); leading {
+		return n.restoreLocal(ctx, r)
+	}
+
+	if n.peers == nil {
+		return ErrNotLeader
+	}
+
+	resp, err := n.toLeader(ctx, http.MethodPost, "/cluster/v1/restore", r)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	return decodeReply(resp, nil)
+}
+
+func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 	if ok, _ := n.Leader(); !ok {
 		return ErrNotLeader
 	}
@@ -150,6 +217,10 @@ func (n *Node) Restore(ctx context.Context, r io.Reader) error {
 
 	if err := db.RaiseSequences(ctx, path, live); err != nil {
 		return fmt.Errorf("keep the IDs moving forward: %w", err)
+	}
+
+	if err := n.db.KeepClusterState(ctx, path); err != nil {
+		return fmt.Errorf("keep the cluster members: %w", err)
 	}
 
 	f, err := os.Open(path)

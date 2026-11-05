@@ -3,27 +3,59 @@ package db
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
+	"errors"
 	"fmt"
+
+	"github.com/google/uuid"
 )
 
 const (
 	jwtSecretLength     = 32
 	oidcCookieKeyLength = 32
+	joinKeyLength       = 32
 )
 
 type Secrets struct {
 	JWT           []byte
 	OIDCCookieKey []byte
+	ClusterID     string
+	JoinKey       []byte
 }
 
-func (d *DB) Secrets(ctx context.Context) (_ Secrets, err error) {
+func (d *DB) Secrets(ctx context.Context) (Secrets, error) {
+	return d.InitSecrets(ctx, d.proposer)
+}
+
+func (d *DB) ReadSecrets(ctx context.Context) (_ Secrets, err error) {
 	defer d.observe(&err)()
 
-	candidate := Secrets{JWT: make([]byte, jwtSecretLength), OIDCCookieKey: make([]byte, oidcCookieKeyLength)}
+	return readSecrets(ctx, d.reader())
+}
+
+func (d *DB) InitSecrets(ctx context.Context, via Proposer) (_ Secrets, err error) {
+	defer d.observe(&err)()
+
+	s, err := readSecrets(ctx, d.reader())
+	if err == nil {
+		return s, nil
+	}
+
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Secrets{}, fmt.Errorf("read secrets: %w", err)
+	}
+
+	candidate := Secrets{
+		JWT:           make([]byte, jwtSecretLength),
+		OIDCCookieKey: make([]byte, oidcCookieKeyLength),
+		ClusterID:     uuid.Must(uuid.NewV7()).String(),
+		JoinKey:       make([]byte, joinKeyLength),
+	}
 	_, _ = rand.Read(candidate.JWT)
 	_, _ = rand.Read(candidate.OIDCCookieKey)
+	_, _ = rand.Read(candidate.JoinKey)
 
-	s, err := submit[Secrets](ctx, d, cmdInitSecrets, candidate)
+	s, _, err = submitVia[Secrets](ctx, via, cmdInitSecrets, candidate)
 	if err != nil {
 		return Secrets{}, fmt.Errorf("init secrets: %w", err)
 	}
@@ -54,15 +86,20 @@ func applyInitSecrets(a *applyCtx, candidate Secrets) (Secrets, error) {
 		return Secrets{}, err
 	}
 
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO cluster (id, cluster_id, join_key) VALUES (1, ?, ?)`,
+		candidate.ClusterID, candidate.JoinKey); err != nil {
+		return Secrets{}, err
+	}
+
+	return readSecrets(ctx, tx)
+}
+
+func readSecrets(ctx context.Context, q querier) (Secrets, error) {
 	var s Secrets
 
-	if err := tx.QueryRowContext(ctx, `SELECT secret FROM jwt_secret WHERE id = 1`).Scan(&s.JWT); err != nil {
-		return Secrets{}, err
-	}
+	err := q.QueryRowContext(ctx, `SELECT j.secret, o.key, c.cluster_id, c.join_key
+		FROM jwt_secret j, oidc_cookie_key o, cluster c WHERE j.id = 1 AND o.id = 1 AND c.id = 1`).
+		Scan(&s.JWT, &s.OIDCCookieKey, &s.ClusterID, &s.JoinKey)
 
-	if err := tx.QueryRowContext(ctx, `SELECT key FROM oidc_cookie_key WHERE id = 1`).Scan(&s.OIDCCookieKey); err != nil {
-		return Secrets{}, err
-	}
-
-	return s, nil
+	return s, err
 }

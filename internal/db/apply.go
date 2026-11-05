@@ -14,7 +14,8 @@ import (
 	"github.com/mattn/go-sqlite3"
 )
 
-const appliedRequestsWindow = 1_000_000
+// RFC 6733 section 3
+const appliedRequestsWindow = 5 * time.Minute
 
 type Events struct {
 	Replaced      bool
@@ -22,8 +23,10 @@ type Events struct {
 	Notifications bool
 	Settings      bool
 	OIDC          bool
+	Members       bool
 	ClosedESMEs   []int64
 	Alerted       []string
+	Removed       []string
 }
 
 func (e *Events) merge(o Events) {
@@ -32,12 +35,15 @@ func (e *Events) merge(o Events) {
 	e.Notifications = e.Notifications || o.Notifications
 	e.Settings = e.Settings || o.Settings
 	e.OIDC = e.OIDC || o.OIDC
+	e.Members = e.Members || o.Members
+	e.Removed = append(e.Removed, o.Removed...)
 	e.ClosedESMEs = append(e.ClosedESMEs, o.ClosedESMEs...)
 	e.Alerted = append(e.Alerted, o.Alerted...)
 }
 
 func (e Events) empty() bool {
-	return !e.Replaced && !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && len(e.ClosedESMEs) == 0 && len(e.Alerted) == 0
+	return !e.Replaced && !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && !e.Members &&
+		len(e.ClosedESMEs) == 0 && len(e.Alerted) == 0 && len(e.Removed) == 0
 }
 
 type applyCtx struct {
@@ -95,6 +101,41 @@ func readFSMState(ctx context.Context, q querier) (fsmState, error) {
 
 func (d *DB) AppliedIndex() uint64 {
 	return d.applied.Load()
+}
+
+func (d *DB) setApplied(index uint64) {
+	d.applied.Store(index)
+
+	d.appliedMu.Lock()
+	if d.advanced != nil {
+		close(d.advanced)
+		d.advanced = nil
+	}
+	d.appliedMu.Unlock()
+}
+
+func (d *DB) WaitApplied(ctx context.Context, index uint64) error {
+	for {
+		d.appliedMu.Lock()
+
+		if d.applied.Load() >= index {
+			d.appliedMu.Unlock()
+			return nil
+		}
+
+		if d.advanced == nil {
+			d.advanced = make(chan struct{})
+		}
+
+		ch := d.advanced
+		d.appliedMu.Unlock()
+
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func (d *DB) Hash(ctx context.Context) (_ []byte, _ uint64, err error) {
@@ -173,11 +214,9 @@ func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
 		hash = chain(hash, index, c, r)
 	}
 
-	if index > appliedRequestsWindow {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM applied_requests WHERE applied_index < ?`,
-			index-appliedRequestsWindow); err != nil {
-			return nil, Events{}, err
-		}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_requests WHERE applied_at < ?`,
+		b.LeaderTime-int64(appliedRequestsWindow)); err != nil {
+		return nil, Events{}, err
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE fsm_state SET applied_index = ?, applied_term = ?, hash = ?,
@@ -189,7 +228,7 @@ func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
 		return nil, Events{}, err
 	}
 
-	d.applied.Store(index)
+	d.setApplied(index)
 
 	return results, events, nil
 }
@@ -197,7 +236,14 @@ func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
 func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 	ctx, tx := a.ctx, a.tx
 
-	if c.Retryable {
+	h, ok := handlers[c.Type]
+	if !ok || c.Version != 1 {
+		return Result{}, Events{}, fmt.Errorf("unknown command type %d version %d", c.Type, c.Version)
+	}
+
+	recorded := c.Type.recorded()
+
+	if recorded {
 		var stored []byte
 
 		err := tx.QueryRowContext(ctx, `SELECT result FROM applied_requests WHERE request_id = ?`, c.RequestID[:]).
@@ -216,11 +262,6 @@ func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return Result{}, Events{}, err
 		}
-	}
-
-	h, ok := handlers[c.Type]
-	if !ok || c.Version != 1 {
-		return Result{}, Events{}, fmt.Errorf("unknown command type %d version %d", c.Type, c.Version)
 	}
 
 	if _, err := tx.ExecContext(ctx, `SAVEPOINT command`); err != nil {
@@ -260,14 +301,14 @@ func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 		return Result{}, Events{}, err
 	}
 
-	if c.Retryable {
+	if recorded {
 		stored, err := json.Marshal(r)
 		if err != nil {
 			return Result{}, Events{}, err
 		}
 
-		if _, err := tx.ExecContext(ctx, `INSERT INTO applied_requests (request_id, result, applied_index)
-			VALUES (?, ?, ?)`, c.RequestID[:], stored, a.index); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO applied_requests (request_id, result, applied_at)
+			VALUES (?, ?, ?)`, c.RequestID[:], stored, a.leaderTime); err != nil {
 			return Result{}, Events{}, err
 		}
 	}
@@ -355,9 +396,7 @@ func submitVia[R any](ctx context.Context, p Proposer, t CommandType, payload an
 		return zero, false, fmt.Errorf("encode command: %w", err)
 	}
 
-	id, retryable := requestID(ctx, t)
-
-	results, err := p.Propose(ctx, []Command{{Type: t, Version: 1, RequestID: id, Retryable: retryable, Payload: raw}})
+	results, err := p.Propose(ctx, []Command{{Type: t, Version: 1, RequestID: requestID(ctx, t), Payload: raw}})
 	if err != nil {
 		return zero, false, err
 	}

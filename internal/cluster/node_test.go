@@ -17,7 +17,7 @@ type env struct {
 	node *Node
 }
 
-func open(t *testing.T, dir string) *env {
+func open(t testing.TB, dir string) *env {
 	t.Helper()
 
 	ctx := context.Background()
@@ -47,25 +47,23 @@ func (e *env) close(t *testing.T) {
 	}
 }
 
-func waitLeader(t *testing.T, n *Node) uint64 {
+func waitLeader(t testing.TB, n *Node) {
 	t.Helper()
 
 	deadline := time.Now().Add(10 * time.Second)
 
 	for time.Now().Before(deadline) {
-		if ok, term := n.Leader(); ok {
-			return term
+		if ok, _ := n.Leader(); ok {
+			return
 		}
 
 		time.Sleep(10 * time.Millisecond)
 	}
 
 	t.Fatal("no leader")
-
-	return 0
 }
 
-func timeout(t *testing.T) context.Context {
+func timeout(t testing.TB) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 

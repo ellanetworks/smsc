@@ -37,4 +37,10 @@ func init() {
 	register(cmdCreateIdentity, handle(applyCreateIdentity))
 	register(cmdDeleteIdentities, handle(applyDeleteIdentities))
 	register(cmdLeaderStart, handle(applyLeaderStart))
+	register(cmdRegisterMember, handle(applyRegisterMember))
+	register(cmdCreateJoinToken, handle(applyCreateJoinToken))
+	register(cmdAdmitMember, handle(applyAdmitMember))
+	register(cmdRemoveMember, handle(applyRemoveMember))
+	register(cmdSetDiameterLabel, handle(applySetDiameterLabel))
+	register(cmdDeleteExpiredJoinTokens, handle(applyDeleteExpiredJoinTokens))
 }

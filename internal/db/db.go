@@ -35,6 +35,8 @@ type DB struct {
 	proposer    Proposer
 	applyMu     sync.Mutex
 	applied     atomic.Uint64
+	appliedMu   sync.Mutex
+	advanced    chan struct{}
 	subscribers []func(Events)
 }
 
@@ -292,9 +294,33 @@ var migrations = []string{
 	CREATE TABLE applied_requests (
 		request_id BLOB PRIMARY KEY CHECK (length(request_id) = 16),
 		result BLOB NOT NULL,
-		applied_index INTEGER NOT NULL
+		applied_at INTEGER NOT NULL
 	) WITHOUT ROWID;
-	CREATE INDEX applied_requests_applied_index ON applied_requests (applied_index);`,
+	CREATE INDEX applied_requests_applied_at ON applied_requests (applied_at);
+	CREATE TABLE cluster (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		cluster_id TEXT NOT NULL CHECK (length(cluster_id) = 36),
+		join_key BLOB NOT NULL CHECK (length(join_key) >= 32)
+	);
+	CREATE TABLE cluster_members (
+		node_id TEXT PRIMARY KEY CHECK (length(node_id) = 36),
+		address TEXT NOT NULL,
+		fingerprint TEXT UNIQUE,
+		certificate TEXT,
+		diameter_label TEXT NOT NULL UNIQUE CHECK (diameter_label != ''),
+		schema_version INTEGER NOT NULL,
+		version TEXT NOT NULL,
+		joined_at INTEGER NOT NULL,
+		CHECK ((fingerprint IS NULL) = (certificate IS NULL))
+	);
+	CREATE UNIQUE INDEX cluster_members_address ON cluster_members (address) WHERE address != '';
+	CREATE TABLE cluster_join_tokens (
+		token_id TEXT PRIMARY KEY CHECK (token_id != ''),
+		expires_at INTEGER NOT NULL,
+		node_id TEXT,
+		fingerprint TEXT,
+		CHECK ((node_id IS NULL) = (fingerprint IS NULL))
+	);`,
 }
 
 type Option func(*DB)
@@ -324,7 +350,7 @@ func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 		return nil, fmt.Errorf("open database: read state: %w", err)
 	}
 
-	d.applied.Store(state.appliedIndex)
+	d.setApplied(state.appliedIndex)
 	d.proposer = &localProposer{d: d, now: time.Now, last: state.leaderTime}
 
 	for _, opt := range opts {

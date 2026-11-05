@@ -12,8 +12,14 @@ import (
 )
 
 func (s *Server) applyEvents(ctx context.Context, ev db.Events, database *db.DB, live *settings.Live, oidcLive *oidc.Live,
-	deliverer *delivery.Deliverer, esmes *esme.Service,
+	deliverer *delivery.Deliverer, esmes *esme.Service, secrets *secrets,
 ) {
+	if ev.Replaced {
+		if err := secrets.reload(ctx, database); err != nil {
+			s.Logger.ErrorContext(ctx, "failed to reload the secrets", slog.Any("error", err))
+		}
+	}
+
 	if ev.Settings {
 		current, err := database.GetSettings(ctx)
 		if err != nil {

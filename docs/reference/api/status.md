@@ -44,7 +44,7 @@ It answers `204 No Content`.
 
 ## Check Readiness
 
-This path returns whether the SMSC can serve requests: its database answers, and it is not shutting down.
+This path returns whether the SMSC can serve requests: its database answers, it is not shutting down, and in a [cluster](cluster.md) it is a member, it heard from the leader within two election timeouts, and its database is fewer than 1,000 log entries behind.
 
 | Method | Path             |
 | ------ | ---------------- |

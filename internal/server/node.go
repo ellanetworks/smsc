@@ -34,6 +34,7 @@ type nodeManager struct {
 	metrics        *peerMetrics
 	tracerProvider trace.TracerProvider
 	logger         *slog.Logger
+	label          func() (string, bool)
 
 	mu       sync.Mutex
 	node     *diameter.Node
@@ -134,10 +135,25 @@ func (m *nodeManager) Addr() net.Addr {
 	return m.listener.Addr()
 }
 
+func (m *nodeManager) host(operator settings.Operator) string {
+	label, ok := m.label()
+	if ok {
+		return operator.Host(label)
+	}
+
+	if node := m.Node(); node != nil {
+		if current, _, found := strings.Cut(node.Identity().OriginHost, ".node."); found {
+			return operator.Host(current)
+		}
+	}
+
+	return operator.Host(settings.DefaultLabel)
+}
+
 func (m *nodeManager) start(ctx context.Context, operator settings.Operator, peers []settings.Peer) error {
 	node, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{
-			OriginHost:      operator.Host(),
+			OriginHost:      m.host(operator),
 			OriginRealm:     operator.Realm(),
 			HostIPAddresses: m.addresses,
 			ProductName:     "smsc",
@@ -201,14 +217,14 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 		changed := live.Changed()
 		current := live.Get()
 
-		if operator := current.Operator; operator.Host() != m.Identity().OriginHost {
+		if operator, host := current.Operator, m.host(current.Operator); host != m.Identity().OriginHost {
 			m.logger.InfoContext(ctx, "restarting Diameter for the new identity; cores reconnect",
-				slog.String("host", operator.Host()), slog.String("realm", operator.Realm()))
+				slog.String("host", host), slog.String("realm", operator.Realm()))
 
 			m.shutdown(ctx)
 
 			if err := m.start(ctx, operator, current.Peers); err != nil {
-				m.logger.ErrorContext(ctx, "failed to restart Diameter", slog.String("host", operator.Host()), slog.Any("error", err))
+				m.logger.ErrorContext(ctx, "failed to restart Diameter", slog.String("host", host), slog.Any("error", err))
 			}
 		} else if !slices.EqualFunc(current.Peers, m.configuredPeers(), settings.Peer.Equal) {
 			m.setPeers(m.Node(), current.Peers)
