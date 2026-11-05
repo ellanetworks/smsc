@@ -93,6 +93,8 @@ func TestBindRateLimit(t *testing.T) {
 			"127.0.0.1:4000")); out.Status != smpp.StatusOK {
 			t.Fatalf("bind %d = %s", i+1, out.Status)
 		}
+
+		env.endSessions(t)
 	}
 
 	if out := env.service.Authenticate(context.Background(), bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
@@ -282,5 +284,44 @@ func TestCloseESMEWithoutABind(t *testing.T) {
 
 	if want := strconv.FormatInt(env.esme.ID, 10); len(accounts.closed) != 1 || accounts.closed[0] != want {
 		t.Fatalf("accounts closed = %v, want [%s]", accounts.closed, want)
+	}
+}
+
+func (e *testEnv) endSessions(t *testing.T) {
+	t.Helper()
+
+	e.service.mu.Lock()
+	clear(e.service.opened)
+	e.service.mu.Unlock()
+
+	if err := e.store.SyncSMPPSessions(context.Background(), e.service.Node, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionLimitAcrossTheCluster(t *testing.T) {
+	env := newTestEnv(t, nil)
+
+	for i := range MaxSessions {
+		if err := env.store.OpenSMPPSession(context.Background(), db.SMPPSession{
+			NodeID: "other", SessionID: uint64(i + 1), ESMEID: env.esme.ID, BindType: string(Receiver),
+			Remote: "127.0.0.1:1", BoundAt: testNow,
+		}, MaxSessions); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if out := env.service.Authenticate(context.Background(), bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
+		"127.0.0.1:4000")); out.Status != smpp.StatusBindFail {
+		t.Fatalf("a fifth session across the cluster = %s, want ESME_RBINDFAIL", out.Status)
+	}
+
+	if err := env.store.SyncSMPPSessions(context.Background(), "other", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if out := env.service.Authenticate(context.Background(), bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
+		"127.0.0.1:4000")); out.Status != smpp.StatusOK {
+		t.Fatalf("a bind once the other node's sessions are gone = %s", out.Status)
 	}
 }

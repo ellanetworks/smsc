@@ -22,7 +22,7 @@ type Metrics struct {
 	pending  *pendingCollector
 }
 
-func NewMetrics(store PendingCounter) *Metrics {
+func NewMetrics(store PendingCounter, leading func() bool) *Metrics {
 	m := &Metrics{
 		sessions: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "ellasmsc_smpp_sessions",
@@ -43,7 +43,8 @@ func NewMetrics(store PendingCounter) *Metrics {
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
 		}),
 		pending: &pendingCollector{
-			store: store,
+			store:   store,
+			leading: leading,
 			desc: prometheus.NewDesc("ellasmsc_smpp_notifications_pending",
 				"SMPP notifications not yet sent and not expired, by type (receipt, sim_answer).", []string{"type"}, nil),
 		},
@@ -103,13 +104,18 @@ func (m *Metrics) submitted(d time.Duration) {
 }
 
 type pendingCollector struct {
-	store PendingCounter
-	desc  *prometheus.Desc
+	store   PendingCounter
+	leading func() bool
+	desc    *prometheus.Desc
 }
 
 func (c *pendingCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
 
 func (c *pendingCollector) Collect(ch chan<- prometheus.Metric) {
+	if c.leading != nil && !c.leading() {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), pendingTimeout)
 	defer cancel()
 

@@ -18,6 +18,7 @@ export default function AuthLayout({
   valid,
   onSubmit,
   children,
+  footer,
 }: {
   title: string;
   intro?: string;
@@ -27,6 +28,7 @@ export default function AuthLayout({
   valid: boolean;
   onSubmit: () => void;
   children: ReactNode;
+  footer?: ReactNode;
 }) {
   useEffect(() => {
     document.title = `${title} · Ella SMSC`;
@@ -77,6 +79,7 @@ export default function AuthLayout({
         >
           {submitting ? <CircularProgress size={24} /> : submitLabel}
         </Button>
+        {footer}
       </Box>
     </AuthFrame>
   );

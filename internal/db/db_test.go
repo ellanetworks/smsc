@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -120,7 +121,7 @@ func TestMessageLifecycle(t *testing.T) {
 	}
 
 	delivered := submitted.Add(time.Second)
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, nil, 0, Fence{}); err != nil {
 		t.Fatalf("CompleteMessage: %v", err)
 	}
 
@@ -141,7 +142,7 @@ func TestGetMessageNotFound(t *testing.T) {
 }
 
 func TestCompleteMessageNotFound(t *testing.T) {
-	err := openTestDB(t).CompleteMessage(context.Background(), 42, StatusFailed, time.Now(), nil, 0)
+	err := openTestDB(t).CompleteMessage(context.Background(), 42, StatusFailed, time.Now(), nil, 0, Fence{})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -157,7 +158,7 @@ func TestCompleteMessageRejectsOtherStatuses(t *testing.T) {
 	}
 
 	for _, status := range []MessageStatus{StatusPending, StatusReplaced, "lost"} {
-		if err := d.CompleteMessage(ctx, id, status, time.Now(), nil, 0); err == nil {
+		if err := d.CompleteMessage(ctx, id, status, time.Now(), nil, 0, Fence{}); err == nil {
 			t.Fatalf("expected an error for status %q", status)
 		}
 	}
@@ -173,11 +174,11 @@ func TestCompleteMessageOnlyCompletesPendingMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusFailed, now, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusFailed, now, nil, 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
-	err = d.CompleteMessage(ctx, id, StatusDelivered, now.Add(time.Second), testReport(now), 0)
+	err = d.CompleteMessage(ctx, id, StatusDelivered, now.Add(time.Second), testReport(now), 0, Fence{})
 	if !errors.Is(err, ErrNotPending) {
 		t.Fatalf("err = %v, want ErrNotPending", err)
 	}
@@ -379,7 +380,7 @@ func TestListMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, ids[3], StatusDelivered, now, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, ids[3], StatusDelivered, now, nil, 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -436,7 +437,7 @@ func TestCountMessages(t *testing.T) {
 	}
 
 	for _, id := range []int64{ids[0], ids[1], ids[3]} {
-		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0); err != nil {
+		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0, Fence{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -512,7 +513,7 @@ func TestRejectDuplicates(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0); err != nil {
+		if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0, Fence{}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -631,7 +632,7 @@ func TestReplaceShortMessage(t *testing.T) {
 		})
 	}
 
-	if err := d.CompleteMessage(ctx, replacementID, StatusDelivered, now, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, replacementID, StatusDelivered, now, nil, 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -743,6 +744,24 @@ func TestReplacedMessageStatusReport(t *testing.T) {
 	})
 }
 
+func nextDue(ctx context.Context, d *DB, now time.Time, busy ...string) (Message, bool, error) {
+	due, _, err := d.DueRecipients(ctx, now, 1, func(msisdn string) bool { return slices.Contains(busy, msisdn) })
+	if err != nil || len(due) == 0 {
+		return Message{}, false, err
+	}
+
+	return d.NextDue(ctx, due[0], now)
+}
+
+func nextWakeup(ctx context.Context, d *DB, busy ...string) (time.Time, bool, error) {
+	due, at, err := d.DueRecipients(ctx, time.Unix(0, 0), 1, func(msisdn string) bool { return slices.Contains(busy, msisdn) })
+	if err != nil || len(due) > 0 {
+		return time.Time{}, false, err
+	}
+
+	return at, !at.IsZero(), nil
+}
+
 func TestDeliveryScheduling(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
@@ -758,20 +777,20 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, ok, err := d.NextDue(ctx, base.Add(-time.Second), nil); err != nil || ok {
+	if _, ok, err := nextDue(ctx, d, base.Add(-time.Second)); err != nil || ok {
 		t.Fatalf("NextDue before anything is due = %v, %v", ok, err)
 	}
 
-	m, ok, err := d.NextDue(ctx, base.Add(time.Minute), nil)
+	m, ok, err := nextDue(ctx, d, base.Add(time.Minute))
 	if err != nil || !ok || m.ID != first {
 		t.Fatalf("NextDue = %+v, %v, %v; want message %d", m, ok, err, first)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute), false); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base.Add(time.Minute), false, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
-	m, ok, err = d.NextDue(ctx, base.Add(time.Minute), nil)
+	m, ok, err = nextDue(ctx, d, base.Add(time.Minute))
 	if err != nil || !ok || m.ID != second {
 		t.Fatalf("NextDue after retry = %+v, %v, %v; want message %d", m, ok, err, second)
 	}
@@ -781,7 +800,7 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("retried message = %+v, %v", retried, err)
 	}
 
-	wakeup, ok, err := d.NextWakeup(ctx, nil)
+	wakeup, ok, err := nextWakeup(ctx, d)
 	if err != nil || !ok || !wakeup.Equal(base.Add(time.Second)) {
 		t.Fatalf("NextWakeup = %v, %v, %v", wakeup, ok, err)
 	}
@@ -794,19 +813,19 @@ func TestDeliveryScheduling(t *testing.T) {
 		t.Fatalf("NextDueFor = %+v, %v, %v; want message %d", next, ok, err, second)
 	}
 
-	if err := d.CompleteMessage(ctx, second, StatusExpired, base, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, second, StatusExpired, base, nil, 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, first, StatusDelivered, base, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, first, StatusDelivered, base, nil, 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base, base, false); !errors.Is(err, ErrNotFound) {
+	if err := d.ScheduleRetry(ctx, first, base, base, false, time.Time{}, Fence{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ScheduleRetry on a delivered message = %v, want ErrNotFound", err)
 	}
 
-	if _, ok, err := d.NextWakeup(ctx, nil); err != nil || ok {
+	if _, ok, err := nextWakeup(ctx, d); err != nil || ok {
 		t.Fatalf("NextWakeup with nothing pending = %v, %v", ok, err)
 	}
 }
@@ -828,16 +847,16 @@ func TestNextDueSkipsBusyRecipients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m, ok, err := d.NextDue(ctx, base.Add(time.Minute), []string{testMSISDN})
+	m, ok, err := nextDue(ctx, d, base.Add(time.Minute), testMSISDN)
 	if err != nil || !ok || m.ID != otherID || m.MSISDN != "15551230003" {
 		t.Fatalf("NextDue = %+v, %v, %v; want message %d", m, ok, err, otherID)
 	}
 
-	if _, ok, err := d.NextDue(ctx, base.Add(time.Minute), []string{testMSISDN, "15551230003"}); err != nil || ok {
+	if _, ok, err := nextDue(ctx, d, base.Add(time.Minute), testMSISDN, "15551230003"); err != nil || ok {
 		t.Fatalf("NextDue with every recipient busy = %v, %v", ok, err)
 	}
 
-	wakeup, ok, err := d.NextWakeup(ctx, []string{testMSISDN})
+	wakeup, ok, err := nextWakeup(ctx, d, testMSISDN)
 	if err != nil || !ok || !wakeup.Equal(base.Add(time.Second)) {
 		t.Fatalf("NextWakeup = %v, %v, %v", wakeup, ok, err)
 	}
@@ -863,12 +882,12 @@ func TestHoldAndAlertRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base, false); err != nil {
+	if err := d.ScheduleRetry(ctx, later, base.Add(2*time.Hour), base, false, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -879,7 +898,7 @@ func TestHoldAndAlertRecipient(t *testing.T) {
 		}
 	}
 
-	if _, ok, err := d.NextDue(ctx, base.Add(time.Minute), nil); err != nil || ok {
+	if _, ok, err := nextDue(ctx, d, base.Add(time.Minute)); err != nil || ok {
 		t.Fatalf("NextDue while held = %v, %v", ok, err)
 	}
 
@@ -908,7 +927,7 @@ func TestAlertMSISDN(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, id, base.Add(time.Hour), base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, id, base.Add(time.Hour), base, true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -956,7 +975,7 @@ func TestNewMessageJoinsRecipientHold(t *testing.T) {
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -999,7 +1018,7 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1012,11 +1031,11 @@ func TestOnlyHoldsDelayNewMessages(t *testing.T) {
 		t.Fatalf("message after a plain retry next attempt = %v, %v; a retry is not a hold", m.NextAttemptAt, err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(2*time.Hour), base.Add(time.Minute), true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(2*time.Hour), base.Add(time.Minute), true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(90*time.Minute), base.Add(time.Minute), true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(90*time.Minute), base.Add(time.Minute), true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1055,11 +1074,11 @@ func TestCountPending(t *testing.T) {
 		}
 	}
 
-	if err := d.CompleteMessage(ctx, 1, StatusDelivered, now, testReport(now), 0); err != nil {
+	if err := d.CompleteMessage(ctx, 1, StatusDelivered, now, testReport(now), 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now, false); err != nil {
+	if err := d.ScheduleRetry(ctx, 2, now.Add(time.Minute), now, false, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1073,7 +1092,7 @@ func TestCountPending(t *testing.T) {
 		t.Fatalf("CountPending a minute later = %+v, %v, want %+v", got, err, want)
 	}
 
-	if err := d.CompleteMessage(ctx, 4, StatusDelivered, now, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, 4, StatusDelivered, now, nil, 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1098,7 +1117,7 @@ func TestScheduleRetryHoldsOnlyWhenAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false); err != nil {
+	if err := d.ScheduleRetry(ctx, first, base.Add(time.Hour), base, false, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1106,7 +1125,7 @@ func TestScheduleRetryHoldsOnlyWhenAsked(t *testing.T) {
 		t.Fatalf("other message after a retry without hold = %v, %v; want it still due", m.NextAttemptAt, err)
 	}
 
-	if err := d.ScheduleRetry(ctx, second, base.Add(time.Minute), base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, second, base.Add(time.Minute), base, true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1144,7 +1163,7 @@ func TestMessagesAreDueNoLaterThanTheyExpire(t *testing.T) {
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, first, until, base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, first, until, base, true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -18,15 +18,6 @@ import (
 const shutdownTimeout = 5 * time.Second
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "cluster" {
-		if err := clusterCommand(os.Args[2:], os.Stdout); err != nil {
-			logging.New(os.Stdout, slog.LevelInfo).Error("smsc cluster", "error", err)
-			os.Exit(1)
-		}
-
-		return
-	}
-
 	configPath := flag.String("config", "smsc.yaml", "path to the configuration file")
 
 	flag.Parse()
@@ -57,7 +48,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.API.DrainDelay+delivery.DefaultAttemptTimeout+shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), delivery.DefaultAttemptTimeout+shutdownTimeout)
 	defer cancel()
 
 	srv.Shutdown(shutdownCtx)

@@ -6,7 +6,16 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
+	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	"go.etcd.io/bbolt"
 )
+
+func openLogStore(path string) (*raftboltdb.BoltStore, error) {
+	return raftboltdb.New(raftboltdb.Options{
+		Path:        path,
+		BoltOptions: &bbolt.Options{NoFreelistSync: true, FreelistType: bbolt.FreelistMapType},
+	})
+}
 
 var errLogStoreTimeout = errors.New("the log store did not finish writing in time")
 

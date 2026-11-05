@@ -25,7 +25,7 @@ func TestPendingCollector(t *testing.T) {
 		}
 
 		return nil, failure
-	}))
+	}), nil)
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(m.pending)

@@ -127,33 +127,18 @@ type Notification struct {
 const notificationColumns = `n.id, s.esme_id, n.type, n.attempts, n.tp_status, s.source_npi,
 	s.data_coding, s.user_message_reference, a.deliver_report, a.outcome`
 
-func (d *DB) DueNotifications(ctx context.Context, esmeID int64, now time.Time, exclude []int64, limit int,
-) (_ []Notification, err error) {
-	defer d.observe(&err)()
-
+func dueNotifications(ctx context.Context, q querier, esmeID int64, now time.Time, limit int) ([]Notification, error) {
 	at := now.UTC().UnixNano()
-	args := []any{esmeID, at, at}
 
-	notIn := ""
-	if len(exclude) > 0 {
-		notIn = ` AND n.id NOT IN (?` + strings.Repeat(`, ?`, len(exclude)-1) + `)`
-
-		for _, id := range exclude {
-			args = append(args, id)
-		}
-	}
-
-	args = append(args, limit)
-
-	rows, err := d.reader().QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
+	rows, err := q.QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
 		FROM smpp_notifications n
 		CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		JOIN messages m ON m.id = n.message_id
 		LEFT JOIN delivery_attempts a ON a.id = n.attempt_id
 		WHERE s.esme_id = ? AND n.result IS NULL AND n.next_attempt_at <= ? AND n.expires_at > ?
 		AND NOT EXISTS (SELECT 1 FROM smpp_notifications o WHERE o.message_id = n.message_id AND o.id < n.id
-			AND o.result IS NULL)`+notIn+`
-		ORDER BY n.id LIMIT ?`, args...)
+			AND o.result IS NULL)
+		ORDER BY n.id LIMIT ?`, esmeID, at, at, limit)
 	if err != nil {
 		return nil, fmt.Errorf("due notifications: %w", err)
 	}
@@ -250,8 +235,8 @@ func (d *DB) CloseNotification(ctx context.Context, id int64, result Notificatio
 }
 
 func applyCloseNotification(a *applyCtx, p closeNotification) (struct{}, error) {
-	res, err := a.tx.ExecContext(a.ctx, `UPDATE smpp_notifications SET result = ? WHERE id = ? AND result IS NULL`,
-		p.Result, p.ID)
+	res, err := a.tx.ExecContext(a.ctx, `UPDATE smpp_notifications SET result = ?, claimed_by = NULL
+		WHERE id = ? AND result IS NULL`, p.Result, p.ID)
 	if err != nil {
 		return struct{}{}, err
 	}
@@ -266,14 +251,15 @@ func applyCloseNotification(a *applyCtx, p closeNotification) (struct{}, error) 
 }
 
 type retryNotification struct {
-	ID   int64
-	Next time.Time
+	ID     int64
+	Next   time.Time
+	NodeID string
 }
 
-func (d *DB) RetryNotification(ctx context.Context, id int64, next time.Time) (err error) {
+func (d *DB) RetryNotification(ctx context.Context, id int64, next time.Time, nodeID string) (err error) {
 	defer d.observe(&err)()
 
-	_, err = submit[struct{}](ctx, d, cmdRetryNotification, retryNotification{ID: id, Next: next})
+	_, err = submit[struct{}](ctx, d, cmdRetryNotification, retryNotification{ID: id, Next: next, NodeID: nodeID})
 	if err != nil {
 		return fmt.Errorf("retry notification: %w", err)
 	}
@@ -282,8 +268,9 @@ func (d *DB) RetryNotification(ctx context.Context, id int64, next time.Time) (e
 }
 
 func applyRetryNotification(a *applyCtx, p retryNotification) (struct{}, error) {
-	_, err := a.tx.ExecContext(a.ctx, `UPDATE smpp_notifications SET attempts = attempts + 1, next_attempt_at = ?
-		WHERE id = ? AND result IS NULL`, p.Next.UTC().UnixNano(), p.ID)
+	_, err := a.tx.ExecContext(a.ctx, `UPDATE smpp_notifications SET attempts = attempts + 1, next_attempt_at = ?,
+		claimed_by = NULL WHERE id = ? AND result IS NULL AND (claimed_by IS NULL OR claimed_by = ?)`,
+		p.Next.UTC().UnixNano(), p.ID, p.NodeID)
 
 	return struct{}{}, err
 }

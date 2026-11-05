@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/netip"
 	"runtime"
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/api"
@@ -29,6 +31,8 @@ import (
 const (
 	interfaceVersion34 = 0x34
 	MaxSessions        = 4
+	recordTimeout      = 10 * time.Second
+	syncInterval       = 10 * time.Second
 )
 
 // SMPP 3.4 section 2.2
@@ -90,9 +94,15 @@ type SessionInfo struct {
 type Store interface {
 	GetESMEBySystemID(ctx context.Context, systemID string) (db.ESME, error)
 	GetUserByID(ctx context.Context, id int64) (db.User, error)
-	DueNotifications(ctx context.Context, esmeID int64, now time.Time, exclude []int64, limit int) ([]db.Notification, error)
+	ClaimNotifications(ctx context.Context, nodeID string, esmeID int64, now time.Time, lease time.Duration,
+		limit int) ([]db.Notification, error)
+	OpenSMPPSession(ctx context.Context, s db.SMPPSession, limit int) error
+	CloseSMPPSession(ctx context.Context, nodeID string, sessionID uint64) error
+	SyncSMPPSessions(ctx context.Context, nodeID string, live []uint64) error
+	NodeSMPPSessions(ctx context.Context, nodeID string) ([]uint64, error)
 	CloseNotification(ctx context.Context, id int64, result db.NotificationResult) error
-	RetryNotification(ctx context.Context, id int64, next time.Time) error
+	RetryNotification(ctx context.Context, id int64, next time.Time, nodeID string) error
+	ReleaseNotification(ctx context.Context, id int64, nodeID string, now time.Time) error
 	ExpireNotifications(ctx context.Context, now time.Time) (map[db.NotificationType]int, error)
 	NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (time.Time, bool, error)
 }
@@ -106,6 +116,7 @@ type Service struct {
 	Metrics        *Metrics
 	BcryptCost     int
 	Accounts       interface{ CloseAccount(account string) int }
+	Node           string
 	TracerProvider trace.TracerProvider
 	Now            func() time.Time
 	Logger         *slog.Logger
@@ -123,6 +134,12 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[uint64]*Session
 	sending  map[int64]bool
+	opened   map[uint64]bool
+	synced   bool
+	draining bool
+	unbound  atomic.Uint64
+	records  sync.WaitGroup
+	stopping bool
 }
 
 func (s *Service) init() {
@@ -142,7 +159,16 @@ func (s *Service) init() {
 		s.wake = make(chan struct{}, 1)
 		s.sessions = map[uint64]*Session{}
 		s.sending = map[int64]bool{}
+		s.opened = map[uint64]bool{}
 	})
+}
+
+func (s *Service) SetDraining(draining bool) {
+	s.init()
+
+	s.mu.Lock()
+	s.draining = draining
+	s.mu.Unlock()
 }
 
 // SMPP 3.4 section 4.1
@@ -151,7 +177,7 @@ func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.B
 
 	remote := addrPortOf(req.RemoteAddr)
 
-	sess, reason, err := s.bind(ctx, remote, req.Bind)
+	sess, reason, err := s.bind(ctx, s.sessionID(req), remote, req.Bind)
 
 	log := s.Logger.With(slog.String("system_id", req.Bind.SystemID), slog.String("remote", remote.String()),
 		slog.String("bind", req.Bind.ID.String()))
@@ -177,6 +203,14 @@ func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.B
 	return smpp.BindOutcome{Status: smpp.StatusBindFail}
 }
 
+func (s *Service) sessionID(req smpp.BindRequest) uint64 {
+	if req.Session != nil {
+		return req.Session.ID()
+	}
+
+	return math.MaxInt64 - s.unbound.Add(1)
+}
+
 func accountOf(esmeID int64) string { return strconv.FormatInt(esmeID, 10) }
 
 func addrPortOf(a net.Addr) netip.AddrPort {
@@ -192,7 +226,7 @@ func addrPortOf(a net.Addr) netip.AddrPort {
 	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
 }
 
-func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind) (*Session, string, error) {
+func (s *Service) bind(ctx context.Context, id uint64, remote netip.AddrPort, b *smpp.Bind) (*Session, string, error) {
 	addr := remote.Addr().Unmap()
 
 	if !s.binds.Allow(ratelimit.Key(addr)) {
@@ -259,7 +293,41 @@ func (s *Service) bind(ctx context.Context, remote netip.AddrPort, b *smpp.Bind)
 		}
 	}
 
-	return &Session{ESME: e, UserID: u.ID, BindType: bindType, Remote: remote}, "", nil
+	s.mu.Lock()
+	draining, synced := s.draining, s.synced
+	s.opened[id] = true
+	s.mu.Unlock()
+
+	switch {
+	case draining:
+		s.forget(id)
+		return nil, "the node is draining", nil
+	case !synced:
+		s.forget(id)
+		return nil, "the node is starting", nil
+	}
+
+	err = s.Store.OpenSMPPSession(ctx, db.SMPPSession{
+		NodeID: s.Node, SessionID: id, ESMEID: e.ID, BindType: string(bindType), Remote: remote.String(),
+		BoundAt: s.Now(),
+	}, MaxSessions)
+
+	switch {
+	case errors.Is(err, db.ErrTooManySessions):
+		s.forget(id)
+		return nil, "too many sessions for the account", nil
+	case err != nil:
+		s.forget(id)
+		return nil, "the session could not be recorded: " + err.Error(), nil
+	}
+
+	return &Session{ID: id, ESME: e, UserID: u.ID, BindType: bindType, Remote: remote}, "", nil
+}
+
+func (s *Service) forget(id uint64) {
+	s.mu.Lock()
+	delete(s.opened, id)
+	s.mu.Unlock()
 }
 
 func (s *Service) dummy() []byte {
@@ -296,7 +364,6 @@ func (s *Service) OnBound(ls *smpp.Session) {
 		return
 	}
 
-	sess.ID = ls.ID()
 	sess.BoundAt = ls.Info().BoundAt
 	s.attach(sess, libraryConn{ls})
 }
@@ -305,6 +372,98 @@ func (s *Service) OnClosed(ls *smpp.Session) {
 	if sess, ok := ls.Data().(*Session); ok {
 		s.detach(sess)
 	}
+
+	s.closeRecord(ls.ID())
+}
+
+func (s *Service) closeRecord(id uint64) {
+	s.init()
+
+	s.mu.Lock()
+	opened := s.opened[id]
+	delete(s.opened, id)
+
+	async := opened && !s.stopping
+	if async {
+		s.records.Add(1)
+	}
+	s.mu.Unlock()
+
+	if !opened {
+		return
+	}
+
+	record := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), recordTimeout)
+		defer cancel()
+
+		if err := s.Store.CloseSMPPSession(ctx, s.Node, id); err != nil {
+			s.Logger.WarnContext(ctx, "failed to record the end of an SMPP session; it is cleaned up later",
+				slog.Uint64("session", id), slog.Any("error", err))
+		}
+	}
+
+	if !async {
+		record()
+		return
+	}
+
+	go func() {
+		defer s.records.Done()
+
+		record()
+	}()
+}
+
+// SMPP 3.4 section 2.2
+func (s *Service) RunSessions(ctx context.Context) {
+	s.init()
+
+	ticker := time.NewTicker(syncInterval)
+	defer ticker.Stop()
+
+	for {
+		s.syncSessions(ctx)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Service) syncSessions(ctx context.Context) {
+	s.mu.Lock()
+	live := make([]uint64, 0, len(s.opened))
+
+	for id := range s.opened {
+		live = append(live, id)
+	}
+	s.mu.Unlock()
+
+	slices.Sort(live)
+
+	recorded, err := s.Store.NodeSMPPSessions(ctx, s.Node)
+	if err != nil {
+		return
+	}
+
+	stale := slices.ContainsFunc(recorded, func(id uint64) bool { _, ok := slices.BinarySearch(live, id); return !ok })
+
+	if stale {
+		if err := s.Store.SyncSMPPSessions(ctx, s.Node, live); err != nil {
+			if ctx.Err() == nil {
+				s.Logger.DebugContext(ctx, "failed to clean up the recorded SMPP sessions", slog.Any("error", err))
+			}
+
+			return
+		}
+	}
+
+	s.mu.Lock()
+	s.synced = true
+	s.mu.Unlock()
 }
 
 func (s *Service) OnDecodeError(_ *smpp.Session, h smpp.Header, _ error) {

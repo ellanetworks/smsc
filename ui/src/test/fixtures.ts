@@ -1,3 +1,4 @@
+import type { ClusterMember, ClusterStatus } from "@/queries/cluster";
 import type { Attempt, Message } from "@/queries/messages";
 
 export const message = (overrides: Partial<Message> = {}): Message => ({
@@ -31,4 +32,57 @@ export const page = <T>(
   page: extra.page ?? 1,
   per_page: extra.per_page ?? 25,
   total_count: extra.total_count ?? items.length,
+});
+
+export const clusterMember = (
+  overrides: Partial<ClusterMember> = {},
+): ClusterMember => ({
+  node_id: "0b5c6a0e-1111-4c1e-9a55-1f0c2d3e4f50",
+  address: "10.0.0.11:7000",
+  diameter_label: "smsc",
+  version: "v0.1.0",
+  joined_at: "2026-09-30T12:00:00.000Z",
+  drain_state: "active",
+  suffrage: "voter",
+  leader: false,
+  healthy: true,
+  last_contact: "12ms",
+  applied_index: 42,
+  ...overrides,
+});
+
+export const clusterStatus = (
+  overrides: Partial<ClusterStatus> = {},
+): ClusterStatus => ({
+  node_id: "0b5c6a0e-1111-4c1e-9a55-1f0c2d3e4f50",
+  cluster_id: "9f1e2d3c-2222-4b5a-8c7d-6e5f4a3b2c1d",
+  clustered: true,
+  leader_id: "0b5c6a0e-1111-4c1e-9a55-1f0c2d3e4f50",
+  term: 3,
+  applied_index: 42,
+  commit_index: 42,
+  healthy: true,
+  failure_tolerance: 1,
+  members: [
+    clusterMember({ leader: true, last_contact: "0s" }),
+    clusterMember({
+      node_id: "1c6d7b1f-3333-4d2f-8b66-2a1d3e4f5a61",
+      address: "10.0.0.12:7000",
+      diameter_label: "smsc2",
+      last_contact: "35ms",
+      applied_index: 41,
+    }),
+    clusterMember({
+      node_id: "2d7e8c2a-4444-4e3a-9c77-3b2e4f5a6b72",
+      address: "10.0.0.13:7000",
+      diameter_label: "smsc3",
+      suffrage: "nonvoter",
+      drain_state: "drained",
+      healthy: false,
+      last_contact: "9.5s",
+      applied_index: 30,
+      diverged: true,
+    }),
+  ],
+  ...overrides,
 });

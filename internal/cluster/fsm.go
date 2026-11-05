@@ -23,21 +23,44 @@ func (f *fsm) Apply(l *raft.Log) any {
 func (f *fsm) ApplyBatch(logs []*raft.Log) []any {
 	out := make([]any, len(logs))
 
+	var run []int
+
+	flush := func() {
+		if len(run) == 0 {
+			return
+		}
+
+		entries := make([]db.Entry, len(run))
+		for j, i := range run {
+			entries[j] = db.Entry{Index: logs[i].Index, Term: logs[i].Term, Data: logs[i].Data}
+		}
+
+		results, err := f.db.ApplyEntries(entries)
+		if err != nil {
+			panic(fmt.Sprintf("halting: %v", err))
+		}
+
+		for j, i := range run {
+			out[i] = results[j]
+		}
+
+		run = run[:0]
+	}
+
 	for i, l := range logs {
 		switch l.Type {
 		case raft.LogCommand:
-			results, err := f.db.Apply(l.Index, l.Term, l.Data)
-			if err != nil {
-				panic(fmt.Sprintf("halting: %v", err))
-			}
-
-			out[i] = results
+			run = append(run, i)
 		case raft.LogConfiguration:
+			flush()
+
 			if err := f.db.RecordConfiguration(l.Index, l.Term, l.Data); err != nil {
 				panic(fmt.Sprintf("halting: %v", err))
 			}
 		}
 	}
+
+	flush()
 
 	return out
 }

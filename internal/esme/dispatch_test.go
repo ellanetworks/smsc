@@ -143,7 +143,7 @@ func (e *testEnv) complete(t *testing.T, id int64, status db.MessageStatus, tpSt
 		}
 	}
 
-	if err := e.store.CompleteMessage(ctx, id, status, at, nil, tpStatus); err != nil {
+	if err := e.store.CompleteMessage(ctx, id, status, at, nil, tpStatus, db.Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -511,7 +511,7 @@ func TestExpiry(t *testing.T) {
 	env.complete(t, id, db.StatusDelivered, 0, "", "", c.Now())
 
 	c.advance(env.settings.Delivery.DefaultValidity)
-	env.service.NotificationsQueued()
+	env.service.Expire(context.Background())
 	waitResult(t, env, id, db.NotificationReceipt, db.NotificationExpired)
 
 	conn := env.bind(1, Receiver, env.esme)
@@ -606,26 +606,26 @@ func notificationResult(t *testing.T, env *testEnv, messageID int64, typ db.Noti
 	return r.V
 }
 
-type excludeRecorder struct {
+type claimRecorder struct {
 	Store
 
 	mu      sync.Mutex
 	largest int
 }
 
-func (r *excludeRecorder) DueNotifications(ctx context.Context, esmeID int64, now time.Time, exclude []int64,
-	limit int,
+func (r *claimRecorder) ClaimNotifications(ctx context.Context, nodeID string, esmeID int64, now time.Time,
+	lease time.Duration, limit int,
 ) ([]db.Notification, error) {
 	r.mu.Lock()
-	r.largest = max(r.largest, len(exclude))
+	r.largest = max(r.largest, limit)
 	r.mu.Unlock()
 
-	return r.Store.DueNotifications(ctx, esmeID, now, exclude, limit)
+	return r.Store.ClaimNotifications(ctx, nodeID, esmeID, now, lease, limit)
 }
 
 func TestNotificationsInFlightStayWithinTheWindow(t *testing.T) {
 	env := newTestEnv(t, nil)
-	recorder := &excludeRecorder{Store: env.service.Store}
+	recorder := &claimRecorder{Store: env.service.Store}
 	env.service.Store = recorder
 	c := env.run(t)
 	conn := env.bind(1, Receiver, env.esme)
@@ -651,6 +651,6 @@ func TestNotificationsInFlightStayWithinTheWindow(t *testing.T) {
 	defer recorder.mu.Unlock()
 
 	if recorder.largest > window {
-		t.Fatalf("%d notifications excluded as in flight, want at most the window of %d", recorder.largest, window)
+		t.Fatalf("%d notifications claimed at once, want at most the window of %d", recorder.largest, window)
 	}
 }

@@ -634,14 +634,57 @@ func (d *DB) CountMessages(ctx context.Context, f MessageFilter) (_ map[MessageS
 	return counts, nil
 }
 
-func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (_ Message, _ bool, err error) {
+func (d *DB) DueRecipients(ctx context.Context, now time.Time, limit int, skip func(msisdn string) bool) (
+	_ []string, _ time.Time, err error,
+) {
 	defer d.observe(&err)()
 
-	exclude, args := excludeMSISDNs(busy)
+	rows, err := d.reader().QueryContext(ctx,
+		`SELECT msisdn, next_attempt_at FROM recipients WHERE next_attempt_at IS NOT NULL ORDER BY next_attempt_at, msisdn`)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("due recipients: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	at := now.UTC().UnixNano()
+
+	var due []string
+
+	for len(due) < limit && rows.Next() {
+		var (
+			msisdn string
+			next   int64
+		)
+
+		if err := rows.Scan(&msisdn, &next); err != nil {
+			return nil, time.Time{}, fmt.Errorf("due recipients: %w", err)
+		}
+
+		if skip != nil && skip(msisdn) {
+			continue
+		}
+
+		if next > at {
+			return due, time.Unix(0, next).UTC(), nil
+		}
+
+		due = append(due, msisdn)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, time.Time{}, fmt.Errorf("due recipients: %w", err)
+	}
+
+	return due, time.Time{}, nil
+}
+
+func (d *DB) NextDue(ctx context.Context, msisdn string, now time.Time) (_ Message, _ bool, err error) {
+	defer d.observe(&err)()
 
 	m, err := scanMessage(d.reader().QueryRowContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE status = ? AND next_attempt_at <= ?`+exclude+`
-		ORDER BY next_attempt_at, id LIMIT 1`, append([]any{StatusPending, now.UTC().UnixNano()}, args...)...))
+		`SELECT `+messageColumns+` FROM messages WHERE msisdn = ? AND status = ? AND next_attempt_at <= ?
+		ORDER BY next_attempt_at, id LIMIT 1`, msisdn, StatusPending, now.UTC().UnixNano()))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, false, nil
 	}
@@ -653,52 +696,22 @@ func (d *DB) NextDue(ctx context.Context, now time.Time, busy []string) (_ Messa
 	return m, true, nil
 }
 
-func (d *DB) NextWakeup(ctx context.Context, busy []string) (_ time.Time, _ bool, err error) {
-	defer d.observe(&err)()
-
-	var at sql.Null[int64]
-
-	exclude, args := excludeMSISDNs(busy)
-
-	err = d.reader().QueryRowContext(ctx,
-		`SELECT MIN(next_attempt_at) FROM messages WHERE status = ?`+exclude,
-		append([]any{StatusPending}, args...)...).Scan(&at)
-	if err != nil {
-		return time.Time{}, false, fmt.Errorf("next wakeup: %w", err)
-	}
-
-	if !at.Valid {
-		return time.Time{}, false, nil
-	}
-
-	return time.Unix(0, at.V).UTC(), true, nil
-}
-
-func excludeMSISDNs(busy []string) (string, []any) {
-	if len(busy) == 0 {
-		return "", nil
-	}
-
-	args := make([]any, len(busy))
-	for i, msisdn := range busy {
-		args[i] = msisdn
-	}
-
-	return ` AND msisdn NOT IN (?` + strings.Repeat(`, ?`, len(busy)-1) + `)`, args
-}
-
 type scheduleRetry struct {
-	ID   int64
-	At   time.Time
-	Now  time.Time
-	Hold bool
+	ID    int64
+	At    time.Time
+	Now   time.Time
+	Hold  bool
+	Since time.Time
+	Fence Fence
 }
 
-func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool) (err error) {
+func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, since time.Time, f Fence) (err error) {
 	defer d.observe(&err)()
 
-	_, err = submit[struct{}](ctx, d, cmdScheduleRetry, scheduleRetry{ID: id, At: at, Now: now, Hold: hold})
-	if err != nil && !errors.Is(err, ErrNotFound) {
+	_, err = submit[struct{}](ctx, d, cmdScheduleRetry, scheduleRetry{
+		ID: id, At: at, Now: now, Hold: hold, Since: since, Fence: f,
+	})
+	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrStaleTerm) {
 		return fmt.Errorf("schedule retry: %w", err)
 	}
 
@@ -711,6 +724,17 @@ func applyScheduleRetry(a *applyCtx, p scheduleRetry) (struct{}, error) {
 	next, updated := p.At.UTC().UnixNano(), p.Now.UTC().UnixNano()
 
 	var msisdn string
+
+	if err := tx.QueryRowContext(ctx, `SELECT msisdn FROM messages WHERE id = ?`, p.ID).Scan(&msisdn); errors.Is(err,
+		sql.ErrNoRows) {
+		return struct{}{}, ErrNotFound
+	} else if err != nil {
+		return struct{}{}, err
+	}
+
+	if err := fenced(a, msisdn, p.Fence); err != nil {
+		return struct{}{}, err
+	}
 
 	err := tx.QueryRowContext(ctx,
 		`UPDATE messages SET next_attempt_at = MIN(?, expires_at), retries = retries + 1, updated_at = ?
@@ -726,12 +750,23 @@ func applyScheduleRetry(a *applyCtx, p scheduleRetry) (struct{}, error) {
 	}
 
 	if p.Hold {
-		if err := holdRecipient(ctx, tx, msisdn, next, updated); err != nil {
+		alerted, err := alertedSince(a, msisdn, p.Since)
+		if err != nil {
 			return struct{}{}, err
+		}
+
+		if !alerted {
+			if err := holdRecipient(ctx, tx, msisdn, next, updated); err != nil {
+				return struct{}{}, err
+			}
 		}
 	}
 
-	return struct{}{}, nil
+	if p.Fence.Keep {
+		return struct{}{}, nil
+	}
+
+	return struct{}{}, release(a, msisdn, p.Fence.Claim)
 }
 
 type PendingCount struct {
@@ -859,7 +894,8 @@ func applyAlertRecipient(a *applyCtx, p alertRecipient) ([]string, error) {
 
 	for _, r := range recipients {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE recipients SET held_until = NULL, updated_at = ? WHERE msisdn = ?`, at, r); err != nil {
+			`INSERT INTO recipients (msisdn, alerted_at, updated_at) VALUES (?1, ?2, ?2)
+			ON CONFLICT (msisdn) DO UPDATE SET held_until = NULL, alerted_at = ?2, updated_at = ?2`, r, at); err != nil {
 			return nil, err
 		}
 
@@ -911,17 +947,19 @@ type completeMessage struct {
 	Report      *NewStatusReport
 	TPStatus    uint8
 	TraceParent string
+	Fence       Fence
 }
 
 func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus, at time.Time, report *NewStatusReport,
-	tpStatus uint8,
+	tpStatus uint8, f Fence,
 ) (err error) {
 	defer d.observe(&err)()
 
 	kind, replayed, err := submitReplay[MessageKind](ctx, d, cmdCompleteMessage, completeMessage{
 		ID: id, Status: status, At: at, Report: report, TPStatus: tpStatus, TraceParent: tracing.TraceParent(ctx),
+		Fence: f,
 	})
-	if errors.Is(err, ErrNotPending) || errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrNotPending) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrStaleTerm) {
 		return err
 	}
 
@@ -946,6 +984,15 @@ func applyCompleteMessage(a *applyCtx, p completeMessage) (MessageKind, error) {
 	}
 
 	at := p.At.UTC().UnixNano()
+
+	var msisdn string
+
+	if err := tx.QueryRowContext(ctx, `SELECT msisdn FROM messages WHERE id = ?`, p.ID).Scan(&msisdn); errors.Is(err,
+		sql.ErrNoRows) {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
 
 	var kind MessageKind
 
@@ -984,7 +1031,11 @@ func applyCompleteMessage(a *applyCtx, p completeMessage) (MessageKind, error) {
 
 	a.events.Notifications = a.events.Notifications || queued
 
-	return kind, nil
+	if p.Fence.Keep {
+		return kind, nil
+	}
+
+	return kind, release(a, msisdn, p.Fence.Claim)
 }
 
 const purgeableMessages = `SELECT m.id FROM messages m
@@ -1059,4 +1110,19 @@ func (d *DB) StatusReportsFor(ctx context.Context, messageIDs []int64) (_ map[in
 	}
 
 	return reports, nil
+}
+
+func alertedSince(a *applyCtx, msisdn string, since time.Time) (bool, error) {
+	if since.IsZero() {
+		return false, nil
+	}
+
+	var alerted sql.NullInt64
+
+	err := a.tx.QueryRowContext(a.ctx, `SELECT alerted_at FROM recipients WHERE msisdn = ?`, msisdn).Scan(&alerted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+
+	return alerted.Valid && alerted.Int64 >= since.UTC().UnixNano(), err
 }

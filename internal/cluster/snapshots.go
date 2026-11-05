@@ -114,7 +114,7 @@ func (s *snapshotStore) openDatabase() (*raft.SnapshotMeta, io.ReadCloser, error
 		return nil, nil, err
 	}
 
-	header := db.SnapshotHeader()
+	header := db.SnapshotHeader(c.Position.Schema)
 
 	m := meta(databaseSnapshot, c.Position)
 	m.Size = int64(len(header)) + info.Size()

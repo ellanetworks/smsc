@@ -15,9 +15,7 @@ description: Reference of the network interfaces and ports of Ella SMSC.
 
 Defaults are in parentheses. SMPP listens only when the configuration file has an `smpp` block, and the cluster port only when it has a `cluster` block.
 
-Nodes authenticate each other on the cluster port with self-signed certificates that each node creates, pinned by their SHA-256 fingerprints in the replicated database. A [join token](api/cluster.md#create-a-join-token) carries the fingerprints a new node trusts until it has the database.
-
-Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the configured peers, and reconnects after 1 to 30 seconds.
+Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the configured peers, and reconnects after 1 to 30 seconds. In a cluster, every node connects to the configured peers, and every other peer connects to every node.
 
 ## Diameter identity
 
@@ -26,4 +24,4 @@ Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the
 | Host | `<label>.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
 | Realm | `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
 
-`<MCC>` and `<MNC>` are the operator's, with a 2-digit MNC padded to 3. `<label>` is the node's [Diameter label](api/cluster.md#update-a-member): `smsc` on a single node or the first node of a cluster, and `smsc2`, `smsc3`, and so on for the nodes that join it. Every node of a cluster has its own host and shares the realm and the service centre address.
+`<MCC>` and `<MNC>` are the operator's, with a 2-digit MNC padded to 3. `<label>` is the node's [Diameter label](api/cluster.md#update-a-member).

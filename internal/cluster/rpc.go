@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/cluster/listener"
@@ -17,9 +16,8 @@ import (
 )
 
 const (
+	maxReportBody   = 8 << 20
 	maxJoinBody     = 64 << 10
-	joinRate        = time.Second
-	joinBurst       = 5
 	rpcReadTimeout  = time.Minute
 	rpcWriteTimeout = 5 * time.Minute
 )
@@ -27,6 +25,9 @@ const (
 const (
 	codeInvalidJoin   = "invalid_join"
 	codeInvalidBackup = "invalid_backup"
+	codeUnknown       = "outcome_unknown"
+	codeNotDrained    = "not_drained"
+	codeQuorum        = "quorum"
 )
 
 type peerKey struct{}
@@ -43,7 +44,6 @@ func (n *Node) serveRPC() {
 	mux.HandleFunc("POST /cluster/v1/join", n.leaderOnly(n.handleJoin))
 	mux.HandleFunc("POST /cluster/v1/remove", n.leaderOnly(n.handleRemove))
 	mux.HandleFunc("GET /cluster/v1/health", n.leaderOnly(n.handleHealth))
-	mux.HandleFunc("GET /cluster/v1/backup", n.leaderOnly(n.handleBackup))
 	mux.HandleFunc("POST /cluster/v1/restore", n.leaderOnly(n.handleRestore))
 
 	errorLog := slog.NewLogLogger(n.cfg.Logger.Handler(), slog.LevelDebug)
@@ -62,7 +62,7 @@ func (n *Node) serveRPC() {
 	go func() { _ = n.rpc.Serve(n.ln.Stream(listener.ALPNHTTP, n.cfg.Advertise)) }()
 
 	join := http.NewServeMux()
-	join.HandleFunc("POST /cluster/v1/join", n.handleBootstrapJoin(newLimiters(joinRate, joinBurst)))
+	join.HandleFunc("POST /cluster/v1/join", n.handleBootstrapJoin)
 
 	joinServer := &http.Server{
 		Handler:           join,
@@ -91,12 +91,18 @@ func writeRPCError(w http.ResponseWriter, err error) {
 	var remote *RemoteError
 
 	switch {
+	case errors.Is(err, errUnknown):
+		writeJSON(w, http.StatusServiceUnavailable, rpcError{Error: err.Error(), Code: codeUnknown})
 	case errors.Is(err, errRetry), errors.Is(err, raft.ErrRaftShutdown):
 		writeJSON(w, http.StatusServiceUnavailable, rpcError{Error: err.Error()})
 	case errors.As(err, &remote):
 		writeJSON(w, remote.Status, rpcError{Error: remote.Message, Code: remote.Code})
 	case errors.Is(err, ErrInvalidJoin):
 		writeJSON(w, http.StatusBadRequest, rpcError{Error: err.Error(), Code: codeInvalidJoin})
+	case errors.Is(err, ErrNotDrained):
+		writeJSON(w, http.StatusConflict, rpcError{Error: err.Error(), Code: codeNotDrained})
+	case errors.Is(err, ErrQuorum):
+		writeJSON(w, http.StatusConflict, rpcError{Error: err.Error(), Code: codeQuorum})
 	case errors.Is(err, ErrInvalidBackup):
 		writeJSON(w, http.StatusBadRequest, rpcError{Error: err.Error(), Code: codeInvalidBackup})
 	default:
@@ -150,7 +156,7 @@ func (n *Node) handlePropose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := b.propose(r.Context(), req.Commands)
+	results, index, err := b.propose(r.Context(), req.Commands)
 
 	switch {
 	case errors.Is(err, db.ErrBusy):
@@ -158,13 +164,13 @@ func (n *Node) handlePropose(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeRPCError(w, classify(err))
 	default:
-		writeJSON(w, http.StatusOK, proposeReply{Results: results, Index: n.db.AppliedIndex()})
+		writeJSON(w, http.StatusOK, proposeReply{Results: results, Index: index})
 	}
 }
 
 func (n *Node) handleReport(w http.ResponseWriter, r *http.Request) {
 	var rep report
-	if !decodeBody(w, r, 1<<16, &rep) {
+	if !decodeBody(w, r, maxReportBody, &rep) {
 		return
 	}
 
@@ -192,47 +198,41 @@ func (n *Node) handleJoin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, reply)
 }
 
-func (n *Node) handleBootstrapJoin(limits *limiters) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !limits.allow(r.RemoteAddr) {
-			writeJSON(w, http.StatusTooManyRequests, rpcError{Error: "too many join requests"})
-			return
-		}
+func (n *Node) handleBootstrapJoin(w http.ResponseWriter, r *http.Request) {
+	var req joinRequest
+	if !decodeBody(w, r, maxJoinBody, &req) {
+		return
+	}
 
-		var req joinRequest
-		if !decodeBody(w, r, maxJoinBody, &req) {
-			return
-		}
+	if _, err := n.verifyToken(r.Context(), req.Token); err != nil {
+		writeRPCError(w, err)
+		return
+	}
 
-		if _, err := n.verifyToken(r.Context(), req.Token); err != nil {
-			writeRPCError(w, err)
-			return
-		}
-
-		if leading, _ := n.Leader(); leading {
-			reply, err := n.admit(r.Context(), req)
-			if err != nil {
-				writeRPCError(w, err)
-				return
-			}
-
-			writeJSON(w, http.StatusOK, reply)
-
-			return
-		}
-
-		var reply joinReply
-		if err := n.peers.call(r.Context(), "/cluster/v1/join", req, &reply); err != nil {
+	if leading, _ := n.Leader(); leading {
+		reply, err := n.admit(r.Context(), req)
+		if err != nil {
 			writeRPCError(w, err)
 			return
 		}
 
 		writeJSON(w, http.StatusOK, reply)
+
+		return
 	}
+
+	var reply joinReply
+	if err := n.peers.call(r.Context(), "/cluster/v1/join", req, &reply); err != nil {
+		writeRPCError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, reply)
 }
 
 type removeRequest struct {
 	NodeID string `json:"node_id"`
+	Force  bool   `json:"force,omitempty"`
 }
 
 func (n *Node) handleRemove(w http.ResponseWriter, r *http.Request) {
@@ -241,22 +241,12 @@ func (n *Node) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := n.removeAsLeader(r.Context(), req.NodeID); err != nil {
+	if err := n.removeAsLeader(r.Context(), req.NodeID, req.Force); err != nil {
 		writeRPCError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, struct{}{})
-}
-
-func (n *Node) handleBackup(w http.ResponseWriter, r *http.Request) {
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-
-	w.Header().Set("Content-Type", "application/gzip")
-
-	if err := n.backupLocal(r.Context(), w); err != nil {
-		n.cfg.Logger.ErrorContext(r.Context(), "failed to stream a backup to a peer", slog.Any("error", err))
-	}
 }
 
 func (n *Node) handleRestore(w http.ResponseWriter, r *http.Request) {
@@ -270,72 +260,4 @@ func (n *Node) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, struct{}{})
-}
-
-const maxLimiters = 4096
-
-type limiters struct {
-	mu    sync.Mutex
-	every time.Duration
-	burst int
-	by    map[string]*limiter
-}
-
-func newLimiters(every time.Duration, burst int) *limiters {
-	return &limiters{every: every, burst: burst, by: map[string]*limiter{}}
-}
-
-func (l *limiters) allow(remote string) bool {
-	host, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		host = remote
-	}
-
-	l.mu.Lock()
-
-	lim, ok := l.by[host]
-	if !ok {
-		if len(l.by) >= maxLimiters {
-			clear(l.by)
-		}
-
-		lim = newLimiter(l.every, l.burst)
-		l.by[host] = lim
-	}
-	l.mu.Unlock()
-
-	return lim.allow()
-}
-
-type limiter struct {
-	mu     sync.Mutex
-	every  time.Duration
-	burst  int
-	tokens float64
-	last   time.Time
-}
-
-func newLimiter(every time.Duration, burst int) *limiter {
-	return &limiter{every: every, burst: burst, tokens: float64(burst)}
-}
-
-func (l *limiter) allow() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-
-	if !l.last.IsZero() {
-		l.tokens = min(float64(l.burst), l.tokens+float64(now.Sub(l.last))/float64(l.every))
-	}
-
-	l.last = now
-
-	if l.tokens < 1 {
-		return false
-	}
-
-	l.tokens--
-
-	return true
 }

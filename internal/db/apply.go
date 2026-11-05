@@ -27,6 +27,7 @@ type Events struct {
 	ClosedESMEs   []int64
 	Alerted       []string
 	Removed       []string
+	Migrated      int
 }
 
 func (e *Events) merge(o Events) {
@@ -36,18 +37,20 @@ func (e *Events) merge(o Events) {
 	e.Settings = e.Settings || o.Settings
 	e.OIDC = e.OIDC || o.OIDC
 	e.Members = e.Members || o.Members
+	e.Migrated = max(e.Migrated, o.Migrated)
 	e.Removed = append(e.Removed, o.Removed...)
 	e.ClosedESMEs = append(e.ClosedESMEs, o.ClosedESMEs...)
 	e.Alerted = append(e.Alerted, o.Alerted...)
 }
 
 func (e Events) empty() bool {
-	return !e.Replaced && !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && !e.Members &&
+	return !e.Replaced && !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && !e.Members && e.Migrated == 0 &&
 		len(e.ClosedESMEs) == 0 && len(e.Alerted) == 0 && len(e.Removed) == 0
 }
 
 type applyCtx struct {
 	ctx        context.Context
+	schema     int
 	tx         *sql.Tx
 	index      uint64
 	term       uint64
@@ -107,9 +110,9 @@ func (d *DB) setApplied(index uint64) {
 	d.applied.Store(index)
 
 	d.appliedMu.Lock()
-	if d.advanced != nil {
-		close(d.advanced)
-		d.advanced = nil
+	if d.appliedCh != nil {
+		close(d.appliedCh)
+		d.appliedCh = nil
 	}
 	d.appliedMu.Unlock()
 }
@@ -123,11 +126,11 @@ func (d *DB) WaitApplied(ctx context.Context, index uint64) error {
 			return nil
 		}
 
-		if d.advanced == nil {
-			d.advanced = make(chan struct{})
+		if d.appliedCh == nil {
+			d.appliedCh = make(chan struct{})
 		}
 
-		ch := d.advanced
+		ch := d.appliedCh
 		d.appliedMu.Unlock()
 
 		select {
@@ -136,6 +139,41 @@ func (d *DB) WaitApplied(ctx context.Context, index uint64) error {
 			return ctx.Err()
 		}
 	}
+}
+
+func (d *DB) LeaderTime() int64 {
+	return d.leaderTime.Load()
+}
+
+const recentHashes = 4096
+
+type appliedHash struct {
+	index uint64
+	hash  []byte
+}
+
+func (d *DB) remember(index uint64, hash []byte) {
+	d.hashMu.Lock()
+	defer d.hashMu.Unlock()
+
+	if d.hashes == nil {
+		d.hashes = make([]appliedHash, recentHashes)
+	}
+
+	d.hashes[index%recentHashes] = appliedHash{index: index, hash: hash}
+}
+
+func (d *DB) HashAt(index uint64) ([]byte, bool) {
+	d.hashMu.Lock()
+	defer d.hashMu.Unlock()
+
+	if d.hashes == nil {
+		return nil, false
+	}
+
+	h := d.hashes[index%recentHashes]
+
+	return h.hash, h.index == index && h.hash != nil
 }
 
 func (d *DB) Hash(ctx context.Context) (_ []byte, _ uint64, err error) {
@@ -149,20 +187,41 @@ func (d *DB) Hash(ctx context.Context) (_ []byte, _ uint64, err error) {
 	return s.hash, s.appliedIndex, nil
 }
 
+type Entry struct {
+	Index uint64
+	Term  uint64
+	Data  []byte
+}
+
 func (d *DB) Apply(index, term uint64, entry []byte) ([]Result, error) {
-	b, err := DecodeBatch(entry)
+	results, err := d.ApplyEntries([]Entry{{Index: index, Term: term, Data: entry}})
 	if err != nil {
-		return nil, &FatalError{Index: index, Err: err}
+		return nil, err
+	}
+
+	return results[0], nil
+}
+
+func (d *DB) ApplyEntries(entries []Entry) ([][]Result, error) {
+	batches := make([]Batch, len(entries))
+
+	for i, e := range entries {
+		b, err := DecodeBatch(e.Data)
+		if err != nil {
+			return nil, &FatalError{Index: e.Index, Err: err}
+		}
+
+		batches[i] = b
 	}
 
 	d.applyMu.Lock()
 
-	results, events, err := d.applyBatch(index, term, b)
+	results, events, err := d.applyBatches(entries, batches)
 
 	d.applyMu.Unlock()
 
 	if err != nil {
-		return nil, &FatalError{Index: index, Err: err}
+		return nil, err
 	}
 
 	d.publish(events)
@@ -170,65 +229,107 @@ func (d *DB) Apply(index, term uint64, entry []byte) ([]Result, error) {
 	return results, nil
 }
 
-func (d *DB) applyBatch(index, term uint64, b Batch) ([]Result, Events, error) {
+func (d *DB) applyBatches(entries []Entry, batches []Batch) ([][]Result, Events, error) {
 	ctx := context.Background()
+
+	fatal := func(i int, err error) ([][]Result, Events, error) {
+		return nil, Events{}, &FatalError{Index: entries[i].Index, Err: err}
+	}
 
 	tx, err := d.writer.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, Events{}, err
+		return fatal(0, err)
 	}
 
 	defer func() { _ = tx.Rollback() }()
 
 	state, err := readFSMState(ctx, tx)
 	if err != nil {
-		return nil, Events{}, err
+		return fatal(0, err)
 	}
 
-	results := make([]Result, len(b.Commands))
+	var schema int
 
-	if index <= state.appliedIndex {
-		for i := range results {
-			results[i] = Result{Code: "already_applied", Message: ErrAlreadyApplied.Error()}
-		}
-
-		return results, Events{}, nil
+	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&schema); err != nil {
+		return fatal(0, err)
 	}
+
+	results := make([][]Result, len(entries))
+	hashes := make([][]byte, len(entries))
 
 	var events Events
 
-	hash := state.hash
+	applied := state.appliedIndex
 
-	for i, c := range b.Commands {
-		a := &applyCtx{ctx: ctx, tx: tx, index: index, term: term, leaderTime: b.LeaderTime}
+	for i, e := range entries {
+		b := batches[i]
+		results[i] = make([]Result, len(b.Commands))
 
-		r, ev, err := applyCommand(a, c)
-		if err != nil {
-			return nil, Events{}, fmt.Errorf("command %d (type %d): %w", i, c.Type, err)
+		if e.Index <= applied {
+			for j := range results[i] {
+				results[i][j] = Result{Code: "already_applied", Message: ErrAlreadyApplied.Error()}
+			}
+
+			continue
 		}
 
-		results[i] = r
+		state.leaderTime = max(state.leaderTime, b.LeaderTime)
 
-		events.merge(ev)
+		for j, c := range b.Commands {
+			a := &applyCtx{ctx: ctx, tx: tx, index: e.Index, term: e.Term, leaderTime: state.leaderTime, schema: schema}
 
-		hash = chain(hash, index, c, r)
+			r, ev, err := applyCommand(a, c)
+			if err != nil {
+				return fatal(i, fmt.Errorf("command %d (type %d): %w", j, c.Type, err))
+			}
+
+			results[i][j] = r
+
+			events.merge(ev)
+
+			if ev.Migrated > 0 {
+				schema = ev.Migrated
+			}
+
+			state.hash = chain(state.hash, e.Index, c, r)
+		}
+
+		hashes[i] = state.hash
+		state.appliedIndex, state.appliedTerm = e.Index, e.Term
 	}
 
+	if state.appliedIndex == applied {
+		return results, Events{}, nil
+	}
+
+	last := len(entries) - 1
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_requests WHERE applied_at < ?`,
-		b.LeaderTime-int64(appliedRequestsWindow)); err != nil {
-		return nil, Events{}, err
+		state.leaderTime-int64(appliedRequestsWindow)); err != nil {
+		return fatal(last, err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE fsm_state SET applied_index = ?, applied_term = ?, hash = ?,
-		leader_time = MAX(leader_time, ?) WHERE id = 1`, index, term, hash, b.LeaderTime); err != nil {
-		return nil, Events{}, err
+		leader_time = ? WHERE id = 1`, state.appliedIndex, state.appliedTerm, state.hash, state.leaderTime); err != nil {
+		return fatal(last, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, Events{}, err
+		return fatal(last, err)
 	}
 
-	d.setApplied(index)
+	d.setApplied(state.appliedIndex)
+	d.leaderTime.Store(state.leaderTime)
+
+	if events.Migrated > 0 {
+		d.schema.Store(int64(events.Migrated))
+	}
+
+	for i, e := range entries {
+		if hashes[i] != nil {
+			d.remember(e.Index, hashes[i])
+		}
+	}
 
 	return results, events, nil
 }
@@ -241,13 +342,16 @@ func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 		return Result{}, Events{}, fmt.Errorf("unknown command type %d version %d", c.Type, c.Version)
 	}
 
-	recorded := c.Type.recorded()
+	if need := commandSchema(c.Type); need > a.schema {
+		return Result{}, Events{}, fmt.Errorf("command type %d needs schema %d, the database has %d", c.Type, need,
+			a.schema)
+	}
 
-	if recorded {
+	if c.Retryable {
 		var stored []byte
 
-		err := tx.QueryRowContext(ctx, `SELECT result FROM applied_requests WHERE request_id = ?`, c.RequestID[:]).
-			Scan(&stored)
+		err := tx.QueryRowContext(ctx, `SELECT result FROM applied_requests WHERE request_id = ? AND applied_at >= ?`,
+			c.RequestID[:], a.leaderTime-int64(appliedRequestsWindow)).Scan(&stored)
 		if err == nil {
 			var r Result
 			if err := json.Unmarshal(stored, &r); err != nil {
@@ -301,14 +405,15 @@ func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 		return Result{}, Events{}, err
 	}
 
-	if recorded {
+	if c.Retryable {
 		stored, err := json.Marshal(r)
 		if err != nil {
 			return Result{}, Events{}, err
 		}
 
 		if _, err := tx.ExecContext(ctx, `INSERT INTO applied_requests (request_id, result, applied_at)
-			VALUES (?, ?, ?)`, c.RequestID[:], stored, a.leaderTime); err != nil {
+			VALUES (?, ?, ?) ON CONFLICT (request_id) DO UPDATE SET result = excluded.result,
+			applied_at = excluded.applied_at`, c.RequestID[:], stored, a.leaderTime); err != nil {
 			return Result{}, Events{}, err
 		}
 	}
@@ -380,11 +485,22 @@ func (l *localProposer) Propose(_ context.Context, cmds []Command) ([]Result, er
 }
 
 func submit[R any](ctx context.Context, d *DB, t CommandType, payload any) (R, error) {
+	if commandSchema(t) > d.Schema() {
+		var zero R
+		return zero, ErrUpgradePending
+	}
+
 	r, _, err := submitVia[R](ctx, d.proposer, t, payload)
+
 	return r, err
 }
 
 func submitReplay[R any](ctx context.Context, d *DB, t CommandType, payload any) (R, bool, error) {
+	if commandSchema(t) > d.Schema() {
+		var zero R
+		return zero, false, ErrUpgradePending
+	}
+
 	return submitVia[R](ctx, d.proposer, t, payload)
 }
 
@@ -396,7 +512,9 @@ func submitVia[R any](ctx context.Context, p Proposer, t CommandType, payload an
 		return zero, false, fmt.Errorf("encode command: %w", err)
 	}
 
-	results, err := p.Propose(ctx, []Command{{Type: t, Version: 1, RequestID: requestID(ctx, t), Payload: raw}})
+	id, retryable := requestID(ctx, t)
+
+	results, err := p.Propose(ctx, []Command{{Type: t, Version: 1, RequestID: id, Retryable: retryable, Payload: raw}})
 	if err != nil {
 		return zero, false, err
 	}

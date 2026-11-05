@@ -18,15 +18,23 @@ var (
 )
 
 type Member struct {
-	NodeID        string    `json:"node_id"`
-	Address       string    `json:"address"`
-	Fingerprint   string    `json:"fingerprint,omitempty"`
-	Certificate   string    `json:"certificate,omitempty"`
-	DiameterLabel string    `json:"diameter_label,omitempty"`
-	SchemaVersion int       `json:"schema_version"`
-	Version       string    `json:"version"`
-	JoinedAt      time.Time `json:"joined_at"`
+	NodeID        string     `json:"node_id"`
+	Address       string     `json:"address"`
+	Fingerprint   string     `json:"fingerprint,omitempty"`
+	DiameterLabel string     `json:"diameter_label,omitempty"`
+	SchemaVersion int        `json:"schema_version"`
+	Version       string     `json:"version"`
+	JoinedAt      time.Time  `json:"joined_at"`
+	DrainState    DrainState `json:"drain_state,omitempty"`
 }
+
+type DrainState string
+
+const (
+	DrainActive   DrainState = "active"
+	DrainDraining DrainState = "draining"
+	DrainDrained  DrainState = "drained"
+)
 
 func memberLabels(ctx context.Context, q querier) ([]string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT diameter_label FROM cluster_members ORDER BY diameter_label`)
@@ -50,22 +58,24 @@ func memberLabels(ctx context.Context, q querier) ([]string, error) {
 	return labels, rows.Err()
 }
 
-const memberColumns = `node_id, address, fingerprint, certificate, diameter_label, schema_version, version, joined_at`
+const (
+	memberColumns     = `node_id, address, fingerprint, diameter_label, schema_version, version, joined_at`
+	memberReadColumns = memberColumns + `, drain_state`
+)
 
 func scanMember(scan func(...any) error) (Member, error) {
 	var (
 		m           Member
 		fingerprint sql.NullString
-		certificate sql.NullString
 		joined      int64
 	)
 
-	if err := scan(&m.NodeID, &m.Address, &fingerprint, &certificate, &m.DiameterLabel, &m.SchemaVersion, &m.Version,
-		&joined); err != nil {
+	if err := scan(&m.NodeID, &m.Address, &fingerprint, &m.DiameterLabel, &m.SchemaVersion, &m.Version,
+		&joined, &m.DrainState); err != nil {
 		return Member{}, err
 	}
 
-	m.Fingerprint, m.Certificate, m.JoinedAt = fingerprint.String, certificate.String, time.Unix(0, joined).UTC()
+	m.Fingerprint, m.JoinedAt = fingerprint.String, time.Unix(0, joined).UTC()
 
 	return m, nil
 }
@@ -77,7 +87,7 @@ func (d *DB) Members(ctx context.Context) (_ []Member, err error) {
 }
 
 func members(ctx context.Context, q querier) ([]Member, error) {
-	rows, err := q.QueryContext(ctx, `SELECT `+memberColumns+` FROM cluster_members ORDER BY joined_at, node_id`)
+	rows, err := q.QueryContext(ctx, `SELECT `+memberReadColumns+` FROM cluster_members ORDER BY joined_at, node_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list members: %w", err)
 	}
@@ -105,7 +115,7 @@ func (d *DB) Member(ctx context.Context, nodeID string) (_ Member, err error) {
 }
 
 func member(ctx context.Context, q querier, nodeID string) (Member, error) {
-	m, err := scanMember(q.QueryRowContext(ctx, `SELECT `+memberColumns+` FROM cluster_members WHERE node_id = ?`,
+	m, err := scanMember(q.QueryRowContext(ctx, `SELECT `+memberReadColumns+` FROM cluster_members WHERE node_id = ?`,
 		nodeID).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Member{}, fmt.Errorf("member %s: %w", nodeID, ErrNotFound)
@@ -136,9 +146,9 @@ func applyRegisterMember(a *applyCtx, m Member) (struct{}, error) {
 		return struct{}{}, err
 	}
 
-	if _, err := a.tx.ExecContext(a.ctx, `UPDATE cluster_members SET address = ?, fingerprint = ?, certificate = ?,
+	if _, err := a.tx.ExecContext(a.ctx, `UPDATE cluster_members SET address = ?, fingerprint = ?,
 		schema_version = ?, version = ? WHERE node_id = ?`, m.Address, nullString(m.Fingerprint),
-		nullString(m.Certificate), m.SchemaVersion, m.Version, m.NodeID); err != nil {
+		m.SchemaVersion, m.Version, m.NodeID); err != nil {
 		if isUnique(err) {
 			return struct{}{}, fmt.Errorf("%w: another member has the address %s or the certificate", settings.ErrConflict,
 				m.Address)
@@ -160,8 +170,8 @@ func insertMember(a *applyCtx, m Member) error {
 		return err
 	}
 
-	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO cluster_members (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.NodeID, m.Address, nullString(m.Fingerprint), nullString(m.Certificate), label, m.SchemaVersion, m.Version,
+	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO cluster_members (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		m.NodeID, m.Address, nullString(m.Fingerprint), label, m.SchemaVersion, m.Version,
 		a.leaderTime); err != nil {
 		if isUnique(err) {
 			return fmt.Errorf("%w: another member has the address %s or the certificate", settings.ErrConflict, m.Address)
@@ -306,6 +316,10 @@ func applyRemoveMember(a *applyCtx, nodeID string) (struct{}, error) {
 		return struct{}{}, fmt.Errorf("member %s: %w", nodeID, ErrNotFound)
 	}
 
+	if err := dropSMPPSessions(a, nodeID, nil); err != nil {
+		return struct{}{}, err
+	}
+
 	a.events.Members = true
 	a.events.Settings = true
 	a.events.Removed = append(a.events.Removed, nodeID)
@@ -385,4 +399,42 @@ func applyDeleteExpiredJoinTokens(a *applyCtx, before int64) (struct{}, error) {
 	_, err := a.tx.ExecContext(a.ctx, `DELETE FROM cluster_join_tokens WHERE expires_at < ?`, before)
 
 	return struct{}{}, err
+}
+
+type drainState struct {
+	NodeID string     `json:"node_id"`
+	State  DrainState `json:"state"`
+}
+
+func (d *DB) SetDrainState(ctx context.Context, nodeID string, state DrainState) (err error) {
+	defer d.observe(&err)()
+
+	_, err = submit[struct{}](ctx, d, cmdSetDrainState, drainState{NodeID: nodeID, State: state})
+
+	return err
+}
+
+func applySetDrainState(a *applyCtx, p drainState) (struct{}, error) {
+	switch p.State {
+	case DrainActive, DrainDraining, DrainDrained:
+	default:
+		return struct{}{}, fmt.Errorf("%w: drain state %q", ErrInvalid, p.State)
+	}
+
+	res, err := a.tx.ExecContext(a.ctx, `UPDATE cluster_members SET drain_state = ? WHERE node_id = ? AND drain_state != ?`,
+		p.State, p.NodeID, p.State)
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	if n, _ := res.RowsAffected(); n > 0 {
+		a.events.Members = true
+		return struct{}{}, nil
+	}
+
+	if _, err := member(a.ctx, a.tx, p.NodeID); err != nil {
+		return struct{}{}, err
+	}
+
+	return struct{}{}, nil
 }

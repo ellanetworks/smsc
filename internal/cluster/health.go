@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,15 +19,13 @@ import (
 )
 
 const (
-	reportInterval      = time.Second
-	maintainInterval    = 10 * time.Second
-	tokenCleanup        = time.Hour
-	maxVoters           = 5
-	stabilization       = 10 * time.Second
-	lastContactLimit    = 10 * time.Second
-	maxTrailingLogs     = 5000
-	maxApplyLag         = 1000
-	appliedWaitDeadline = time.Second
+	reportInterval   = time.Second
+	maintainInterval = 10 * time.Second
+	tokenCleanup     = time.Hour
+	maxVoters        = 5
+	stabilization    = 10 * time.Second
+	lastContactLimit = 10 * time.Second
+	maxTrailingLogs  = 5000
 )
 
 type report struct {
@@ -36,11 +35,13 @@ type report struct {
 	LastIndex    uint64 `json:"last_index"`
 	Schema       int    `json:"schema"`
 	Version      string `json:"version"`
+	Hash         []byte `json:"hash,omitempty"`
 }
 
 type peerReport struct {
 	report
-	At time.Time
+	At       time.Time
+	Diverged bool
 }
 
 type health struct {
@@ -59,9 +60,22 @@ func (h *health) record(nodeID string, r report) {
 		return
 	}
 
+	diverged := false
+
+	if mine, ok := h.n.db.HashAt(r.AppliedIndex); ok && r.Hash != nil && !bytes.Equal(mine, r.Hash) {
+		diverged = true
+	}
+
 	h.mu.Lock()
-	h.reports[nodeID] = peerReport{report: r, At: h.n.cfg.Now()}
+	previous := h.reports[nodeID].Diverged
+	h.reports[nodeID] = peerReport{report: r, At: h.n.cfg.Now(), Diverged: diverged || previous}
 	h.mu.Unlock()
+
+	if diverged && !previous {
+		h.n.metrics.mismatches.Inc()
+		h.n.cfg.Logger.Error("a member's database differs from the leader's: remove it and join it again with an empty data directory",
+			slog.String("node", nodeID), slog.Uint64("index", r.AppliedIndex))
+	}
 }
 
 func (h *health) get(nodeID string) (peerReport, bool) {
@@ -71,13 +85,6 @@ func (h *health) get(nodeID string) (peerReport, bool) {
 	r, ok := h.reports[nodeID]
 
 	return r, ok
-}
-
-func (h *health) observeApplied(ctx context.Context, index uint64) {
-	ctx, cancel := context.WithTimeout(ctx, appliedWaitDeadline)
-	defer cancel()
-
-	_ = h.n.db.WaitApplied(ctx, index)
 }
 
 type ServerHealth struct {
@@ -90,6 +97,7 @@ type ServerHealth struct {
 	LastContact  string    `json:"last_contact,omitempty"`
 	AppliedIndex uint64    `json:"applied_index"`
 	Version      string    `json:"version,omitempty"`
+	Diverged     bool      `json:"diverged,omitempty"`
 }
 
 type Health struct {
@@ -121,7 +129,7 @@ func (h *health) snapshot() Health {
 		}
 
 		if r, ok := h.get(string(id)); ok {
-			sh.Version, sh.AppliedIndex = r.Version, r.AppliedIndex
+			sh.Version, sh.AppliedIndex, sh.Diverged = r.Version, r.AppliedIndex, r.Diverged
 		}
 
 		out.Servers = append(out.Servers, sh)
@@ -227,23 +235,33 @@ func (p *pilot) RemoveFailedServer(*autopilot.Server) {}
 
 type cappedPromoter struct {
 	autopilot.StablePromoter
+
+	draining func(raft.ServerID) bool
 }
 
-func (cappedPromoter) CalculatePromotionsAndDemotions(c *autopilot.Config, s *autopilot.State) autopilot.RaftChanges {
+func (p cappedPromoter) isDraining(id raft.ServerID) bool {
+	return p.draining != nil && p.draining(id)
+}
+
+func (p cappedPromoter) CalculatePromotionsAndDemotions(c *autopilot.Config, s *autopilot.State) autopilot.RaftChanges {
 	var (
-		changes          autopilot.RaftChanges
-		voters, standbys []raft.ServerID
-		failed, others   []raft.ServerID
-		nonvoters        int
+		changes                  autopilot.RaftChanges
+		standbys, failed, others []raft.ServerID
+		active, nonvoters        int
 	)
 
 	now := time.Now()
 	stable := s.ServerStabilizationTime(c)
 
+	leaderDraining := false
+
 	for id, srv := range s.Servers {
+		draining := p.isDraining(id)
+
 		switch {
 		case srv.HasVotingRights():
-			voters = append(voters, id)
+			leaderDraining = leaderDraining || draining
+			active++
 
 			switch {
 			case srv.State == autopilot.RaftLeader:
@@ -252,7 +270,7 @@ func (cappedPromoter) CalculatePromotionsAndDemotions(c *autopilot.Config, s *au
 			default:
 				others = append(others, id)
 			}
-		case srv.State == autopilot.RaftNonVoter:
+		case srv.State == autopilot.RaftNonVoter && !draining:
 			nonvoters++
 
 			if srv.Health.IsStable(now, stable) {
@@ -265,19 +283,24 @@ func (cappedPromoter) CalculatePromotionsAndDemotions(c *autopilot.Config, s *au
 	slices.Sort(failed)
 	slices.Sort(others)
 
-	target := min(maxVoters, len(voters)+nonvoters)
+	target := min(maxVoters, active+nonvoters)
 	if target%2 == 0 {
 		target--
 	}
 
-	for len(voters) < target && len(standbys) > 0 {
+	for active < target && len(standbys) > 0 {
 		changes.Promotions = append(changes.Promotions, standbys[0])
-		voters = append(voters, standbys[0])
 		standbys = standbys[1:]
+		active++
 	}
 
 	switch {
-	case len(voters) > target:
+	case len(changes.Promotions) > 0:
+	case leaderDraining:
+		if active < 2 && len(standbys) > 0 {
+			changes.Promotions = append(changes.Promotions, standbys[0])
+		}
+	case active > target:
 		if victims := append(failed, others...); len(victims) > 0 {
 			changes.Demotions = append(changes.Demotions, victims[0])
 		}
@@ -297,7 +320,7 @@ func (n *Node) runAutopilot(ctx context.Context, _ uint64) {
 	r, _ := n.current()
 
 	ap := autopilot.New(r, &pilot{n: n, r: r}, autopilot.WithLogger(hclog.NewNullLogger()),
-		autopilot.WithPromoter(&cappedPromoter{}), autopilot.WithReconcileInterval(time.Second),
+		autopilot.WithPromoter(&cappedPromoter{draining: n.isDraining}), autopilot.WithReconcileInterval(time.Second),
 		autopilot.WithUpdateInterval(time.Second))
 
 	ap.Start(ctx)
@@ -305,6 +328,12 @@ func (n *Node) runAutopilot(ctx context.Context, _ uint64) {
 	<-ctx.Done()
 
 	<-ap.Stop()
+}
+
+func (n *Node) isDraining(id raft.ServerID) bool {
+	m, err := n.db.Member(context.Background(), string(id))
+
+	return err != nil || m.DrainState != db.DrainActive
 }
 
 func (n *Node) onEvents(ev db.Events) {
@@ -382,6 +411,10 @@ func (n *Node) sendReport() {
 	rep := report{
 		Address: n.cfg.Advertise, AppliedIndex: n.db.AppliedIndex(), LastTerm: parseUint(stats["last_log_term"]),
 		LastIndex: parseUint(stats["last_log_index"]), Schema: db.SchemaVersion(), Version: n.cfg.Version,
+	}
+
+	if h, ok := n.db.HashAt(rep.AppliedIndex); ok {
+		rep.Hash = h
 	}
 
 	if err := n.peers.call(ctx, "/cluster/v1/report", rep, nil); err != nil {
@@ -475,7 +508,9 @@ func (n *Node) registerMembers() {
 	}
 }
 
-func (n *Node) RemoveMember(ctx context.Context, nodeID string) error {
+var ErrNotDrained = errors.New("drain the member before removing it, or force the removal")
+
+func (n *Node) RemoveMember(ctx context.Context, nodeID string, force bool) error {
 	ctx, cancel := context.WithTimeout(ctx, n.forwardBudget())
 	defer cancel()
 
@@ -483,9 +518,9 @@ func (n *Node) RemoveMember(ctx context.Context, nodeID string) error {
 		var err error
 
 		if leading, _ := n.Leader(); leading {
-			err = n.removeAsLeader(ctx, nodeID)
+			err = n.removeAsLeader(ctx, nodeID, force)
 		} else if n.peers != nil {
-			err = n.peers.call(ctx, "/cluster/v1/remove", removeRequest{NodeID: nodeID}, nil)
+			err = n.peers.call(ctx, "/cluster/v1/remove", removeRequest{NodeID: nodeID, Force: force}, nil)
 		} else {
 			err = fmt.Errorf("%w: no leader", errRetry)
 		}
@@ -502,10 +537,21 @@ func (n *Node) RemoveMember(ctx context.Context, nodeID string) error {
 	}
 }
 
-func (n *Node) removeAsLeader(ctx context.Context, nodeID string) error {
+func (n *Node) removeAsLeader(ctx context.Context, nodeID string, force bool) error {
 	r, b := n.current()
 	if r == nil || b == nil {
 		return fmt.Errorf("%w: raft is restarting", errRetry)
+	}
+
+	if !force {
+		m, err := n.db.Member(ctx, nodeID)
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			return err
+		}
+
+		if err == nil && m.DrainState != db.DrainDrained {
+			return ErrNotDrained
+		}
 	}
 
 	if nodeID == n.id {

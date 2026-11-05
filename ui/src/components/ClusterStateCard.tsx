@@ -1,0 +1,139 @@
+import { Box, Chip, IconButton, Tooltip, Typography } from "@mui/material";
+import { ContentCopy as ContentCopyIcon } from "@mui/icons-material";
+import SettingsTable from "@/components/SettingsTable";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { memberLabel, type ClusterStatus } from "@/queries/cluster";
+
+function CopyableValue({ value, label }: { value: string; label: string }) {
+  const copy = useCopyToClipboard();
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
+      <Typography
+        variant="body2"
+        sx={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          fontFamily: "monospace",
+        }}
+        title={value}
+      >
+        {value}
+      </Typography>
+      <Tooltip title="Copy">
+        <IconButton
+          size="small"
+          onClick={() => void copy(value, label)}
+          aria-label={`Copy ${label}`}
+        >
+          <ContentCopyIcon fontSize="inherit" />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+}
+
+function ToleranceChip({ failureTolerance }: { failureTolerance: number }) {
+  if (failureTolerance < 1) {
+    return (
+      <Chip
+        label="No failure tolerance"
+        size="small"
+        color="warning"
+        variant="outlined"
+      />
+    );
+  }
+
+  const plural = failureTolerance === 1 ? "" : "s";
+
+  return (
+    <Chip
+      label={`Tolerates ${failureTolerance} voter failure${plural}`}
+      size="small"
+      color="success"
+      variant="outlined"
+    />
+  );
+}
+
+function HealthValue({ status }: { status: ClusterStatus }) {
+  if (!status.leader_id) {
+    return (
+      <Tooltip title="No node holds leadership. The cluster cannot accept writes until enough voters recover for an election to succeed.">
+        <Chip label="No leader" size="small" color="error" />
+      </Tooltip>
+    );
+  }
+
+  if (status.healthy === undefined) {
+    return (
+      <Tooltip title="The leader has not reported yet. This is normal for a moment after a leadership change.">
+        <Chip label="Unknown" size="small" variant="outlined" />
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Box
+      sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}
+    >
+      <Chip
+        label={status.healthy ? "Healthy" : "Unhealthy"}
+        size="small"
+        color={status.healthy ? "success" : "error"}
+      />
+      {status.failure_tolerance !== undefined && (
+        <ToleranceChip failureTolerance={status.failure_tolerance} />
+      )}
+    </Box>
+  );
+}
+
+export default function ClusterStateCard({
+  status,
+}: {
+  status?: ClusterStatus;
+}) {
+  const leader = status?.members?.find((m) => m.node_id === status.leader_id);
+
+  return (
+    <SettingsTable
+      label="Cluster state"
+      loading={status === undefined}
+      rows={[
+        {
+          label: "Cluster ID",
+          help: "The identity shared by every member of this cluster.",
+          value: status?.cluster_id ? (
+            <CopyableValue value={status.cluster_id} label="Cluster ID" />
+          ) : (
+            "—"
+          ),
+        },
+        {
+          label: "Health",
+          help: "Reported by the leader: whether every voter is healthy, and how many voters can fail without stopping writes.",
+          value: status && <HealthValue status={status} />,
+        },
+        {
+          label: "Leader",
+          help: "The member that commits writes for the cluster.",
+          value: leader ? memberLabel(leader) : (status?.leader_id ?? "—"),
+        },
+        {
+          label: "Term",
+          help: "The Raft term: it increases at every election.",
+          value: status?.term,
+        },
+        {
+          label: "Applied Index",
+          help: "The last log entry this node applied, and the last one the cluster committed.",
+          value:
+            status &&
+            `${status.applied_index} applied · ${status.commit_index} committed`,
+        },
+      ]}
+    />
+  );
+}

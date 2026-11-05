@@ -20,8 +20,42 @@ func TestCappedPromoter(t *testing.T) {
 	tests := []struct {
 		name              string
 		servers           map[raft.ServerID]*autopilot.ServerState
+		draining          []raft.ServerID
 		promoted, demoted []raft.ServerID
 	}{
+		{
+			name: "a draining sole voter first gets a standby promoted",
+			servers: map[raft.ServerID]*autopilot.ServerState{
+				"a": server(autopilot.RaftLeader, true), "b": server(autopilot.RaftNonVoter, true),
+			},
+			draining: []raft.ServerID{"a"},
+			promoted: []raft.ServerID{"b"},
+		},
+		{
+			name: "no demotion while the leader drains",
+			servers: map[raft.ServerID]*autopilot.ServerState{
+				"a": server(autopilot.RaftLeader, true), "b": server(autopilot.RaftVoter, true),
+				"c": server(autopilot.RaftVoter, true),
+			},
+			draining: []raft.ServerID{"a"},
+		},
+		{
+			name: "a draining voter keeps its vote",
+			servers: map[raft.ServerID]*autopilot.ServerState{
+				"a": server(autopilot.RaftVoter, true), "b": server(autopilot.RaftLeader, true),
+				"c": server(autopilot.RaftVoter, true),
+			},
+			draining: []raft.ServerID{"a"},
+		},
+		{
+			name: "a draining standby is not promoted",
+			servers: map[raft.ServerID]*autopilot.ServerState{
+				"a": server(autopilot.RaftLeader, true), "b": server(autopilot.RaftVoter, true),
+				"c": server(autopilot.RaftNonVoter, true),
+			},
+			draining: []raft.ServerID{"c"},
+			demoted:  []raft.ServerID{"b"},
+		},
 		{
 			name: "a second node waits as a standby",
 			servers: map[raft.ServerID]*autopilot.ServerState{
@@ -80,7 +114,9 @@ func TestCappedPromoter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			changes := cappedPromoter{}.CalculatePromotionsAndDemotions(&autopilot.Config{ServerStabilizationTime: stabilization},
+			p := cappedPromoter{draining: func(id raft.ServerID) bool { return slices.Contains(tt.draining, id) }}
+
+			changes := p.CalculatePromotionsAndDemotions(&autopilot.Config{ServerStabilizationTime: stabilization},
 				&autopilot.State{Servers: tt.servers})
 
 			if !slices.Equal(changes.Promotions, tt.promoted) || !slices.Equal(changes.Demotions, tt.demoted) {

@@ -103,6 +103,7 @@ describe("App", () => {
       ["Messages", "/messages"],
       ["Users", "/users"],
       ["Single Sign-On", "/single-sign-on"],
+      ["Cluster", "/cluster"],
     ]);
     expect(
       within(screen.getByRole("navigation", { name: "Main" })).getByText(
@@ -216,7 +217,14 @@ describe("App", () => {
       within(screen.getByRole("navigation", { name: "Main" }))
         .getAllByRole("link")
         .map((link) => link.textContent),
-    ).toEqual(["Dashboard", "Operator", "Diameter", "SMPP", "Messages"]);
+    ).toEqual([
+      "Dashboard",
+      "Operator",
+      "Diameter",
+      "SMPP",
+      "Messages",
+      "Cluster",
+    ]);
   });
 
   it("goes to the login page without a session", async () => {

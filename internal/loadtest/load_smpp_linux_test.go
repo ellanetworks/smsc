@@ -40,11 +40,16 @@ func TestLoadSMPP(t *testing.T) {
 		t.Skip("run with -load-smpp")
 	}
 
-	smsc := netip.MustParseAddr(*smscAddr)
+	nodes := smscNodes()
+	smsc := nodes[0].addr
 	local := netip.MustParseAddr(*localAddr)
-	api := fmt.Sprintf("http://%s:%d/api/v1", smsc, *apiPort)
+	api := nodes[0].api
 
 	token := logIn(t, api)
+
+	for i := range nodes {
+		nodes[i].host = diameterHost(t, token, nodes[i].api)
+	}
 
 	call(t, token, http.MethodPut, api+"/operator", map[string]any{
 		"mcc": "001", "mnc": "01", "service_centre_address": "+" + scAddress, "numbering": map[string]any{"country_code": "1"},
@@ -61,7 +66,7 @@ func TestLoadSMPP(t *testing.T) {
 		t.Fatalf("PUT %s/esmes/%s: %d", api, esmeSystemID, code)
 	}
 
-	c := newCore(t, local, smsc)
+	c := newCore(t, local, nodes)
 	e := newESME(t, netip.AddrPortFrom(smsc, uint16(*smppPort)).String())
 
 	for _, rate := range parseRates(t, *rates) {

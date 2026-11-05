@@ -57,6 +57,15 @@ const (
 	cmdRemoveMember
 	cmdSetDiameterLabel
 	cmdDeleteExpiredJoinTokens
+	cmdClaimRecipient
+	cmdReleaseRecipient
+	cmdSetDrainState
+	cmdOpenSMPPSession
+	cmdCloseSMPPSession
+	cmdSyncSMPPSessions
+	cmdClaimNotifications
+	cmdReleaseNotification
+	cmdMigrate
 )
 
 const entryBatch uint16 = 1
@@ -67,6 +76,7 @@ type Command struct {
 	Type      CommandType     `json:"t"`
 	Version   uint16          `json:"v"`
 	RequestID RequestID       `json:"r"`
+	Retryable bool            `json:"x,omitempty"`
 	Payload   json.RawMessage `json:"p"`
 }
 
@@ -138,6 +148,8 @@ var resultCodes = []struct {
 	{"conflict", settings.ErrConflict},
 	{"token_used", ErrTokenUsed},
 	{"token_expired", ErrTokenExpired},
+	{"stale_term", ErrStaleTerm},
+	{"too_many_sessions", ErrTooManySessions},
 	{"invalid", ErrInvalid},
 	{"constraint", ErrConstraint},
 	{"already_applied", ErrAlreadyApplied},
@@ -210,21 +222,17 @@ func RequestIDOf(parts ...[]byte) RequestID {
 	return id
 }
 
-func requestID(ctx context.Context, t CommandType) RequestID {
+func requestID(ctx context.Context, t CommandType) (RequestID, bool) {
 	if id, ok := ctx.Value(requestIDKey{}).(RequestID); ok && id != (RequestID{}) {
 		var typ [2]byte
 		binary.BigEndian.PutUint16(typ[:], uint16(t))
 
-		return RequestIDOf(id[:], typ[:])
+		return RequestIDOf(id[:], typ[:]), true
 	}
 
 	var id RequestID
 
 	_, _ = rand.Read(id[:])
 
-	return id
-}
-
-func (t CommandType) recorded() bool {
-	return t != cmdInitSecrets && t != cmdLeaderStart
+	return id, false
 }

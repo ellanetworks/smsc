@@ -18,6 +18,7 @@ const (
 	maxWait         = time.Minute
 	dispatchBackoff = time.Second
 	window          = smpp.DefaultWindow
+	claimLease      = 2 * time.Minute
 )
 
 func (s *Service) NotificationsQueued() {
@@ -48,25 +49,49 @@ func (s *Service) Run(ctx context.Context) {
 
 		timer.Stop()
 	}
-
-	s.sends.Wait()
 }
 
-func (s *Service) dispatch(ctx context.Context) time.Duration {
-	now := s.Now()
+func (s *Service) Wait(ctx context.Context) error {
+	done := make(chan struct{})
 
-	expired, err := s.Store.ExpireNotifications(ctx, now)
+	go func() {
+		s.sends.Wait()
+
+		s.mu.Lock()
+		s.stopping = true
+		s.mu.Unlock()
+
+		s.records.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Service) Expire(ctx context.Context) {
+	s.init()
+
+	expired, err := s.Store.ExpireNotifications(ctx, s.Now())
 	if err != nil {
-		s.Logger.ErrorContext(ctx, "failed to expire SMPP notifications", slog.Any("error", err))
-		return dispatchBackoff
+		if ctx.Err() == nil {
+			s.Logger.ErrorContext(ctx, "failed to expire SMPP notifications", slog.Any("error", err))
+		}
+
+		return
 	}
 
 	for t, n := range expired {
 		s.Metrics.notified(t, db.NotificationExpired, n)
 	}
+}
 
-	exclude := s.sendingIDs()
-
+func (s *Service) dispatch(ctx context.Context) time.Duration {
+	now := s.Now()
 	wait := maxWait
 
 	for esmeID, sessions := range s.receivers() {
@@ -76,16 +101,20 @@ func (s *Service) dispatch(ctx context.Context) time.Duration {
 		}
 
 		if free > 0 {
-			due, err := s.Store.DueNotifications(ctx, esmeID, now, exclude, free)
+			due, err := s.Store.ClaimNotifications(ctx, s.Node, esmeID, now, claimLease, free)
 			if err != nil {
-				s.Logger.ErrorContext(ctx, "failed to read the due SMPP notifications", slog.Any("error", err))
+				if ctx.Err() == nil {
+					s.Logger.WarnContext(ctx, "failed to claim the due SMPP notifications", slog.Any("error", err))
+				}
+
 				return dispatchBackoff
 			}
 
 			for _, n := range due {
 				sess := s.reserve(sessions, n.ID)
 				if sess == nil {
-					break
+					s.giveBack(context.WithoutCancel(ctx), n)
+					continue
 				}
 
 				s.sends.Go(func() {
@@ -128,18 +157,6 @@ func (s *Service) receivers() map[int64][]receiverSlot {
 	}
 
 	return out
-}
-
-func (s *Service) sendingIDs() []int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	ids := make([]int64, 0, len(s.sending))
-	for id := range s.sending {
-		ids = append(ids, id)
-	}
-
-	return ids
 }
 
 func (s *Service) reserve(slots []receiverSlot, id int64) *Session {
@@ -213,6 +230,8 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 		s.mu.Lock()
 		sess.closed = true
 		s.mu.Unlock()
+
+		s.giveBack(ctx, n)
 	case err != nil:
 		log.DebugContext(ctx, "deliver_sm failed", slog.Any("error", err))
 		s.retry(ctx, log, n)
@@ -242,7 +261,7 @@ func (s *Service) close(ctx context.Context, log *slog.Logger, n db.Notification
 }
 
 func (s *Service) retry(ctx context.Context, log *slog.Logger, n db.Notification) {
-	if err := s.Store.RetryNotification(ctx, n.ID, s.Now().Add(retryDelay(n.Attempts))); err != nil {
+	if err := s.Store.RetryNotification(ctx, n.ID, s.Now().Add(retryDelay(n.Attempts)), s.Node); err != nil {
 		log.ErrorContext(ctx, "failed to schedule an SMPP notification again", slog.Any("error", err))
 	}
 }
@@ -272,4 +291,11 @@ func statusErrorType(status smpp.CommandStatus) string {
 	}
 
 	return semconv.ErrorTypeOther.Value.AsString()
+}
+
+func (s *Service) giveBack(ctx context.Context, n db.Notification) {
+	if err := s.Store.ReleaseNotification(ctx, n.ID, s.Node, s.Now()); err != nil {
+		s.Logger.DebugContext(ctx, "failed to give back an SMPP notification; it is retried when its claim ends",
+			slog.Int64("message_id", n.Message.ID), slog.Any("error", err))
+	}
 }

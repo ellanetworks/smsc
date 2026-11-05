@@ -17,14 +17,14 @@ The token is either:
 - an access token, from [log in](auth.md#log-in) or [refresh the access token](auth.md#refresh-the-access-token), valid for 15 minutes;
 - an [API token](users.md#create-an-api-token), which starts with `ellasmsc_`.
 
-These paths take no token: `GET /api/v1/livez`, `GET /api/v1/readyz`, `GET /api/v1/status`, `GET /api/v1/metrics`, `GET /api/v1/openapi.yaml`, `POST /api/v1/init`, `POST /api/v1/auth/login`, `/refresh` and `/logout`, and `GET /api/v1/auth/oidc`, `/oidc/login` and `/oidc/callback`.
+These paths take no token: `GET /api/v1/livez`, `GET /api/v1/readyz`, `GET /api/v1/status`, `GET /api/v1/metrics`, `GET /api/v1/openapi.yaml`, `POST /api/v1/init`, `POST /api/v1/cluster/join`, `POST /api/v1/auth/login`, `/refresh` and `/logout`, and `GET /api/v1/auth/oidc`, `/oidc/login` and `/oidc/callback`.
 
 ### Roles
 
 | Role            | `role_id` | Allows |
 | --------------- | --------- | ------ |
 | Admin           | `1`       | Everything. |
-| Read Only       | `2`       | Reading messages without their content, Diameter, operator, delivery and retention settings, and ESMEs. |
+| Read Only       | `2`       | Reading messages without their content, Diameter, operator, delivery and retention settings, ESMEs, and the [cluster](cluster.md). |
 | Network Manager | `3`       | Read Only, plus reading message content, sending messages, updating operator, delivery and retention settings, and managing Diameter peers. |
 | Submitter       | `4`       | Sending messages, and reading the messages it sent, their content included. |
 

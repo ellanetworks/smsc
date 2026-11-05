@@ -75,3 +75,25 @@ func (p *purger) pass(ctx context.Context) {
 			slog.Duration("duration", time.Since(start)))
 	}
 }
+
+const sessionCleanup = 10 * time.Minute
+
+func cleanSessions(ctx context.Context, store interface {
+	DeleteExpiredSessions(ctx context.Context, now time.Time) error
+}, logger *slog.Logger,
+) {
+	ticker := time.NewTicker(sessionCleanup)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		if err := store.DeleteExpiredSessions(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			logger.WarnContext(ctx, "failed to delete expired sessions", slog.Any("error", err))
+		}
+	}
+}

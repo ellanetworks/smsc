@@ -92,9 +92,13 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 		Settings:   func() settings.Settings { return current },
 		Received:   received,
 		BcryptCost: bcrypt.MinCost,
+		Node:       "node",
 		Now:        now,
 		Logger:     slog.New(slog.DiscardHandler),
 	}
+
+	service.init()
+	service.syncSessions(ctx)
 
 	store.OnEvents(func(ev db.Events) {
 		if ev.Notifications {

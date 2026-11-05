@@ -34,7 +34,9 @@ export type Permission =
   | "retention:update"
   | "user:admin"
   | "oidc:read"
-  | "oidc:update";
+  | "oidc:update"
+  | "cluster:read"
+  | "cluster:manage";
 
 const permissions: Record<RoleID, Permission[]> = {
   [RoleID.Admin]: [
@@ -54,6 +56,8 @@ const permissions: Record<RoleID, Permission[]> = {
     "user:admin",
     "oidc:read",
     "oidc:update",
+    "cluster:read",
+    "cluster:manage",
   ],
   [RoleID.ReadOnly]: [
     "message:read",
@@ -62,6 +66,7 @@ const permissions: Record<RoleID, Permission[]> = {
     "operator:read",
     "delivery:read",
     "retention:read",
+    "cluster:read",
   ],
   [RoleID.NetworkManager]: [
     "message:create",
@@ -76,6 +81,7 @@ const permissions: Record<RoleID, Permission[]> = {
     "delivery:update",
     "retention:read",
     "retention:update",
+    "cluster:read",
   ],
   [RoleID.Submitter]: ["message:create", "message:read", "message:content"],
 };

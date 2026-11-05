@@ -43,4 +43,13 @@ func init() {
 	register(cmdRemoveMember, handle(applyRemoveMember))
 	register(cmdSetDiameterLabel, handle(applySetDiameterLabel))
 	register(cmdDeleteExpiredJoinTokens, handle(applyDeleteExpiredJoinTokens))
+	register(cmdClaimRecipient, handle(applyClaimRecipient))
+	register(cmdReleaseRecipient, handle(applyReleaseRecipient))
+	register(cmdSetDrainState, handle(applySetDrainState))
+	register(cmdOpenSMPPSession, handle(applyOpenSMPPSession))
+	register(cmdCloseSMPPSession, handle(applyCloseSMPPSession))
+	register(cmdSyncSMPPSessions, handle(applySyncSMPPSessions))
+	register(cmdClaimNotifications, handle(applyClaimNotifications))
+	register(cmdReleaseNotification, handle(applyReleaseNotification))
+	register(cmdMigrate, handle(applyMigrate))
 }

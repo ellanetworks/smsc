@@ -10,6 +10,7 @@ type Status struct {
 	Version     string `json:"version"`
 	Revision    string `json:"revision"`
 	Initialized bool   `json:"initialized"`
+	Clustered   bool   `json:"clustered"`
 }
 
 func GetStatus(cfg Config) http.Handler {
@@ -21,6 +22,10 @@ func GetStatus(cfg Config) http.Handler {
 		}
 
 		v := version.Get()
-		writeResponse(w, r, Status{Version: v.Version, Revision: v.Revision, Initialized: n > 0}, http.StatusOK, cfg.Logger)
+		st := Status{
+			Version: v.Version, Revision: v.Revision, Initialized: n > 0,
+			Clustered: cfg.Cluster != nil && cfg.Cluster.Clustered(),
+		}
+		writeResponse(w, r, st, http.StatusOK, cfg.Logger)
 	})
 }

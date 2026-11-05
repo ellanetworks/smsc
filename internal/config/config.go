@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,7 +17,6 @@ const (
 	defaultAPIPort      = 5010
 	defaultSMPPPort     = 2775
 	defaultClusterPort  = 7000
-	maxMultiplier       = 10
 )
 
 type Config struct {
@@ -40,10 +38,9 @@ type DB struct {
 }
 
 type API struct {
-	Address    netip.Addr    `yaml:"address"`
-	Port       int           `yaml:"port"`
-	TLS        *TLS          `yaml:"tls"`
-	DrainDelay time.Duration `yaml:"drain_delay"`
+	Address netip.Addr `yaml:"address"`
+	Port    int        `yaml:"port"`
+	TLS     *TLS       `yaml:"tls"`
 }
 
 type TLS struct {
@@ -58,10 +55,9 @@ type SMPP struct {
 }
 
 type Cluster struct {
-	Address               netip.Addr `yaml:"address"`
-	Port                  int        `yaml:"port"`
-	Advertise             string     `yaml:"advertise"`
-	PerformanceMultiplier int        `yaml:"performance_multiplier"`
+	Address   netip.Addr `yaml:"address"`
+	Port      int        `yaml:"port"`
+	Advertise string     `yaml:"advertise"`
 }
 
 func (c Cluster) AdvertiseAddress() string {
@@ -113,10 +109,6 @@ func Load(path string) (Config, error) {
 		if c.Port == 0 {
 			c.Port = defaultClusterPort
 		}
-
-		if c.PerformanceMultiplier == 0 {
-			c.PerformanceMultiplier = 1
-		}
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -134,8 +126,6 @@ func (c Config) validate() error {
 		return errors.New("api.address is required")
 	case c.API.Port < 1 || c.API.Port > 65535:
 		return fmt.Errorf("api.port %d is out of range", c.API.Port)
-	case c.API.DrainDelay < 0:
-		return fmt.Errorf("api.drain_delay %s is negative", c.API.DrainDelay)
 	case c.Diameter.Name != "" && c.Diameter.Address.IsValid():
 		return errors.New("diameter.name and diameter.address cannot both be set")
 	case c.Diameter.Name == "" && !c.Diameter.Address.IsValid():
@@ -182,8 +172,6 @@ func (c Cluster) validate() error {
 		return errors.New("cluster.address is required")
 	case c.Port < 1 || c.Port > 65535:
 		return fmt.Errorf("cluster.port %d is out of range", c.Port)
-	case c.PerformanceMultiplier < 1 || c.PerformanceMultiplier > maxMultiplier:
-		return fmt.Errorf("cluster.performance_multiplier %d is not between 1 and %d", c.PerformanceMultiplier, maxMultiplier)
 	case c.Advertise == "" && c.Address.IsUnspecified():
 		return errors.New("cluster.advertise is required when cluster.address is unspecified")
 	}

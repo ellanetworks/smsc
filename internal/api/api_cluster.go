@@ -12,11 +12,13 @@ import (
 )
 
 type Cluster interface {
+	Clustered() bool
 	Status(ctx context.Context) (cluster.Status, error)
 	MintToken(ctx context.Context, ttl time.Duration) (cluster.Token, error)
 	Join(ctx context.Context, token string) error
-	RemoveMember(ctx context.Context, nodeID string) error
+	RemoveMember(ctx context.Context, nodeID string, force bool) error
 	SetDiameterLabel(ctx context.Context, nodeID, label string) error
+	SetDrainState(ctx context.Context, nodeID string, state db.DrainState) error
 }
 
 const (
@@ -58,6 +60,8 @@ func clusterError(w http.ResponseWriter, r *http.Request, cfg Config, message st
 		writeError(w, r, http.StatusNotFound, "Member not found", err, cfg.Logger)
 	case errors.Is(err, cluster.ErrJoinUnavailable):
 		writeError(w, r, http.StatusBadGateway, err.Error(), err, cfg.Logger)
+	case errors.Is(err, cluster.ErrNotDrained), errors.Is(err, cluster.ErrQuorum), errors.Is(err, cluster.ErrLastMember):
+		writeError(w, r, http.StatusConflict, err.Error(), err, cfg.Logger)
 	case errors.Is(err, cluster.ErrRemoved):
 		writeError(w, r, http.StatusGone, err.Error(), err, cfg.Logger)
 	default:
@@ -204,8 +208,9 @@ func RemoveMember(a *auth) http.Handler {
 		}
 
 		id := r.PathValue("node_id")
+		force := r.URL.Query().Get("force") == "true"
 
-		if err := cfg.Cluster.RemoveMember(r.Context(), id); err != nil {
+		if err := cfg.Cluster.RemoveMember(r.Context(), id, force); err != nil {
 			clusterError(w, r, cfg, "Failed to remove the member", err)
 			return
 		}
@@ -213,5 +218,31 @@ func RemoveMember(a *auth) http.Handler {
 		p, _ := PrincipalFrom(r.Context())
 		a.audit(r, "remove_member", p.Email, "Cluster member "+id+" removed")
 		writeResponse(w, r, SuccessResponse{Message: "Member removed successfully"}, http.StatusOK, cfg.Logger)
+	})
+}
+
+func DrainMember(a *auth, state db.DrainState) http.Handler {
+	cfg := a.cfg
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if noCluster(w, r, cfg) {
+			return
+		}
+
+		id := r.PathValue("node_id")
+
+		if err := cfg.Cluster.SetDrainState(r.Context(), id, state); err != nil {
+			clusterError(w, r, cfg, "Failed to change the drain state", err)
+			return
+		}
+
+		action, message := "drain_member", "Member is draining"
+		if state == db.DrainActive {
+			action, message = "resume_member", "Member resumed"
+		}
+
+		p, _ := PrincipalFrom(r.Context())
+		a.audit(r, action, p.Email, "Cluster member "+id+": "+string(state))
+		writeResponse(w, r, SuccessResponse{Message: message}, http.StatusOK, cfg.Logger)
 	})
 }

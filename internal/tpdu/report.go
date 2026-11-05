@@ -15,6 +15,7 @@ const (
 	FailureRejectedDuplicate                 byte = 0xc5
 	FailureValidityPeriodNotSupported        byte = 0xc7
 	FailureUSIMStorageFull                   byte = 0xd0
+	FailureErrorInMS                         byte = 0xd2
 	FailureMemoryCapacityExceeded            byte = 0xd3
 	FailureUSIMToolkitBusy                   byte = 0xd4
 	FailureUSIMDataDownloadError             byte = 0xd5

@@ -179,10 +179,7 @@ func (c *certs) member(address, version string) db.Member {
 	m := db.Member{NodeID: c.nodeID, Address: address, SchemaVersion: db.SchemaVersion(), Version: version}
 
 	if cert := c.cert.Load(); cert != nil {
-		certPEM, _, err := pki.EncodeCert(*cert)
-		if err == nil {
-			m.Fingerprint, m.Certificate = pki.Fingerprint(cert.Leaf), string(certPEM)
-		}
+		m.Fingerprint = pki.Fingerprint(cert.Leaf)
 	}
 
 	return m

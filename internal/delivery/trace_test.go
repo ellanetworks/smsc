@@ -182,8 +182,8 @@ func TestDeliveryAttemptLogs(t *testing.T) {
 			d.TracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
 			d.Logger = logs.Logger()
 
-			m, _, _ := d.Store.NextDue(context.Background(), d.Now(), nil)
-			_ = d.process(context.Background(), m)
+			m, _, _ := nextDue(d)
+			_ = d.process(context.Background(), 0, m)
 
 			spans := rec.Ended()
 			if len(spans) != 1 {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
@@ -14,36 +15,50 @@ import (
 const (
 	maxBatchCommands = 256
 	maxBatchBytes    = 512 * 1024
-	maxInFlight      = 64
+	maxInFlight      = 4
 	queueLength      = 4096
 	applyTimeout     = 30 * time.Second
-	linger           = 2 * time.Millisecond
 )
 
-var ErrTooLarge = errors.New("command too large")
+const (
+	queued int32 = iota
+	taken
+	abandoned
+)
+
+var (
+	ErrTooLarge   = errors.New("command too large")
+	errRestarting = fmt.Errorf("%w: raft is restarting", errRetry)
+)
 
 type request struct {
 	cmds    []db.Command
 	size    int
+	state   atomic.Int32
 	results []db.Result
+	index   uint64
 	err     error
 	done    chan struct{}
 }
 
 type batcher struct {
-	raft  *raft.Raft
-	now   func() time.Time
-	queue chan *request
-	slots chan struct{}
-	stop  chan struct{}
-	wg    sync.WaitGroup
-	last  int64
+	raft   *raft.Raft
+	now    func() time.Time
+	floor  func() int64
+	queue  chan *request
+	slots  chan struct{}
+	stop   chan struct{}
+	mu     sync.RWMutex
+	closed bool
+	wg     sync.WaitGroup
+	last   int64
 }
 
-func newBatcher(r *raft.Raft, now func() time.Time) *batcher {
+func newBatcher(r *raft.Raft, now func() time.Time, floor func() int64) *batcher {
 	b := &batcher{
 		raft:  r,
 		now:   now,
+		floor: floor,
 		queue: make(chan *request, queueLength),
 		slots: make(chan struct{}, maxInFlight),
 		stop:  make(chan struct{}),
@@ -56,83 +71,128 @@ func newBatcher(r *raft.Raft, now func() time.Time) *batcher {
 	return b
 }
 
-func (b *batcher) propose(ctx context.Context, cmds []db.Command) ([]db.Result, error) {
+func (b *batcher) propose(ctx context.Context, cmds []db.Command) ([]db.Result, uint64, error) {
 	size := 0
 	for _, c := range cmds {
 		size += len(c.Payload) + 64
 	}
 
 	if size > maxBatchBytes {
-		return nil, fmt.Errorf("%w: %d bytes", ErrTooLarge, size)
+		return nil, 0, fmt.Errorf("%w: %d bytes", ErrTooLarge, size)
 	}
 
 	req := &request{cmds: cmds, size: size, done: make(chan struct{})}
 
-	select {
-	case b.queue <- req:
-	default:
-		return nil, db.ErrBusy
+	if err := b.enqueue(req); err != nil {
+		return nil, 0, err
 	}
 
 	select {
 	case <-req.done:
-		return req.results, req.err
+		return req.results, req.index, req.err
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		if req.state.CompareAndSwap(queued, abandoned) {
+			return nil, 0, ctx.Err()
+		}
+
+		return nil, 0, fmt.Errorf("%w: %w", errUnknown, ctx.Err())
+	}
+}
+
+func (b *batcher) enqueue(req *request) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return errRestarting
+	}
+
+	select {
+	case b.queue <- req:
+		return nil
+	default:
+		return db.ErrBusy
 	}
 }
 
 func (b *batcher) close() {
+	b.mu.Lock()
+	closed := b.closed
+	b.closed = true
+	b.mu.Unlock()
+
+	if closed {
+		return
+	}
+
 	close(b.stop)
 	b.wg.Wait()
+
+	for {
+		select {
+		case r := <-b.queue:
+			if r.state.CompareAndSwap(queued, taken) {
+				finish([]*request{r}, nil, 0, errRestarting)
+			}
+		default:
+			return
+		}
+	}
 }
 
 func (b *batcher) run() {
 	defer b.wg.Done()
 
-	for {
-		var first *request
+	var carry *request
 
+	for {
 		select {
 		case <-b.stop:
+			if carry != nil {
+				finish([]*request{carry}, nil, 0, errRestarting)
+			}
+
 			return
-		case first = <-b.queue:
+		case b.slots <- struct{}{}:
+		}
+
+		first := carry
+		carry = nil
+
+		for first == nil {
+			select {
+			case <-b.stop:
+				<-b.slots
+				return
+			case r := <-b.queue:
+				if r.state.CompareAndSwap(queued, taken) {
+					first = r
+				}
+			}
 		}
 
 		batch := []*request{first}
 		count, size := len(first.cmds), first.size
 
-		var wait <-chan time.Time
-
 	fill:
 		for count < maxBatchCommands {
-			var next *request
+			select {
+			case next := <-b.queue:
+				if !next.state.CompareAndSwap(queued, taken) {
+					continue
+				}
 
-			if wait == nil {
-				select {
-				case next = <-b.queue:
-					wait = time.After(linger)
-				default:
+				if count+len(next.cmds) > maxBatchCommands || size+next.size > maxBatchBytes {
+					carry = next
 					break fill
 				}
-			} else {
-				select {
-				case next = <-b.queue:
-				case <-wait:
-					break fill
-				case <-b.stop:
-					break fill
-				}
-			}
 
-			if count+len(next.cmds) > maxBatchCommands || size+next.size > maxBatchBytes {
-				b.send(batch)
-				batch, count, size = nil, 0, 0
+				batch = append(batch, next)
+				count += len(next.cmds)
+				size += next.size
+			default:
+				break fill
 			}
-
-			batch = append(batch, next)
-			count += len(next.cmds)
-			size += next.size
 		}
 
 		b.send(batch)
@@ -140,13 +200,7 @@ func (b *batcher) run() {
 }
 
 func (b *batcher) send(batch []*request) {
-	if len(batch) == 0 {
-		return
-	}
-
-	b.slots <- struct{}{}
-
-	b.last = max(b.last+1, b.now().UnixNano())
+	b.last = max(b.last+1, b.now().UnixNano(), b.floor()+1)
 
 	var cmds []db.Command
 	for _, r := range batch {
@@ -157,7 +211,7 @@ func (b *batcher) send(batch []*request) {
 	if err != nil {
 		<-b.slots
 
-		finish(batch, nil, err)
+		finish(batch, nil, 0, err)
 
 		return
 	}
@@ -171,21 +225,21 @@ func (b *batcher) send(batch []*request) {
 		defer func() { <-b.slots }()
 
 		if err := future.Error(); err != nil {
-			finish(batch, nil, err)
+			finish(batch, nil, 0, err)
 			return
 		}
 
 		results, ok := future.Response().([]db.Result)
 		if !ok || len(results) != len(cmds) {
-			finish(batch, nil, fmt.Errorf("unexpected apply response %T", future.Response()))
+			finish(batch, nil, 0, fmt.Errorf("unexpected apply response %T", future.Response()))
 			return
 		}
 
-		finish(batch, results, nil)
+		finish(batch, results, future.Index(), nil)
 	}()
 }
 
-func finish(batch []*request, results []db.Result, err error) {
+func finish(batch []*request, results []db.Result, index uint64, err error) {
 	offset := 0
 
 	for _, r := range batch {
@@ -193,6 +247,7 @@ func finish(batch []*request, results []db.Result, err error) {
 			r.err = err
 		} else {
 			r.results = results[offset : offset+len(r.cmds)]
+			r.index = index
 		}
 
 		offset += len(r.cmds)

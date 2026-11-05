@@ -1,0 +1,431 @@
+import { useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
+  IconButton,
+  MenuItem,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import { ContentCopy as ContentCopyIcon } from "@mui/icons-material";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DialogError from "@/components/DialogError";
+import EditDialog from "@/components/EditDialog";
+import { useSnackbar } from "@/contexts/SnackbarContext";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import {
+  createJoinToken,
+  DIAMETER_LABEL,
+  drainMember,
+  memberLabel,
+  removeMember,
+  resumeMember,
+  updateDiameterLabel,
+  type ClusterMember,
+} from "@/queries/cluster";
+import { formatDateTime } from "@/utils/dates";
+
+export const TTL_OPTIONS: { label: string; seconds: number }[] = [
+  { label: "15 minutes", seconds: 15 * 60 },
+  { label: "30 minutes", seconds: 30 * 60 },
+  { label: "1 hour", seconds: 60 * 60 },
+  { label: "4 hours", seconds: 4 * 60 * 60 },
+  { label: "24 hours", seconds: 24 * 60 * 60 },
+];
+
+const DEFAULT_TTL = 30 * 60;
+
+const useClusterMutation = <T,>(
+  mutationFn: (value: T) => Promise<unknown>,
+  success: string,
+  onClose: () => void,
+) => {
+  const queryClient = useQueryClient();
+  const { showSnackbar } = useSnackbar();
+
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["cluster"] });
+      showSnackbar(success, "success");
+      onClose();
+    },
+  });
+};
+
+export function NodeIdentity({ nodeId }: { nodeId: string }) {
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+        Node identity
+      </Typography>
+      <Typography
+        variant="body2"
+        sx={{ fontFamily: "monospace", wordBreak: "break-all" }}
+      >
+        {nodeId}
+      </Typography>
+    </Box>
+  );
+}
+
+function CopyBlock({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: () => void;
+}) {
+  return (
+    <Box>
+      <Typography variant="caption" color="textSecondary">
+        {label}
+      </Typography>
+      <Box
+        sx={{
+          position: "relative",
+          mt: 0.5,
+          p: 1.5,
+          pr: 5,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          bgcolor: "background.default",
+        }}
+      >
+        <Typography
+          component="pre"
+          variant="body2"
+          data-testid="join-token"
+          sx={{
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            fontFamily: "monospace",
+            userSelect: "all",
+            m: 0,
+          }}
+        >
+          {value}
+        </Typography>
+        <Tooltip title={`Copy ${label.toLowerCase()}`}>
+          <IconButton
+            size="small"
+            aria-label={`Copy ${label.toLowerCase()}`}
+            onClick={onCopy}
+            sx={{ position: "absolute", top: 4, right: 4 }}
+          >
+            <ContentCopyIcon fontSize="inherit" />
+          </IconButton>
+        </Tooltip>
+      </Box>
+    </Box>
+  );
+}
+
+export function AddNodeDialog({ onClose }: { onClose: () => void }) {
+  const copy = useCopyToClipboard();
+  const [ttlSeconds, setTtlSeconds] = useState(DEFAULT_TTL);
+  const mint = useMutation({ mutationFn: createJoinToken });
+  const token = mint.data;
+
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Add a Node to the Cluster</DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={2}>
+          <DialogError
+            error={mint.error}
+            prefix="Could not create the join token"
+          />
+          {!token && (
+            <>
+              <Typography variant="body2">
+                This creates a single-use token that lets one new node join the
+                cluster. The new node needs a cluster block in its configuration
+                file, and no user or message yet.
+              </Typography>
+              <TextField
+                select
+                autoFocus
+                label="Token lifetime"
+                value={ttlSeconds}
+                onChange={(e) => setTtlSeconds(Number(e.target.value))}
+              >
+                {TTL_OPTIONS.map((opt) => (
+                  <MenuItem key={opt.seconds} value={opt.seconds}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </>
+          )}
+          {token && (
+            <>
+              <Typography variant="body2" color="success.main">
+                Token created. Copy it now, because it is shown only once. It
+                expires on {formatDateTime(token.expires_at)}.
+              </Typography>
+              <Typography variant="body2">
+                Open the new node in a browser, click{" "}
+                <strong>Join an existing cluster instead</strong> and paste this
+                token.
+              </Typography>
+              <CopyBlock
+                label="Join token"
+                value={token.token}
+                onCopy={() => void copy(token.token, "Join token")}
+              />
+            </>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={mint.isPending}>
+          {token ? "Close" : "Cancel"}
+        </Button>
+        {!token && (
+          <Button
+            variant="contained"
+            color="success"
+            onClick={() => mint.mutate(ttlSeconds)}
+            disabled={mint.isPending}
+          >
+            {mint.isPending ? "Creating…" : "Create Token"}
+          </Button>
+        )}
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+export function DrainNodeDialog({
+  member,
+  isLastActive,
+  isSelf,
+  onClose,
+}: {
+  member: ClusterMember;
+  isLastActive: boolean;
+  isSelf: boolean;
+  onClose: () => void;
+}) {
+  const label = memberLabel(member);
+  const drain = useClusterMutation(
+    () => drainMember(member.node_id),
+    `Node ${label} is draining.`,
+    onClose,
+  );
+
+  return (
+    <ConfirmDialog
+      title={`Drain node ${label}?`}
+      description={
+        <>
+          <strong>Node {label}</strong> fails readiness, refuses new SMPP binds,
+          and closes its SMPP sessions after the drain delay. Diameter stays up.
+        </>
+      }
+      confirmLabel="Drain"
+      pendingLabel="Draining…"
+      confirmColor="warning"
+      maxWidth="sm"
+      pending={drain.isPending}
+      onConfirm={() => drain.mutate(undefined)}
+      onClose={onClose}
+    >
+      <NodeIdentity nodeId={member.node_id} />
+      <Stack spacing={1} sx={{ mt: 2 }}>
+        <DialogError error={drain.error} prefix="Could not drain the node" />
+        {isLastActive && (
+          <Alert severity="warning">
+            No other node is active, so ESMEs have no node left to bind to.
+          </Alert>
+        )}
+        {member.leader && (
+          <Alert severity="info">
+            This node is the leader. Leadership will move to another node.
+          </Alert>
+        )}
+        {isSelf && (
+          <Alert severity="info">
+            This is the node serving this page. It stops taking new SMPP
+            traffic; your session is unaffected.
+          </Alert>
+        )}
+      </Stack>
+    </ConfirmDialog>
+  );
+}
+
+export function ResumeNodeDialog({
+  member,
+  onClose,
+}: {
+  member: ClusterMember;
+  onClose: () => void;
+}) {
+  const label = memberLabel(member);
+  const resume = useClusterMutation(
+    () => resumeMember(member.node_id),
+    `Node ${label} resumed.`,
+    onClose,
+  );
+
+  return (
+    <ConfirmDialog
+      title={`Resume node ${label}?`}
+      description={
+        <>
+          <strong>Node {label}</strong> accepts SMPP binds again and passes
+          readiness.
+        </>
+      }
+      confirmLabel="Resume"
+      pendingLabel="Resuming…"
+      confirmColor="primary"
+      maxWidth="sm"
+      pending={resume.isPending}
+      onConfirm={() => resume.mutate(undefined)}
+      onClose={onClose}
+    >
+      <NodeIdentity nodeId={member.node_id} />
+      <Box sx={{ mt: 2 }}>
+        <DialogError error={resume.error} prefix="Could not resume the node" />
+      </Box>
+    </ConfirmDialog>
+  );
+}
+
+export function RemoveNodeDialog({
+  member,
+  isSelf,
+  onClose,
+}: {
+  member: ClusterMember;
+  isSelf: boolean;
+  onClose: () => void;
+}) {
+  const label = memberLabel(member);
+  const forceRequired = member.drain_state !== "drained";
+  const [force, setForce] = useState(forceRequired && member.healthy === false);
+  const remove = useClusterMutation(
+    () => removeMember(member.node_id, forceRequired && force),
+    `Node ${label} removed.`,
+    onClose,
+  );
+
+  return (
+    <ConfirmDialog
+      title={`Remove node ${label}?`}
+      description={
+        <>
+          <strong>Node {label}</strong> closes its Diameter and SMPP listeners,
+          fails readiness, and refuses to start until its data directory is
+          deleted.
+        </>
+      }
+      confirmLabel="Remove"
+      pendingLabel="Removing…"
+      maxWidth="sm"
+      pending={remove.isPending}
+      confirmDisabled={forceRequired && !force}
+      onConfirm={() => remove.mutate(undefined)}
+      onClose={onClose}
+    >
+      <NodeIdentity nodeId={member.node_id} />
+      <Box sx={{ mt: 2 }}>
+        <DialogError error={remove.error} prefix="Could not remove the node" />
+        {forceRequired && (
+          <>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={force}
+                  onChange={(e) => setForce(e.target.checked)}
+                />
+              }
+              label="Force remove (skip drain)"
+            />
+            <Typography variant="body2" color="textSecondary">
+              {member.healthy === false
+                ? "This node is unreachable, so it cannot be drained first."
+                : "This node is not drained: its SMPP sessions are cut. To close them gracefully, cancel and drain the node before removing it."}
+            </Typography>
+          </>
+        )}
+        {isSelf && (
+          <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
+            This is the node serving this page. Removing it ends your session on
+            this node.
+          </Typography>
+        )}
+      </Box>
+    </ConfirmDialog>
+  );
+}
+
+export function RenameNodeDialog({
+  member,
+  onClose,
+}: {
+  member: ClusterMember;
+  onClose: () => void;
+}) {
+  const [label, setLabel] = useState(member.diameter_label);
+  const rename = useClusterMutation(
+    (value: string) => updateDiameterLabel(member.node_id, value),
+    "Diameter label updated.",
+    onClose,
+  );
+  const valid = DIAMETER_LABEL.test(label);
+
+  return (
+    <EditDialog
+      title="Edit Diameter Label"
+      valid={valid && label !== member.diameter_label}
+      pending={rename.isPending}
+      error={rename.error}
+      onSubmit={() => rename.mutate(label)}
+      onClose={onClose}
+      submitLabel="Save"
+      pendingLabel="Saving…"
+      failure="Could not update the Diameter label"
+      notice={
+        <Alert severity="info">
+          The node restarts Diameter, and its peers reconnect.
+        </Alert>
+      }
+    >
+      <Typography variant="body2">
+        The node's Diameter host is &lt;label&gt;.node.&lt;realm&gt;.
+      </Typography>
+      <TextField
+        label="Diameter label"
+        value={label}
+        onChange={(e) => setLabel(e.target.value.trim().toLowerCase())}
+        error={label !== "" && !valid}
+        helperText={
+          label !== "" && !valid
+            ? "Use lowercase letters, digits and hyphens, at most 63 characters, not starting or ending with a hyphen."
+            : "A DNS label, unique in the cluster."
+        }
+        required
+        autoFocus
+        slotProps={{ htmlInput: { maxLength: 63 } }}
+      />
+      <NodeIdentity nodeId={member.node_id} />
+    </EditDialog>
+  );
+}

@@ -3,9 +3,11 @@ package cluster
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
+	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/hashicorp/raft"
 )
 
@@ -20,11 +22,13 @@ type MemberStatus struct {
 	DiameterLabel string    `json:"diameter_label"`
 	Version       string    `json:"version"`
 	JoinedAt      time.Time `json:"joined_at"`
+	DrainState    string    `json:"drain_state"`
 	Suffrage      string    `json:"suffrage"`
 	Leader        bool      `json:"leader"`
 	Healthy       *bool     `json:"healthy,omitempty"`
 	LastContact   string    `json:"last_contact,omitempty"`
 	AppliedIndex  uint64    `json:"applied_index,omitempty"`
+	Diverged      bool      `json:"diverged,omitempty"`
 }
 
 type Status struct {
@@ -75,7 +79,7 @@ func (n *Node) Status(ctx context.Context) (Status, error) {
 	for _, m := range members {
 		ms := MemberStatus{
 			NodeID: m.NodeID, Address: m.Address, DiameterLabel: m.DiameterLabel, Version: m.Version,
-			JoinedAt: m.JoinedAt, Suffrage: "none", Leader: m.NodeID == string(leaderID),
+			JoinedAt: m.JoinedAt, DrainState: string(m.DrainState), Suffrage: "none", Leader: m.NodeID == string(leaderID),
 		}
 
 		if i := slices.IndexFunc(servers, func(s raft.Server) bool { return string(s.ID) == m.NodeID }); i >= 0 {
@@ -87,7 +91,7 @@ func (n *Node) Status(ctx context.Context) (Status, error) {
 
 		if i := slices.IndexFunc(h.Servers, func(s ServerHealth) bool { return s.NodeID == m.NodeID }); i >= 0 {
 			s := h.Servers[i]
-			ms.Healthy, ms.LastContact, ms.AppliedIndex = &s.Healthy, s.LastContact, s.AppliedIndex
+			ms.Healthy, ms.LastContact, ms.AppliedIndex, ms.Diverged = &s.Healthy, s.LastContact, s.AppliedIndex, s.Diverged
 		}
 
 		st.Members = append(st.Members, ms)
@@ -136,6 +140,10 @@ func (n *Node) Ready() error {
 	default:
 	}
 
+	if m, err := n.db.Member(context.Background(), n.id); err == nil && m.DrainState != db.DrainActive {
+		return fmt.Errorf("the node is %s", m.DrainState)
+	}
+
 	r, _ := n.current()
 
 	if lag := r.CommitIndex() - min(r.CommitIndex(), n.db.AppliedIndex()); lag > readyLag {
@@ -151,6 +159,50 @@ func (n *Node) Ready() error {
 	}
 
 	return nil
+}
+
+func (n *Node) HandOver() error {
+	if leading, _ := n.Leader(); !leading {
+		return nil
+	}
+
+	r, _ := n.current()
+
+	future := r.GetConfiguration()
+	if err := future.Error(); err != nil {
+		return err
+	}
+
+	for _, s := range future.Configuration().Servers {
+		if s.Suffrage == raft.Voter && string(s.ID) != n.id && !n.isDraining(s.ID) {
+			return r.LeadershipTransferToServer(s.ID, s.Address).Error()
+		}
+	}
+
+	return nil
+}
+
+func (n *Node) RaftLeader() bool {
+	r, _ := n.current()
+
+	return r.State() == raft.Leader
+}
+
+var ErrLastMember = errors.New("the only member of the cluster cannot be drained")
+
+func (n *Node) SetDrainState(ctx context.Context, nodeID string, state db.DrainState) error {
+	if state == db.DrainDraining {
+		members, err := n.db.Members(ctx)
+		if err != nil {
+			return err
+		}
+
+		if len(members) < 2 {
+			return ErrLastMember
+		}
+	}
+
+	return n.db.SetDrainState(ctx, nodeID, state)
 }
 
 func (n *Node) SetDiameterLabel(ctx context.Context, nodeID, label string) error {

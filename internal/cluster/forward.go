@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	maxApplyGap      = 5000
 	minForwardBudget = 5 * time.Second
 	maxBackoff       = 500 * time.Millisecond
 	minBackoff       = 10 * time.Millisecond
@@ -28,6 +29,7 @@ const (
 var (
 	ErrNoLeader = fmt.Errorf("%w: no cluster leader", db.ErrBusy)
 	errRetry    = errors.New("retry")
+	errUnknown  = errors.New("the outcome of the write is unknown")
 )
 
 func (n *Node) forwardBudget() time.Duration {
@@ -42,7 +44,11 @@ func (n *Node) Propose(ctx context.Context, cmds []db.Command) ([]db.Result, err
 
 	for attempt := 0; ; attempt++ {
 		results, err := n.proposeOnce(ctx, cmds)
-		if !errors.Is(err, errRetry) {
+
+		switch {
+		case errors.Is(err, errUnknown) && !retryable(cmds):
+			return nil, fmt.Errorf("%w: %w", db.ErrBusy, err)
+		case !errors.Is(err, errRetry) && !errors.Is(err, errUnknown):
 			return results, err
 		}
 
@@ -61,6 +67,16 @@ func (n *Node) Propose(ctx context.Context, cmds []db.Command) ([]db.Result, err
 	}
 }
 
+func retryable(cmds []db.Command) bool {
+	for _, c := range cmds {
+		if !c.Retryable {
+			return false
+		}
+	}
+
+	return true
+}
+
 func backoff(attempt int) time.Duration {
 	d := min(maxBackoff, minBackoff<<min(attempt, 6))
 
@@ -74,13 +90,18 @@ func (n *Node) proposeOnce(ctx context.Context, cmds []db.Command) ([]db.Result,
 	default:
 	}
 
+	if r, _ := n.current(); r.CommitIndex() > n.db.AppliedIndex()+maxApplyGap {
+		return nil, fmt.Errorf("%w: the database is %d entries behind the log", db.ErrBusy,
+			r.CommitIndex()-n.db.AppliedIndex())
+	}
+
 	if leading, _ := n.Leader(); leading {
 		_, b := n.current()
 		if b == nil {
 			return nil, fmt.Errorf("%w: raft is restarting", errRetry)
 		}
 
-		results, err := b.propose(ctx, cmds)
+		results, _, err := b.propose(ctx, cmds)
 
 		return results, classify(err)
 	}
@@ -108,7 +129,9 @@ func (n *Node) proposeOnce(ctx context.Context, cmds []db.Command) ([]db.Result,
 		return nil, db.ErrBusy
 	}
 
-	n.health.observeApplied(ctx, reply.Index)
+	if err := n.db.WaitApplied(ctx, reply.Index); err != nil {
+		n.cfg.Logger.Warn("forwarded write is committed but not yet applied here", "index", reply.Index, "error", err)
+	}
 
 	return reply.Results, nil
 }
@@ -118,8 +141,10 @@ func classify(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, raft.ErrNotLeader), errors.Is(err, raft.ErrLeadershipTransferInProgress),
-		errors.Is(err, raft.ErrLeadershipLost), errors.Is(err, raft.ErrEnqueueTimeout):
+		errors.Is(err, raft.ErrEnqueueTimeout):
 		return fmt.Errorf("%w: %w", errRetry, err)
+	case errors.Is(err, raft.ErrLeadershipLost):
+		return fmt.Errorf("%w: %w", errUnknown, err)
 	}
 
 	return err
@@ -131,7 +156,7 @@ type proposeRequest struct {
 
 type proposeReply struct {
 	Results []db.Result `json:"results"`
-	Index   uint64      `json:"index"`
+	Index   uint64      `json:"index,omitempty"`
 	Busy    bool        `json:"busy,omitempty"`
 }
 
@@ -170,12 +195,12 @@ type leaderKey struct{}
 func (p *peerClient) dial(ctx context.Context, _, addr string) (net.Conn, error) {
 	conn, peer, err := p.n.ln.Dial(ctx, addr, listener.ALPNHTTP, nil)
 	if err != nil {
-		return nil, err
+		return nil, &dialError{err}
 	}
 
 	if want, ok := ctx.Value(leaderKey{}).(string); ok && want != "" && peer != want {
 		_ = conn.Close()
-		return nil, fmt.Errorf("%s is node %s, not %s", addr, peer, want)
+		return nil, &dialError{fmt.Errorf("%s is node %s, not %s", addr, peer, want)}
 	}
 
 	return conn, nil
@@ -218,6 +243,10 @@ func (p *peerClient) callAt(ctx context.Context, addr, id, path string, in, out 
 }
 
 func (p *peerClient) do(ctx context.Context, addr, id, method, path string, body io.Reader) (*http.Response, error) {
+	if _, ok := ctx.Deadline(); ok {
+		return p.send(ctx, p.streams, addr, id, method, path, body)
+	}
+
 	return p.send(ctx, p.client, addr, id, method, path, body)
 }
 
@@ -238,8 +267,14 @@ func (p *peerClient) send(ctx context.Context, client *http.Client, addr, id, me
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
-	if err != nil {
+
+	var dial *dialError
+
+	switch {
+	case errors.As(err, &dial):
 		return nil, fmt.Errorf("%w: %w", errRetry, err)
+	case err != nil:
+		return nil, fmt.Errorf("%w: %w", errUnknown, err)
 	}
 
 	return resp, nil
@@ -257,6 +292,10 @@ func decodeReply(resp *http.Response, out any) error {
 		var e rpcError
 
 		_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&e)
+
+		if e.Code == codeUnknown {
+			return fmt.Errorf("%w: %s", errUnknown, e.Error)
+		}
 
 		return fmt.Errorf("%w: %s: %s", errRetry, resp.Status, e.Error)
 	}
@@ -286,7 +325,17 @@ func (e *RemoteError) Unwrap() error {
 		return ErrInvalidBackup
 	case codeInvalidJoin:
 		return ErrInvalidJoin
+	case codeNotDrained:
+		return ErrNotDrained
+	case codeQuorum:
+		return ErrQuorum
 	}
 
 	return db.Result{Code: e.Code, Message: e.Message}.Err()
 }
+
+type dialError struct{ err error }
+
+func (e *dialError) Error() string { return e.err.Error() }
+
+func (e *dialError) Unwrap() error { return e.err }

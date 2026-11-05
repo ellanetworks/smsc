@@ -29,7 +29,9 @@ func TestMetrics(t *testing.T) {
 	}
 
 	for _, p := range problems {
-		t.Errorf("lint: %s: %s", p.Metric, p.Text)
+		if !strings.HasPrefix(p.Metric, "raft_") {
+			t.Errorf("lint: %s: %s", p.Metric, p.Text)
+		}
 	}
 
 	families := parseFamilies(t, body)

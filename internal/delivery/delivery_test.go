@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,6 +38,8 @@ type fakeStore struct {
 	recipients   []string
 	reports      map[int64]*db.NewStatusReport
 	tpStatuses   map[int64]uint8
+	claimed      []string
+	completed    []int64
 }
 
 type attempt struct {
@@ -83,11 +87,58 @@ func (s *fakeStore) first(now time.Time, match func(*db.Message) bool) (db.Messa
 	return *next, true
 }
 
-func (s *fakeStore) NextDue(_ context.Context, now time.Time, busy []string) (db.Message, bool, error) {
+func (s *fakeStore) DueRecipients(_ context.Context, now time.Time, limit int, skip func(string) bool) ([]string,
+	time.Time, error,
+) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	m, ok := s.first(now, func(m *db.Message) bool { return !slices.Contains(busy, m.MSISDN) })
+	heads := map[string]*db.Message{}
+
+	for _, m := range s.messages {
+		if m.Status != db.StatusPending {
+			continue
+		}
+
+		if h := heads[m.MSISDN]; h == nil || m.NextAttemptAt.Before(h.NextAttemptAt) {
+			heads[m.MSISDN] = m
+		}
+	}
+
+	ordered := slices.SortedFunc(maps.Values(heads), func(a, b *db.Message) int {
+		if c := a.NextAttemptAt.Compare(b.NextAttemptAt); c != 0 {
+			return c
+		}
+
+		return strings.Compare(a.MSISDN, b.MSISDN)
+	})
+
+	var due []string
+
+	for _, h := range ordered {
+		if len(due) == limit {
+			break
+		}
+
+		if skip != nil && skip(h.MSISDN) {
+			continue
+		}
+
+		if h.NextAttemptAt.After(now) {
+			return due, h.NextAttemptAt, nil
+		}
+
+		due = append(due, h.MSISDN)
+	}
+
+	return due, time.Time{}, nil
+}
+
+func (s *fakeStore) NextDue(_ context.Context, msisdn string, now time.Time) (db.Message, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, ok := s.first(now, func(m *db.Message) bool { return m.MSISDN == msisdn })
 
 	return m, ok, nil
 }
@@ -103,12 +154,8 @@ func (s *fakeStore) NextDueFor(_ context.Context, msisdn string, excludeID int64
 	return m, ok, nil
 }
 
-func (s *fakeStore) NextWakeup(context.Context, []string) (time.Time, bool, error) {
-	return time.Time{}, false, nil
-}
-
 func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.MessageStatus, _ time.Time, report *db.NewStatusReport,
-	tpStatus uint8,
+	tpStatus uint8, _ db.Fence,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,6 +165,7 @@ func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.Messa
 	}
 
 	s.messages[id].Status = status
+	s.completed = append(s.completed, id)
 
 	if s.tpStatuses == nil {
 		s.tpStatuses = map[int64]uint8{}
@@ -132,7 +180,9 @@ func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.Messa
 	return nil
 }
 
-func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool) error {
+func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool, _ time.Time,
+	_ db.Fence,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -184,6 +234,34 @@ func (s *fakeStore) CreateDeliveryAttempt(_ context.Context, a db.DeliveryAttemp
 	s.attempts = append(s.attempts, a)
 
 	return int64(len(s.attempts)), nil
+}
+
+func (s *fakeStore) ClaimRecipient(context.Context, string, uint64) (db.Claim, error) {
+	return db.Claim{}, nil
+}
+
+func (s *fakeStore) ReleaseRecipient(context.Context, string, db.Claim) error {
+	return nil
+}
+
+func (s *fakeStore) RecordAttemptAndClaim(ctx context.Context, a db.DeliveryAttempt, _ string, _ uint64) (db.Claim, error) {
+	_, err := s.CreateDeliveryAttempt(ctx, a)
+
+	return db.Claim{}, err
+}
+
+func (s *fakeStore) ClaimedBefore(context.Context, uint64, time.Time) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return slices.Clone(s.claimed), nil
+}
+
+func (s *fakeStore) status(id int64) db.MessageStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.messages[id].Status
 }
 
 func (s *fakeStore) recorded(step db.AttemptStep) []attempt {
@@ -360,14 +438,23 @@ func newDeliverer(store Store, router Router, sender Sender) *Deliverer {
 func process(t *testing.T, d *Deliverer) {
 	t.Helper()
 
-	m, ok, err := d.Store.NextDue(context.Background(), d.Now(), nil)
+	m, ok, err := nextDue(d)
 	if err != nil || !ok {
 		t.Fatalf("NextDue = %v, %v", ok, err)
 	}
 
-	if err := d.process(context.Background(), m); err != nil {
+	if err := d.process(context.Background(), 0, m); err != nil {
 		t.Fatalf("process = %v", err)
 	}
+}
+
+func nextDue(d *Deliverer) (db.Message, bool, error) {
+	due, _, err := d.Store.DueRecipients(context.Background(), d.Now(), 1, nil)
+	if err != nil || len(due) == 0 {
+		return db.Message{}, false, err
+	}
+
+	return d.Store.NextDue(context.Background(), due[0], d.Now())
 }
 
 func avpData(t *testing.T, m *diameter.Message, code, vendor uint32) []byte {
@@ -714,7 +801,7 @@ func TestDeliverOutcomes(t *testing.T) {
 			wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute),
 		},
 		"error in MS is retried": {
-			answer:     smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x00, 0xd2, 0x00),
+			answer:     smDeliveryFailure(sgd.CauseEquipmentProtocolError, 0x00, tpdu.FailureErrorInMS, 0x00),
 			wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute),
 		},
 	}
@@ -830,7 +917,7 @@ func TestRunDeliversStoredMessages(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		d.Run(ctx)
+		runAndWait(ctx, d)
 		close(done)
 	}()
 
@@ -924,7 +1011,7 @@ func TestShutdownLetsInFlightDeliveryFinish(t *testing.T) {
 		cancel:     cancel,
 	}
 
-	newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender).Run(ctx)
+	runAndWait(ctx, newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender))
 
 	if store.messages[1].Status != db.StatusDelivered {
 		t.Fatalf("status = %s; a delivery in flight at shutdown must complete and be recorded", store.messages[1].Status)
@@ -944,7 +1031,7 @@ func TestNotifyBeforeRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	d.Run(ctx)
+	runAndWait(ctx, d)
 	<-done
 }
 
@@ -1084,7 +1171,7 @@ func TestMemoryExceededReport(t *testing.T) {
 	}
 }
 
-func TestEquipmentProtocolErrorRetriesWithoutHoldOrReport(t *testing.T) {
+func TestEquipmentProtocolErrorRetriesWithoutReport(t *testing.T) {
 	router := &fakeRouter{routing: mmeRouting()}
 	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": smDeliveryFailure(sgd.CauseEquipmentProtocolError)}}
 	store := newFakeStore(pendingMessage(t))
@@ -1095,7 +1182,7 @@ func TestEquipmentProtocolErrorRetriesWithoutHoldOrReport(t *testing.T) {
 		t.Fatalf("status = %s", store.messages[1].Status)
 	}
 
-	if len(router.reports) != 0 || len(store.holds) != 0 {
+	if len(router.reports) != 0 || len(store.holds) != 1 {
 		t.Fatalf("reports = %+v, holds = %+v", router.reports, store.holds)
 	}
 }
@@ -1218,7 +1305,7 @@ func TestShutdownStopsBetweenSteps(t *testing.T) {
 		cancel: cancel,
 	}
 
-	newDeliverer(store, router, sender).Run(ctx)
+	runAndWait(ctx, newDeliverer(store, router, sender))
 
 	if len(sender.peers) != 1 || len(router.reports) != 0 {
 		t.Fatalf("TFRs to %v, reports = %+v; nothing new may start after shutdown", sender.peers, router.reports)
@@ -1273,8 +1360,9 @@ func TestAlertOfBusyRecipientIsReapplied(t *testing.T) {
 	store.recipients = []string{"15551230002", "15551230009"}
 
 	d := newDeliverer(store, &fakeRouter{}, &fakeSender{})
-	d.busy = map[string]bool{"15551230002": true}
-	d.realert = map[string]bool{}
+	d.initState()
+	d.busy["15551230002"] = true
+	d.running = 1
 
 	if err := d.Alert(context.Background(), "15559990000"); err != nil {
 		t.Fatal(err)
@@ -1353,7 +1441,7 @@ func TestRunDeliversOtherRecipientsWhileOneIsStuck(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		d.Run(ctx)
+		runAndWait(ctx, d)
 		close(done)
 	}()
 
@@ -1404,7 +1492,7 @@ func TestShutdownAfterRoutingSendsNoTFR(t *testing.T) {
 	router := &cancellingRouter{fakeRouter: &fakeRouter{routing: mmeRouting()}, cancel: cancel}
 	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
 
-	newDeliverer(store, router, sender).Run(ctx)
+	runAndWait(ctx, newDeliverer(store, router, sender))
 
 	if len(sender.requests) != 0 || len(store.recorded(db.StepDelivery)) != 0 {
 		t.Fatalf("TFRs = %d, attempts = %+v; no TFR may start after shutdown", len(sender.requests), store.attempts)
@@ -1439,7 +1527,7 @@ func TestShutdownInterruptsRoutingLookup(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		d.Run(ctx)
+		runAndWait(ctx, d)
 		close(done)
 	}()
 
@@ -1478,8 +1566,15 @@ func TestRecipientFailuresHoldItsOtherMessages(t *testing.T) {
 		"HSS too busy":                           {routingErr: &s6c.ResultError{Result: tgpp.Result{Code: diameter.ResultTooBusy}}, wantHold: true},
 		"USIM storage full":                      {answer: protocolError([]byte{0x00, tpdu.FailureUSIMStorageFull, 0x00}), wantHold: true},
 		"USIM toolkit busy":                      {answer: protocolError([]byte{0x00, tpdu.FailureUSIMToolkitBusy, 0x00}), wantHold: true},
+		"MS memory capacity exceeded":            {answer: protocolError([]byte{0x00, tpdu.FailureMemoryCapacityExceeded, 0x00}), wantHold: true},
+		"error in MS":                            {answer: protocolError([]byte{0x00, tpdu.FailureErrorInMS, 0x00}), wantHold: true},
+		"protocol error without a failure cause": {answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError), wantHold: true},
+		"protocol error with an SMS-SUBMIT":      {answer: protocolError([]byte{0x01, tpdu.FailureUnspecified, 0x00}), wantHold: true},
 		"MS refuses the data coding scheme":      {answer: protocolError([]byte{0x00, 0x90, 0x00}), wantHold: false},
-		"protocol error without a failure cause": {answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError), wantHold: false},
+		"MS refuses the message class":           {answer: protocolError([]byte{0x00, 0x91, 0x00}), wantHold: false},
+		"MS cannot replace the message":          {answer: protocolError([]byte{0x00, 0x82, 0x00}), wantHold: false},
+		"no SMS storage in the USIM":             {answer: protocolError([]byte{0x00, 0xd1, 0x00}), wantHold: false},
+		"application specific failure":           {answer: protocolError([]byte{0x00, 0xe0, 0x00}), wantHold: false},
 		"protocol error with an unspecified fcs": {answer: protocolError([]byte{0x00, tpdu.FailureUnspecified, 0x00}), wantHold: false},
 	}
 
@@ -1686,7 +1781,7 @@ func TestShutdownEndsTheSession(t *testing.T) {
 		cancel:     cancel,
 	}
 
-	newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender).Run(ctx)
+	runAndWait(ctx, newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender))
 
 	if store.messages[1].Status != db.StatusDelivered || len(sender.requests) != 1 {
 		t.Fatalf("status %s after %d TFRs", store.messages[1].Status, len(sender.requests))
@@ -1769,5 +1864,110 @@ func TestCompletionRecordsTPStatus(t *testing.T) {
 				t.Fatalf("%d delivery attempts, the last %+v; want one, with the RP-ERROR report", deliveries, last)
 			}
 		})
+	}
+}
+
+// TS 23.040 clause 6.2
+func TestNewLeaderHoldsTheRecipientsOfThePreviousOne(t *testing.T) {
+	store := newFakeStore(pendingMessage(t))
+	store.claimed = []string{"15551230002"}
+
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+	d := newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender)
+	d.AttemptTimeout = time.Hour
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	go d.Run(ctx, 2)
+
+	time.Sleep(200 * time.Millisecond)
+
+	if got := store.status(1); got != db.StatusPending {
+		t.Fatalf("a held recipient's message is %s", got)
+	}
+
+	store.mu.Lock()
+	store.claimed = nil
+	store.mu.Unlock()
+
+	d.Notify()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for store.status(1) != db.StatusDelivered {
+		if time.Now().After(deadline) {
+			t.Fatal("the message was not delivered once the previous leader released the recipient")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+
+	if err := d.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runAndWait(ctx context.Context, d *Deliverer) {
+	d.Run(ctx, 0)
+
+	_ = d.Wait(context.Background())
+}
+
+func TestRunDeliversEveryRecipientInOrder(t *testing.T) {
+	var messages []db.Message
+
+	for i := range 6 {
+		m := pendingMessage(t)
+		m.ID = int64(i + 1)
+		m.MSISDN = fmt.Sprintf("1555123%04d", i%3)
+		m.NextAttemptAt = testNow.Add(-time.Duration(6-i) * time.Second)
+		messages = append(messages, m)
+	}
+
+	store := newFakeStore(messages...)
+	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
+	d := newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender)
+	d.Concurrency = 2
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	go d.Run(ctx, 0)
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for {
+		store.mu.Lock()
+		done := len(store.completed) == len(messages)
+		store.mu.Unlock()
+
+		if done {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("completed %v of %d messages", store.completed, len(messages))
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	cancel()
+
+	if err := d.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	position := map[int64]int{}
+	for i, id := range store.completed {
+		position[id] = i
+	}
+
+	for id := int64(1); id <= 3; id++ {
+		if position[id] > position[id+3] {
+			t.Fatalf("message %d completed after message %d to the same recipient: %v", id, id+3, store.completed)
+		}
 	}
 }

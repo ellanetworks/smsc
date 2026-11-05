@@ -1,3 +1,4 @@
 export const DOCS_URL = "https://docs.ellanetworks.com/smsc/";
 
 export const SSO_DOCS_URL = `${DOCS_URL}how_to/configure_single_sign_on/`;
+export const CLUSTER_DOCS_URL = `${DOCS_URL}explanation/high_availability/`;

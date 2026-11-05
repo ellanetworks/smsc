@@ -127,9 +127,9 @@ func runWorkload(t *testing.T, d *DB) {
 
 	for _, err := range []error{
 		d.SetAlertMSISDN(ctx, testMSISDN, "15559990000", now),
-		d.ScheduleRetry(ctx, first, now.Add(time.Minute), now, true),
-		d.CompleteMessage(ctx, first, StatusDelivered, now.Add(2*time.Minute), testReport(now), 0),
-		d.CompleteMessage(ctx, smppID, StatusFailed, now.Add(2*time.Minute), nil, 0x45),
+		d.ScheduleRetry(ctx, first, now.Add(time.Minute), now, true, time.Time{}, Fence{}),
+		d.CompleteMessage(ctx, first, StatusDelivered, now.Add(2*time.Minute), testReport(now), 0, Fence{}),
+		d.CompleteMessage(ctx, smppID, StatusFailed, now.Add(2*time.Minute), nil, 0x45, Fence{}),
 		d.UpdateESME(ctx, ESME{ID: esme}),
 	} {
 		if err != nil {
@@ -137,7 +137,7 @@ func runWorkload(t *testing.T, d *DB) {
 		}
 	}
 
-	if err := d.CompleteMessage(ctx, first, StatusDelivered, now, nil, 0); !errors.Is(err, ErrNotPending) {
+	if err := d.CompleteMessage(ctx, first, StatusDelivered, now, nil, 0, Fence{}); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("second completion = %v", err)
 	}
 
@@ -237,6 +237,89 @@ func TestApplyIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestGroupedEntriesMatchSingleEntries(t *testing.T) {
+	ctx := context.Background()
+
+	leader := openTestDB(t)
+	r := &recorder{d: leader}
+	leader.SetProposer(r)
+
+	runWorkload(t, leader)
+
+	replica := openTestDB(t)
+
+	for i := 0; i < len(r.entries); i += 3 {
+		var group []Entry
+
+		for j := i; j < min(i+3, len(r.entries)); j++ {
+			group = append(group, Entry{Index: uint64(j + 1), Term: 1, Data: r.entries[j]})
+		}
+
+		if _, err := replica.ApplyEntries(group); err != nil {
+			t.Fatalf("entries from %d: %v", i+1, err)
+		}
+	}
+
+	leaderHash, leaderIndex := must2(leader.Hash(ctx))
+	replicaHash, replicaIndex := must2(replica.Hash(ctx))
+
+	if replicaIndex != leaderIndex || !bytes.Equal(leaderHash, replicaHash) {
+		t.Fatalf("leader at %d %x, replica at %d %x", leaderIndex, leaderHash, replicaIndex, replicaHash)
+	}
+
+	for i := range r.entries {
+		want, _ := leader.HashAt(uint64(i + 1))
+
+		if h, ok := replica.HashAt(uint64(i + 1)); !ok || !bytes.Equal(h, want) {
+			t.Fatalf("hash at %d differs", i+1)
+		}
+	}
+
+	if a, b := dump(t, leader), dump(t, replica); a != b {
+		t.Fatalf("replica differs from the leader:\nleader:\n%s\nreplica:\n%s", a, b)
+	}
+}
+
+func TestExpiredRequestIDIsAppliedAgainInAnyGrouping(t *testing.T) {
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	id := RequestID{7}
+
+	cmd := store(t, id, testMessage(1, false, []byte{0}, now))
+	cmd.Retryable = true
+
+	var entries [][]byte
+
+	for _, at := range []time.Time{now, now.Add(appliedRequestsWindow + time.Second)} {
+		entry, err := EncodeBatch(Batch{LeaderTime: at.UnixNano(), Commands: []Command{cmd}})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		entries = append(entries, entry)
+	}
+
+	single, grouped := openTestDB(t), openTestDB(t)
+
+	for i, e := range entries {
+		if _, err := single.Apply(uint64(i+1), 1, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := grouped.ApplyEntries([]Entry{{Index: 1, Term: 1, Data: entries[0]}, {Index: 2, Term: 1, Data: entries[1]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if results[1][0].Replayed {
+		t.Fatal("an expired request ID was replayed")
+	}
+
+	if a, b := dump(t, single), dump(t, grouped); a != b {
+		t.Fatalf("grouping changed the state:\nsingle:\n%s\ngrouped:\n%s", a, b)
+	}
+}
+
 func must2(h []byte, i uint64, err error) ([]byte, uint64) {
 	if err != nil {
 		panic(err)
@@ -330,11 +413,11 @@ func TestRequestIDKeepsAnErrorResult(t *testing.T) {
 	ctx := WithRequestID(context.Background(), RequestID{9})
 	d := openTestDB(t)
 
-	if err := d.CompleteMessage(ctx, 42, StatusDelivered, time.Now(), nil, 0); !errors.Is(err, ErrNotFound) {
+	if err := d.CompleteMessage(ctx, 42, StatusDelivered, time.Now(), nil, 0, Fence{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 
-	if err := d.CompleteMessage(ctx, 42, StatusDelivered, time.Now(), nil, 0); !errors.Is(err, ErrNotFound) {
+	if err := d.CompleteMessage(ctx, 42, StatusDelivered, time.Now(), nil, 0, Fence{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("retried err = %v", err)
 	}
 }

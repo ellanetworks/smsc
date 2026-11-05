@@ -4,17 +4,43 @@ description: RESTful API reference for the cluster of Ella SMSC nodes.
 
 # Cluster
 
-A cluster is three or more Ella SMSC nodes that share one database, replicated with raft. A write is committed once a majority of the voting nodes have it on disk, so a node can fail without losing a message. Every node accepts Diameter, SMPP and the API. One node, the leader, delivers the messages, and the others forward their writes to it.
+A cluster is a set of Ella SMSC nodes that share their messages, users and settings. See [High Availability](../../explanation/high_availability.md).
 
-Each node needs a `cluster` block in its [configuration file](../config_file.md). A node without one runs alone, and is a cluster of one.
+Reading the cluster requires Admin, Read Only or Network Manager. The other paths, except [Join a Cluster](#join-a-cluster), require Admin, and an access token: an API token gets `403`.
 
 ## Get the Cluster
 
-This path returns the node that answered, its cluster, and every member. Health comes from the leader, and is absent when no leader answers.
+This path returns the node that answered, its cluster, and every member.
 
 | Method | Path              |
 | ------ | ----------------- |
 | GET    | `/api/v1/cluster` |
+
+### Response Fields
+
+| Field                         | Type    | Description |
+| ----------------------------- | ------- | ----------- |
+| `node_id`                     | string  | ID of the node that answered. |
+| `cluster_id`                  | string  | ID of the cluster. |
+| `clustered`                   | boolean | The node has a `cluster` block. |
+| `leader_id`                   | string  | ID of the leader. Absent when there is none. |
+| `term`                        | int     | Election term. |
+| `applied_index`               | int     | Last log entry applied by the node. |
+| `commit_index`                | int     | Last log entry committed by the cluster. |
+| `healthy`                     | boolean | The cluster is healthy. Absent when no leader answers. |
+| `failure_tolerance`           | int     | Voters that can fail without stopping writes. Absent when no leader answers. |
+| `members[].node_id`           | string  | ID of the member. |
+| `members[].address`           | string  | Cluster address of the member. |
+| `members[].diameter_label`    | string  | First label of the member's Diameter host. See [Update a Member](#update-a-member). |
+| `members[].version`           | string  | Version of the member. |
+| `members[].joined_at`         | string  | Time the member joined. |
+| `members[].drain_state`       | string  | `active`, `draining` or `drained`. See [Drain a Member](#drain-a-member). |
+| `members[].suffrage`          | string  | `voter`, `nonvoter` (catching up, or standby), or `none`. |
+| `members[].leader`            | boolean | The member is the leader. |
+| `members[].healthy`           | boolean | The member is healthy. Absent when no leader answers. |
+| `members[].last_contact`      | string  | Time since the leader last heard from the member. |
+| `members[].applied_index`     | int     | Last log entry applied by the member. |
+| `members[].diverged`          | boolean | The member's database differs from the leader's. Absent when it does not. |
 
 ### Sample Response
 
@@ -37,6 +63,7 @@ This path returns the node that answered, its cluster, and every member. Health 
                 "diameter_label": "smsc",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:12:44Z",
+                "drain_state": "active",
                 "suffrage": "voter",
                 "leader": true,
                 "healthy": true,
@@ -48,6 +75,7 @@ This path returns the node that answered, its cluster, and every member. Health 
                 "diameter_label": "smsc2",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:14:02Z",
+                "drain_state": "active",
                 "suffrage": "voter",
                 "leader": false,
                 "healthy": true,
@@ -59,17 +87,9 @@ This path returns the node that answered, its cluster, and every member. Health 
 }
 ```
 
-| Field | Description |
-| ----- | ----------- |
-| `suffrage` | `voter`: the node counts towards the majority. `nonvoter`: a new node catching up, or a standby kept when the cluster has an even number of nodes or more than 5. `none`: not in the raft configuration. |
-| `failure_tolerance` | How many voters can fail without stopping writes. |
-| `last_contact` | Time since the leader last heard from the member. |
-
-A new node joins as a non-voter, and becomes a voter after 10 seconds of good health. The cluster keeps an odd number of voters, up to 5. When a voter has been unhealthy for 10 seconds and a healthy standby exists, the standby replaces it.
-
 ## Create a Join Token
 
-This path returns a token that lets one new node join the cluster. The token holds the address and the certificate fingerprint of every member, and is signed with a key that only the cluster knows. It needs a login, not an API token, and works once.
+This path returns a token that lets one node join the cluster, once.
 
 | Method | Path                     |
 | ------ | ------------------------ |
@@ -77,9 +97,9 @@ This path returns a token that lets one new node join the cluster. The token hol
 
 ### Request Body
 
-| Name          | Type    | Description |
-| ------------- | ------- | ----------- |
-| `ttl_seconds` | integer | Optional. How long the token is valid, 300 to 86400. Default 1800. |
+| Field         | Type | Required | Description |
+| ------------- | ---- | -------- | ----------- |
+| `ttl_seconds` | int  | No       | Validity of the token, 300 to 86400. Default `1800`. |
 
 ### Sample Response
 
@@ -96,12 +116,13 @@ This path returns a token that lets one new node join the cluster. The token hol
 
 | Code  | Description |
 | ----- | ----------- |
-| `400` | The lifetime is out of range. |
+| `201` | The token. |
+| `400` | `ttl_seconds` is out of range. |
 | `409` | The node has no `cluster` block. |
 
 ## Join a Cluster
 
-This path is called on the new node, with a token from a member. It needs no login, and works only while the new node has no user and no message: initialize the cluster, not the new node. The new node replaces its database with the cluster's, then takes the next free [Diameter label](#update-a-member).
+This path joins a node with no user and no message to a cluster. It takes no access token.
 
 | Method | Path                   |
 | ------ | ---------------------- |
@@ -109,70 +130,109 @@ This path is called on the new node, with a token from a member. It needs no log
 
 ### Request Body
 
-| Name    | Type   | Description |
-| ------- | ------ | ----------- |
-| `token` | string | The token from [Create a Join Token](#create-a-join-token). |
+| Field   | Type   | Required | Description |
+| ------- | ------ | -------- | ----------- |
+| `token` | string | Yes      | A token from [Create a Join Token](#create-a-join-token). |
+
+### Sample Request
+
+```json
+{
+    "token": "AXsiaWQiOiI0ZjJk..."
+}
+```
+
+### Sample Response
+
+```json
+{
+    "result": {
+        "message": "Joined the cluster"
+    }
+}
+```
 
 ### Response Codes
 
 | Code  | Description |
 | ----- | ----------- |
-| `400` | The token is not valid, has expired, or the node runs another version than the cluster. |
+| `400` | The token is not valid, or the node runs an older version than the cluster. |
 | `403` | The node has a user. |
-| `409` | The node has a message, is already in a cluster, has no `cluster` block, or the token was used. |
+| `409` | The node has a message, is already in a cluster, or has no `cluster` block, or the token was used. |
+| `429` | Too many attempts from the client address. |
 | `502` | No member answered. |
 
 ## Update a Member
 
-This path sets a member's Diameter label, the first label of its Diameter host: `<label>.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`. The member restarts Diameter with the new host, and its peers reconnect. It needs a login, not an API token.
+This path sets the first label of a member's Diameter host, `<label>.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`, and its Diameter peers reconnect.
 
-| Method | Path                                  |
-| ------ | ------------------------------------- |
-| PUT    | `/api/v1/cluster/members/{node_id}`   |
+| Method | Path                                |
+| ------ | ----------------------------------- |
+| PUT    | `/api/v1/cluster/members/{node_id}` |
 
 ### Request Body
 
-| Name             | Type   | Description |
-| ---------------- | ------ | ----------- |
-| `diameter_label` | string | 1 to 63 lowercase letters, digits and hyphens, not starting or ending with a hyphen. Unique in the cluster, and not a configured peer's host. |
+| Field            | Type   | Required | Description |
+| ---------------- | ------ | -------- | ----------- |
+| `diameter_label` | string | Yes      | 1 to 63 lowercase letters, digits and hyphens, not starting or ending with a hyphen. Unique in the cluster, and not a configured peer's host. |
+
+### Sample Request
+
+```json
+{
+    "diameter_label": "smsc-east"
+}
+```
 
 ### Response Codes
 
 | Code  | Description |
 | ----- | ----------- |
-| `400` | The label is not valid. |
+| `400` | Invalid label. |
 | `404` | No such member. |
 | `409` | Another member or a peer has the host. |
 
-## Remove a Member
+## Drain a Member
 
-This path removes a member. The removed node closes its Diameter and SMPP listeners, fails [readiness](status.md#check-readiness), and refuses to start again until its data directory is deleted. Removing the leader hands the leadership to another voter first. It needs a login, not an API token.
+| Method | Path                                       |
+| ------ | ------------------------------------------ |
+| POST   | `/api/v1/cluster/members/{node_id}/drain`  |
+| POST   | `/api/v1/cluster/members/{node_id}/resume` |
 
-| Method | Path                                  |
-| ------ | ------------------------------------- |
-| DELETE | `/api/v1/cluster/members/{node_id}`   |
+`drain` sets the member's `drain_state` to `draining`, then `drained`. `resume` sets it to `active`.
+
+| Interface  | Draining or drained member |
+| ---------- | -------------------------- |
+| Readiness  | [Fails](status.md#check-readiness). |
+| SMPP       | Closes its sessions and refuses binds. |
+| Diameter   | Stays up. |
+| Leadership | Moves to another voter. |
 
 ### Response Codes
 
 | Code  | Description |
 | ----- | ----------- |
 | `404` | No such member. |
+| `409` | The member is the only member of the cluster. |
+
+## Remove a Member
+
+This path removes a drained member from the cluster. The removed node stops serving.
+
+| Method | Path                                |
+| ------ | ----------------------------------- |
+| DELETE | `/api/v1/cluster/members/{node_id}` |
+
+### Query Parameters
+
+| Name    | Type    | Description |
+| ------- | ------- | ----------- |
+| `force` | boolean | `true` removes a member that is not drained, such as one that is down for good. |
+
+### Response Codes
+
+| Code  | Description |
+| ----- | ----------- |
+| `404` | No such member. |
+| `409` | The member is not drained, or the cluster would lose its majority without it. |
 | `503` | No leader. Retry. |
-
-## Recover from the Loss of a Majority
-
-When a majority of the voters are lost, writes stop. To recover, stop every surviving node, and run on each:
-
-```shell
-smsc cluster recover --config smsc.yaml
-```
-
-It prints the node's last log index and term. On the node with the highest term, then the highest index, run:
-
-```shell
-smsc cluster recover --config smsc.yaml --apply
-```
-
-and start it: it is now the only voter and the only member, and no longer trusts the others. Delete the data directory of every other survivor, start them, and join them again with new tokens.
-
-Recovering a node other than the most up-to-date one loses the messages that only the others had.

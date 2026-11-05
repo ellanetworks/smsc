@@ -191,7 +191,7 @@ func TestDeleteESMEKeepsItsMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 

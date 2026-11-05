@@ -59,6 +59,9 @@ type Server struct {
 	apiServer     *http.Server
 	apiListener   net.Listener
 	node          *cluster.Node
+	deliverer     *delivery.Deliverer
+	esmes         *esme.Service
+	drain         *drainer
 	stopLeading   context.CancelFunc
 	engines       sync.WaitGroup
 	smppServer    *smpp.Server
@@ -126,7 +129,6 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	if c := cfg.Cluster; c != nil {
 		clusterCfg.Address = netip.AddrPortFrom(c.Address, uint16(c.Port)).String()
 		clusterCfg.Advertise = c.AdvertiseAddress()
-		clusterCfg.PerformanceMultiplier = c.PerformanceMultiplier
 	}
 
 	node, err := cluster.Open(ctx, clusterCfg, database)
@@ -162,7 +164,11 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	}
 
 	live := settings.NewLive(database, initial)
-	m := newMetrics(database)
+	m, err := newMetrics(database, node)
+	if err != nil {
+		closeStore()
+		return err
+	}
 
 	mux := diameter.NewMux()
 
@@ -210,10 +216,17 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		Received:       m.received,
 		Metrics:        m.smpp,
 		BcryptCost:     s.bcryptCost,
+		Node:           node.ID(),
 		TracerProvider: tp,
 		Now:            time.Now,
 		Logger:         s.Logger,
 	}
+
+	s.drain = &drainer{
+		node: node, store: database, esmes: esmes, logger: s.Logger,
+		wake: make(chan struct{}, 1),
+	}
+
 	oidcLive := oidc.NewLive(database, oidcSettings)
 
 	database.OnEvents(func(ev db.Events) {
@@ -265,7 +278,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 			OIDC:           oidcLive,
 			Backups:        node,
 			Cluster:        node,
-			SMPP:           smppSessions{esmes},
+			SMPP:           smppSessions{database},
 			Ready:          func(ctx context.Context) error { return s.ready(ctx, database, node) },
 			Received:       m.received,
 			Metrics:        m.registry,
@@ -310,6 +323,11 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	followCtx, stopFollowing := context.WithCancel(base)
 	go nodes.follow(followCtx, live)
 
+	if cfg.SMPP != nil {
+		go esmes.RunSessions(followCtx)
+		go esmes.Run(followCtx)
+	}
+
 	p := &purger{
 		store:    database,
 		settings: live.Get,
@@ -324,7 +342,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 
 	leadCtx, stopLeading := context.WithCancel(base)
 
-	node.Lead(func(ctx context.Context, _ uint64) {
+	node.Lead(func(ctx context.Context, term uint64) {
 		s.engines.Add(1)
 		defer s.engines.Done()
 
@@ -336,19 +354,23 @@ func (s *Server) Start(ctx context.Context) (err error) {
 
 		var wg sync.WaitGroup
 
-		wg.Go(func() { deliverer.Run(ctx) })
+		wg.Go(func() { deliverer.Run(ctx, term) })
 		wg.Go(func() { p.run(ctx) })
 
-		if cfg.SMPP != nil {
-			wg.Go(func() { esmes.Run(ctx) })
-		}
+		wg.Go(func() { cleanSessions(ctx, database, s.Logger) })
+		wg.Go(func() { expireNotifications(ctx, esmes) })
+		wg.Go(func() { dropLostSMPPSessions(ctx, node, database, s.Logger) })
 
 		wg.Wait()
 	})
 
 	go s.fenceOnRemoval(base, node, nodes, s.smppServer)
 
+	go s.drain.run(followCtx)
+
 	s.database = database
+	s.deliverer = deliverer
+	s.esmes = esmes
 	s.node = node
 	s.shutdownTracing = shutdownTracing
 	s.nodes = nodes
@@ -437,15 +459,6 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.stopLeading()
 
-	if d := s.Config.API.DrainDelay; d > 0 {
-		s.Logger.InfoContext(ctx, "draining the API", slog.Duration("delay", d))
-
-		select {
-		case <-time.After(d):
-		case <-ctx.Done():
-		}
-	}
-
 	s.stopFollowing()
 
 	if s.smppServer != nil {
@@ -471,6 +484,9 @@ func (s *Server) Shutdown(ctx context.Context) {
 	select {
 	case <-engines:
 	case <-ctx.Done():
+	}
+
+	if err := errors.Join(s.deliverer.Wait(ctx), s.esmes.Wait(ctx)); err != nil {
 		s.Logger.WarnContext(ctx, "shutting down with short message deliveries still in flight")
 	}
 
@@ -661,13 +677,18 @@ func (d diameterStatus) Routes() []api.Route {
 
 func (h hssSender) NewSessionID() string { return h.nodes.Node().NewSessionID() }
 
-type smppSessions struct{ esmes *esme.Service }
+type smppSessions struct{ store *db.DB }
 
 func (s smppSessions) Sessions(id int64) []api.SMPPSession {
-	var out []api.SMPPSession
+	sessions, err := s.store.SMPPSessions(context.Background(), id)
+	if err != nil {
+		return nil
+	}
 
-	for _, sess := range s.esmes.Sessions(id) {
-		out = append(out, api.SMPPSession{BindType: string(sess.BindType), Remote: sess.Remote.String(), BoundAt: sess.BoundAt})
+	out := make([]api.SMPPSession, 0, len(sessions))
+
+	for _, sess := range sessions {
+		out = append(out, api.SMPPSession{BindType: sess.BindType, Remote: sess.Remote, BoundAt: sess.BoundAt})
 	}
 
 	return out

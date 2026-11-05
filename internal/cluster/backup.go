@@ -45,24 +45,7 @@ type Manifest struct {
 const maxRestoreBytes = 64 << 30
 
 func (n *Node) Backup(ctx context.Context, w io.Writer) error {
-	if leading, _ := n.Leader(); leading || n.peers == nil {
-		return n.backupLocal(ctx, w)
-	}
-
-	resp, err := n.toLeader(ctx, http.MethodGet, "/cluster/v1/backup", nil)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return decodeReply(resp, nil)
-	}
-
-	_, err = io.Copy(w, resp.Body)
-
-	return err
+	return n.backupLocal(ctx, w)
 }
 
 func (n *Node) toLeader(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
@@ -84,12 +67,6 @@ func (n *Node) toLeader(ctx context.Context, method, path string, body io.Reader
 }
 
 func (n *Node) backupLocal(ctx context.Context, w io.Writer) error {
-	if r, _ := n.current(); r.State() == raft.Leader {
-		if err := r.Barrier(restoreTimeout).Error(); err != nil {
-			return classify(err)
-		}
-	}
-
 	c, err := n.db.CopyTo(ctx, n.scratch())
 	if err != nil {
 		return err
@@ -103,7 +80,7 @@ func (n *Node) backupLocal(ctx context.Context, w io.Writer) error {
 	}
 
 	manifest, err := json.MarshalIndent(Manifest{
-		Format: backupFormat, Schema: db.SchemaVersion(), Protocol: db.ProtocolVersion, AppliedIndex: c.Position.Index,
+		Format: backupFormat, Schema: c.Position.Schema, Protocol: db.ProtocolVersion, AppliedIndex: c.Position.Index,
 		AppliedTerm: c.Position.Term, Sequences: seqs, CreatedAt: n.cfg.Now().UTC(),
 	}, "", "  ")
 	if err != nil {
@@ -235,10 +212,12 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 		return err
 	}
 
-	header := db.SnapshotHeader()
+	header := db.SnapshotHeader(manifest.Schema)
 
 	return n.pauseEngines(func() error {
-		return n.raft.Restore(&raft.SnapshotMeta{
+		r, _ := n.current()
+
+		return r.Restore(&raft.SnapshotMeta{
 			Version: raft.SnapshotVersionMax, Index: manifest.AppliedIndex, Term: manifest.AppliedTerm,
 			Size: int64(len(header)) + info.Size(),
 		}, io.MultiReader(bytes.NewReader(header), f), restoreTimeout)
@@ -360,7 +339,8 @@ func (n *Node) pauseEngines(fn func() error) error {
 
 	err := fn()
 
-	n.notify <- n.raft.State() == raft.Leader
+	r, _ := n.current()
+	n.notify <- r.State() == raft.Leader
 
 	return err
 }

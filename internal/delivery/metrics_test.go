@@ -77,7 +77,9 @@ type statusFailingStore struct {
 	*fakeStore
 }
 
-func (s statusFailingStore) CompleteMessage(context.Context, int64, db.MessageStatus, time.Time, *db.NewStatusReport, uint8) error {
+func (s statusFailingStore) CompleteMessage(context.Context, int64, db.MessageStatus, time.Time, *db.NewStatusReport, uint8,
+	db.Fence,
+) error {
 	return errors.New("disk I/O error")
 }
 
@@ -86,8 +88,8 @@ func TestMetricsDoNotCountUnstoredStatus(t *testing.T) {
 	d := newDeliverer(statusFailingStore{newFakeStore(pendingMessage(t))}, &fakeRouter{routing: mmeRouting()}, sender)
 	d.Metrics = NewMetrics()
 
-	m, _, _ := d.Store.NextDue(context.Background(), d.Now(), nil)
-	if err := d.process(context.Background(), m); err == nil {
+	m, _, _ := nextDue(d)
+	if err := d.process(context.Background(), 0, m); err == nil {
 		t.Fatal("process succeeded although the status was not stored")
 	}
 
@@ -102,10 +104,10 @@ func TestMessageReplacedDuringDeliveryKeepsItsStatus(t *testing.T) {
 	d := newDeliverer(store, &fakeRouter{routing: mmeRouting()}, sender)
 	d.Metrics = NewMetrics()
 
-	m, _, _ := d.Store.NextDue(context.Background(), d.Now(), nil)
+	m, _, _ := nextDue(d)
 	store.messages[m.ID].Status = db.StatusReplaced
 
-	if err := d.process(context.Background(), m); err != nil {
+	if err := d.process(context.Background(), 0, m); err != nil {
 		t.Fatalf("process = %v", err)
 	}
 

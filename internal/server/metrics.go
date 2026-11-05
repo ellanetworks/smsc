@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/api"
+	"github.com/ellanetworks/smsc/internal/cluster"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/delivery"
 	"github.com/ellanetworks/smsc/internal/esme"
@@ -26,7 +28,7 @@ type metrics struct {
 	requests *api.RequestMetrics
 }
 
-func newMetrics(database *db.DB) *metrics {
+func newMetrics(database *db.DB, node *cluster.Node) (*metrics, error) {
 	m := &metrics{
 		registry: prometheus.NewRegistry(),
 		received: intake.New(),
@@ -34,7 +36,8 @@ func newMetrics(database *db.DB) *metrics {
 		peers:    newPeerMetrics(),
 		requests: api.NewRequestMetrics(),
 	}
-	m.smpp = esme.NewMetrics(database)
+	leading := func() bool { leading, _ := node.Leader(); return leading }
+	m.smpp = esme.NewMetrics(database, leading)
 
 	v := version.Get()
 
@@ -47,8 +50,13 @@ func newMetrics(database *db.DB) *metrics {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		versioncollector.NewCollector("ellasmsc", versioncollector.WithExtraConstLabels(build)),
-		pendingCollector{database},
+		pendingCollector{database: database, leading: leading},
 	)
+	if err := cluster.RegisterRaftMetrics(m.registry); err != nil {
+		return nil, fmt.Errorf("register raft metrics: %w", err)
+	}
+
+	m.registry.MustRegister(node.Collectors()...)
 	m.registry.MustRegister(database.Collectors()...)
 	m.registry.MustRegister(m.received.Collectors()...)
 	m.registry.MustRegister(m.delivery.Collectors()...)
@@ -56,7 +64,7 @@ func newMetrics(database *db.DB) *metrics {
 	m.registry.MustRegister(m.smpp.Collectors()...)
 	m.registry.MustRegister(m.requests.Collectors()...)
 
-	return m
+	return m, nil
 }
 
 func (m *metrics) watchHSS(hss hssSender) {
@@ -75,6 +83,7 @@ var pendingDesc = prometheus.NewDesc(
 
 type pendingCollector struct {
 	database *db.DB
+	leading  func() bool
 }
 
 func (c pendingCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -82,6 +91,10 @@ func (c pendingCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c pendingCollector) Collect(ch chan<- prometheus.Metric) {
+	if !c.leading() {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), pendingTimeout)
 	defer cancel()
 

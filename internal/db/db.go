@@ -30,15 +30,22 @@ func isUnique(err error) bool {
 type DB struct {
 	writer      *sql.DB
 	readers     atomic.Pointer[sql.DB]
+	checkpoints *checkpointer
 	path        string
 	metrics     metrics
 	proposer    Proposer
 	applyMu     sync.Mutex
 	applied     atomic.Uint64
 	appliedMu   sync.Mutex
-	advanced    chan struct{}
+	appliedCh   chan struct{}
+	leaderTime  atomic.Int64
+	schema      atomic.Int64
+	hashMu      sync.Mutex
+	hashes      []appliedHash
 	subscribers []func(Events)
 }
+
+const baselineSchema = 1
 
 var migrations = []string{
 	`CREATE TABLE users (
@@ -184,9 +191,31 @@ var migrations = []string{
 		alert_msisdn TEXT,
 		held_until INTEGER,
 		last_time_stamp INTEGER,
-		updated_at INTEGER NOT NULL
+		claim_term INTEGER,
+		claim_index INTEGER,
+		claimed_at INTEGER,
+		alerted_at INTEGER,
+		next_attempt_at INTEGER,
+		updated_at INTEGER NOT NULL,
+		CHECK ((claim_term IS NULL) = (claim_index IS NULL) AND (claim_term IS NULL) = (claimed_at IS NULL))
 	);
+	CREATE INDEX recipients_claim_term ON recipients (claim_term) WHERE claim_term IS NOT NULL;
 	CREATE INDEX recipients_alert_msisdn ON recipients (alert_msisdn);
+	CREATE INDEX recipients_due ON recipients (next_attempt_at, msisdn) WHERE next_attempt_at IS NOT NULL;
+	CREATE TRIGGER messages_due_insert AFTER INSERT ON messages WHEN NEW.status = 'pending' BEGIN
+		INSERT INTO recipients (msisdn, next_attempt_at, updated_at) VALUES (NEW.msisdn, NEW.next_attempt_at, NEW.updated_at)
+		ON CONFLICT (msisdn) DO UPDATE SET next_attempt_at = COALESCE(MIN(next_attempt_at, excluded.next_attempt_at),
+		excluded.next_attempt_at);
+	END;
+	CREATE TRIGGER messages_due_update AFTER UPDATE OF status, next_attempt_at ON messages
+	WHEN OLD.status = 'pending' OR NEW.status = 'pending' BEGIN
+		UPDATE recipients SET next_attempt_at = (SELECT MIN(next_attempt_at) FROM messages
+		WHERE msisdn = NEW.msisdn AND status = 'pending') WHERE msisdn = NEW.msisdn;
+	END;
+	CREATE TRIGGER messages_due_delete AFTER DELETE ON messages WHEN OLD.status = 'pending' BEGIN
+		UPDATE recipients SET next_attempt_at = (SELECT MIN(next_attempt_at) FROM messages
+		WHERE msisdn = OLD.msisdn AND status = 'pending') WHERE msisdn = OLD.msisdn;
+	END;
 	CREATE TABLE operator (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		mcc TEXT NOT NULL,
@@ -273,6 +302,7 @@ var migrations = []string{
 		expires_at INTEGER NOT NULL,
 		next_attempt_at INTEGER NOT NULL,
 		attempts INTEGER NOT NULL,
+		claimed_by TEXT,
 		result TEXT CHECK (result IN ('acknowledged', 'rejected', 'expired', 'no_user_data')),
 		UNIQUE (message_id, type),
 		CHECK (type = 'receipt' AND tp_status IS NOT NULL AND attempt_id IS NULL
@@ -280,6 +310,16 @@ var migrations = []string{
 	);
 	CREATE INDEX smpp_notifications_due ON smpp_notifications (next_attempt_at) WHERE result IS NULL;
 	CREATE INDEX smpp_notifications_message_id ON smpp_notifications (message_id);
+	CREATE TABLE smpp_sessions (
+		node_id TEXT NOT NULL,
+		session_id INTEGER NOT NULL,
+		esme_id INTEGER NOT NULL REFERENCES esmes (id) ON DELETE CASCADE,
+		bind_type TEXT NOT NULL CHECK (bind_type IN ('transmitter', 'receiver', 'transceiver')),
+		remote TEXT NOT NULL,
+		bound_at INTEGER NOT NULL,
+		PRIMARY KEY (node_id, session_id)
+	) WITHOUT ROWID;
+	CREATE INDEX smpp_sessions_esme_id ON smpp_sessions (esme_id);
 	CREATE TABLE fsm_state (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		applied_index INTEGER NOT NULL,
@@ -306,12 +346,11 @@ var migrations = []string{
 		node_id TEXT PRIMARY KEY CHECK (length(node_id) = 36),
 		address TEXT NOT NULL,
 		fingerprint TEXT UNIQUE,
-		certificate TEXT,
 		diameter_label TEXT NOT NULL UNIQUE CHECK (diameter_label != ''),
 		schema_version INTEGER NOT NULL,
 		version TEXT NOT NULL,
 		joined_at INTEGER NOT NULL,
-		CHECK ((fingerprint IS NULL) = (certificate IS NULL))
+		drain_state TEXT NOT NULL DEFAULT 'active' CHECK (drain_state IN ('active', 'draining', 'drained'))
 	);
 	CREATE UNIQUE INDEX cluster_members_address ON cluster_members (address) WHERE address != '';
 	CREATE TABLE cluster_join_tokens (
@@ -351,6 +390,7 @@ func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 	}
 
 	d.setApplied(state.appliedIndex)
+	d.leaderTime.Store(state.leaderTime)
 	d.proposer = &localProposer{d: d, now: time.Now, last: state.leaderTime}
 
 	for _, opt := range opts {
@@ -369,8 +409,9 @@ func (d *DB) openConns(ctx context.Context) error {
 	}
 
 	writer.SetMaxOpenConns(1)
+	writer.SetMaxIdleConns(1)
 
-	if err := writer.PingContext(ctx); err != nil {
+	if _, err := writer.ExecContext(ctx, "PRAGMA wal_autocheckpoint = 0"); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -389,6 +430,7 @@ func (d *DB) openConns(ctx context.Context) error {
 	}
 
 	reader.SetMaxOpenConns(readConns)
+	reader.SetMaxIdleConns(readConns)
 
 	if err := reader.PingContext(ctx); err != nil {
 		_ = writer.Close()
@@ -397,11 +439,25 @@ func (d *DB) openConns(ctx context.Context) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
+	checkpoints, err := startCheckpointer(ctx, d.path, writer)
+	if err != nil {
+		_ = writer.Close()
+		_ = reader.Close()
+
+		return fmt.Errorf("open database: %w", err)
+	}
+
+	d.checkpoints = checkpoints
+
 	if old := d.readers.Swap(reader); old != nil {
 		_ = old.Close()
 	}
 
 	return nil
+}
+
+func (d *DB) closeConns() error {
+	return errors.Join(d.checkpoints.stop(), d.reader().Close(), d.writer.Close())
 }
 
 func (d *DB) reader() *sql.DB {
@@ -415,7 +471,7 @@ func (d *DB) Ping(ctx context.Context) error {
 }
 
 func (d *DB) Close() error {
-	return errors.Join(d.reader().Close(), d.writer.Close())
+	return d.closeConns()
 }
 
 func (d *DB) migrate(ctx context.Context) error {
@@ -428,7 +484,13 @@ func (d *DB) migrate(ctx context.Context) error {
 		return fmt.Errorf("schema version %d is newer than this binary supports (%d)", version, len(migrations))
 	}
 
-	for i := version; i < len(migrations); i++ {
+	d.schema.Store(int64(version))
+
+	if version > 0 {
+		return nil
+	}
+
+	for i := range baselineSchema {
 		tx, err := d.writer.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
@@ -447,6 +509,8 @@ func (d *DB) migrate(ctx context.Context) error {
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
+
+		d.schema.Store(int64(i + 1))
 	}
 
 	return nil

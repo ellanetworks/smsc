@@ -200,8 +200,8 @@ func TestDeliverStatusReport(t *testing.T) {
 			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
 			d := newDeliverer(store, router, sender)
 
-			r, _ := d.deliver(t.Context(), report, testNow, nil)
-			if err := d.settle(t.Context(), report, r); err != nil {
+			r, _ := d.deliver(t.Context(), report, testNow, nil, nil)
+			if err := d.settle(t.Context(), report, r, nil, false); err != nil {
 				t.Fatal(err)
 			}
 

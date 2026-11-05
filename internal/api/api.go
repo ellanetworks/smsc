@@ -160,6 +160,8 @@ func routes(cfg Config, a *auth) []route {
 		{"POST /api/v1/cluster/join", public, JoinCluster(a)},
 		{"PUT /api/v1/cluster/members/{node_id}", PermManageCluster, a.needsLogin(UpdateMember(a))},
 		{"DELETE /api/v1/cluster/members/{node_id}", PermManageCluster, a.needsLogin(RemoveMember(a))},
+		{"POST /api/v1/cluster/members/{node_id}/drain", PermManageCluster, a.needsLogin(DrainMember(a, db.DrainDraining))},
+		{"POST /api/v1/cluster/members/{node_id}/resume", PermManageCluster, a.needsLogin(DrainMember(a, db.DrainActive))},
 
 		{"GET /api/v1/backup", PermBackup, Backup(a)},
 		{"POST /api/v1/restore", PermBackup, a.needsLogin(Restore(a))},

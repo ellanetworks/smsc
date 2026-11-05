@@ -4,7 +4,7 @@ description: Step-by-step instructions to back up and restore Ella SMSC.
 
 # Back Up and Restore
 
-Ella SMSC backs up and restores over its [API](../reference/api/backup.md), while it runs. A backup holds message content, user accounts, and the single sign-on client secret. Store and transfer it encrypted.
+A backup holds message content, user accounts, and the single sign-on client secret. Store and transfer it encrypted.
 
 ## Back up
 
@@ -17,7 +17,7 @@ Ella SMSC backs up and restores over its [API](../reference/api/backup.md), whil
       -H "Authorization: Bearer ellasmsc_..."
     ```
 
-    This saves `smsc-backup-<time>.tar.gz`. To back up on a schedule, run this command from a cron job, and keep as many backups as you need.
+    This saves `smsc-backup-<time>.tar.gz`. In a cluster, back up from any node.
 
 ## Restore
 
@@ -38,4 +38,20 @@ Ella SMSC backs up and restores over its [API](../reference/api/backup.md), whil
       --data-binary @smsc-backup-<time>.tar.gz
     ```
 
-Every message, user and setting is now the backup's. Messages received after the backup was taken are gone. Users log in again if their sessions were not in the backup, and ESMEs bind again.
+    In a cluster, restore on any node.
+
+## Disaster recovery
+
+Use this procedure when a cluster lost a majority of its nodes, or a standalone node was lost.
+
+1. Install Ella SMSC on a new host, as in [Install](install.md). For a cluster, add a `cluster` block to the configuration file.
+2. Open `http://<host-ip>:5010` in a browser and initialize it with a temporary user.
+3. Restore the backup with that user, as in [Restore](#restore).
+4. For a standalone deployment, stop here.
+5. Log in with a user from the backup, and add the other nodes, as in [Deploy a High Availability Cluster](deploy_ha_cluster.md), steps 2 to 4. Delete the data of any node that was in the old cluster first:
+
+    ```shell
+    sudo snap stop ella-smsc.smscd
+    sudo rm -rf /var/snap/ella-smsc/common/smsc.db* /var/snap/ella-smsc/common/raft
+    sudo snap start ella-smsc.smscd
+    ```

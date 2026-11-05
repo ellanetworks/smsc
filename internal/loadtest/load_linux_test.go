@@ -32,7 +32,7 @@ import (
 var (
 	load = flag.Bool("load", false, "load the SMSC at -smsc")
 
-	smscAddr     = flag.String("smsc", "", "the address of the SMSC, for Diameter and the API")
+	smscAddr     = flag.String("smsc", "", "the addresses of the SMSC's nodes, comma-separated, for Diameter and the API")
 	diameterPort = flag.Int("diameter-port", 3868, "the SCTP port of the SMSC's Diameter")
 	apiPort      = flag.Int("api-port", 5010, "the TCP port of the SMSC's API")
 	localAddr    = flag.String("local", "", "the address of this host, the core's")
@@ -48,7 +48,6 @@ var (
 const (
 	coreHost  = "core.epc.mnc001.mcc001.3gppnetwork.org"
 	realm     = "epc.mnc001.mcc001.3gppnetwork.org"
-	smscHost  = "smsc.node.epc.mnc001.mcc001.3gppnetwork.org"
 	scAddress = "15550000000"
 	mmeNumber = "15550000010"
 
@@ -64,25 +63,77 @@ func TestLoad(t *testing.T) {
 		t.Skip("run with -load")
 	}
 
-	smsc := netip.MustParseAddr(*smscAddr)
-	api := fmt.Sprintf("http://%s:%d/api/v1", smsc, *apiPort)
+	nodes := smscNodes()
+	api := nodes[0].api
 
 	token := logIn(t, api)
+
+	for i := range nodes {
+		nodes[i].host = diameterHost(t, token, nodes[i].api)
+	}
 
 	call(t, token, http.MethodPut, api+"/operator", map[string]any{
 		"mcc": "001", "mnc": "01", "service_centre_address": "+" + scAddress, "numbering": map[string]any{"country_code": "1"},
 	})
 	call(t, token, http.MethodPut, api+"/delivery", map[string]any{"default_validity_seconds": 3600, "retry_intervals_seconds": []int{60}})
 
-	c := newCore(t, netip.MustParseAddr(*localAddr), smsc)
+	c := newCore(t, netip.MustParseAddr(*localAddr), nodes)
 
 	for _, rate := range parseRates(t, *rates) {
-		c.run(t, api, rate)
+		c.run(t, rate)
 	}
 }
 
+func smscNodes() []smscNode {
+	var nodes []smscNode
+
+	for _, a := range strings.Split(*smscAddr, ",") {
+		addr := netip.MustParseAddr(strings.TrimSpace(a))
+		nodes = append(nodes, smscNode{addr: addr, api: fmt.Sprintf("http://%s:%d/api/v1", addr, *apiPort)})
+	}
+
+	return nodes
+}
+
+type smscNode struct {
+	addr netip.Addr
+	api  string
+	host string
+}
+
+func diameterHost(t *testing.T, token, api string) string {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, api+"/diameter", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = res.Body.Close() }()
+
+	var out struct {
+		Result struct {
+			Host string `json:"host"`
+		} `json:"result"`
+	}
+
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil || out.Result.Host == "" {
+		t.Fatalf("GET %s/diameter: %v", api, err)
+	}
+
+	return out.Result.Host
+}
+
 type core struct {
-	node *diameter.Node
+	node  *diameter.Node
+	smscs []smscNode
 
 	next atomic.Int64
 
@@ -91,10 +142,10 @@ type core struct {
 	delivered map[int64]time.Duration
 }
 
-func newCore(t *testing.T, local, smsc netip.Addr) *core {
+func newCore(t *testing.T, local netip.Addr, smscs []smscNode) *core {
 	t.Helper()
 
-	c := &core{sent: map[int64]time.Time{}, delivered: map[int64]time.Duration{}}
+	c := &core{smscs: smscs, sent: map[int64]time.Time{}, delivered: map[int64]time.Duration{}}
 
 	node, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{
@@ -117,33 +168,43 @@ func newCore(t *testing.T, local, smsc netip.Addr) *core {
 
 	c.node = node
 
-	if err := node.SetPeers([]diameter.Peer{{
-		ID: "smsc", Addresses: []netip.Addr{smsc}, Transports: []diameter.Transport{diameter.TransportSCTP},
-		Dial: &diameter.Dial{Port: uint16(*diameterPort)},
-		Applications: []diameter.Application{
-			{ID: sgd.ApplicationID, VendorID: tgpp.VendorID}, {ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
-		},
-	}}); err != nil {
+	var peers []diameter.Peer
+
+	for i, s := range smscs {
+		peers = append(peers, diameter.Peer{
+			ID: "smsc" + strconv.Itoa(i), Host: s.host, Addresses: []netip.Addr{s.addr},
+			Transports: []diameter.Transport{diameter.TransportSCTP}, Dial: &diameter.Dial{Port: uint16(*diameterPort)},
+			Applications: []diameter.Application{
+				{ID: sgd.ApplicationID, VendorID: tgpp.VendorID}, {ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
+			},
+		})
+	}
+
+	if err := node.SetPeers(peers); err != nil {
 		t.Fatal(err)
 	}
 
-	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(200 * time.Millisecond) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		_, err := node.Send(ctx, c.request(s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
+	for i := range smscs {
+		for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			_, err := node.Do(ctx, "smsc"+strconv.Itoa(i), c.request(i, s6c.CommandSendRoutingInfoForSM, s6c.ApplicationID))
 
-		cancel()
+			cancel()
 
-		if err == nil {
-			return c
-		}
+			if err == nil {
+				break
+			}
 
-		if time.Now().After(deadline) {
-			t.Fatalf("the SMSC did not connect: %v", err)
+			if time.Now().After(deadline) {
+				t.Fatalf("SMSC node %s did not connect: %v", smscs[i].addr, err)
+			}
 		}
 	}
+
+	return c
 }
 
-func (c *core) run(t *testing.T, api string, rate float64) {
+func (c *core) run(t *testing.T, rate float64) {
 	t.Helper()
 
 	n := int(rate * step.Seconds())
@@ -153,7 +214,7 @@ func (c *core) run(t *testing.T, api string, rate float64) {
 		ids       = make([]int64, 0, n)
 		idsMu     sync.Mutex
 		wg        sync.WaitGroup
-		cpu0      = scrape(t, api)["process_cpu_seconds_total"]
+		cpu0      = c.cpu(t)
 		started   = time.Now()
 	)
 
@@ -173,7 +234,7 @@ func (c *core) run(t *testing.T, api string, rate float64) {
 
 			began := time.Now()
 
-			if err := c.submit(from, to, id); err != nil {
+			if err := c.submit(int(id)%len(c.smscs), from, to, id); err != nil {
 				submitted.fail(err)
 				return
 			}
@@ -191,7 +252,7 @@ func (c *core) run(t *testing.T, api string, rate float64) {
 	wg.Wait()
 
 	elapsed := time.Since(started)
-	m := scrape(t, api)
+	cpu1 := c.cpu(t)
 
 	for deadline := time.Now().Add(*drain); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		if c.deliveredOf(ids) == len(ids) {
@@ -213,8 +274,20 @@ func (c *core) run(t *testing.T, api string, rate float64) {
 
 	submitted.report(t, fmt.Sprintf("submitted at %4.0f/s", rate), n, elapsed)
 	delivered.report(t, fmt.Sprintf("delivered at %4.0f/s", rate), len(ids), 0)
-	t.Logf("  SMSC: %.0f%% of a CPU, %.1f MiB resident",
-		100*(m["process_cpu_seconds_total"]-cpu0)/elapsed.Seconds(), m["process_resident_memory_bytes"]/(1<<20))
+	for i, s := range c.smscs {
+		t.Logf("  SMSC %s: %.0f%% of a CPU", s.addr, 100*(cpu1[i]-cpu0[i])/elapsed.Seconds())
+	}
+}
+
+func (c *core) cpu(t *testing.T) []float64 {
+	t.Helper()
+
+	out := make([]float64, len(c.smscs))
+	for i, s := range c.smscs {
+		out[i] = scrape(t, s.api)["process_cpu_seconds_total"]
+	}
+
+	return out
 }
 
 func (c *core) deliveredOf(ids []int64) int {
@@ -233,11 +306,11 @@ func (c *core) deliveredOf(ids []int64) int {
 }
 
 // TS 29.338 clause 6.2.1
-func (c *core) submit(from, to int, id int64) error {
+func (c *core) submit(via, from, to int, id int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ans, err := c.node.Send(ctx, c.request(sgd.CommandMOForwardShortMessage, sgd.ApplicationID,
+	ans, err := c.node.Do(ctx, "smsc"+strconv.Itoa(via), c.request(via, sgd.CommandMOForwardShortMessage, sgd.ApplicationID,
 		diameter.OctetString(tgpp.AVPSCAddress, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(scAddress)),
 		diameter.Grouped(tgpp.AVPUserIdentifier, diameter.AVPFlagMandatory, tgpp.VendorID,
 			diameter.UTF8String(diameter.AVPUserName, diameter.AVPFlagMandatory, 0, imsiOf(from)),
@@ -325,7 +398,7 @@ func (c *core) answer(req *diameter.Message, resultCode uint32) *diameter.Messag
 	return ans
 }
 
-func (c *core) request(commandCode, applicationID uint32, avps ...diameter.AVP) *diameter.Message {
+func (c *core) request(via int, commandCode, applicationID uint32, avps ...diameter.AVP) *diameter.Message {
 	return &diameter.Message{
 		Flags:         diameter.FlagRequest | diameter.FlagProxiable,
 		CommandCode:   commandCode,
@@ -335,7 +408,7 @@ func (c *core) request(commandCode, applicationID uint32, avps ...diameter.AVP) 
 			authSessionState(),
 			diameter.UTF8String(diameter.AVPOriginHost, diameter.AVPFlagMandatory, 0, coreHost),
 			diameter.UTF8String(diameter.AVPOriginRealm, diameter.AVPFlagMandatory, 0, realm),
-			diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, smscHost),
+			diameter.UTF8String(diameter.AVPDestinationHost, diameter.AVPFlagMandatory, 0, c.smscs[via].host),
 			diameter.UTF8String(diameter.AVPDestinationRealm, diameter.AVPFlagMandatory, 0, realm),
 		}, avps...),
 	}

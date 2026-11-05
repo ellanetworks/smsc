@@ -55,18 +55,61 @@ const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, 
 	failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
 	absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp, deliver_report`
 
+type recordAttempt struct {
+	Attempt DeliveryAttempt `json:"attempt"`
+	Claim   *claimRecipient `json:"claim,omitempty"`
+}
+
+type recordedAttempt struct {
+	ID    int64 `json:"id"`
+	Claim Claim `json:"claim"`
+}
+
 func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ int64, err error) {
 	defer d.observe(&err)()
 
-	id, err := submit[int64](ctx, d, cmdRecordAttempt, a)
+	r, err := submit[recordedAttempt](ctx, d, cmdRecordAttempt, recordAttempt{Attempt: a})
 	if err != nil {
 		return 0, fmt.Errorf("create delivery attempt: %w", err)
 	}
 
-	return id, nil
+	return r.ID, nil
 }
 
-func applyRecordAttempt(ax *applyCtx, a DeliveryAttempt) (int64, error) {
+// TS 23.040 clause 6.2
+func (d *DB) RecordAttemptAndClaim(ctx context.Context, a DeliveryAttempt, msisdn string, term uint64) (_ Claim,
+	err error,
+) {
+	defer d.observe(&err)()
+
+	r, err := submit[recordedAttempt](ctx, d, cmdRecordAttempt, recordAttempt{
+		Attempt: a, Claim: &claimRecipient{MSISDN: msisdn, Term: term},
+	})
+	if err != nil {
+		return Claim{}, err
+	}
+
+	return r.Claim, nil
+}
+
+func applyRecordAttempt(ax *applyCtx, p recordAttempt) (recordedAttempt, error) {
+	id, err := insertAttempt(ax, p.Attempt)
+	if err != nil {
+		return recordedAttempt{}, err
+	}
+
+	r := recordedAttempt{ID: id}
+
+	if p.Claim != nil {
+		if r.Claim, err = applyClaimRecipient(ax, *p.Claim); err != nil {
+			return recordedAttempt{}, err
+		}
+	}
+
+	return r, nil
+}
+
+func insertAttempt(ax *applyCtx, a DeliveryAttempt) (int64, error) {
 	res, err := ax.tx.ExecContext(ax.ctx,
 		`INSERT INTO delivery_attempts (message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 			failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,

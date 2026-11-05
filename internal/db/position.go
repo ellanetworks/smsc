@@ -19,6 +19,7 @@ type Position struct {
 	Term               uint64
 	Configuration      []byte
 	ConfigurationIndex uint64
+	Schema             int `json:"-"`
 }
 
 func readPosition(ctx context.Context, q querier) (Position, error) {
@@ -65,11 +66,18 @@ func (d *DB) MakeDurable(ctx context.Context, p Position) error {
 
 	defer func() { _ = conn.Close() }()
 
+	var previous int
+	if err := conn.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&previous); err != nil {
+		return fmt.Errorf("make durable: %w", err)
+	}
+
 	if _, err := conn.ExecContext(ctx, `PRAGMA synchronous = FULL`); err != nil {
 		return fmt.Errorf("make durable: %w", err)
 	}
 
-	defer func() { _, _ = conn.ExecContext(context.Background(), `PRAGMA synchronous = NORMAL`) }()
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), fmt.Sprintf(`PRAGMA synchronous = %d`, previous))
+	}()
 
 	if _, err := conn.ExecContext(ctx, `UPDATE fsm_state SET
 		applied_term = CASE WHEN applied_index < ?1 THEN ?2 ELSE applied_term END,
@@ -128,11 +136,11 @@ const (
 
 var ErrSnapshotHeader = errors.New("unsupported snapshot")
 
-func SnapshotHeader() []byte {
+func SnapshotHeader(schema int) []byte {
 	h := make([]byte, snapshotHeaderSize)
 	copy(h, snapshotMagic)
 	binary.BigEndian.PutUint32(h[4:], snapshotFormatVersion)
-	binary.BigEndian.PutUint32(h[8:], uint32(len(migrations)))
+	binary.BigEndian.PutUint32(h[8:], uint32(schema))
 	binary.BigEndian.PutUint32(h[12:], ProtocolVersion)
 
 	return h
@@ -202,6 +210,10 @@ func (d *DB) copyPinned(ctx context.Context, dest string, p *Position) error {
 		return err
 	}
 
+	if err := conn.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&p.Schema); err != nil {
+		return err
+	}
+
 	destDB, err := sql.Open("sqlite3", "file:"+dest)
 	if err != nil {
 		return err
@@ -247,23 +259,6 @@ func (d *DB) copyPinned(ctx context.Context, dest string, p *Position) error {
 			return backup.Finish()
 		})
 	})
-}
-
-func WriteSnapshot(w io.Writer, path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = f.Close() }()
-
-	if _, err := w.Write(SnapshotHeader()); err != nil {
-		return err
-	}
-
-	_, err = io.Copy(w, f)
-
-	return err
 }
 
 func ReadSnapshot(r io.Reader, dir string) (string, error) {
@@ -322,7 +317,7 @@ func (d *DB) install(ctx context.Context, src string, at *Position) error {
 
 	backup := d.path + ".replaced"
 
-	if err := errors.Join(d.reader().Close(), d.writer.Close()); err != nil {
+	if err := d.closeConns(); err != nil {
 		_ = d.openConns(ctx)
 		return fmt.Errorf("install database: %w", err)
 	}
@@ -368,6 +363,7 @@ func (d *DB) install(ctx context.Context, src string, at *Position) error {
 	}
 
 	d.setApplied(state.appliedIndex)
+	d.leaderTime.Store(state.leaderTime)
 
 	if l, ok := d.proposer.(*localProposer); ok {
 		l.mu.Lock()
@@ -401,6 +397,10 @@ func syncDir(dir string) {
 
 func SchemaVersion() int {
 	return len(migrations)
+}
+
+func (d *DB) Schema() int {
+	return int(d.schema.Load())
 }
 
 func Sequences(ctx context.Context, path string) (map[string]int64, error) {
@@ -536,25 +536,3 @@ func (d *DB) KeepClusterState(ctx context.Context, path string) (err error) {
 	return tx.Commit()
 }
 
-func (d *DB) ForceConfiguration(ctx context.Context, configuration []byte, survivor string) error {
-	d.applyMu.Lock()
-	defer d.applyMu.Unlock()
-
-	tx, err := d.writer.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("force the configuration: %w", err)
-	}
-
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `UPDATE fsm_state SET configuration = ?, configuration_index = applied_index
-		WHERE id = 1`, configuration); err != nil {
-		return fmt.Errorf("force the configuration: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_members WHERE node_id != ?`, survivor); err != nil {
-		return fmt.Errorf("forget the lost members: %w", err)
-	}
-
-	return tx.Commit()
-}

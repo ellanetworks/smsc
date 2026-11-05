@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, CircularProgress, TextField } from "@mui/material";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  TextField,
+  Tooltip,
+} from "@mui/material";
+import { ArrowForward as ArrowForwardIcon } from "@mui/icons-material";
 import AuthLayout, { AuthFrame } from "@/components/AuthLayout";
 import { useSnackbar } from "@/contexts/SnackbarContext";
 import PasswordField from "@/components/PasswordField";
@@ -14,6 +21,7 @@ export default function Initialize() {
   const navigate = useNavigate();
 
   const [checking, setChecking] = useState(true);
+  const [clustered, setClustered] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [touched, setTouched] = useState({ email: false, password: false });
@@ -29,6 +37,7 @@ export default function Initialize() {
           navigate("/login", { replace: true });
           return;
         }
+        if (!cancelled) setClustered(status.clustered);
       } catch {}
       if (!cancelled) setChecking(false);
     })();
@@ -72,6 +81,26 @@ export default function Initialize() {
       submitting={submitting}
       valid={!emailError && !newPasswordError}
       onSubmit={submit}
+      footer={
+        <Tooltip
+          title={
+            clustered
+              ? ""
+              : "This node has no cluster block in its configuration file."
+          }
+        >
+          <Box component="span" sx={{ display: "block" }}>
+            <Button
+              fullWidth
+              endIcon={<ArrowForwardIcon />}
+              onClick={() => navigate("/initialize/join")}
+              disabled={submitting || !clustered}
+            >
+              Join an existing cluster instead
+            </Button>
+          </Box>
+        </Tooltip>
+      }
     >
       <TextField
         label="Email"

@@ -2,6 +2,8 @@ import { useEffect, type ReactElement } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { AuthProvider, useAuth, type Permission } from "@/contexts/AuthContext";
+import Cluster from "@/pages/Cluster";
+import ClusterJoin from "@/pages/ClusterJoin";
 import Dashboard from "@/pages/Dashboard";
 import Diameter from "@/pages/Diameter";
 import Initialize from "@/pages/Initialize";
@@ -20,6 +22,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/initialize" element={<Initialize />} />
+      <Route path="/initialize/join" element={<ClusterJoin />} />
       <Route
         path="*"
         element={
@@ -47,6 +50,7 @@ const pages: { path: string; element: ReactElement; permission: Permission }[] =
       element: <SingleSignOn />,
       permission: "oidc:read",
     },
+    { path: "/cluster", element: <Cluster />, permission: "cluster:read" },
     {
       path: "/users/:email",
       element: <UserDetail />,

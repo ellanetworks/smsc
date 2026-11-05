@@ -13,6 +13,7 @@ const ROUTES = [
     route: "/single-sign-on",
     heading: "Single Sign-On",
   },
+  { label: "Cluster", route: "/cluster", heading: "Cluster" },
   { label: "Profile", route: "/profile", heading: "Profile" },
 ] as const;
 

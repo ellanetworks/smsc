@@ -34,7 +34,7 @@ func TestCompleteMessageStoresStatusReport(t *testing.T) {
 	report := testReport(delivered)
 	report.Status = 0x46
 
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, report, 0); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, delivered, report, 0, Fence{}); err != nil {
 		t.Fatalf("CompleteMessage: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestStatusReportJoinsTheRecipientsQueue(t *testing.T) {
 	}
 
 	until := base.Add(time.Hour)
-	if err := d.ScheduleRetry(ctx, held, until, base, true); err != nil {
+	if err := d.ScheduleRetry(ctx, held, until, base, true, time.Time{}, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,7 +90,7 @@ func TestStatusReportJoinsTheRecipientsQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, base.Add(time.Minute), testReport(base.Add(time.Minute)), 0); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, base.Add(time.Minute), testReport(base.Add(time.Minute)), 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,7 +125,7 @@ func TestStatusReportOnlyOnMessagesFromAnMS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now), 0); !errors.Is(err, ErrNotFound) {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now), 0, Fence{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 
@@ -138,7 +138,7 @@ func TestStatusReportOnlyOnMessagesFromAnMS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, mobile, StatusDelivered, now, testReport(now), 0); err != nil {
+	if err := d.CompleteMessage(ctx, mobile, StatusDelivered, now, testReport(now), 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -147,7 +147,7 @@ func TestStatusReportOnlyOnMessagesFromAnMS(t *testing.T) {
 		t.Fatalf("reports = %+v, %v", reports, err)
 	}
 
-	if err := d.CompleteMessage(ctx, reports[0].ID, StatusDelivered, now, testReport(now), 0); !errors.Is(err, ErrNotFound) {
+	if err := d.CompleteMessage(ctx, reports[0].ID, StatusDelivered, now, testReport(now), 0, Fence{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("report on a report: err = %v, want ErrNotFound", err)
 	}
 }
@@ -162,7 +162,7 @@ func TestMessageQueriesLeaveOutStatusReports(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now), 0); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now), 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,7 +199,7 @@ func TestSchemaKeepsStatusReportsConsistent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now), 0); err != nil {
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, testReport(now), 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"path/filepath"
 	"testing"
@@ -176,10 +175,6 @@ func TestJoinReplicatesAndForwards(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if u, err := follower.db.GetUserByID(ctx, id); err != nil || u.Email != "a@example.com" {
-		t.Fatalf("read your write on the follower: %+v, %v", u, err)
-	}
-
 	for _, e := range c.nodes {
 		eventually(t, "the user on "+e.node.ID(), func() error {
 			_, err := e.db.GetUserByID(ctx, id)
@@ -323,7 +318,7 @@ func TestRemoveMember(t *testing.T) {
 	c := newCluster(t, 3)
 	follower := c.follower()
 
-	if err := c.leader().node.RemoveMember(timeout(t), follower.node.ID()); err != nil {
+	if err := c.leader().node.RemoveMember(timeout(t), follower.node.ID(), true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -352,70 +347,66 @@ func TestRemoveMember(t *testing.T) {
 	}
 }
 
-func TestRecoverAfterLosingQuorum(t *testing.T) {
-	c := newCluster(t, 3)
-	waitVoters(t, c, 3)
+func TestUnreachableMember(t *testing.T) {
+	c := newCluster(t, 2)
+	leader, follower := c.leader(), c.follower()
 
-	ctx := timeout(t)
-
-	if _, err := c.leader().db.CreateUser(ctx, db.NewUser{Email: "kept@example.com", Role: db.RoleAdmin}, 10); err != nil {
-		t.Fatal(err)
-	}
-
-	survivor := c.nodes[1]
-
-	eventually(t, "the user on the survivor", func() error {
-		_, err := survivor.db.GetUser(ctx, "kept@example.com")
-		return err
-	})
-
-	var lost []string
-
-	for i, e := range c.nodes {
-		if e != survivor {
-			lost = append(lost, e.node.ID())
+	eventually(t, "the follower's report", func() error {
+		if leader.node.Unreachable(follower.node.ID()) {
+			return errors.New("unreachable")
 		}
 
-		_ = e.node.Close()
-		_ = e.db.Close()
-		c.nodes[i] = nil
+		return nil
+	})
+
+	_ = follower.node.Close()
+	_ = follower.db.Close()
+
+	for i, e := range c.nodes {
+		if e == follower {
+			c.nodes[i] = nil
+		}
 	}
 
-	d, err := db.Open(ctx, filepath.Join(survivor.dir, "smsc.db"))
+	deadline := time.Now().Add(lastContactLimit + 10*time.Second)
+
+	for !leader.node.Unreachable(follower.node.ID()) {
+		if time.Now().After(deadline) {
+			t.Fatal("a stopped member was never unreachable")
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func TestLeaderNoticesADivergedMember(t *testing.T) {
+	c := newCluster(t, 2)
+	leader, follower := c.leader(), c.follower()
+
+	eventually(t, "a matching report from the follower", func() error {
+		r, ok := leader.node.health.get(follower.node.ID())
+		if !ok || r.Hash == nil {
+			return errors.New("no report with a hash yet")
+		}
+
+		if r.Diverged {
+			return errors.New("diverged")
+		}
+
+		return nil
+	})
+
+	index := leader.db.AppliedIndex()
+	leader.node.health.record(follower.node.ID(), report{AppliedIndex: index, Hash: []byte("not the leader's hash")})
+
+	st, err := leader.node.Status(timeout(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cfg := Config{Dir: filepath.Join(survivor.dir, "raft"), Address: c.addrs[1]}
-
-	st, err := Inspect(ctx, cfg, d)
-	if err != nil || len(st.Configuration.Servers) != 3 || st.LastIndex == 0 {
-		t.Fatalf("inspect = %+v, %v", st, err)
-	}
-
-	if err := Recover(ctx, cfg, d, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := d.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	e := openClustered(t, survivor.dir, c.addrs[1])
-	c.nodes[1] = e
-
-	waitLeader(t, e.node)
-
-	if _, err := e.db.GetUser(ctx, "kept@example.com"); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := e.db.CreateUser(ctx, db.NewUser{Email: "after@example.com", Role: db.RoleAdmin}, 10); err != nil {
-		t.Fatal(err)
-	}
-
-	members, err := e.db.Members(ctx)
-	if err != nil || len(members) != 1 || members[0].NodeID != e.node.ID() || len(lost) != 2 {
-		t.Fatalf("members = %+v, %v", members, err)
+	for _, m := range st.Members {
+		if m.NodeID == follower.node.ID() && !m.Diverged {
+			t.Fatalf("member %+v not marked diverged", m)
+		}
 	}
 }

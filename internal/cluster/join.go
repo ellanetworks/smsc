@@ -144,9 +144,9 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 		return joinReply{}, fmt.Errorf("%w: the certificate is not node %s's in this cluster", ErrInvalidJoin, req.NodeID)
 	case cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature) != nil:
 		return joinReply{}, fmt.Errorf("%w: the certificate is not self-signed", ErrInvalidJoin)
-	case req.Schema != db.SchemaVersion() || req.Protocol != db.ProtocolVersion:
-		return joinReply{}, fmt.Errorf("%w: the node runs schema %d and protocol %d, the cluster %d and %d",
-			ErrInvalidJoin, req.Schema, req.Protocol, db.SchemaVersion(), db.ProtocolVersion)
+	case req.Schema < n.db.Schema() || req.Protocol != db.ProtocolVersion:
+		return joinReply{}, fmt.Errorf("%w: the node supports schema %d and protocol %d, the cluster runs %d and %d",
+			ErrInvalidJoin, req.Schema, req.Protocol, n.db.Schema(), db.ProtocolVersion)
 	case req.NodeID == n.id:
 		return joinReply{}, fmt.Errorf("%w: the node has the leader's ID", ErrInvalidJoin)
 	}
@@ -156,7 +156,7 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 	}
 
 	m := db.Member{
-		NodeID: req.NodeID, Address: req.Address, Fingerprint: pki.Fingerprint(cert), Certificate: req.Certificate,
+		NodeID: req.NodeID, Address: req.Address, Fingerprint: pki.Fingerprint(cert),
 		SchemaVersion: req.Schema, Version: req.Version,
 	}
 
@@ -347,10 +347,6 @@ func (n *Node) postJoin(ctx context.Context, client *http.Client, addr string, r
 	}
 
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("%w: %s", errRetry, resp.Status)
-	}
 
 	return decodeReply(resp, out)
 }

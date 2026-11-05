@@ -46,13 +46,12 @@ var (
 )
 
 type Config struct {
-	Dir                   string
-	Address               string
-	Advertise             string
-	PerformanceMultiplier int
-	Version               string
-	Now                   func() time.Time
-	Logger                *slog.Logger
+	Dir       string
+	Address   string
+	Advertise string
+	Version   string
+	Now       func() time.Time
+	Logger    *slog.Logger
 }
 
 func (c Config) clustered() bool {
@@ -65,10 +64,11 @@ type Node struct {
 	db    *db.DB
 	certs *certs
 
-	ln     *listener.Listener
-	rpc    *http.Server
-	peers  *peerClient
-	health *health
+	metrics *metrics
+	ln      *listener.Listener
+	rpc     *http.Server
+	peers   *peerClient
+	health  *health
 
 	raftMu    sync.RWMutex
 	raft      *raft.Raft
@@ -79,6 +79,7 @@ type Node struct {
 
 	mu      sync.Mutex
 	term    uint64
+	since   time.Time
 	ready   chan struct{}
 	lead    []func(ctx context.Context, term uint64)
 	leading context.Context
@@ -101,10 +102,6 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
-	}
-
-	if cfg.PerformanceMultiplier < 1 {
-		cfg.PerformanceMultiplier = 1
 	}
 
 	if cfg.Advertise == "" {
@@ -135,6 +132,7 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 	}
 
 	n.health = newHealth(n)
+	n.metrics = newMetrics()
 
 	if _, err := os.Stat(filepath.Join(cfg.Dir, joiningFile)); err == nil {
 		if err := n.finishJoin(); err != nil {
@@ -229,11 +227,11 @@ func (n *Node) electionTimeout() time.Duration {
 		return soleVoterTimeout
 	}
 
-	return raft.DefaultConfig().ElectionTimeout * time.Duration(n.cfg.PerformanceMultiplier)
+	return raft.DefaultConfig().ElectionTimeout
 }
 
 func (n *Node) startRaft(ctx context.Context) error {
-	store, err := raftboltdb.New(raftboltdb.Options{Path: filepath.Join(n.cfg.Dir, logFile)})
+	store, err := openLogStore(filepath.Join(n.cfg.Dir, logFile))
 	if err != nil {
 		return fmt.Errorf("open the raft log: %w", err)
 	}
@@ -269,11 +267,7 @@ func (n *Node) startRaft(ctx context.Context) error {
 	}
 
 	conf := raft.DefaultConfig()
-	m := time.Duration(n.cfg.PerformanceMultiplier)
 	conf.LocalID = raft.ServerID(n.id)
-	conf.HeartbeatTimeout *= m
-	conf.ElectionTimeout *= m
-	conf.LeaderLeaseTimeout *= m
 
 	if !n.cfg.clustered() {
 		conf.HeartbeatTimeout, conf.ElectionTimeout, conf.LeaderLeaseTimeout = soleVoterTimeout, soleVoterTimeout,
@@ -344,7 +338,7 @@ func (n *Node) startRaft(ctx context.Context) error {
 	default:
 	}
 
-	n.raft, n.store, n.transport, n.batcher = r, store, transport, newBatcher(r, n.cfg.Now)
+	n.raft, n.store, n.transport, n.batcher = r, store, transport, newBatcher(r, n.cfg.Now, n.db.LeaderTime)
 
 	return nil
 }
@@ -384,7 +378,9 @@ func (n *Node) current() (*raft.Raft, *batcher) {
 type batcherProposer struct{ b *batcher }
 
 func (p batcherProposer) Propose(ctx context.Context, cmds []db.Command) ([]db.Result, error) {
-	return p.b.propose(ctx, cmds)
+	results, _, err := p.b.propose(ctx, cmds)
+
+	return results, err
 }
 
 func (n *Node) ID() string {
@@ -469,7 +465,7 @@ func (n *Node) becomeLeader() {
 			return
 		}
 
-		n.term, n.leading = term, ctx
+		n.term, n.leading, n.since = term, ctx, n.cfg.Now()
 		close(n.ready)
 
 		for _, f := range n.lead {
@@ -477,6 +473,7 @@ func (n *Node) becomeLeader() {
 		}
 
 		n.run(ctx, term, n.runAutopilot)
+		n.run(ctx, term, n.runUpgrades)
 	}()
 }
 

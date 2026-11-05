@@ -38,7 +38,7 @@ func TestMessagesStoreTheirCreationContext(t *testing.T) {
 
 	deliver, deliverParent := tracedContext(t)
 
-	if err := d.CompleteMessage(deliver, id, StatusDelivered, at.Add(time.Minute), testReport(at.Add(time.Minute)), 0); err != nil {
+	if err := d.CompleteMessage(deliver, id, StatusDelivered, at.Add(time.Minute), testReport(at.Add(time.Minute)), 0, Fence{}); err != nil {
 		t.Fatal(err)
 	}
 
