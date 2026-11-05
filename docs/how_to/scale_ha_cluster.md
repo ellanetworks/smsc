@@ -4,7 +4,7 @@ description: Add and remove nodes in a running Ella SMSC high-availability clust
 
 # Scale a High Availability Cluster
 
-This guide walks through adding a node to an existing Ella SMSC high-availability cluster, and removing one.
+This guide walks through adding a node to an existing Ella SMSC high-availability cluster, removing one, and replacing one whose database diverged.
 
 ## Prerequisites
 
@@ -26,3 +26,19 @@ This guide walks through adding a node to an existing Ella SMSC high-availabilit
 2. In the node's **Node actions** menu, click **Drain this node**. Wait until its **Drain** column shows **Drained**.
 3. In the same menu, click **Remove from cluster**. For a node that is down for good, check **Force remove (skip drain)**.
 4. Disconnect the Diameter peers from the removed node.
+
+## Replace a diverged node
+
+A node whose database differs from the leader's shows **Diverged** in the **Healthy** column of the **Cluster** page, and increments `ellasmsc_cluster_state_mismatches_total`.
+
+1. Remove the node, as in [Remove a node](#remove-a-node).
+2. On the removed node, stop Ella SMSC and delete its data:
+
+    ```shell
+    sudo snap stop ella-smsc.smscd
+    sudo rm -rf /var/snap/ella-smsc/common/smsc.db* /var/snap/ella-smsc/common/raft
+    sudo snap start ella-smsc.smscd
+    ```
+
+3. Add the node back, as in [Add a node](#add-a-node), steps 2, 3, 5 and 6. It gets a new **Diameter Host**.
+4. On the **Cluster** page, verify the node is shown as **Healthy**.

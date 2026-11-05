@@ -60,6 +60,7 @@ func newCore(t *testing.T, nodes []*node) *core {
 		},
 		Handler:           diameter.HandlerFunc(c.serve),
 		ReconnectInterval: 100 * time.Millisecond,
+		WatchdogInterval:  6 * time.Second,
 		Logger:            slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
@@ -92,20 +93,26 @@ func newCore(t *testing.T, nodes []*node) *core {
 	}
 
 	for _, smsc := range nodes {
-		host := smsc.diameterHost()
-
-		eventually(t, "the core connected to "+smsc.name, func() error {
-			for _, p := range n.Peers() {
-				if strings.EqualFold(p.Host, host) && p.State == diameter.PeerOpen {
-					return nil
-				}
-			}
-
-			return fmt.Errorf("not connected to %s", host)
-		})
+		c.waitOpen(smsc)
 	}
 
 	return c
+}
+
+func (c *core) waitOpen(smsc *node) {
+	c.t.Helper()
+
+	host := smsc.diameterHost()
+
+	eventually(c.t, "the core connected to "+smsc.name, func() error {
+		for _, p := range c.node.Peers() {
+			if strings.EqualFold(p.Host, host) && p.State == diameter.PeerOpen {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("not connected to %s", host)
+	})
 }
 
 // TS 29.338 clause 6.2.1

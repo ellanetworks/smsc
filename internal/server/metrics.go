@@ -52,6 +52,7 @@ func newMetrics(database *db.DB, node *cluster.Node) (*metrics, error) {
 		versioncollector.NewCollector("ellasmsc", versioncollector.WithExtraConstLabels(build)),
 		pendingCollector{database: database, leading: leading},
 	)
+
 	if err := cluster.RegisterRaftMetrics(m.registry); err != nil {
 		return nil, fmt.Errorf("register raft metrics: %w", err)
 	}

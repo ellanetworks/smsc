@@ -311,7 +311,7 @@ func (n *Node) redeem(ctx context.Context, claims pki.Claims, req joinRequest) (
 				return reply, nil
 			}
 
-			if !errors.Is(err, errRetry) {
+			if !retryableJoin(err) {
 				return joinReply{}, err
 			}
 
@@ -326,6 +326,16 @@ func (n *Node) redeem(ctx context.Context, claims pki.Claims, req joinRequest) (
 		case <-time.After(backoff(attempt + 4)):
 		}
 	}
+}
+
+func retryableJoin(err error) bool {
+	if errors.Is(err, errRetry) {
+		return true
+	}
+
+	var remote *RemoteError
+
+	return errors.As(err, &remote) && remote.Status >= http.StatusInternalServerError && remote.Code == ""
 }
 
 func (n *Node) postJoin(ctx context.Context, client *http.Client, addr string, req joinRequest, out *joinReply) error {

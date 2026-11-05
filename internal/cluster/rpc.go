@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -205,7 +206,12 @@ func (n *Node) handleBootstrapJoin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := n.verifyToken(r.Context(), req.Token); err != nil {
+		if !errors.Is(err, ErrInvalidJoin) {
+			err = fmt.Errorf("%w: %w", errRetry, err)
+		}
+
 		writeRPCError(w, err)
+
 		return
 	}
 

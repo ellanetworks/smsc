@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ const (
 	waitTimeout   = 60 * time.Second
 )
 
-var binary string
+var binary, upgraded string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "smsc-integration-*")
@@ -35,14 +36,27 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	binary = filepath.Join(dir, "smsc")
+	binary, upgraded = filepath.Join(dir, "smsc"), filepath.Join(dir, "smsc-next")
 
-	build := exec.CommandContext(context.Background(), "go", "build", "-o", binary, "../../cmd/smsc")
-	build.Stdout, build.Stderr = os.Stdout, os.Stderr
+	builds := []*exec.Cmd{
+		exec.CommandContext(context.Background(), "go", "build", "-o", binary, "../../cmd/smsc"),
+		exec.CommandContext(context.Background(), "go", "build", "-tags", "upgradetest", "-o", upgraded, "../../cmd/smsc"),
+	}
 
-	if err := build.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	for _, build := range builds {
+		build.Stdout, build.Stderr = os.Stdout, os.Stderr
+
+		if err := build.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
+	for _, build := range builds {
+		if err := build.Wait(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 
 	code := m.Run()
@@ -52,19 +66,33 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+var (
+	portsMu sync.Mutex
+	ports   = map[int]bool{}
+)
+
 func freePort(t *testing.T) int {
 	t.Helper()
 
-	var lc net.ListenConfig
+	portsMu.Lock()
+	defer portsMu.Unlock()
 
-	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for {
+		var lc net.ListenConfig
+
+		ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		port := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+
+		if !ports[port] {
+			ports[port] = true
+			return port
+		}
 	}
-
-	defer func() { _ = ln.Close() }()
-
-	return ln.Addr().(*net.TCPAddr).Port
 }
 
 type node struct {
@@ -75,6 +103,7 @@ type node struct {
 	diameterPort int
 	clusterPort  int
 	smppPort     int
+	bin          string
 	cmd          *exec.Cmd
 	exited       chan struct{}
 	token        string
@@ -85,9 +114,29 @@ func newNode(t *testing.T, name string) *node {
 	t.Helper()
 
 	n := &node{
-		t: t, name: name, dir: t.TempDir(), apiPort: freePort(t), diameterPort: freePort(t), clusterPort: freePort(t),
-		smppPort: freePort(t),
+		t: t, name: name, bin: binary, dir: t.TempDir(), apiPort: freePort(t), diameterPort: freePort(t),
+		clusterPort: freePort(t), smppPort: freePort(t),
 	}
+
+	n.configure()
+
+	t.Cleanup(func() {
+		n.kill()
+
+		if t.Failed() {
+			if out, err := os.ReadFile(filepath.Join(n.dir, "smsc.log")); err == nil {
+				fmt.Fprintf(os.Stderr, "--- %s log ---\n%s\n", n.name, tail(out, 8<<10))
+			}
+		}
+	})
+
+	n.start()
+
+	return n
+}
+
+func (n *node) configure() {
+	n.t.Helper()
 
 	config := fmt.Sprintf(`logging:
   level: debug
@@ -108,22 +157,8 @@ cluster:
 `, filepath.Join(n.dir, "smsc.db"), n.apiPort, n.diameterPort, n.smppPort, n.clusterPort)
 
 	if err := os.WriteFile(filepath.Join(n.dir, "smsc.yaml"), []byte(config), 0o600); err != nil {
-		t.Fatal(err)
+		n.t.Fatal(err)
 	}
-
-	t.Cleanup(func() {
-		n.kill()
-
-		if t.Failed() {
-			if out, err := os.ReadFile(filepath.Join(n.dir, "smsc.log")); err == nil {
-				fmt.Fprintf(os.Stderr, "--- %s log ---\n%s\n", n.name, tail(out, 8<<10))
-			}
-		}
-	})
-
-	n.start()
-
-	return n
 }
 
 func tail(b []byte, n int) []byte {
@@ -137,12 +172,23 @@ func tail(b []byte, n int) []byte {
 func (n *node) start() {
 	n.t.Helper()
 
+	n.launch()
+
+	eventually(n.t, n.name+" to answer", func() error {
+		_, err := n.request(http.MethodGet, "/api/v1/livez", nil, nil)
+		return err
+	})
+}
+
+func (n *node) launch() {
+	n.t.Helper()
+
 	log, err := os.OpenFile(filepath.Join(n.dir, "smsc.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		n.t.Fatal(err)
 	}
 
-	cmd := exec.CommandContext(context.Background(), binary, "--config", filepath.Join(n.dir, "smsc.yaml"))
+	cmd := exec.CommandContext(context.Background(), n.bin, "--config", filepath.Join(n.dir, "smsc.yaml"))
 	cmd.Stdout, cmd.Stderr = log, log
 
 	if err := cmd.Start(); err != nil {
@@ -159,11 +205,6 @@ func (n *node) start() {
 	}()
 
 	n.cmd, n.exited = cmd, exited
-
-	eventually(n.t, n.name+" to answer", func() error {
-		_, err := n.request(http.MethodGet, "/api/v1/livez", nil, nil)
-		return err
-	})
 }
 
 func (n *node) running() bool {
@@ -187,6 +228,20 @@ func (n *node) kill() {
 	_ = n.cmd.Process.Signal(syscall.SIGCONT)
 	_ = n.cmd.Process.Kill()
 	<-n.exited
+}
+
+func (n *node) stop() {
+	if !n.running() {
+		return
+	}
+
+	_ = n.cmd.Process.Signal(syscall.SIGTERM)
+
+	select {
+	case <-n.exited:
+	case <-time.After(30 * time.Second):
+		n.kill()
+	}
 }
 
 func (n *node) freeze() { _ = n.cmd.Process.Signal(syscall.SIGSTOP) }
@@ -280,6 +335,7 @@ func (n *node) logIn() {
 
 type member struct {
 	NodeID     string `json:"node_id"`
+	Address    string `json:"address"`
 	Suffrage   string `json:"suffrage"`
 	Leader     bool   `json:"leader"`
 	Healthy    *bool  `json:"healthy"`
@@ -288,6 +344,7 @@ type member struct {
 
 type status struct {
 	NodeID   string   `json:"node_id"`
+	Schema   int      `json:"schema"`
 	LeaderID string   `json:"leader_id"`
 	Members  []member `json:"members"`
 }
@@ -350,7 +407,7 @@ func newCluster(t *testing.T) *cluster {
 		n.id = st.NodeID
 	}
 
-	c.waitStable(size)
+	c.waitStable()
 
 	return c
 }
@@ -379,7 +436,9 @@ func (c *cluster) live() *node {
 	return nil
 }
 
-func (c *cluster) waitStable(voters int) {
+func (c *cluster) waitStable() {
+	const voters = 3
+
 	c.t.Helper()
 
 	eventually(c.t, fmt.Sprintf("%d healthy voters", voters), func() error {

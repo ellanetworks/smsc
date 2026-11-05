@@ -165,6 +165,8 @@ type result struct {
 
 var errInterrupted = errors.New("short message delivery interrupted")
 
+var anyClaim = time.Unix(0, 0)
+
 var (
 	statusCongestion      = tpdu.TemporaryCongestion.GaveUp()
 	statusNoResponse      = tpdu.TemporaryNoResponse.GaveUp()
@@ -336,7 +338,7 @@ func (d *Deliverer) holdTakenOver(ctx context.Context, r *run) bool {
 	for {
 		now := d.Now()
 
-		claimed, err := d.Store.ClaimedBefore(ctx, r.term, now.Add(-d.holdWindow()))
+		claimed, err := d.Store.ClaimedBefore(ctx, r.term, anyClaim)
 		if err == nil {
 			until := now.Add(d.holdWindow())
 
@@ -369,7 +371,7 @@ func (d *Deliverer) refreshHolds(ctx context.Context, r *run) (time.Time, bool) 
 
 	now := d.Now()
 
-	claimed, err := d.Store.ClaimedBefore(ctx, r.term, now.Add(-d.holdWindow()))
+	claimed, err := d.Store.ClaimedBefore(ctx, r.term, anyClaim)
 
 	still := make(map[string]bool, len(claimed))
 	for _, msisdn := range claimed {

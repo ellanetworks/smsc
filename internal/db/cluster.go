@@ -255,15 +255,23 @@ func applyAdmitMember(a *applyCtx, p admitMember) (struct{}, error) {
 		return struct{}{}, fmt.Errorf("join token %s: %w", p.TokenID, ErrTokenExpired)
 	}
 
-	if _, err := member(a.ctx, a.tx, m.NodeID); err == nil {
+	existing, err := member(a.ctx, a.tx, m.NodeID)
+	admitted := err == nil
+
+	switch {
+	case admitted && (existing.Fingerprint != m.Fingerprint || existing.Address != m.Address):
 		return struct{}{}, fmt.Errorf("%w: node %s is already a member", settings.ErrConflict, m.NodeID)
-	} else if !errors.Is(err, ErrNotFound) {
+	case !admitted && !errors.Is(err, ErrNotFound):
 		return struct{}{}, err
 	}
 
 	if _, err := a.tx.ExecContext(a.ctx, `UPDATE cluster_join_tokens SET node_id = ?, fingerprint = ? WHERE token_id = ?`,
 		m.NodeID, m.Fingerprint, p.TokenID); err != nil {
 		return struct{}{}, err
+	}
+
+	if admitted {
+		return applyRegisterMember(a, m)
 	}
 
 	return struct{}{}, insertMember(a, m)

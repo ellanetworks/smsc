@@ -1302,6 +1302,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -1330,7 +1332,11 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          description: No member of the cluster answered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/v1/cluster/members/{node_id}:
     put:
@@ -1362,6 +1368,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
@@ -1404,8 +1412,8 @@ paths:
       operationId: drainClusterMember
       summary: Drain a cluster member
       description: >-
-        The member fails readiness, refuses new SMPP binds, closes its SMPP sessions after api.drain_delay, and hands
-        the leadership over if it leads. Diameter stays up. It is then drained, and can be removed or stopped. Needs a
+        The member fails readiness, refuses new SMPP binds, closes its SMPP sessions, and hands the leadership over
+        if it leads. Diameter stays up. It is then drained, and can be removed or stopped. Needs a
         login, not an API token.
       parameters:
         - name: node_id
@@ -1425,6 +1433,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -1450,6 +1460,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -2134,6 +2146,12 @@ components:
             type: string
     Conflict:
       description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Gone:
+      description: The node was removed from the cluster.
       content:
         application/json:
           schema:

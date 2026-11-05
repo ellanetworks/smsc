@@ -189,7 +189,7 @@ func (l *Listener) serve(raw net.Conn) {
 	h, ok := l.handlers[cs.NegotiatedProtocol]
 
 	fp := ""
-	if len(cs.PeerCertificates) > 0 {
+	if len(cs.PeerCertificates) > 0 && cs.NegotiatedProtocol != ALPNJoin {
 		fp = pki.Fingerprint(cs.PeerCertificates[0])
 	}
 

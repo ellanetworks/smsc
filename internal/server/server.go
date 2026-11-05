@@ -164,6 +164,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	}
 
 	live := settings.NewLive(database, initial)
+
 	m, err := newMetrics(database, node)
 	if err != nil {
 		closeStore()

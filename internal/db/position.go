@@ -535,4 +535,3 @@ func (d *DB) KeepClusterState(ctx context.Context, path string) (err error) {
 
 	return tx.Commit()
 }
-

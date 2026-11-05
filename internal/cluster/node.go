@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -52,6 +53,10 @@ type Config struct {
 	Version   string
 	Now       func() time.Time
 	Logger    *slog.Logger
+
+	transport       func(raft.Transport) raft.Transport
+	logStore        func(raft.LogStore) raft.LogStore
+	logStoreTimeout time.Duration
 }
 
 func (c Config) clustered() bool {
@@ -242,7 +247,12 @@ func (n *Node) startRaft(ctx context.Context) error {
 		return err
 	}
 
-	logs, err := raft.NewLogCache(logCacheSize, timeoutLogStore{LogStore: store, timeout: logStoreTimeout})
+	var inner raft.LogStore = store
+	if n.cfg.logStore != nil {
+		inner = n.cfg.logStore(store)
+	}
+
+	logs, err := raft.NewLogCache(logCacheSize, timeoutLogStore{LogStore: inner, timeout: cmp.Or(n.cfg.logStoreTimeout, logStoreTimeout)})
 	if err != nil {
 		_ = store.Close()
 		return fmt.Errorf("open the raft log: %w", err)
@@ -299,6 +309,10 @@ func (n *Node) startRaft(ctx context.Context) error {
 			Logger:          conf.Logger,
 		})
 		addr = raft.ServerAddress(n.cfg.Advertise)
+
+		if n.cfg.transport != nil {
+			transport = n.cfg.transport(transport)
+		}
 	} else {
 		addr, transport = raft.NewInmemTransport(raft.ServerAddress(n.id))
 	}

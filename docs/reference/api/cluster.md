@@ -124,6 +124,7 @@ This path returns a token that lets one node join the cluster, once.
 | `201` | The token. |
 | `400` | `ttl_seconds` is out of range. |
 | `409` | The node has no `cluster` block. |
+| `410` | The node was removed from the cluster. |
 
 ## Join a Cluster
 
@@ -161,7 +162,7 @@ This path joins a node with no user and no message to a cluster. It takes no acc
 
 | Code  | Description |
 | ----- | ----------- |
-| `400` | The token is not valid, or the node runs an older version than the cluster. |
+| `400` | The token is not valid or expired, or the node runs an older version than the cluster. |
 | `403` | The node has a user. |
 | `409` | The node has a message, is already in a cluster, or has no `cluster` block, the token was used, or a peer has the node's Diameter host. |
 | `429` | Too many attempts from the client address. |
@@ -195,6 +196,7 @@ This path sets the display name of a member.
 | ----- | ----------- |
 | `400` | The name is over 63 bytes. |
 | `404` | No such member. |
+| `410` | The node was removed from the cluster. |
 
 ## Drain a Member
 
@@ -218,6 +220,7 @@ This path sets the display name of a member.
 | ----- | ----------- |
 | `404` | No such member. |
 | `409` | The member is the only member of the cluster. |
+| `410` | The node was removed from the cluster. |
 
 ## Remove a Member
 

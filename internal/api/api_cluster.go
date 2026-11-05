@@ -55,9 +55,9 @@ func clusterError(w http.ResponseWriter, r *http.Request, cfg Config, message st
 	switch {
 	case errors.Is(err, cluster.ErrNotClustered), errors.Is(err, cluster.ErrAlreadyMember):
 		writeError(w, r, http.StatusConflict, err.Error(), err, cfg.Logger)
-	case errors.Is(err, cluster.ErrInvalidJoin), errors.Is(err, db.ErrInvalid):
+	case errors.Is(err, cluster.ErrInvalidJoin), errors.Is(err, db.ErrInvalid), errors.Is(err, db.ErrTokenExpired):
 		writeError(w, r, http.StatusBadRequest, err.Error(), err, cfg.Logger)
-	case errors.Is(err, db.ErrTokenUsed), errors.Is(err, db.ErrTokenExpired), errors.Is(err, settings.ErrConflict):
+	case errors.Is(err, db.ErrTokenUsed), errors.Is(err, settings.ErrConflict):
 		writeError(w, r, http.StatusConflict, err.Error(), err, cfg.Logger)
 	case errors.Is(err, db.ErrNotFound):
 		writeError(w, r, http.StatusNotFound, "Member not found", err, cfg.Logger)

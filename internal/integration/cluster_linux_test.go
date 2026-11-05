@@ -164,7 +164,7 @@ func TestRemoveAndRejoin(t *testing.T) {
 
 	replacement.id = st.NodeID
 
-	cl.waitStable(3)
+	cl.waitStable()
 
 	leader.must(http.MethodPost, "/api/v1/users",
 		map[string]any{"email": "ops@example.com", "password": "correct horse", "role_id": 2}, nil)
@@ -174,4 +174,3 @@ func TestRemoveAndRejoin(t *testing.T) {
 		return err
 	})
 }
-

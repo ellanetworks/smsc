@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ellanetworks/smsc/internal/cluster/pki"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/hashicorp/raft"
 )
@@ -59,21 +60,32 @@ type testCluster struct {
 func newCluster(t testing.TB, size int) *testCluster {
 	t.Helper()
 
-	c := &testCluster{t: t}
+	return newClusterWith(t, size, func(_ int, dir, address string) *env { return openClustered(t, dir, address) })
+}
 
-	for i := range size {
-		c.addrs = append(c.addrs, freeAddress(t))
-		c.nodes = append(c.nodes, openClustered(t, t.TempDir(), c.addrs[i]))
-	}
+func newClusterWith(t testing.TB, size int, open func(i int, dir, address string) *env) *testCluster {
+	t.Helper()
+
+	c := &testCluster{t: t}
 
 	t.Cleanup(func() {
 		for _, e := range c.nodes {
 			if e != nil {
 				_ = e.node.Close()
+
+				if e.stop != nil {
+					e.stop()
+				}
+
 				_ = e.db.Close()
 			}
 		}
 	})
+
+	for i := range size {
+		c.addrs = append(c.addrs, freeAddress(t))
+		c.nodes = append(c.nodes, open(i, t.TempDir(), c.addrs[i]))
+	}
 
 	waitLeader(t, c.nodes[0].node)
 	waitMember(t, c.nodes[0], c.nodes[0].node.ID())
@@ -403,4 +415,53 @@ func TestLeaderNoticesADivergedMember(t *testing.T) {
 			t.Fatalf("member %+v not marked diverged", m)
 		}
 	}
+}
+
+func TestJoinRetriesAfterAHalfCompletedAdmission(t *testing.T) {
+	c := newCluster(t, 1)
+	leader := c.leader()
+	ctx := timeout(t)
+
+	joiner := openClustered(t, t.TempDir(), freeAddress(t))
+	t.Cleanup(func() { joiner.close(t) })
+	waitLeader(t, joiner.node)
+
+	first, err := leader.node.MintToken(ctx, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	claims, err := pki.ReadToken(first.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cert, err := joiner.node.certs.pending(claims.ClusterID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	certPEM, _, err := pki.EncodeCert(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := leader.node.admit(ctx, joinRequest{
+		Token: first.Token, NodeID: joiner.node.ID(), Address: joiner.node.cfg.Advertise, Certificate: string(certPEM),
+		Schema: db.SchemaVersion(), Protocol: db.ProtocolVersion, Version: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := leader.node.MintToken(ctx, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := joiner.node.Join(ctx, second.Token); err != nil {
+		t.Fatalf("retrying a half-completed join: %v", err)
+	}
+
+	waitMember(t, joiner, joiner.node.ID())
+	waitMember(t, joiner, leader.node.ID())
 }

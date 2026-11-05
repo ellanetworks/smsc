@@ -147,7 +147,9 @@ func benchmarkApply(b *testing.B, group int) {
 
 	for i := 0; i < len(entries); i += group {
 		start := time.Now()
+
 		a.apply(b, entries[i:min(i+group, len(entries))]...)
+
 		latencies = append(latencies, time.Since(start))
 	}
 

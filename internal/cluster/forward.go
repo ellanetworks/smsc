@@ -130,7 +130,7 @@ func (n *Node) proposeOnce(ctx context.Context, cmds []db.Command) ([]db.Result,
 	}
 
 	if err := n.db.WaitApplied(ctx, reply.Index); err != nil {
-		n.cfg.Logger.Warn("forwarded write is committed but not yet applied here", "index", reply.Index, "error", err)
+		n.cfg.Logger.WarnContext(ctx, "forwarded write is committed but not yet applied here", "index", reply.Index, "error", err)
 	}
 
 	return reply.Results, nil

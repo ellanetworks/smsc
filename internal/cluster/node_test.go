@@ -15,6 +15,7 @@ type env struct {
 	dir  string
 	db   *db.DB
 	node *Node
+	stop func()
 }
 
 func open(t testing.TB, dir string) *env {

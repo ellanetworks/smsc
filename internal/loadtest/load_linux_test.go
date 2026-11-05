@@ -274,6 +274,7 @@ func (c *core) run(t *testing.T, rate float64) {
 
 	submitted.report(t, fmt.Sprintf("submitted at %4.0f/s", rate), n, elapsed)
 	delivered.report(t, fmt.Sprintf("delivered at %4.0f/s", rate), len(ids), 0)
+
 	for i, s := range c.smscs {
 		t.Logf("  SMSC %s: %.0f%% of a CPU", s.addr, 100*(cpu1[i]-cpu0[i])/elapsed.Seconds())
 	}

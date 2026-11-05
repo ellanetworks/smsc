@@ -417,9 +417,35 @@ func (n *Node) sendReport() {
 		rep.Hash = h
 	}
 
+	if _, id := r.LeaderWithID(); id == "" {
+		n.reportToServers(ctx, r, rep)
+		return
+	}
+
 	if err := n.peers.call(ctx, "/cluster/v1/report", rep, nil); err != nil {
 		n.cfg.Logger.Debug("failed to report to the leader", slog.Any("error", err))
 	}
+}
+
+func (n *Node) reportToServers(ctx context.Context, r *raft.Raft, rep report) {
+	future := r.GetConfiguration()
+	if future.Error() != nil {
+		return
+	}
+
+	var wg sync.WaitGroup
+
+	for _, s := range future.Configuration().Servers {
+		if string(s.ID) == n.id {
+			continue
+		}
+
+		wg.Go(func() {
+			_ = n.peers.callAt(ctx, string(s.Address), string(s.ID), "/cluster/v1/report", rep, nil)
+		})
+	}
+
+	wg.Wait()
 }
 
 func (n *Node) registerSelf(ctx context.Context, via db.Proposer) error {
