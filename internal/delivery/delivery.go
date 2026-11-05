@@ -610,6 +610,7 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 	if errors.Is(err, db.ErrStaleTerm) || errors.Is(err, db.ErrNotFound) {
 		d.flush(ctx, r.attempts)
 		settled(ctx, outcomeSuperseded)
+
 		return nil
 	}
 

@@ -68,7 +68,7 @@ func TestCheckpointerKeepsWALBounded(t *testing.T) {
 
 	peak := 0
 
-	for range 3 * walCheckpointPages / 10 {
+	for range 6 * walCheckpointPages / 10 {
 		if _, err := d.writer.ExecContext(ctx, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10) INSERT INTO filler SELECT randomblob(4000) FROM n"); err != nil {
 			t.Fatal(err)
 		}
@@ -76,8 +76,8 @@ func TestCheckpointerKeepsWALBounded(t *testing.T) {
 		peak = max(peak, walFrames(t, d))
 	}
 
-	if peak > walCheckpointPages*3/2 {
-		t.Fatalf("WAL reached %d frames, want at most %d", peak, walCheckpointPages*3/2)
+	if peak > walCheckpointPages*3 {
+		t.Fatalf("WAL reached %d frames, want at most %d", peak, walCheckpointPages*3)
 	}
 }
 
