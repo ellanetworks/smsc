@@ -54,8 +54,11 @@ func validSettings() Settings {
 		Operator:  validOperator(),
 		Delivery:  Delivery{DefaultValidity: time.Hour, RetryIntervals: []time.Duration{time.Minute}},
 		Retention: Retention{Messages: MinRetention},
+		Labels:    []string{testLabel},
 	}
 }
+
+const testLabel = "smsc-013c0a7ca824"
 
 func TestValidate(t *testing.T) {
 	tests := map[string]func(*Settings){
@@ -106,8 +109,14 @@ func TestRealm(t *testing.T) {
 }
 
 func TestHost(t *testing.T) {
-	if got := (Operator{MCC: "234", MNC: "15"}).Host(DefaultLabel); got != "smsc.node.epc.mnc015.mcc234.3gppnetwork.org" {
+	if got := (Operator{MCC: "234", MNC: "15"}).Host(testLabel); got != "smsc-013c0a7ca824.node.epc.mnc015.mcc234.3gppnetwork.org" {
 		t.Fatalf("Host = %q", got)
+	}
+}
+
+func TestNodeLabel(t *testing.T) {
+	if got := NodeLabel("01A1AC75-E354-762B-B38F-013C0A7CA824"); got != testLabel {
+		t.Fatalf("NodeLabel = %q", got)
 	}
 }
 

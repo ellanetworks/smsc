@@ -346,11 +346,11 @@ var migrations = []string{
 		node_id TEXT PRIMARY KEY CHECK (length(node_id) = 36),
 		address TEXT NOT NULL,
 		fingerprint TEXT UNIQUE,
-		diameter_label TEXT NOT NULL UNIQUE CHECK (diameter_label != ''),
 		schema_version INTEGER NOT NULL,
 		version TEXT NOT NULL,
 		joined_at INTEGER NOT NULL,
-		drain_state TEXT NOT NULL DEFAULT 'active' CHECK (drain_state IN ('active', 'draining', 'drained'))
+		drain_state TEXT NOT NULL DEFAULT 'active' CHECK (drain_state IN ('active', 'draining', 'drained')),
+		display_name TEXT NOT NULL DEFAULT ''
 	);
 	CREATE UNIQUE INDEX cluster_members_address ON cluster_members (address) WHERE address != '';
 	CREATE TABLE cluster_join_tokens (

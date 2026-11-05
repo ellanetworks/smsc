@@ -39,7 +39,8 @@ export const clusterMember = (
 ): ClusterMember => ({
   node_id: "0b5c6a0e-1111-4c1e-9a55-1f0c2d3e4f50",
   address: "10.0.0.11:7000",
-  diameter_label: "smsc",
+  diameter_label: "smsc-1f0c2d3e4f50",
+  display_name: "",
   version: "v0.1.0",
   joined_at: "2026-09-30T12:00:00.000Z",
   drain_state: "active",
@@ -61,6 +62,7 @@ export const clusterStatus = (
   term: 3,
   applied_index: 42,
   commit_index: 42,
+  schema: 1,
   healthy: true,
   failure_tolerance: 1,
   members: [
@@ -68,14 +70,15 @@ export const clusterStatus = (
     clusterMember({
       node_id: "1c6d7b1f-3333-4d2f-8b66-2a1d3e4f5a61",
       address: "10.0.0.12:7000",
-      diameter_label: "smsc2",
+      diameter_label: "smsc-2a1d3e4f5a61",
+      display_name: "paris-2",
       last_contact: "35ms",
       applied_index: 41,
     }),
     clusterMember({
       node_id: "2d7e8c2a-4444-4e3a-9c77-3b2e4f5a6b72",
       address: "10.0.0.13:7000",
-      diameter_label: "smsc3",
+      diameter_label: "smsc-3b2e4f5a6b72",
       suffrage: "nonvoter",
       drain_state: "drained",
       healthy: false,

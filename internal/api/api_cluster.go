@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/cluster"
@@ -12,13 +13,15 @@ import (
 )
 
 type Cluster interface {
+	ID() string
 	Clustered() bool
 	Status(ctx context.Context) (cluster.Status, error)
 	MintToken(ctx context.Context, ttl time.Duration) (cluster.Token, error)
 	Join(ctx context.Context, token string) error
 	RemoveMember(ctx context.Context, nodeID string, force bool) error
-	SetDiameterLabel(ctx context.Context, nodeID, label string) error
 	SetDrainState(ctx context.Context, nodeID string, state db.DrainState) error
+	SetDisplayName(ctx context.Context, nodeID, name string) error
+	DisplayName(ctx context.Context) string
 }
 
 const (
@@ -35,7 +38,7 @@ type JoinClusterParams struct {
 }
 
 type UpdateMemberParams struct {
-	DiameterLabel string `json:"diameter_label"`
+	DisplayName string `json:"display_name"`
 }
 
 func noCluster(w http.ResponseWriter, r *http.Request, cfg Config) bool {
@@ -188,13 +191,13 @@ func UpdateMember(a *auth) http.Handler {
 
 		id := r.PathValue("node_id")
 
-		if err := cfg.Cluster.SetDiameterLabel(r.Context(), id, params.DiameterLabel); err != nil {
+		if err := cfg.Cluster.SetDisplayName(r.Context(), id, params.DisplayName); err != nil {
 			clusterError(w, r, cfg, "Failed to update the member", err)
 			return
 		}
 
 		p, _ := PrincipalFrom(r.Context())
-		a.audit(r, "update_member", p.Email, "Cluster member "+id+" updated")
+		a.audit(r, "update_member", p.Email, "Cluster member "+id+" display name set to "+strconv.Quote(params.DisplayName))
 		writeResponse(w, r, SuccessResponse{Message: "Member updated successfully"}, http.StatusOK, cfg.Logger)
 	})
 }

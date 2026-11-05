@@ -47,17 +47,6 @@ func (s *secrets) jwt() []byte { return s.current.Load().JWT }
 
 func (s *secrets) cookieKey() []byte { return s.current.Load().OIDCCookieKey }
 
-func memberLabel(d *db.DB, nodeID string) func() (string, bool) {
-	return func() (string, bool) {
-		m, err := d.Member(context.Background(), nodeID)
-		if err != nil {
-			return "", false
-		}
-
-		return m.DiameterLabel, true
-	}
-}
-
 func (s *Server) fenceOnRemoval(ctx context.Context, node *cluster.Node, nodes *nodeManager, smppServer *smpp.Server) {
 	select {
 	case <-ctx.Done():

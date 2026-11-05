@@ -22,7 +22,7 @@ Ella SMSC keeps an odd number of voters, at most 5. Other nodes are standbys, pr
 
 ## Diameter peers
 
-Each node has its own Diameter host, and they share the realm and the service centre address. Any node accepts MO-Forward-Short-Message and Alert-Service-Centre, and the leader delivers. So every Diameter peer, such as Ella Core, the HSS or Ella IMS, connects to every node, or every node and every peer connect through a Diameter routing agent.
+Each node has its own Diameter host, fixed by its node ID, and they share the realm and the service centre address. Any node accepts MO-Forward-Short-Message and Alert-Service-Centre, and the leader delivers. So every Diameter peer, such as Ella Core, the HSS or Ella IMS, connects to every node, or every node and every peer connect through a Diameter routing agent.
 
 ## ESMEs
 

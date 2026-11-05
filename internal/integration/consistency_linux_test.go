@@ -19,11 +19,7 @@ func TestALoginWorksOnEveryNodeRightAway(t *testing.T) {
 
 	for _, n := range cl.nodes {
 		eventually(t, n.name+" to know the user", func() error {
-			as := *n
-			as.token = ""
-
-			_, err := as.request(http.MethodPost, "/api/v1/auth/login", credentials, nil)
-
+			_, err := n.request(http.MethodGet, "/api/v1/users/ops@example.com", nil, nil)
 			return err
 		})
 	}

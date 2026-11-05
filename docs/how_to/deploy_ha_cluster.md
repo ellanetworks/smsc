@@ -29,7 +29,7 @@ Repeat steps 2 and 3 for node 3.
 
 ## 5. Connect the Diameter peers
 
-Connect every Diameter peer, such as Ella Core, the HSS or Ella IMS, to every node, with each node's address and Diameter host. The **Cluster** page lists each node's Diameter label. Or connect the nodes and the peers through a Diameter routing agent, as in [Connect through Diameter Agents](connect_through_diameter_agents.md).
+Connect every Diameter peer, such as Ella Core, the HSS or Ella IMS, to every node, with each node's address and Diameter host. The **Cluster** page lists each node's **Diameter Host**. Or connect the nodes and the peers through a Diameter routing agent, as in [Connect through Diameter Agents](connect_through_diameter_agents.md).
 
 ## 6. Verify
 

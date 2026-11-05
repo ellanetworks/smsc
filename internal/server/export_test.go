@@ -16,6 +16,8 @@ func (s *Server) SetTracerProvider(tp trace.TracerProvider) { s.tracerProvider =
 
 func (s *Server) DiameterHost() string { return s.nodes.Identity().OriginHost }
 
+func (s *Server) DiameterLabel() string { return s.nodes.label }
+
 func (s *Server) SetPurgeClock(now func() time.Time, interval time.Duration) {
 	s.purgeNow, s.purgeInterval = now, interval
 }

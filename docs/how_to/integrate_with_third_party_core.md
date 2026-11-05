@@ -31,7 +31,7 @@ In the Ella SMSC UI, go to the **Operator** page:
 - Click the edit icon next to **Service Centre Address**, enter `+15550000000`, and click **Update**.
 - Click the edit icon next to **Numbering**, enter your country code and prefixes, and click **Update**.
 
-The **Diameter** page shows Ella SMSC's **Host** and **Realm**, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org` and `epc.mnc001.mcc001.3gppnetwork.org`.
+The **Diameter** page shows Ella SMSC's **Host** and **Realm**, e.g. `smsc-013c0a7ca824.node.epc.mnc001.mcc001.3gppnetwork.org` and `epc.mnc001.mcc001.3gppnetwork.org`.
 
 ## 3. Add Ella SMSC to the core
 

@@ -8,6 +8,7 @@ export interface ClusterMember {
   node_id: string;
   address: string;
   diameter_label: string;
+  display_name: string;
   version: string;
   joined_at: string;
   drain_state: DrainState;
@@ -27,6 +28,7 @@ export interface ClusterStatus {
   term: number;
   applied_index: number;
   commit_index: number;
+  schema: number;
   healthy?: boolean;
   failure_tolerance?: number;
   members: ClusterMember[] | null;
@@ -37,7 +39,7 @@ export interface JoinToken {
   expires_at: string;
 }
 
-export const DIAMETER_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+export const MAX_DISPLAY_NAME_LENGTH = 63;
 
 const memberPath = (nodeId: string) =>
   `/api/v1/cluster/members/${encodeURIComponent(nodeId)}`;
@@ -58,10 +60,10 @@ export const joinCluster = (token: string) =>
     anonymous: true,
   });
 
-export const updateDiameterLabel = (nodeId: string, diameterLabel: string) =>
+export const updateDisplayName = (nodeId: string, displayName: string) =>
   apiFetch<{ message: string }>(memberPath(nodeId), {
     method: "PUT",
-    body: { diameter_label: diameterLabel },
+    body: { display_name: displayName },
   });
 
 export const drainMember = (nodeId: string) =>
@@ -80,7 +82,11 @@ export const removeMember = (nodeId: string, force: boolean) =>
     { method: "DELETE" },
   );
 
-export const shortNodeId = (nodeId: string) => nodeId.slice(0, 8);
+export const shortNodeId = (nodeId: string) =>
+  nodeId.length > 12 ? nodeId.slice(-12) : nodeId;
+
+export const nodeLabel = (displayName: string | undefined, nodeId: string) =>
+  displayName ? displayName : shortNodeId(nodeId);
 
 export const memberLabel = (member: ClusterMember) =>
-  member.diameter_label || shortNodeId(member.node_id);
+  nodeLabel(member.display_name, member.node_id);

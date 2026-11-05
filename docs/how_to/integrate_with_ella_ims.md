@@ -21,7 +21,7 @@ Follow Ella IMS's [Enable SMS over IP](https://docs.ellanetworks.com/ims/how_to/
 - **Roles**: **SGd** only
 - **Service Centres**: `15550000000`
 - **Transport**: **SCTP**
-- **Host**: the **Host** of Ella SMSC's **Diameter** page, e.g. `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`
+- **Host**: the **Host** of Ella SMSC's **Diameter** page, e.g. `smsc-013c0a7ca824.node.epc.mnc001.mcc001.3gppnetwork.org`
 
 ## 2. Verify
 

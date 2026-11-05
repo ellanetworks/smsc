@@ -40,7 +40,7 @@ Click **Add Service Center** and set:
 
 - **Address**: `127.0.0.1`
 - **Numbers**: `+15550000000`
-- **Diameter Identity**: `smsc.node.epc.mnc001.mcc001.3gppnetwork.org`
+- **Diameter Identity**: the **Host** of Ella SMSC's **Diameter** page, e.g. `smsc-013c0a7ca824.node.epc.mnc001.mcc001.3gppnetwork.org`
 
 Click **Add**. The service center shows **Connected**.
 

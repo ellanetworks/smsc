@@ -179,7 +179,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		metrics:        m.peers,
 		tracerProvider: tp,
 		logger:         s.Logger,
-		label:          memberLabel(database, node.ID()),
+		label:          settings.NodeLabel(node.ID()),
 	}
 
 	if tp == nil {

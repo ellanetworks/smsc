@@ -13,6 +13,15 @@ const serve = (status: ClusterStatus) =>
     vi.fn(
       stubApi({
         "/api/v1/cluster": () => json(200, { result: status }),
+        "/api/v1/diameter": () =>
+          json(200, {
+            result: {
+              host: "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.org",
+              realm: "epc.mnc001.mcc001.3gppnetwork.org",
+              peers: [],
+              routes: [],
+            },
+          }),
       }),
     ),
   );
@@ -49,9 +58,7 @@ describe("Cluster", () => {
     expect(settingRows()).toEqual([
       "Cluster ID9f1e2d3c-2222-4b5a-8c7d-6e5f4a3b2c1d",
       "HealthHealthyTolerates 1 voter failure",
-      "Leadersmsc",
-      "Term3",
-      "Applied Index42 applied · 42 committed",
+      "Schemav1",
     ]);
     expect(
       within(grid())
@@ -60,34 +67,34 @@ describe("Cluster", () => {
     ).toEqual([
       "Node",
       "Cluster Address",
+      "Diameter Host",
       "Suffrage",
       "Drain",
-      "Health",
-      "Applied Index",
-      "Last Contact",
       "Version",
-      "Joined",
+      "Healthy",
       "Actions",
     ]);
-    expect(rowCells("10.0.0.11:7000").slice(0, 8)).toEqual([
-      "smsc0b5c6a0eLeaderThis node",
+    await within(grid()).findByText(
+      "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.org",
+    );
+    expect(rowCells("10.0.0.11:7000").slice(0, 7)).toEqual([
+      "1f0c2d3e4f50LeaderThis node",
       "10.0.0.11:7000",
+      "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.org",
       "Voter",
       "Active",
-      "Healthy",
-      "42",
-      "0s",
       "v0.1.0",
+      "Healthy",
     ]);
-    expect(rowCells("10.0.0.13:7000").slice(0, 7)).toEqual([
-      "smsc32d7e8c2a",
+    expect(rowCells("10.0.0.12:7000")[0]).toBe("paris-2");
+    expect(rowCells("10.0.0.13:7000").slice(0, 5)).toEqual([
+      "3b2e4f5a6b72",
       "10.0.0.13:7000",
+      "smsc-3b2e4f5a6b72.node.epc.mnc001.mcc001.3gppnetwork.org",
       "Nonvoter",
       "Drained",
-      "UnhealthyDiverged",
-      "30",
-      "9.5s",
     ]);
+    expect(rowCells("10.0.0.13:7000")[6]).toBe("Diverged");
   });
 
   it("says when no leader answers", async () => {
@@ -137,15 +144,28 @@ describe("Cluster", () => {
     );
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual([
-      "Edit Diameter label",
-      "Drain this node",
-      "Remove from cluster",
-    ]);
+    ).toEqual(["Rename this node", "Drain this node", "Remove from cluster"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Drain this node" }));
     expect(
-      await screen.findByRole("dialog", { name: "Drain node smsc2?" }),
+      await screen.findByRole("dialog", { name: "Drain node paris-2?" }),
     ).toBeInTheDocument();
+  });
+
+  it("opens the rename dialog with the node's display name", async () => {
+    serve(clusterStatus());
+    renderWithClient(<Cluster />);
+
+    await screen.findByRole("grid", { name: "Nodes" });
+    fireEvent.click(
+      within(row("10.0.0.12:7000")).getByRole("button", {
+        name: "Node actions",
+      }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename this node" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename node" });
+    expect(
+      within(dialog).getByRole("textbox", { name: "Display name" }),
+    ).toHaveValue("paris-2");
   });
 
   it("offers to resume a drained node", async () => {
@@ -160,7 +180,7 @@ describe("Cluster", () => {
     );
     fireEvent.click(screen.getByRole("menuitem", { name: "Resume this node" }));
     expect(
-      await screen.findByRole("dialog", { name: "Resume node smsc3?" }),
+      await screen.findByRole("dialog", { name: "Resume node 3b2e4f5a6b72?" }),
     ).toBeInTheDocument();
   });
 

@@ -164,7 +164,7 @@ func TestLivePeerConflicts(t *testing.T) {
 	ctx := context.Background()
 
 	self := validPeer()
-	self.Host = "SMSC.node." + homeRealm
+	self.Host = "SMSC-013C0A7CA824.node." + homeRealm
 
 	if _, err := live.CreatePeer(ctx, self); !errors.Is(err, ErrConflict) {
 		t.Fatalf("CreatePeer with the SMSC's host = %v", err)
@@ -232,7 +232,7 @@ func TestOperatorCannotTakeAPeersHost(t *testing.T) {
 	next.MNC = "02"
 
 	p := validPeer()
-	p.Host = next.Host(DefaultLabel)
+	p.Host = next.Host(testLabel)
 
 	if _, err := live.CreatePeer(ctx, p); err != nil {
 		t.Fatal(err)

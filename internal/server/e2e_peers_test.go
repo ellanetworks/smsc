@@ -609,7 +609,7 @@ func TestMobileOriginatedMessageThroughAnEdgeAgent(t *testing.T) {
 	dea := newFakeAgent(t, "dea1.ipx.example", ipxRealm, mme)
 	s.addPeer(t, dea.peerParams(defaultSGd()))
 
-	mme.smsc = smscHost
+	mme.smsc = s.host()
 	ofr := mme.request(sgd.CommandMOForwardShortMessage, sgd.ApplicationID,
 		diameter.OctetString(tgpp.AVPSCAddress, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(t, serviceCentreAddress)),
 		diameter.Grouped(tgpp.AVPUserIdentifier, diameter.AVPFlagMandatory, tgpp.VendorID,
@@ -643,7 +643,7 @@ func TestPeersFollowAnOperatorChange(t *testing.T) {
 	dea := newFakeAgent(t, "dea1.ipx.example", ipxRealm, mme)
 	p := s.addPeer(t, dea.peerParams(defaultSGd()))
 
-	if got := dea.connections(); !slices.Equal(got, []string{"smsc.node.epc.mnc099.mcc001.3gppnetwork.org"}) {
+	if got := dea.connections(); !slices.Equal(got, []string{s.server.DiameterLabel() + ".node.epc.mnc099.mcc001.3gppnetwork.org"}) {
 		t.Fatalf("connections = %v", got)
 	}
 
@@ -657,7 +657,7 @@ func TestPeersFollowAnOperatorChange(t *testing.T) {
 	}
 
 	eventually(t, "a connection with the new identity", func() bool {
-		return slices.Contains(dea.connections(), smscHost)
+		return slices.Contains(dea.connections(), s.host())
 	})
 
 	s.waitForPeer(t, p.ID, "open")

@@ -5,6 +5,7 @@ import { authFor } from "@/contexts/AuthContext";
 import Dashboard from "@/pages/Dashboard";
 import { RoleID } from "@/queries/users";
 import { formatDateTime } from "@/utils/dates";
+import { clusterMember, clusterStatus } from "@/test/fixtures";
 import { json, renderWithClient, stubApi } from "@/test/render";
 
 const peer = (host: string, state: string, address: string) => ({
@@ -162,7 +163,12 @@ describe("Dashboard", () => {
         .map((h) => h.textContent);
 
     await screen.findByRole("table", { name: "Diameter Peers" });
-    expect(titles("Overview")).toEqual(["This SMSC", "Diameter Peers", "SMPP"]);
+    expect(titles("Overview")).toEqual([
+      "This SMSC",
+      "Diameter Peers",
+      "SMPP",
+      "High Availability",
+    ]);
     expect(titles("Messages")).toEqual(["Last 24 Hours", "Delivery Queue"]);
     expect(titles("System")).toEqual([
       "Process Memory",
@@ -467,5 +473,52 @@ describe("Dashboard", () => {
     expect(card("Process Memory")).toHaveAccessibleDescription(
       /resident set size/,
     );
+  });
+
+  it("shows the healthy voters of the cluster", async () => {
+    serve({
+      routes: {
+        "/api/v1/cluster": () =>
+          json(200, {
+            result: clusterStatus({
+              healthy: false,
+              members: [
+                clusterMember({ leader: true }),
+                clusterMember({ node_id: "b", healthy: false }),
+                clusterMember({ node_id: "c", suffrage: "nonvoter" }),
+              ],
+            }),
+          }),
+      },
+    });
+    render();
+
+    expect(
+      await within(card("High Availability")).findByText("1/2"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows high availability off on a standalone node", async () => {
+    serve({
+      routes: {
+        "/api/v1/cluster": () =>
+          json(200, { result: clusterStatus({ clustered: false }) }),
+      },
+    });
+    render();
+
+    expect(
+      await within(card("High Availability")).findByText("Off"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides high availability from users who cannot read the cluster", async () => {
+    serve();
+    render(authFor("ota@example.com", RoleID.Submitter));
+
+    await screen.findByRole("heading", { level: 3, name: "This SMSC" });
+    expect(
+      screen.queryByRole("heading", { level: 3, name: "High Availability" }),
+    ).not.toBeInTheDocument();
   });
 });

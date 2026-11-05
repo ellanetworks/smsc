@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   Alert,
   AlertTitle,
@@ -34,17 +34,32 @@ import QueryAlert from "@/components/QueryAlert";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   getCluster,
-  shortNodeId,
+  memberLabel,
   type ClusterMember,
   type DrainState,
 } from "@/queries/cluster";
+import { getDiameterStatus } from "@/queries/diameter";
 import { CLUSTER_DOCS_URL } from "@/utils/docs";
-import { formatTimestamp } from "@/utils/dates";
 import { GRID_SX } from "@/utils/layout";
 
 export const CLUSTER_REFRESH_MS = 5000;
 
 type Action = "drain" | "resume" | "remove" | "rename";
+
+function CenteredCell({ children }: { children: ReactNode }) {
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        height: "100%",
+        width: "100%",
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
 
 function DrainStateChip({ state }: { state: DrainState }) {
   if (state === "draining") {
@@ -72,39 +87,42 @@ function SuffrageChip({ suffrage }: { suffrage: ClusterMember["suffrage"] }) {
   );
 }
 
-function HealthCell({ member }: { member: ClusterMember }) {
+function HealthChip({ member }: { member: ClusterMember }) {
+  if (member.diverged) {
+    return (
+      <Tooltip title="This node's database differs from the leader's." arrow>
+        <Chip label="Diverged" size="small" color="error" />
+      </Tooltip>
+    );
+  }
+  if (member.healthy === undefined) {
+    return (
+      <Tooltip title="The leader has not reported on this node yet." arrow>
+        <Chip label="—" size="small" variant="outlined" />
+      </Tooltip>
+    );
+  }
   return (
-    <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
-      {member.healthy === undefined ? (
-        <Tooltip title="The leader has not reported on this node yet." arrow>
-          <Chip label="—" size="small" variant="outlined" />
-        </Tooltip>
-      ) : (
-        <Chip
-          label={member.healthy ? "Healthy" : "Unhealthy"}
-          size="small"
-          color={member.healthy ? "success" : "error"}
-        />
-      )}
-      {member.diverged && (
-        <Tooltip title="This node's database differs from the leader's." arrow>
-          <Chip label="Diverged" size="small" color="error" />
-        </Tooltip>
-      )}
-    </Stack>
+    <Chip
+      label={member.healthy ? "Healthy" : "Unhealthy"}
+      size="small"
+      color={member.healthy ? "success" : "error"}
+    />
   );
 }
 
 const columns = (
   selfId: string | undefined,
+  realm: string | undefined,
+  versionsDiffer: boolean,
   manageable: boolean,
   act: (action: Action, member: ClusterMember) => void,
 ): GridColDef<ClusterMember>[] => [
   {
-    field: "diameter_label",
+    field: "display_name",
     headerName: "Node",
-    flex: 1.4,
-    minWidth: 240,
+    flex: 1.5,
+    minWidth: 180,
     renderCell: ({ row }) => (
       <Stack
         direction="row"
@@ -114,22 +132,10 @@ const columns = (
         <Typography
           variant="body2"
           noWrap
-          title={`${row.diameter_label} (${row.node_id})`}
+          title={row.node_id}
           sx={{ fontWeight: row.leader ? 700 : 400, minWidth: 0 }}
         >
-          {row.diameter_label || shortNodeId(row.node_id)}
-          <Typography
-            component="span"
-            variant="caption"
-            sx={{
-              ml: 1,
-              color: "text.secondary",
-              fontFamily: "monospace",
-              fontWeight: 400,
-            }}
-          >
-            {shortNodeId(row.node_id)}
-          </Typography>
+          {memberLabel(row)}
         </Typography>
         {row.leader && (
           <Chip
@@ -153,51 +159,73 @@ const columns = (
   {
     field: "address",
     headerName: "Cluster Address",
-    flex: 0.8,
-    minWidth: 160,
+    flex: 1,
+    minWidth: 140,
     valueGetter: (_value, row) => row.address || "—",
+  },
+  {
+    field: "diameter_label",
+    headerName: "Diameter Host",
+    flex: 1,
+    minWidth: 150,
+    valueGetter: (_value, row) =>
+      realm ? `${row.diameter_label}.node.${realm}` : row.diameter_label,
+    renderCell: ({ value }) => (
+      <CenteredCell>
+        <Typography variant="body2" noWrap title={value}>
+          {value}
+        </Typography>
+      </CenteredCell>
+    ),
   },
   {
     field: "suffrage",
     headerName: "Suffrage",
-    width: 110,
-    renderCell: ({ row }) => <SuffrageChip suffrage={row.suffrage} />,
+    width: 100,
+    renderCell: ({ row }) => (
+      <CenteredCell>
+        <SuffrageChip suffrage={row.suffrage} />
+      </CenteredCell>
+    ),
   },
   {
     field: "drain_state",
     headerName: "Drain",
-    width: 105,
-    renderCell: ({ row }) => <DrainStateChip state={row.drain_state} />,
-  },
-  {
-    field: "healthy",
-    headerName: "Health",
-    width: 190,
-    renderCell: ({ row }) => <HealthCell member={row} />,
-  },
-  {
-    field: "applied_index",
-    headerName: "Applied Index",
-    width: 120,
-    valueGetter: (_value, row) => row.applied_index ?? "—",
-  },
-  {
-    field: "last_contact",
-    headerName: "Last Contact",
-    width: 120,
-    valueGetter: (_value, row) => row.last_contact || "—",
+    width: 100,
+    renderCell: ({ row }) => (
+      <CenteredCell>
+        <DrainStateChip state={row.drain_state} />
+      </CenteredCell>
+    ),
   },
   {
     field: "version",
     headerName: "Version",
-    width: 110,
-    valueGetter: (_value, row) => row.version || "—",
+    width: 100,
+    renderCell: ({ row }) => (
+      <CenteredCell>
+        {row.version ? (
+          <Chip
+            label={row.version}
+            size="small"
+            color={versionsDiffer ? "warning" : "default"}
+            variant="outlined"
+          />
+        ) : (
+          <Typography variant="body2">—</Typography>
+        )}
+      </CenteredCell>
+    ),
   },
   {
-    field: "joined_at",
-    headerName: "Joined",
-    width: 170,
-    valueGetter: (_value, row) => formatTimestamp(row.joined_at),
+    field: "healthy",
+    headerName: "Healthy",
+    width: 100,
+    renderCell: ({ row }) => (
+      <CenteredCell>
+        <HealthChip member={row} />
+      </CenteredCell>
+    ),
   },
   ...(manageable
     ? [
@@ -210,7 +238,7 @@ const columns = (
             <GridActionsCellItem
               key="rename"
               showInMenu
-              label="Edit Diameter label"
+              label="Rename this node"
               onClick={() => act("rename", row)}
             />,
             row.drain_state === "active" ? (
@@ -252,6 +280,11 @@ export default function Cluster() {
     queryKey: ["cluster"],
     queryFn: getCluster,
     refetchInterval: CLUSTER_REFRESH_MS,
+  });
+  const diameter = useQuery({
+    queryKey: ["diameter"],
+    queryFn: getDiameterStatus,
+    enabled: auth.can("diameter:read"),
   });
   const status = cluster.data;
   const members = useMemo(() => status?.members ?? [], [status]);
@@ -312,8 +345,12 @@ export default function Cluster() {
           <DataGrid<ClusterMember>
             aria-label="Nodes"
             rows={members}
-            columns={columns(status.node_id, manageable, (action, member) =>
-              setTarget({ action, member }),
+            columns={columns(
+              status.node_id,
+              diameter.data?.realm,
+              new Set(members.map((m) => m.version).filter(Boolean)).size > 1,
+              manageable,
+              (action, member) => setTarget({ action, member }),
             )}
             getRowId={(m) => m.node_id}
             disableColumnSorting

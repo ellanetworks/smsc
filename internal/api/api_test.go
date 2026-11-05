@@ -135,8 +135,14 @@ func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
+const testNodeID = "01a1ac75-e354-762b-b38f-013c0a7ca824"
+
 func testSettings(t *testing.T, store *db.DB) settings.Settings {
 	t.Helper()
+
+	if err := store.RegisterMember(context.Background(), db.Member{NodeID: testNodeID, Version: "v"}); err != nil {
+		t.Fatal(err)
+	}
 
 	s, err := store.GetSettings(context.Background())
 	if err != nil {

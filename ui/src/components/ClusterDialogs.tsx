@@ -25,12 +25,12 @@ import { useSnackbar } from "@/contexts/SnackbarContext";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import {
   createJoinToken,
-  DIAMETER_LABEL,
   drainMember,
+  MAX_DISPLAY_NAME_LENGTH,
   memberLabel,
   removeMember,
   resumeMember,
-  updateDiameterLabel,
+  updateDisplayName,
   type ClusterMember,
 } from "@/queries/cluster";
 import { formatDateTime } from "@/utils/dates";
@@ -233,8 +233,8 @@ export function DrainNodeDialog({
       title={`Drain node ${label}?`}
       description={
         <>
-          <strong>Node {label}</strong> fails readiness, refuses new SMPP binds,
-          and closes its SMPP sessions after the drain delay. Diameter stays up.
+          Stops new SMPP traffic on <strong>node {label}</strong>: its ESMEs
+          bind to the rest of the cluster. Its Diameter connections stay up.
         </>
       }
       confirmLabel="Drain"
@@ -383,47 +383,42 @@ export function RenameNodeDialog({
   member: ClusterMember;
   onClose: () => void;
 }) {
-  const [label, setLabel] = useState(member.diameter_label);
+  const queryClient = useQueryClient();
+  const [displayName, setDisplayName] = useState(member.display_name);
   const rename = useClusterMutation(
-    (value: string) => updateDiameterLabel(member.node_id, value),
-    "Diameter label updated.",
+    async (value: string) => {
+      await updateDisplayName(member.node_id, value);
+      void queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
+    "Display name updated.",
     onClose,
   );
-  const valid = DIAMETER_LABEL.test(label);
+  const name = displayName.trim();
 
   return (
     <EditDialog
-      title="Edit Diameter Label"
-      valid={valid && label !== member.diameter_label}
+      title="Rename node"
+      valid={
+        name !== member.display_name && name.length <= MAX_DISPLAY_NAME_LENGTH
+      }
       pending={rename.isPending}
       error={rename.error}
-      onSubmit={() => rename.mutate(label)}
+      onSubmit={() => rename.mutate(name)}
       onClose={onClose}
       submitLabel="Save"
       pendingLabel="Saving…"
-      failure="Could not update the Diameter label"
-      notice={
-        <Alert severity="info">
-          The node restarts Diameter, and its peers reconnect.
-        </Alert>
-      }
+      failure="Could not set the display name"
     >
       <Typography variant="body2">
-        The node's Diameter host is &lt;label&gt;.node.&lt;realm&gt;.
+        {`Sets the name shown for node ${memberLabel(member)} across the UI.`}
       </Typography>
       <TextField
-        label="Diameter label"
-        value={label}
-        onChange={(e) => setLabel(e.target.value.trim().toLowerCase())}
-        error={label !== "" && !valid}
-        helperText={
-          label !== "" && !valid
-            ? "Use lowercase letters, digits and hyphens, at most 63 characters, not starting or ending with a hyphen."
-            : "A DNS label, unique in the cluster."
-        }
-        required
+        label="Display name"
+        value={displayName}
+        onChange={(e) => setDisplayName(e.target.value)}
+        helperText={`Leave empty to show the node identity instead (max ${MAX_DISPLAY_NAME_LENGTH} characters).`}
         autoFocus
-        slotProps={{ htmlInput: { maxLength: 63 } }}
+        slotProps={{ htmlInput: { maxLength: MAX_DISPLAY_NAME_LENGTH } }}
       />
       <NodeIdentity nodeId={member.node_id} />
     </EditDialog>

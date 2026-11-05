@@ -9,21 +9,32 @@ const serve = ({
   clustered = true,
   join = () => json(200, { result: { message: "Joined the cluster" } }),
   bodies = [],
+  copies = 0,
 }: {
   initialized?: boolean;
   clustered?: boolean;
   join?: () => Response;
   bodies?: unknown[];
+  copies?: number;
 } = {}) => {
+  let joined = false;
+  let polls = 0;
   const fetch = vi.fn(
     stubApi({
       "/api/v1/status": () =>
         json(200, {
-          result: { version: "v0.0.1", revision: "", initialized, clustered },
+          result: {
+            version: "v0.0.1",
+            revision: "",
+            initialized: initialized || (joined && polls++ >= copies),
+            clustered,
+          },
         }),
       "/api/v1/cluster/join": (_url, init) => {
         bodies.push(JSON.parse(String(init?.body)));
-        return join();
+        const res = join();
+        joined = res.ok;
+        return res;
       },
     }),
   );
@@ -88,6 +99,21 @@ describe("ClusterJoin", () => {
     expect(await screen.findByText("login page")).toBeInTheDocument();
     expect(bodies).toEqual([{ token: "join-token-abcd" }]);
     expect(screen.getByText(/Joined the cluster/)).toBeInTheDocument();
+  });
+
+  it("waits for the cluster's data before the login page", async () => {
+    serve({ copies: 1 });
+    renderJoin();
+
+    await screen.findByRole("heading", { name: "Join a cluster" });
+    paste("join-token-abcd");
+    fireEvent.click(screen.getByRole("button", { name: "Join" }));
+
+    expect(await screen.findByText(/copying its data/)).toBeInTheDocument();
+    expect(screen.queryByText("login page")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("login page", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
   });
 
   it("lets the operator clear a pasted token", async () => {

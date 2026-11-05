@@ -2,7 +2,7 @@ import { Box, Chip, IconButton, Tooltip, Typography } from "@mui/material";
 import { ContentCopy as ContentCopyIcon } from "@mui/icons-material";
 import SettingsTable from "@/components/SettingsTable";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
-import { memberLabel, type ClusterStatus } from "@/queries/cluster";
+import { type ClusterStatus } from "@/queries/cluster";
 
 function CopyableValue({ value, label }: { value: string; label: string }) {
   const copy = useCopyToClipboard();
@@ -95,8 +95,6 @@ export default function ClusterStateCard({
 }: {
   status?: ClusterStatus;
 }) {
-  const leader = status?.members?.find((m) => m.node_id === status.leader_id);
-
   return (
     <SettingsTable
       label="Cluster state"
@@ -117,21 +115,9 @@ export default function ClusterStateCard({
           value: status && <HealthValue status={status} />,
         },
         {
-          label: "Leader",
-          help: "The member that commits writes for the cluster.",
-          value: leader ? memberLabel(leader) : (status?.leader_id ?? "—"),
-        },
-        {
-          label: "Term",
-          help: "The Raft term: it increases at every election.",
-          value: status?.term,
-        },
-        {
-          label: "Applied Index",
-          help: "The last log entry this node applied, and the last one the cluster committed.",
-          value:
-            status &&
-            `${status.applied_index} applied · ${status.commit_index} committed`,
+          label: "Schema",
+          help: "The database schema version of the cluster. It advances once every node runs the new version.",
+          value: status && `v${status.schema}`,
         },
       ]}
     />

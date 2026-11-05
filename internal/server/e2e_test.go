@@ -39,7 +39,6 @@ import (
 
 const (
 	coreHost             = "core.example.org"
-	smscHost             = "smsc.node.epc.mnc001.mcc001.3gppnetwork.org"
 	realm                = "epc.mnc001.mcc001.3gppnetwork.org"
 	serviceCentreAddress = "15550000000"
 	mmeNumber            = "15550000010"
@@ -632,6 +631,10 @@ type smsc struct {
 	token  string
 	client *http.Client
 	url    string
+}
+
+func (s *smsc) host() string {
+	return s.server.DiameterLabel() + ".node." + realm
 }
 
 type smscConfig struct {
@@ -1488,7 +1491,7 @@ func TestAPIDiameterStatus(t *testing.T) {
 	s.api(t, http.MethodGet, "/api/v1/diameter", nil, &status)
 
 	if len(status.Routes) != 1 || status.Routes[0].Realm != realm || status.Routes[0].Application != "s6c" ||
-		len(status.Routes[0].Peers) != 0 || len(status.Peers) != 0 || status.Host != smscHost {
+		len(status.Routes[0].Peers) != 0 || len(status.Peers) != 0 || status.Host != s.host() {
 		t.Fatalf("before connect = %+v", status)
 	}
 

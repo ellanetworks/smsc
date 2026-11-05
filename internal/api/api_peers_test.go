@@ -196,7 +196,7 @@ func TestPeerConflicts(t *testing.T) {
 		t.Fatalf("POST of the same host = %d %q", code, errMsg)
 	}
 
-	self := `{"host": "smsc.node.epc.mnc001.mcc001.3gppnetwork.org", "addresses": ["192.0.2.20"]}`
+	self := `{"host": "smsc-013c0a7ca824.node.epc.mnc001.mcc001.3gppnetwork.org", "addresses": ["192.0.2.20"]}`
 	if code, _, _ := a.do(t, http.MethodPost, "/api/v1/diameter/peers", self); code != http.StatusConflict {
 		t.Fatalf("POST of the SMSC's host = %d", code)
 	}
@@ -235,7 +235,7 @@ func TestPeerAddressesAreStoredUnmapped(t *testing.T) {
 func TestOperatorChangeToAPeersHostConflicts(t *testing.T) {
 	a := newTestAPI(t, fakeDiameter{})
 
-	peer := `{"host": "smsc.node.epc.mnc002.mcc001.3gppnetwork.org", "addresses": ["192.0.2.10"]}`
+	peer := `{"host": "smsc-013c0a7ca824.node.epc.mnc002.mcc001.3gppnetwork.org", "addresses": ["192.0.2.10"]}`
 	if code, _, _ := a.do(t, http.MethodPost, "/api/v1/diameter/peers", peer); code != http.StatusCreated {
 		t.Fatalf("POST peer = %d", code)
 	}

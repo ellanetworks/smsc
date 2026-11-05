@@ -132,7 +132,7 @@ describe("DrainNodeDialog", () => {
       />,
     );
 
-    expect(dialog()).toHaveAccessibleName("Drain node smsc?");
+    expect(dialog()).toHaveAccessibleName("Drain node 1f0c2d3e4f50?");
     expect(screen.getByText(MEMBER.node_id)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
@@ -196,7 +196,7 @@ describe("ResumeNodeDialog", () => {
       />,
     );
 
-    expect(dialog()).toHaveAccessibleName("Resume node smsc?");
+    expect(dialog()).toHaveAccessibleName("Resume node 1f0c2d3e4f50?");
     fireEvent.click(button("Resume"));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -218,7 +218,7 @@ describe("RemoveNodeDialog", () => {
       />,
     );
 
-    expect(dialog()).toHaveAccessibleName("Remove node smsc?");
+    expect(dialog()).toHaveAccessibleName("Remove node 1f0c2d3e4f50?");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
     fireEvent.click(button("Remove"));
@@ -271,28 +271,28 @@ describe("RemoveNodeDialog", () => {
 });
 
 describe("RenameNodeDialog", () => {
-  const label = () => screen.getByRole("textbox", { name: /Diameter label/ });
+  const name = () => screen.getByRole("textbox", { name: "Display name" });
 
-  it("validates the label as a DNS label", () => {
+  it("starts from the current display name", () => {
     serve();
     renderWithClient(<RenameNodeDialog member={MEMBER} onClose={() => {}} />);
 
-    expect(dialog()).toHaveAccessibleName("Edit Diameter Label");
-    expect(label()).toHaveValue("smsc");
-    expect(button("Save")).toBeDisabled();
-
-    fireEvent.change(label(), { target: { value: "-bad" } });
-    expect(screen.getByText(/lowercase letters, digits/)).toBeInTheDocument();
+    expect(dialog()).toHaveAccessibleName("Rename node");
+    expect(name()).toHaveValue("");
+    expect(
+      screen.getByText(
+        "Leave empty to show the node identity instead (max 63 characters).",
+      ),
+    ).toBeInTheDocument();
     expect(button("Save")).toBeDisabled();
   });
 
-  it("sets the Diameter label", async () => {
+  it("sets the display name", async () => {
     const calls = serve();
     const onClose = vi.fn();
     renderWithClient(<RenameNodeDialog member={MEMBER} onClose={onClose} />);
 
-    fireEvent.change(label(), { target: { value: "Paris-1" } });
-    expect(label()).toHaveValue("paris-1");
+    fireEvent.change(name(), { target: { value: " Paris 1 " } });
     fireEvent.click(button("Save"));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -301,7 +301,32 @@ describe("RenameNodeDialog", () => {
         method: "PUT",
         path: MEMBER_PATH,
         search: "",
-        body: { diameter_label: "paris-1" },
+        body: { display_name: "Paris 1" },
+      },
+    ]);
+  });
+
+  it("clears the display name", async () => {
+    const calls = serve();
+    const onClose = vi.fn();
+    renderWithClient(
+      <RenameNodeDialog
+        member={{ ...MEMBER, display_name: "paris-1" }}
+        onClose={onClose}
+      />,
+    );
+
+    expect(name()).toHaveValue("paris-1");
+    fireEvent.change(name(), { target: { value: "" } });
+    fireEvent.click(button("Save"));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(calls).toEqual([
+      {
+        method: "PUT",
+        path: MEMBER_PATH,
+        search: "",
+        body: { display_name: "" },
       },
     ]);
   });

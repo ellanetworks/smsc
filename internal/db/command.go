@@ -55,7 +55,7 @@ const (
 	cmdCreateJoinToken
 	cmdAdmitMember
 	cmdRemoveMember
-	cmdSetDiameterLabel
+	cmdSetDisplayName
 	cmdDeleteExpiredJoinTokens
 	cmdClaimRecipient
 	cmdReleaseRecipient

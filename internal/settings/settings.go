@@ -22,8 +22,6 @@ type Settings struct {
 	Labels    []string
 }
 
-const DefaultLabel = "smsc"
-
 type Operator struct {
 	MCC                  string
 	MNC                  string
@@ -36,14 +34,15 @@ func (o Operator) Host(label string) string {
 	return label + ".node." + o.Realm()
 }
 
-func (s Settings) Hosts() []string {
-	labels := s.Labels
-	if len(labels) == 0 {
-		labels = []string{DefaultLabel}
-	}
+func NodeLabel(nodeID string) string {
+	id := strings.ToLower(nodeID)
 
-	hosts := make([]string, len(labels))
-	for i, l := range labels {
+	return "smsc-" + id[max(len(id)-12, 0):]
+}
+
+func (s Settings) Hosts() []string {
+	hosts := make([]string, len(s.Labels))
+	for i, l := range s.Labels {
 		hosts[i] = s.Operator.Host(l)
 	}
 

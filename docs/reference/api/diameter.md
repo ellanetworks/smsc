@@ -41,7 +41,7 @@ This path returns the Diameter identity of the SMSC, its peers, and its routes.
 ```json
 {
     "result": {
-        "host": "smsc.node.epc.mnc001.mcc001.3gppnetwork.org",
+        "host": "smsc-013c0a7ca824.node.epc.mnc001.mcc001.3gppnetwork.org",
         "realm": "epc.mnc001.mcc001.3gppnetwork.org",
         "peers": [
             {

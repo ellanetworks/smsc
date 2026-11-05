@@ -1344,9 +1344,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: >-
-        Sets the member's Diameter label: its Origin-Host is <label>.node.<realm>. The member restarts Diameter, and
-        its peers reconnect. Needs a login, not an API token.
+      description: Sets the member's display name. Needs a login, not an API token.
       requestBody:
         required: true
         content:
@@ -1364,8 +1362,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
@@ -2828,7 +2824,7 @@ components:
 
     Status:
       type: object
-      required: [version, revision, initialized, clustered]
+      required: [version, revision, initialized, clustered, node_id, display_name, diameter_label]
       properties:
         initialized:
           type: boolean
@@ -2842,6 +2838,19 @@ components:
         revision:
           type: string
           description: Git commit the binary was built from. Empty for development builds.
+        node_id:
+          type: string
+          format: uuid
+          description: The ID of the node that answered.
+        display_name:
+          type: string
+          description: The answering node's display name. Empty when unset.
+        diameter_label:
+          type: string
+          description: >-
+            The first label of the answering node's Diameter host, <label>.node.<realm>: smsc- and the last 12 hex
+            characters of the node ID.
+          example: smsc-013c0a7ca824
 
     DiameterStatus:
       type: object
@@ -2892,7 +2901,7 @@ components:
         mnc:
           type: string
           pattern: "^[0-9]{2,3}$"
-          description: Together with mcc, sets the Diameter realm epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org and host smsc.node.<realm>.
+          description: Together with mcc, sets the Diameter realm epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org and each node's host <diameter_label>.node.<realm>.
           example: "01"
         service_centre_address:
           $ref: "#/components/schemas/E164"
@@ -3138,7 +3147,7 @@ components:
           description: Why the last connection to the peer failed or closed.
     ClusterStatus:
       type: object
-      required: [node_id, cluster_id, clustered, term, applied_index, commit_index, members]
+      required: [node_id, cluster_id, clustered, term, applied_index, commit_index, schema, members]
       properties:
         node_id:
           type: string
@@ -3162,6 +3171,9 @@ components:
         commit_index:
           type: integer
           format: int64
+        schema:
+          type: integer
+          description: Database schema version of the cluster.
         healthy:
           type: boolean
         failure_tolerance:
@@ -3173,7 +3185,7 @@ components:
             $ref: "#/components/schemas/ClusterMember"
     ClusterMember:
       type: object
-      required: [node_id, address, diameter_label, version, joined_at, drain_state, suffrage, leader]
+      required: [node_id, address, diameter_label, display_name, version, joined_at, drain_state, suffrage, leader]
       properties:
         node_id:
           type: string
@@ -3183,7 +3195,13 @@ components:
           description: The cluster address, host:port. Empty for a node without one.
         diameter_label:
           type: string
-          description: The first label of the member's Diameter host, <label>.node.<realm>.
+          description: >-
+            The first label of the member's Diameter host, <label>.node.<realm>: smsc- and the last 12 hex characters
+            of the node ID.
+          example: smsc-013c0a7ca824
+        display_name:
+          type: string
+          description: Name set by the operator. Empty when unset.
         version:
           type: string
         joined_at:
@@ -3233,8 +3251,9 @@ components:
           type: string
     UpdateMemberParams:
       type: object
-      required: [diameter_label]
+      required: [display_name]
       properties:
-        diameter_label:
+        display_name:
           type: string
-          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+          maxLength: 63
+          description: Up to 63 bytes. Empty clears it.

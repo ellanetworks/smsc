@@ -23,6 +23,19 @@ import { joinCluster } from "@/queries/cluster";
 import { getStatus } from "@/queries/status";
 import { CLUSTER_DOCS_URL } from "@/utils/docs";
 
+export const JOIN_POLL_MS = 1000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function waitForData() {
+  for (;;) {
+    try {
+      if ((await getStatus()).initialized) return;
+    } catch {}
+    await sleep(JOIN_POLL_MS);
+  }
+}
+
 export default function ClusterJoin() {
   const navigate = useNavigate();
   const { showSnackbar } = useSnackbar();
@@ -65,6 +78,7 @@ export default function ClusterJoin() {
     setSubmitting(true);
     try {
       await joinCluster(token.trim());
+      await waitForData();
       showSnackbar(
         "Joined the cluster. Log in with a user of the cluster.",
         "success",

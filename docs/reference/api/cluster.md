@@ -27,11 +27,13 @@ This path returns the node that answered, its cluster, and every member.
 | `term`                        | int     | Election term. |
 | `applied_index`               | int     | Last log entry applied by the node. |
 | `commit_index`                | int     | Last log entry committed by the cluster. |
+| `schema`                      | int     | Database schema version of the cluster. |
 | `healthy`                     | boolean | The cluster is healthy. Absent when no leader answers. |
 | `failure_tolerance`           | int     | Voters that can fail without stopping writes. Absent when no leader answers. |
 | `members[].node_id`           | string  | ID of the member. |
 | `members[].address`           | string  | Cluster address of the member. |
-| `members[].diameter_label`    | string  | First label of the member's Diameter host. See [Update a Member](#update-a-member). |
+| `members[].diameter_label`    | string  | First label of the member's Diameter host: `smsc-` and the last 12 hex characters of `node_id`. |
+| `members[].display_name`      | string  | Display name of the member. Empty when unset. See [Update a Member](#update-a-member). |
 | `members[].version`           | string  | Version of the member. |
 | `members[].joined_at`         | string  | Time the member joined. |
 | `members[].drain_state`       | string  | `active`, `draining` or `drained`. See [Drain a Member](#drain-a-member). |
@@ -54,13 +56,15 @@ This path returns the node that answered, its cluster, and every member.
         "term": 4,
         "applied_index": 18342,
         "commit_index": 18342,
+        "schema": 1,
         "healthy": true,
         "failure_tolerance": 1,
         "members": [
             {
                 "node_id": "0199f6a2-5c1e-7d3a-9b1f-2a4c6e8d0f12",
                 "address": "10.0.0.1:7000",
-                "diameter_label": "smsc",
+                "diameter_label": "smsc-2a4c6e8d0f12",
+                "display_name": "paris-1",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:12:44Z",
                 "drain_state": "active",
@@ -72,7 +76,8 @@ This path returns the node that answered, its cluster, and every member.
             {
                 "node_id": "0199f6a3-0b77-7c21-a4e0-6f1e2d3c4b5a",
                 "address": "10.0.0.2:7000",
-                "diameter_label": "smsc2",
+                "diameter_label": "smsc-6f1e2d3c4b5a",
+                "display_name": "",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:14:02Z",
                 "drain_state": "active",
@@ -158,13 +163,13 @@ This path joins a node with no user and no message to a cluster. It takes no acc
 | ----- | ----------- |
 | `400` | The token is not valid, or the node runs an older version than the cluster. |
 | `403` | The node has a user. |
-| `409` | The node has a message, is already in a cluster, or has no `cluster` block, or the token was used. |
+| `409` | The node has a message, is already in a cluster, or has no `cluster` block, the token was used, or a peer has the node's Diameter host. |
 | `429` | Too many attempts from the client address. |
 | `502` | No member answered. |
 
 ## Update a Member
 
-This path sets the first label of a member's Diameter host, `<label>.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org`, and its Diameter peers reconnect.
+This path sets the display name of a member.
 
 | Method | Path                                |
 | ------ | ----------------------------------- |
@@ -172,15 +177,15 @@ This path sets the first label of a member's Diameter host, `<label>.node.epc.mn
 
 ### Request Body
 
-| Field            | Type   | Required | Description |
-| ---------------- | ------ | -------- | ----------- |
-| `diameter_label` | string | Yes      | 1 to 63 lowercase letters, digits and hyphens, not starting or ending with a hyphen. Unique in the cluster, and not a configured peer's host. |
+| Field          | Type   | Required | Description |
+| -------------- | ------ | -------- | ----------- |
+| `display_name` | string | Yes      | Up to 63 bytes. Empty clears it. |
 
 ### Sample Request
 
 ```json
 {
-    "diameter_label": "smsc-east"
+    "display_name": "paris-1"
 }
 ```
 
@@ -188,9 +193,8 @@ This path sets the first label of a member's Diameter host, `<label>.node.epc.mn
 
 | Code  | Description |
 | ----- | ----------- |
-| `400` | Invalid label. |
+| `400` | The name is over 63 bytes. |
 | `404` | No such member. |
-| `409` | Another member or a peer has the host. |
 
 ## Drain a Member
 

@@ -21,6 +21,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/server"
+	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/linxGnu/gosmpp"
 	"github.com/linxGnu/gosmpp/pdu"
 	"golang.org/x/crypto/bcrypt"
@@ -137,8 +138,7 @@ func TestClusterJoinThroughTheAPI(t *testing.T) {
 		a.api(t, http.MethodGet, "/api/v1/diameter", nil, &da)
 		b.api(t, http.MethodGet, "/api/v1/diameter", nil, &dbs)
 
-		return da.Host == "smsc.node.epc.mnc001.mcc001.3gppnetwork.org" &&
-			dbs.Host == "smsc2.node.epc.mnc001.mcc001.3gppnetwork.org"
+		return da.Host == a.host() && dbs.Host == b.host() && da.Host != dbs.Host
 	})
 
 	if code := b.api(t, http.MethodPost, "/api/v1/users", api.CreateUserParams{
@@ -154,21 +154,47 @@ func TestClusterJoinThroughTheAPI(t *testing.T) {
 	var member string
 
 	for _, m := range status.Members {
-		if m.DiameterLabel == "smsc2" {
+		if m.DiameterLabel == b.server.DiameterLabel() {
 			member = m.NodeID
 		}
 	}
 
-	if code := a.api(t, http.MethodPut, "/api/v1/cluster/members/"+member, api.UpdateMemberParams{DiameterLabel: "west"}, nil); code != http.StatusOK {
+	var bs api.Status
+	if code := b.apiAs(t, "", http.MethodGet, "/api/v1/status", nil, &bs); code != http.StatusOK ||
+		bs.NodeID != member || bs.DiameterLabel != settings.NodeLabel(member) {
+		t.Fatalf("GET /api/v1/status on the joined node = %d, %+v, want node %s", code, bs, member)
+	}
+
+	if code := a.api(t, http.MethodPut, "/api/v1/cluster/members/"+member, api.UpdateMemberParams{DisplayName: "paris-1"}, nil); code != http.StatusOK {
 		t.Fatalf("PUT member = %d", code)
 	}
 
-	eventuallyOK(t, "the new Diameter host", func() bool {
-		var d api.DiameterStatus
+	eventuallyOK(t, "the display name on the joined node", func() bool {
+		var st api.Status
 
-		b.api(t, http.MethodGet, "/api/v1/diameter", nil, &d)
+		return b.apiAs(t, "", http.MethodGet, "/api/v1/status", nil, &st) == http.StatusOK && st.DisplayName == "paris-1"
+	})
 
-		return d.Host == "west.node.epc.mnc001.mcc001.3gppnetwork.org"
+	if code := a.api(t, http.MethodPut, "/api/v1/cluster/members/"+member, api.UpdateMemberParams{DisplayName: strings.Repeat("a", 64)}, nil); code != http.StatusBadRequest {
+		t.Fatalf("PUT a long display name = %d, want %d", code, http.StatusBadRequest)
+	}
+
+	if code := a.api(t, http.MethodPut, "/api/v1/cluster/members/"+member, api.UpdateMemberParams{}, nil); code != http.StatusOK {
+		t.Fatalf("PUT an empty display name = %d", code)
+	}
+
+	eventuallyOK(t, "the cleared display name", func() bool {
+		var st cluster.Status
+
+		a.api(t, http.MethodGet, "/api/v1/cluster", nil, &st)
+
+		for _, m := range st.Members {
+			if m.NodeID == member {
+				return m.DisplayName == ""
+			}
+		}
+
+		return false
 	})
 
 	if code := a.api(t, http.MethodDelete, "/api/v1/cluster/members/"+member, nil, nil); code != http.StatusConflict {
@@ -229,10 +255,6 @@ func joinedPair(t *testing.T) (*smsc, *smsc) {
 	if code := b.apiAs(t, "", http.MethodPost, "/api/v1/cluster/join", api.JoinClusterParams{Token: token.Token}, nil); code != http.StatusOK {
 		t.Fatalf("POST /api/v1/cluster/join = %d", code)
 	}
-
-	eventuallyOK(t, "the joined node's own Diameter host", func() bool {
-		return strings.HasPrefix(b.server.DiameterHost(), "smsc2.")
-	})
 
 	return a, b
 }

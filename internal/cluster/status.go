@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/hashicorp/raft"
 )
 
@@ -20,6 +21,7 @@ type MemberStatus struct {
 	NodeID        string    `json:"node_id"`
 	Address       string    `json:"address"`
 	DiameterLabel string    `json:"diameter_label"`
+	DisplayName   string    `json:"display_name"`
 	Version       string    `json:"version"`
 	JoinedAt      time.Time `json:"joined_at"`
 	DrainState    string    `json:"drain_state"`
@@ -39,6 +41,7 @@ type Status struct {
 	Term             uint64         `json:"term"`
 	AppliedIndex     uint64         `json:"applied_index"`
 	CommitIndex      uint64         `json:"commit_index"`
+	Schema           int            `json:"schema"`
 	Healthy          *bool          `json:"healthy,omitempty"`
 	FailureTolerance *int           `json:"failure_tolerance,omitempty"`
 	Members          []MemberStatus `json:"members"`
@@ -51,7 +54,7 @@ func (n *Node) Status(ctx context.Context) (Status, error) {
 
 	st := Status{
 		NodeID: n.id, Clustered: n.cfg.clustered(), LeaderID: string(leaderID), Term: r.CurrentTerm(),
-		AppliedIndex: n.db.AppliedIndex(), CommitIndex: r.CommitIndex(),
+		AppliedIndex: n.db.AppliedIndex(), CommitIndex: r.CommitIndex(), Schema: n.db.Schema(),
 	}
 
 	secrets, err := n.db.ReadSecrets(ctx)
@@ -78,7 +81,8 @@ func (n *Node) Status(ctx context.Context) (Status, error) {
 
 	for _, m := range members {
 		ms := MemberStatus{
-			NodeID: m.NodeID, Address: m.Address, DiameterLabel: m.DiameterLabel, Version: m.Version,
+			NodeID: m.NodeID, Address: m.Address, DiameterLabel: settings.NodeLabel(m.NodeID), DisplayName: m.DisplayName,
+			Version:  m.Version,
 			JoinedAt: m.JoinedAt, DrainState: string(m.DrainState), Suffrage: "none", Leader: m.NodeID == string(leaderID),
 		}
 
@@ -205,6 +209,15 @@ func (n *Node) SetDrainState(ctx context.Context, nodeID string, state db.DrainS
 	return n.db.SetDrainState(ctx, nodeID, state)
 }
 
-func (n *Node) SetDiameterLabel(ctx context.Context, nodeID, label string) error {
-	return n.db.SetDiameterLabel(ctx, nodeID, label)
+func (n *Node) SetDisplayName(ctx context.Context, nodeID, name string) error {
+	return n.db.SetDisplayName(ctx, nodeID, name)
+}
+
+func (n *Node) DisplayName(ctx context.Context) string {
+	m, err := n.db.Member(ctx, n.id)
+	if err != nil {
+		return ""
+	}
+
+	return m.DisplayName
 }

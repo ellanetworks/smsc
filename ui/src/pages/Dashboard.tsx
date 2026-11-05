@@ -28,6 +28,7 @@ import {
   messageStatusColors,
 } from "@/components/chips";
 import { useAuth } from "@/contexts/AuthContext";
+import { getCluster, type ClusterStatus } from "@/queries/cluster";
 import {
   type DiameterPeer,
   getDiameterStatus,
@@ -262,6 +263,42 @@ function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
 
 const QUARTER = { xs: 12, sm: 6, md: 3 };
 
+const HA_HINTS = {
+  off: "High availability is not enabled on this node.",
+  healthy: "Healthy voters out of the cluster's total.",
+  degraded: "At least one node is unhealthy.",
+  noLeader:
+    "No node holds leadership. The cluster cannot accept writes until enough voters recover.",
+  unknown: "Cluster health could not be read from this node.",
+};
+
+function clusterHealth(status?: ClusterStatus): {
+  hint: string;
+  value: ReactNode;
+} {
+  if (!status) {
+    return { hint: HA_HINTS.unknown, value: <Chip label="Unknown" /> };
+  }
+  if (!status.clustered) {
+    return { hint: HA_HINTS.off, value: <Chip label="Off" /> };
+  }
+  if (!status.leader_id) {
+    return {
+      hint: HA_HINTS.noLeader,
+      value: <Chip label="No leader" color="error" />,
+    };
+  }
+  if (status.healthy === undefined) {
+    return { hint: HA_HINTS.unknown, value: <Chip label="Unknown" /> };
+  }
+  const voters = (status.members ?? []).filter((m) => m.suffrage === "voter");
+  const healthy = voters.filter((m) => m.healthy).length;
+  return {
+    hint: status.healthy ? HA_HINTS.healthy : HA_HINTS.degraded,
+    value: `${healthy}/${voters.length}`,
+  };
+}
+
 export default function Dashboard() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -288,6 +325,12 @@ export default function Dashboard() {
     queryFn: () =>
       getMessageCounts({ start: new Date(Date.now() - DAY_MS).toISOString() }),
     refetchInterval: COUNTS_REFRESH_MS,
+  });
+  const cluster = useQuery({
+    queryKey: ["cluster"],
+    queryFn: getCluster,
+    refetchInterval: DASHBOARD_REFRESH_MS,
+    enabled: auth.can("cluster:read"),
   });
   const configured = useQuery({
     queryKey: ["diameter", "peers"],
@@ -354,7 +397,7 @@ export default function Dashboard() {
             </Box>
           </Panel>
         </Grid>
-        <Grid size={{ xs: 12, md: 6 }}>
+        <Grid size={QUARTER}>
           <Panel
             title="Diameter Peers"
             to="/diameter"
@@ -434,6 +477,18 @@ export default function Dashboard() {
             </TableContainer>
           </Panel>
         </Grid>
+        {auth.can("cluster:read") && (
+          <Grid size={QUARTER}>
+            <KpiCard
+              title="High Availability"
+              hint={clusterHealth(cluster.data).hint}
+              loading={cluster.isPending}
+              error={failedToLoad(cluster)}
+              value={clusterHealth(cluster.data).value}
+              to="/cluster"
+            />
+          </Grid>
+        )}
       </Section>
 
       <Section title="Messages">

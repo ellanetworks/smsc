@@ -34,7 +34,7 @@ type nodeManager struct {
 	metrics        *peerMetrics
 	tracerProvider trace.TracerProvider
 	logger         *slog.Logger
-	label          func() (string, bool)
+	label          string
 
 	mu       sync.Mutex
 	node     *diameter.Node
@@ -136,18 +136,7 @@ func (m *nodeManager) Addr() net.Addr {
 }
 
 func (m *nodeManager) host(operator settings.Operator) string {
-	label, ok := m.label()
-	if ok {
-		return operator.Host(label)
-	}
-
-	if node := m.Node(); node != nil {
-		if current, _, found := strings.Cut(node.Identity().OriginHost, ".node."); found {
-			return operator.Host(current)
-		}
-	}
-
-	return operator.Host(settings.DefaultLabel)
+	return operator.Host(m.label)
 }
 
 func (m *nodeManager) start(ctx context.Context, operator settings.Operator, peers []settings.Peer) error {

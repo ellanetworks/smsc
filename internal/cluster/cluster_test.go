@@ -209,18 +209,12 @@ func TestJoinReplicatesAndForwards(t *testing.T) {
 		return nil
 	})
 
-	labels := map[string]bool{}
-
 	members, err := follower.db.Members(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, m := range members {
-		labels[m.DiameterLabel] = true
-	}
-
-	if len(members) != 3 || !labels["smsc"] || !labels["smsc2"] || !labels["smsc3"] {
+	if len(members) != 3 {
 		t.Fatalf("members = %+v", members)
 	}
 }
