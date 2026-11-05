@@ -697,19 +697,22 @@ func (d *DB) NextDue(ctx context.Context, msisdn string, now time.Time) (_ Messa
 }
 
 type scheduleRetry struct {
-	ID    int64
-	At    time.Time
-	Now   time.Time
-	Hold  bool
-	Since time.Time
-	Fence Fence
+	ID       int64
+	At       time.Time
+	Now      time.Time
+	Hold     bool
+	Since    time.Time
+	Fence    Fence
+	Attempts []DeliveryAttempt `json:",omitempty"`
 }
 
-func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, since time.Time, f Fence) (err error) {
+func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, since time.Time, f Fence,
+	attempts ...DeliveryAttempt,
+) (err error) {
 	defer d.observe(&err)()
 
 	_, err = submit[struct{}](ctx, d, cmdScheduleRetry, scheduleRetry{
-		ID: id, At: at, Now: now, Hold: hold, Since: since, Fence: f,
+		ID: id, At: at, Now: now, Hold: hold, Since: since, Fence: f, Attempts: attempts,
 	})
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrStaleTerm) {
 		return fmt.Errorf("schedule retry: %w", err)
@@ -733,6 +736,10 @@ func applyScheduleRetry(a *applyCtx, p scheduleRetry) (struct{}, error) {
 	}
 
 	if err := fenced(a, msisdn, p.Fence); err != nil {
+		return struct{}{}, err
+	}
+
+	if err := insertAttempts(a, p.Attempts); err != nil {
 		return struct{}{}, err
 	}
 
@@ -921,6 +928,13 @@ type setAlertMSISDN struct {
 func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) (err error) {
 	defer d.observe(&err)()
 
+	var current sql.NullString
+
+	err = d.reader().QueryRowContext(ctx, `SELECT alert_msisdn FROM recipients WHERE msisdn = ?`, msisdn).Scan(&current)
+	if err == nil && current.String == alertMSISDNOf(msisdn, alertMSISDN).V {
+		return nil
+	}
+
 	_, err = submit[struct{}](ctx, d, cmdSetAlertMSISDN, setAlertMSISDN{MSISDN: msisdn, AlertMSISDN: alertMSISDN, Now: now})
 	if err != nil {
 		return fmt.Errorf("set alert MSISDN: %w", err)
@@ -929,8 +943,16 @@ func (d *DB) SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now
 	return nil
 }
 
+func alertMSISDNOf(msisdn, alertMSISDN string) sql.Null[string] {
+	if alertMSISDN == "" || alertMSISDN == msisdn {
+		return sql.Null[string]{}
+	}
+
+	return sql.Null[string]{V: alertMSISDN, Valid: true}
+}
+
 func applySetAlertMSISDN(a *applyCtx, p setAlertMSISDN) (struct{}, error) {
-	alert := sql.Null[string]{V: p.AlertMSISDN, Valid: p.AlertMSISDN != "" && p.AlertMSISDN != p.MSISDN}
+	alert := alertMSISDNOf(p.MSISDN, p.AlertMSISDN)
 
 	_, err := a.tx.ExecContext(a.ctx,
 		`INSERT INTO recipients (msisdn, alert_msisdn, updated_at) VALUES (?, ?, ?)
@@ -948,16 +970,17 @@ type completeMessage struct {
 	TPStatus    uint8
 	TraceParent string
 	Fence       Fence
+	Attempts    []DeliveryAttempt `json:",omitempty"`
 }
 
 func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus, at time.Time, report *NewStatusReport,
-	tpStatus uint8, f Fence,
+	tpStatus uint8, f Fence, attempts ...DeliveryAttempt,
 ) (err error) {
 	defer d.observe(&err)()
 
 	kind, replayed, err := submitReplay[MessageKind](ctx, d, cmdCompleteMessage, completeMessage{
 		ID: id, Status: status, At: at, Report: report, TPStatus: tpStatus, TraceParent: tracing.TraceParent(ctx),
-		Fence: f,
+		Fence: f, Attempts: attempts,
 	})
 	if errors.Is(err, ErrNotPending) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrStaleTerm) {
 		return err
@@ -1013,6 +1036,10 @@ func applyCompleteMessage(a *applyCtx, p completeMessage) (MessageKind, error) {
 	}
 
 	if err != nil {
+		return "", err
+	}
+
+	if err := insertAttempts(a, p.Attempts); err != nil {
 		return "", err
 	}
 

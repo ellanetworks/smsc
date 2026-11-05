@@ -48,11 +48,13 @@ type Store interface {
 	DueRecipients(ctx context.Context, now time.Time, limit int, skip func(msisdn string) bool) ([]string, time.Time, error)
 	NextDue(ctx context.Context, msisdn string, now time.Time) (db.Message, bool, error)
 	CompleteMessage(ctx context.Context, id int64, status db.MessageStatus, at time.Time, report *db.NewStatusReport,
-		tpStatus uint8, f db.Fence) error
-	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, since time.Time, f db.Fence) error
+		tpStatus uint8, f db.Fence, attempts ...db.DeliveryAttempt) error
+	ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hold bool, since time.Time, f db.Fence,
+		attempts ...db.DeliveryAttempt) error
 	ClaimRecipient(ctx context.Context, msisdn string, term uint64) (db.Claim, error)
 	ReleaseRecipient(ctx context.Context, msisdn string, c db.Claim) error
-	RecordAttemptAndClaim(ctx context.Context, a db.DeliveryAttempt, msisdn string, term uint64) (db.Claim, error)
+	RecordAttemptAndClaim(ctx context.Context, a db.DeliveryAttempt, msisdn string, term uint64, alertMSISDN *string) (db.Claim,
+		error)
 	ClaimedBefore(ctx context.Context, term uint64, since time.Time) ([]string, error)
 	AlertRecipient(ctx context.Context, msisdn string, now time.Time) ([]string, error)
 	SetAlertMSISDN(ctx context.Context, msisdn, alertMSISDN string, now time.Time) error
@@ -158,9 +160,10 @@ type nodeOutcome struct {
 
 // TS 23.040 clause 9.2.3.15
 type result struct {
-	outcome outcome
-	hold    bool
-	status  tpdu.Status
+	outcome  outcome
+	hold     bool
+	status   tpdu.Status
+	attempts []db.DeliveryAttempt
 }
 
 var errInterrupted = errors.New("short message delivery interrupted")
@@ -573,12 +576,13 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 
 	switch r.outcome {
 	case delivered:
-		return d.complete(ctx, m, db.StatusDelivered, r.status, d.Now(), f, settledClaim)
+		return d.complete(ctx, m, db.StatusDelivered, r, d.Now(), f, settledClaim)
 	case expired:
-		return d.complete(ctx, m, db.StatusExpired, r.status, d.Now(), f, settledClaim)
+		return d.complete(ctx, m, db.StatusExpired, r, d.Now(), f, settledClaim)
 	case permanent:
-		return d.complete(ctx, m, db.StatusFailed, r.status, d.Now(), f, settledClaim)
+		return d.complete(ctx, m, db.StatusFailed, r, d.Now(), f, settledClaim)
 	case interrupted:
+		d.flush(ctx, r.attempts)
 		settled(ctx, outcomeInterrupted)
 
 		if ctx.Err() == nil {
@@ -592,7 +596,7 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 
 	intervals := d.Settings().Delivery.RetryIntervals
 	if m.SingleShot || len(intervals) == 0 {
-		return d.complete(ctx, m, db.StatusFailed, r.status, now, f, settledClaim)
+		return d.complete(ctx, m, db.StatusFailed, r, now, f, settledClaim)
 	}
 
 	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
@@ -602,8 +606,9 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 		since = l.started
 	}
 
-	err := d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold, since, f)
+	err := d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold, since, f, r.attempts...)
 	if errors.Is(err, db.ErrStaleTerm) || errors.Is(err, db.ErrNotFound) {
+		d.flush(ctx, r.attempts)
 		settled(ctx, outcomeSuperseded)
 		return nil
 	}
@@ -618,16 +623,22 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 	return nil
 }
 
-func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, reported tpdu.Status, at time.Time,
+func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, r result, at time.Time,
 	f db.Fence, settledClaim func(),
 ) error {
+	reported := r.status
+
 	report, err := statusreport.For(m, reported, at, d.Settings())
 	if err != nil {
 		d.Logger.ErrorContext(ctx, "failed to make the status report on a short message", slog.Int64("message_id", m.ID),
 			slog.Any("error", err))
 	}
 
-	err = d.Store.CompleteMessage(ctx, m.ID, status, at, report, uint8(reported), f)
+	err = d.Store.CompleteMessage(ctx, m.ID, status, at, report, uint8(reported), f, r.attempts...)
+	if errors.Is(err, db.ErrStaleTerm) || errors.Is(err, db.ErrNotPending) || errors.Is(err, db.ErrNotFound) {
+		d.flush(ctx, r.attempts)
+	}
+
 	if errors.Is(err, db.ErrStaleTerm) {
 		d.Logger.DebugContext(ctx, "a newer leader term took the recipient over", slog.Int64("message_id", m.ID))
 		settled(ctx, outcomeSuperseded)
@@ -695,7 +706,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		routingAttempt.Step, routingAttempt.Node, routingAttempt.StartedAt = db.StepRouting, hss, started
 
 		if err == nil && len(deliveryTargets(routing.ServingNodes)) > 0 {
-			if err := d.recordAndClaim(ctx, log, m, routingAttempt, l); err != nil {
+			if err := d.recordAndClaim(ctx, log, m, routingAttempt, l, &routing.AlertMSISDN); err != nil {
 				return d.unclaimed(ctx, log, err), nil
 			}
 		} else {
@@ -708,7 +719,9 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 			return d.routingFailed(ctx, m, err), nil
 		}
 
-		d.setAlertMSISDN(ctx, m.MSISDN, routing.AlertMSISDN)
+		if len(deliveryTargets(routing.ServingNodes)) == 0 {
+			d.setAlertMSISDN(ctx, m.MSISDN, routing.AlertMSISDN)
+		}
 
 		targets = deliveryTargets(routing.ServingNodes)
 	}
@@ -743,30 +756,33 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 			_, reported = d.report(stop, log, m, success, nil)
 		}
 
-		return result{outcome: delivered, status: tpdu.StatusReceived}, follow(routing, a.via, following, more && reported)
+		return result{outcome: delivered, status: tpdu.StatusReceived, attempts: a.pending}, follow(routing, a.via, following,
+			more && reported)
 	}
 
 	if a.outcome == permanent {
-		return result{outcome: permanent, status: a.status}, nil
+		return result{outcome: permanent, status: a.status, attempts: a.pending}, nil
 	}
 
 	if len(a.failures()) == 0 {
-		return result{outcome: temporary, hold: !a.rejected, status: a.status}, nil
+		return result{outcome: temporary, hold: !a.rejected, status: a.status, attempts: a.pending}, nil
 	}
 
 	if !needsReport(a.failures(), routing) {
-		return result{outcome: temporary, hold: true, status: a.status}, nil
+		return result{outcome: temporary, hold: true, status: a.status, attempts: a.pending}, nil
 	}
 
 	alert, ok := d.report(stop, log, m, a.outcomes, &routing.ServingNodes)
 	if !ok {
-		return result{outcome: temporary, hold: true, status: a.status}, nil
+		return result{outcome: temporary, hold: true, status: a.status, attempts: a.pending}, nil
 	}
 
 	retryTargets := deliveryTargets(alert.ServingNodes)
 	if len(retryTargets) == 0 || stop.Err() != nil {
-		return result{outcome: temporary, hold: true, status: a.status}, nil
+		return result{outcome: temporary, hold: true, status: a.status, attempts: a.pending}, nil
 	}
+
+	d.flush(ctx, a.pending)
 
 	log.DebugContext(ctx, "retrying delivery via the serving nodes the HSS reported")
 
@@ -777,11 +793,12 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		_, reported := d.report(stop, log, m, retry.successReport(), nil)
 		routing.ServingNodes = alert.ServingNodes
 
-		return result{outcome: delivered, status: tpdu.StatusReceived}, follow(routing, retry.via, following, more && reported)
+		return result{outcome: delivered, status: tpdu.StatusReceived, attempts: retry.pending}, follow(routing, retry.via,
+			following, more && reported)
 	case permanent:
-		return result{outcome: permanent, status: retry.status}, nil
+		return result{outcome: permanent, status: retry.status, attempts: retry.pending}, nil
 	default:
-		return result{outcome: temporary, hold: true, status: retry.status}, nil
+		return result{outcome: temporary, hold: true, status: retry.status, attempts: retry.pending}, nil
 	}
 }
 
@@ -860,6 +877,7 @@ func (d *Deliverer) setAlertMSISDN(ctx context.Context, msisdn, alertMSISDN stri
 }
 
 type attemptResult struct {
+	pending   []db.DeliveryAttempt
 	outcome   outcome
 	outcomes  []nodeOutcome
 	via       target
@@ -930,14 +948,14 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 		deliveryAttempt.Step, deliveryAttempt.Node, deliveryAttempt.StartedAt = db.StepDelivery, t.name, started
 
 		if continues := r.outcome != delivered && r.outcome != permanent && i+1 < len(targets) && stop.Err() == nil; continues {
-			if err := d.recordAndClaim(ctx, log, m, deliveryAttempt, l); err != nil {
+			if err := d.recordAndClaim(ctx, log, m, deliveryAttempt, l, nil); err != nil {
 				unclaimed := d.unclaimed(ctx, log, err)
 				a.outcome, a.status, a.hasStatus = unclaimed.outcome, unclaimed.status, true
 
 				return a
 			}
 		} else {
-			d.record(ctx, log, m.ID, deliveryAttempt)
+			a.pending = append(a.pending, d.pending(ctx, log, m.ID, deliveryAttempt))
 		}
 
 		if r.cause != nil {

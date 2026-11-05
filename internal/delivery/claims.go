@@ -46,16 +46,23 @@ func (d *Deliverer) ensureClaim(ctx context.Context, m db.Message, l *lease) err
 	return d.claimed(ctx, m, l, c, at)
 }
 
-func (d *Deliverer) recordAndClaim(ctx context.Context, log *slog.Logger, m db.Message, a db.DeliveryAttempt, l *lease) error {
+func (d *Deliverer) recordAndClaim(ctx context.Context, log *slog.Logger, m db.Message, a db.DeliveryAttempt, l *lease,
+	alertMSISDN *string,
+) error {
 	if !l.enabled() {
 		d.record(ctx, log, m.ID, a)
+
+		if alertMSISDN != nil {
+			d.setAlertMSISDN(ctx, m.MSISDN, *alertMSISDN)
+		}
+
 		return nil
 	}
 
 	a.MessageID, a.CompletedAt = m.ID, d.Now()
 	at := d.Now()
 
-	c, err := d.Store.RecordAttemptAndClaim(ctx, a, m.MSISDN, l.term)
+	c, err := d.Store.RecordAttemptAndClaim(ctx, a, m.MSISDN, l.term, alertMSISDN)
 	if err != nil {
 		return err
 	}

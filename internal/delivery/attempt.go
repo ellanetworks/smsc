@@ -93,6 +93,24 @@ var tpFailureCauses = map[byte]string{
 	0xff: "unspecified_error_cause",
 }
 
+func (d *Deliverer) pending(ctx context.Context, log *slog.Logger, messageID int64, a db.DeliveryAttempt) db.DeliveryAttempt {
+	a.MessageID, a.CompletedAt = messageID, d.Now()
+
+	log.DebugContext(ctx, "short message delivery attempt", slog.String("step", string(a.Step)), slog.String("node", a.Node),
+		slog.String("outcome", a.Outcome))
+
+	return a
+}
+
+func (d *Deliverer) flush(ctx context.Context, attempts []db.DeliveryAttempt) {
+	for _, a := range attempts {
+		if _, err := d.Store.CreateDeliveryAttempt(ctx, a); err != nil {
+			d.Logger.ErrorContext(ctx, "failed to record delivery attempt", slog.Int64("message_id", a.MessageID),
+				slog.Any("error", err))
+		}
+	}
+}
+
 func (d *Deliverer) record(ctx context.Context, log *slog.Logger, messageID int64, a db.DeliveryAttempt) {
 	a.MessageID, a.CompletedAt = messageID, d.Now()
 

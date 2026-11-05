@@ -78,7 +78,7 @@ type statusFailingStore struct {
 }
 
 func (s statusFailingStore) CompleteMessage(context.Context, int64, db.MessageStatus, time.Time, *db.NewStatusReport, uint8,
-	db.Fence,
+	db.Fence, ...db.DeliveryAttempt,
 ) error {
 	return errors.New("disk I/O error")
 }

@@ -58,6 +58,7 @@ const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, 
 type recordAttempt struct {
 	Attempt DeliveryAttempt `json:"attempt"`
 	Claim   *claimRecipient `json:"claim,omitempty"`
+	Alert   *setAlertMSISDN `json:"alert,omitempty"`
 }
 
 type recordedAttempt struct {
@@ -77,14 +78,17 @@ func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ in
 }
 
 // TS 23.040 clause 6.2
-func (d *DB) RecordAttemptAndClaim(ctx context.Context, a DeliveryAttempt, msisdn string, term uint64) (_ Claim,
-	err error,
-) {
+func (d *DB) RecordAttemptAndClaim(ctx context.Context, a DeliveryAttempt, msisdn string, term uint64,
+	alertMSISDN *string,
+) (_ Claim, err error) {
 	defer d.observe(&err)()
 
-	r, err := submit[recordedAttempt](ctx, d, cmdRecordAttempt, recordAttempt{
-		Attempt: a, Claim: &claimRecipient{MSISDN: msisdn, Term: term},
-	})
+	p := recordAttempt{Attempt: a, Claim: &claimRecipient{MSISDN: msisdn, Term: term}}
+	if alertMSISDN != nil {
+		p.Alert = &setAlertMSISDN{MSISDN: msisdn, AlertMSISDN: *alertMSISDN, Now: a.CompletedAt}
+	}
+
+	r, err := submit[recordedAttempt](ctx, d, cmdRecordAttempt, p)
 	if err != nil {
 		return Claim{}, err
 	}
@@ -106,7 +110,23 @@ func applyRecordAttempt(ax *applyCtx, p recordAttempt) (recordedAttempt, error) 
 		}
 	}
 
+	if p.Alert != nil {
+		if _, err := applySetAlertMSISDN(ax, *p.Alert); err != nil {
+			return recordedAttempt{}, err
+		}
+	}
+
 	return r, nil
+}
+
+func insertAttempts(ax *applyCtx, attempts []DeliveryAttempt) error {
+	for _, a := range attempts {
+		if _, err := insertAttempt(ax, a); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func insertAttempt(ax *applyCtx, a DeliveryAttempt) (int64, error) {

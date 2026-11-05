@@ -499,7 +499,7 @@ type faultCluster struct {
 	nodes []*faultNode
 }
 
-func newFaultCluster(t *testing.T, size int, opts faultOptions) *faultCluster {
+func newFaultCluster(t *testing.T, opts faultOptions) *faultCluster {
 	t.Helper()
 
 	if testing.Short() {
@@ -508,7 +508,7 @@ func newFaultCluster(t *testing.T, size int, opts faultOptions) *faultCluster {
 
 	fc := &faultCluster{core: newFakeCore()}
 
-	fc.testCluster = newClusterWith(t, size, func(i int, dir, address string) *env {
+	fc.testCluster = newClusterWith(t, 3, func(i int, dir, address string) *env {
 		fn := &faultNode{
 			name: fmt.Sprintf("node%d", i), address: address, clock: &skewedClock{}, part: &partition{},
 			logs: newHangingLogStore(),
@@ -593,7 +593,7 @@ func newFaultCluster(t *testing.T, size int, opts faultOptions) *faultCluster {
 		}
 	})
 
-	waitVoters(t, fc.testCluster, size)
+	waitVoters(t, fc.testCluster, 3)
 
 	return fc
 }
@@ -693,12 +693,12 @@ func storeMessage(t testing.TB, on *faultNode, msisdn string, submitted time.Tim
 	return id
 }
 
-func waitMessage(t testing.TB, on *faultNode, id int64, want db.MessageStatus) db.Message {
+func waitDelivered(t testing.TB, on *faultNode, id int64) db.Message {
 	t.Helper()
 
 	var m db.Message
 
-	eventually(t, fmt.Sprintf("message %d %s on %s", id, want, on.name), func() error {
+	eventually(t, fmt.Sprintf("message %d delivered on %s", id, on.name), func() error {
 		var err error
 
 		m, err = on.db.GetMessage(context.Background(), id)
@@ -706,7 +706,7 @@ func waitMessage(t testing.TB, on *faultNode, id int64, want db.MessageStatus) d
 			return err
 		}
 
-		if m.Status != want {
+		if m.Status != db.StatusDelivered {
 			return fmt.Errorf("status %s", m.Status)
 		}
 
@@ -730,7 +730,7 @@ func forwardsTo(transfers []transfer, msisdn string) []transfer {
 
 // TS 23.040 clause 6.2
 func TestPartitionedLeaderStopsDelivering(t *testing.T) {
-	c := newFaultCluster(t, 3, faultOptions{attemptTimeout: time.Second, retry: []time.Duration{500 * time.Millisecond}})
+	c := newFaultCluster(t, faultOptions{attemptTimeout: time.Second, retry: []time.Duration{500 * time.Millisecond}})
 	old := c.leaderNode()
 
 	const held, unclaimed = "15551230002", "15551230003"
@@ -760,7 +760,7 @@ func TestPartitionedLeaderStopsDelivering(t *testing.T) {
 		return nil
 	})
 
-	waitMessage(t, next, unclaimedID, db.StatusDelivered)
+	waitDelivered(t, next, unclaimedID)
 
 	time.Sleep(time.Until(ledAt.Add(1500 * time.Millisecond)))
 
@@ -768,7 +768,7 @@ func TestPartitionedLeaderStopsDelivering(t *testing.T) {
 
 	old.part.heal()
 
-	m := waitMessage(t, next, heldID, db.StatusDelivered)
+	m := waitDelivered(t, next, heldID)
 
 	c.core.check(t)
 
@@ -856,7 +856,7 @@ func (lt *leaderTimes) check(t *testing.T) {
 
 // TS 23.040 clause 6.2
 func TestLeaderChangeAcrossSkewedClocks(t *testing.T) {
-	c := newFaultCluster(t, 3, faultOptions{
+	c := newFaultCluster(t, faultOptions{
 		attemptTimeout: 2 * time.Second,
 		retry:          []time.Duration{300 * time.Millisecond},
 		offsets:        []time.Duration{0, 30 * time.Second, -30 * time.Second},
@@ -877,7 +877,7 @@ func TestLeaderChangeAcrossSkewedClocks(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	close(gate)
 
-	waitMessage(t, ahead, firstID, db.StatusDelivered)
+	waitDelivered(t, ahead, firstID)
 
 	aheadTime := ahead.db.LeaderTime()
 
@@ -889,11 +889,11 @@ func TestLeaderChangeAcrossSkewedClocks(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	close(gate)
 
-	waitMessage(t, behind, secondID, db.StatusDelivered)
+	waitDelivered(t, behind, secondID)
 
 	c.core.answerAbsent(retried, 1)
 	retriedID := storeMessage(t, behind, retried, behind.clock.now())
-	m := waitMessage(t, behind, retriedID, db.StatusDelivered)
+	m := waitDelivered(t, behind, retriedID)
 
 	c.core.check(t)
 	times.check(t)
@@ -918,7 +918,7 @@ func TestLeaderChangeAcrossSkewedClocks(t *testing.T) {
 func TestHungLogStoreHandsLeadershipOver(t *testing.T) {
 	const storeTimeout = time.Second
 
-	c := newFaultCluster(t, 3, faultOptions{attemptTimeout: time.Second, logStoreTimeout: storeTimeout})
+	c := newFaultCluster(t, faultOptions{attemptTimeout: time.Second, logStoreTimeout: storeTimeout})
 	stuck := c.leaderNode()
 
 	var writer *faultNode
@@ -950,8 +950,8 @@ func TestHungLogStoreHandsLeadershipOver(t *testing.T) {
 
 	t.Logf("%s led %s after the log store of %s hung", next.name, time.Since(hungAt), stuck.name)
 
-	waitMessage(t, next, id, db.StatusDelivered)
-	waitMessage(t, next, routedID, db.StatusDelivered)
+	waitDelivered(t, next, id)
+	waitDelivered(t, next, routedID)
 
 	eventually(t, "the stuck node not leading", func() error {
 		if stuck.leading() {
@@ -979,7 +979,7 @@ func TestHungLogStoreHandsLeadershipOver(t *testing.T) {
 }
 
 func TestLeadershipLostAndRegained(t *testing.T) {
-	c := newFaultCluster(t, 3, faultOptions{attemptTimeout: 2 * time.Second, retry: []time.Duration{300 * time.Millisecond}})
+	c := newFaultCluster(t, faultOptions{attemptTimeout: 2 * time.Second, retry: []time.Duration{300 * time.Millisecond}})
 	c.core.latency = 20 * time.Millisecond
 
 	home := c.leaderNode()

@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1328,5 +1329,76 @@ func TestMessagesSubmittedBy(t *testing.T) {
 		if _, err := d.writer.ExecContext(ctx, statement); err == nil {
 			t.Errorf("%s: no constraint failed", name)
 		}
+	}
+}
+
+func TestCompleteMessageRecordsAttempts(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := DeliveryAttempt{MessageID: id, StartedAt: now, CompletedAt: now, Step: StepDelivery, Node: "mme", Outcome: "success"}
+
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0, Fence{}, a); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.CompleteMessage(ctx, id, StatusDelivered, now, nil, 0, Fence{}, a); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("err = %v, want ErrNotPending", err)
+	}
+
+	attempts, total, err := d.ListDeliveryAttempts(ctx, id, 1, 10)
+	if err != nil || total != 1 || attempts[0].Node != "mme" {
+		t.Fatalf("attempts = %+v, %d, %v; want the one recorded with the completion", attempts, total, err)
+	}
+}
+
+func TestScheduleRetryRecordsAttempts(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := DeliveryAttempt{MessageID: id, StartedAt: now, CompletedAt: now, Step: StepDelivery, Node: "mme", Outcome: "absent"}
+
+	if err := d.ScheduleRetry(ctx, id, now.Add(time.Minute), now, false, now, Fence{}, a); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, total, err := d.ListDeliveryAttempts(ctx, id, 1, 10); err != nil || total != 1 {
+		t.Fatalf("total = %d, %v; want 1", total, err)
+	}
+}
+
+func TestRecordAttemptAndClaimSetsAlertMSISDN(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	alert := "15559990000"
+	a := DeliveryAttempt{MessageID: id, StartedAt: now, CompletedAt: now, Step: StepRouting, Node: "hss", Outcome: "success"}
+
+	if _, err := d.RecordAttemptAndClaim(ctx, a, testMSISDN, 1, &alert); err != nil {
+		t.Fatal(err)
+	}
+
+	var got sql.NullString
+	if err := d.reader().QueryRowContext(ctx, `SELECT alert_msisdn FROM recipients WHERE msisdn = ?`, testMSISDN).Scan(&got); err != nil ||
+		got.String != alert {
+		t.Fatalf("alert_msisdn = %v, %v; want %s", got, err, alert)
 	}
 }

@@ -155,7 +155,7 @@ func (s *fakeStore) NextDueFor(_ context.Context, msisdn string, excludeID int64
 }
 
 func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.MessageStatus, _ time.Time, report *db.NewStatusReport,
-	tpStatus uint8, _ db.Fence,
+	tpStatus uint8, _ db.Fence, attempts ...db.DeliveryAttempt,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -163,6 +163,8 @@ func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.Messa
 	if s.messages[id].Status != db.StatusPending {
 		return db.ErrNotPending
 	}
+
+	s.attempts = append(s.attempts, attempts...)
 
 	s.messages[id].Status = status
 	s.completed = append(s.completed, id)
@@ -181,10 +183,12 @@ func (s *fakeStore) CompleteMessage(_ context.Context, id int64, status db.Messa
 }
 
 func (s *fakeStore) ScheduleRetry(_ context.Context, id int64, at, _ time.Time, holdRecipient bool, _ time.Time,
-	_ db.Fence,
+	_ db.Fence, attempts ...db.DeliveryAttempt,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.attempts = append(s.attempts, attempts...)
 
 	m := s.messages[id]
 	m.NextAttemptAt = at
@@ -244,8 +248,13 @@ func (s *fakeStore) ReleaseRecipient(context.Context, string, db.Claim) error {
 	return nil
 }
 
-func (s *fakeStore) RecordAttemptAndClaim(ctx context.Context, a db.DeliveryAttempt, _ string, _ uint64) (db.Claim, error) {
+func (s *fakeStore) RecordAttemptAndClaim(ctx context.Context, a db.DeliveryAttempt, msisdn string, _ uint64,
+	alertMSISDN *string,
+) (db.Claim, error) {
 	_, err := s.CreateDeliveryAttempt(ctx, a)
+	if err == nil && alertMSISDN != nil {
+		err = s.SetAlertMSISDN(ctx, msisdn, *alertMSISDN, time.Time{})
+	}
 
 	return db.Claim{}, err
 }
