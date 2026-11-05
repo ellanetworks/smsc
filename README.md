@@ -12,11 +12,10 @@
 
 ## Key Features
 
-- **SMS over 4G and 5G**: phones send and receive SMS through the MME or SMSF of the core, over SGd, with routing from the HSS over S6c.
+- **SMS over NAS**: phones on 4G and 5G send and receive SMS through the MME or SMSF of the core over SGd.
 - **SMS over IP**: phones registered with an IP-SM-GW, such as Ella IMS's, send and receive SMS through it.
 - **Store and forward**: messages wait while a phone is unreachable, are retried, and go out as soon as the HSS says it is back, within their validity period.
-- **3GPP compliant**: status reports, replace short message and reject duplicates, per TS 23.040 and TS 29.338.
-- **Application messages**: send text from the web UI or the HTTP API, from a number or a name such as `EllaSMSC`, and binary messages such as SIM OTA updates from the HTTP API.
+- **Application messages**: send messages to phones from the web UI, the HTTP API, or SMPP 3.4 for SIM OTA platforms and other ESMEs.
 - **Delivery visibility**: every routing lookup and delivery attempt is recorded, with why it failed.
 - **Single sign-on**: users log in with your identity provider, such as Google, Microsoft or Okta, over OpenID Connect.
 - **Secure**: users with roles, API tokens, HTTPS, and audited reads of message content.
