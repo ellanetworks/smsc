@@ -373,6 +373,10 @@ func WithClock(now func() time.Time) Option {
 }
 
 func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
+	if err := recoverInstall(path); err != nil {
+		return nil, fmt.Errorf("open database: recover an interrupted install: %w", err)
+	}
+
 	if err := restrict(path); err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

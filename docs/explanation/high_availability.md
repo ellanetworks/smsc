@@ -22,7 +22,7 @@ Ella SMSC keeps an odd number of voters, at most 5. Other nodes are standbys, pr
 
 ## Diameter peers
 
-Each node has its own Diameter host, fixed by its node ID, and they share the realm and the service centre address. Any node accepts MO-Forward-Short-Message and Alert-Service-Centre, and the leader delivers. So every Diameter peer, such as Ella Core, the HSS or Ella IMS, connects to every node, or every node and every peer connect through a Diameter routing agent.
+Each node has its own Diameter host, and they share the realm and the service centre address. Any node receives messages, and the leader delivers them. Connect each Diameter peer to every node, or connect them all through a Diameter routing agent.
 
 ## ESMEs
 
@@ -32,11 +32,9 @@ An ESME binds to any node. Its limit of 4 sessions applies across the cluster. D
 
 When the leader fails, the other nodes elect a new one within a few seconds. Until then, Ella SMSC answers new messages with a temporary error, so the sender retries, and delivers nothing.
 
-The new leader resumes delivery. It waits up to 35 seconds before delivering to a phone that the old leader was delivering to, so that the phone never receives the same message twice.
-
 ## Draining
 
-Draining a node prepares it for an upgrade or removal: it closes its SMPP sessions, so that its ESMEs bind to another node, and hands over the leadership. It keeps its Diameter connections and its vote.
+Draining a node prepares it for an upgrade or removal: it closes its SMPP sessions, and hands over the leadership. It keeps its Diameter connections and its vote.
 
 ## Upgrades
 

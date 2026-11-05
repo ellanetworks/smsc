@@ -2,6 +2,7 @@ package esme
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"strconv"
@@ -323,5 +324,23 @@ func TestSessionLimitAcrossTheCluster(t *testing.T) {
 	if out := env.service.Authenticate(context.Background(), bindRequest(smpp.CmdBindTransceiver, "ota", "secret",
 		"127.0.0.1:4000")); out.Status != smpp.StatusOK {
 		t.Fatalf("a bind once the other node's sessions are gone = %s", out.Status)
+	}
+}
+
+func TestBindsFromManyNetworksDoNotLockOutOthers(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := &Service{Now: func() time.Time { return now }}
+	s.init()
+
+	for i := range ratelimit.MaxKeys {
+		addr := netip.MustParseAddrPort(fmt.Sprintf("[2001:db8:%x:%x::1]:2775", i>>16, i&0xffff))
+		if _, reason, _ := s.bind(context.Background(), uint64(i), addr, &smpp.Bind{}); reason != "not a bind" {
+			t.Fatalf("bind %d: %q", i, reason)
+		}
+	}
+
+	_, reason, _ := s.bind(context.Background(), ratelimit.MaxKeys, netip.MustParseAddrPort("192.0.2.10:2775"), &smpp.Bind{})
+	if reason != "not a bind" {
+		t.Fatalf("bind from a new client once the clients are full: %q", reason)
 	}
 }

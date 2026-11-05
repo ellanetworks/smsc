@@ -460,6 +460,10 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.stopLeading()
 
+	if err := s.node.HandOver(); err != nil {
+		s.Logger.WarnContext(ctx, "failed to hand the leadership over", slog.Any("error", err))
+	}
+
 	s.stopFollowing()
 
 	if s.smppServer != nil {

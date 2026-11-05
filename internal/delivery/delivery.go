@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -25,7 +26,10 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-const errorBackoff = time.Second
+const (
+	errorBackoff   = time.Second
+	persistBackoff = 50 * time.Millisecond
+)
 
 const (
 	tracerName         = "github.com/ellanetworks/smsc/internal/delivery"
@@ -147,6 +151,7 @@ type forwardResult struct {
 	cause         *s6c.DeliveryCause
 	diagnostic    *tgpp.AbsentUserDiagnostic
 	rejected      bool
+	fault         bool
 	status        tpdu.Status
 	deliverReport []byte
 }
@@ -165,6 +170,13 @@ type result struct {
 	status   tpdu.Status
 	attempts []db.DeliveryAttempt
 }
+
+// RFC 6733 section 7.1.5
+const (
+	resultAVPNotAllowed      uint32 = 5008
+	resultInvalidBitInHeader uint32 = 5013
+	resultInvalidAVPBitCombo uint32 = 5016
+)
 
 var errInterrupted = errors.New("short message delivery interrupted")
 
@@ -538,11 +550,35 @@ func (d *Deliverer) deliverAndSettle(stop context.Context, m db.Message, s *sess
 
 	r, next := d.deliver(stop, m, d.Now(), s, l)
 
-	if err := d.settle(context.WithoutCancel(stop), m, r, l, next != nil); err != nil {
+	if err := d.settle(stop, m, r, l, next != nil); err != nil {
 		return nil, err
 	}
 
 	return next, nil
+}
+
+func (d *Deliverer) persist(stop context.Context, write func(context.Context) error) error {
+	var id db.RequestID
+
+	_, _ = rand.Read(id[:])
+
+	ctx := db.WithRequestID(context.WithoutCancel(stop), id)
+
+	for wait := persistBackoff; ; wait = min(2*wait, errorBackoff) {
+		err := write(ctx)
+		if err == nil || db.CodeOf(err) != "" || stop.Err() != nil {
+			return err
+		}
+
+		d.Logger.WarnContext(ctx, "failed to record a delivery outcome, retrying", slog.Duration("backoff", wait),
+			slog.Any("error", err))
+
+		select {
+		case <-stop.Done():
+			return err
+		case <-time.After(wait):
+		}
+	}
 }
 
 func (d *Deliverer) tracer() trace.Tracer {
@@ -564,7 +600,8 @@ func settled(ctx context.Context, outcome string) {
 	}
 }
 
-func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease, keep bool) error {
+func (d *Deliverer) settle(stop context.Context, m db.Message, r result, l *lease, keep bool) error {
+	ctx := context.WithoutCancel(stop)
 	f := l.fence()
 	f.Keep = keep
 
@@ -576,13 +613,13 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 
 	switch r.outcome {
 	case delivered:
-		return d.complete(ctx, m, db.StatusDelivered, r, d.Now(), f, settledClaim)
+		return d.complete(stop, m, db.StatusDelivered, r, d.Now(), f, settledClaim)
 	case expired:
-		return d.complete(ctx, m, db.StatusExpired, r, d.Now(), f, settledClaim)
+		return d.complete(stop, m, db.StatusExpired, r, d.Now(), f, settledClaim)
 	case permanent:
-		return d.complete(ctx, m, db.StatusFailed, r, d.Now(), f, settledClaim)
+		return d.complete(stop, m, db.StatusFailed, r, d.Now(), f, settledClaim)
 	case interrupted:
-		d.flush(ctx, r.attempts)
+		d.flush(stop, r.attempts)
 		settled(ctx, outcomeInterrupted)
 
 		if ctx.Err() == nil {
@@ -596,7 +633,7 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 
 	intervals := d.Settings().Delivery.RetryIntervals
 	if m.SingleShot || len(intervals) == 0 {
-		return d.complete(ctx, m, db.StatusFailed, r, now, f, settledClaim)
+		return d.complete(stop, m, db.StatusFailed, r, now, f, settledClaim)
 	}
 
 	at := now.Add(intervals[min(m.Retries, len(intervals)-1)])
@@ -606,9 +643,11 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 		since = l.started
 	}
 
-	err := d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold, since, f, r.attempts...)
+	err := d.persist(stop, func(ctx context.Context) error {
+		return d.Store.ScheduleRetry(ctx, m.ID, at, now, r.hold, since, f, r.attempts...)
+	})
 	if errors.Is(err, db.ErrStaleTerm) || errors.Is(err, db.ErrNotFound) {
-		d.flush(ctx, r.attempts)
+		d.flush(stop, r.attempts)
 		settled(ctx, outcomeSuperseded)
 
 		return nil
@@ -624,9 +663,10 @@ func (d *Deliverer) settle(ctx context.Context, m db.Message, r result, l *lease
 	return nil
 }
 
-func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.MessageStatus, r result, at time.Time,
+func (d *Deliverer) complete(stop context.Context, m db.Message, status db.MessageStatus, r result, at time.Time,
 	f db.Fence, settledClaim func(),
 ) error {
+	ctx := context.WithoutCancel(stop)
 	reported := r.status
 
 	report, err := statusreport.For(m, reported, at, d.Settings())
@@ -635,9 +675,11 @@ func (d *Deliverer) complete(ctx context.Context, m db.Message, status db.Messag
 			slog.Any("error", err))
 	}
 
-	err = d.Store.CompleteMessage(ctx, m.ID, status, at, report, uint8(reported), f, r.attempts...)
+	err = d.persist(stop, func(ctx context.Context) error {
+		return d.Store.CompleteMessage(ctx, m.ID, status, at, report, uint8(reported), f, r.attempts...)
+	})
 	if errors.Is(err, db.ErrStaleTerm) || errors.Is(err, db.ErrNotPending) || errors.Is(err, db.ErrNotFound) {
-		d.flush(ctx, r.attempts)
+		d.flush(stop, r.attempts)
 	}
 
 	if errors.Is(err, db.ErrStaleTerm) {
@@ -707,11 +749,14 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		routingAttempt.Step, routingAttempt.Node, routingAttempt.StartedAt = db.StepRouting, hss, started
 
 		if err == nil && len(deliveryTargets(routing.ServingNodes)) > 0 {
-			if err := d.recordAndClaim(ctx, log, m, routingAttempt, l, &routing.AlertMSISDN); err != nil {
-				return d.unclaimed(ctx, log, err), nil
+			if err := d.recordAndClaim(stop, log, m, routingAttempt, l, &routing.AlertMSISDN); err != nil {
+				r := d.unclaimed(ctx, log, err)
+				r.attempts = d.unrecorded(ctx, log, m.ID, routingAttempt, err)
+
+				return r, nil
 			}
 		} else {
-			d.record(ctx, log, m.ID, routingAttempt)
+			d.record(stop, log, m.ID, routingAttempt)
 		}
 
 		if err != nil {
@@ -747,7 +792,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 
 	if a.outcome == interrupted {
 		log.DebugContext(ctx, "short message delivery interrupted by shutdown")
-		return result{outcome: interrupted}, nil
+		return result{outcome: interrupted, attempts: a.pending}, nil
 	}
 
 	if a.outcome == delivered {
@@ -783,7 +828,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 		return result{outcome: temporary, hold: true, status: a.status, attempts: a.pending}, nil
 	}
 
-	d.flush(ctx, a.pending)
+	d.flush(stop, a.pending)
 
 	log.DebugContext(ctx, "retrying delivery via the serving nodes the HSS reported")
 
@@ -818,6 +863,13 @@ func follow(routing s6c.Routing, via target, next db.Message, announced bool) *s
 func (d *Deliverer) routingFailed(ctx context.Context, m db.Message, err error) result {
 	if re := (*s6c.ResultError)(nil); errors.As(err, &re) && re.AlertMSISDN != "" {
 		d.setAlertMSISDN(ctx, m.MSISDN, re.AlertMSISDN)
+	}
+
+	if r, ok := tgpp.ResultOf(err); ok && rejectsRequest(r) {
+		d.Logger.ErrorContext(ctx, "HSS rejected the routing request of the SMSC as malformed", slog.Int64("message_id", m.ID),
+			slog.Any("error", err))
+
+		return result{outcome: permanent, status: tpdu.StatusRemoteProcedureError}
 	}
 
 	for code, status := range map[uint32]tpdu.Status{
@@ -883,6 +935,7 @@ type attemptResult struct {
 	outcomes  []nodeOutcome
 	via       target
 	rejected  bool
+	faulted   bool
 	status    tpdu.Status
 	hasStatus bool
 }
@@ -949,14 +1002,20 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 		deliveryAttempt.Step, deliveryAttempt.Node, deliveryAttempt.StartedAt = db.StepDelivery, t.name, started
 
 		if continues := r.outcome != delivered && r.outcome != permanent && i+1 < len(targets) && stop.Err() == nil; continues {
-			if err := d.recordAndClaim(ctx, log, m, deliveryAttempt, l, nil); err != nil {
+			if err := d.recordAndClaim(stop, log, m, deliveryAttempt, l, nil); err != nil {
 				unclaimed := d.unclaimed(ctx, log, err)
 				a.outcome, a.status, a.hasStatus = unclaimed.outcome, unclaimed.status, true
+				a.pending = append(a.pending, d.unrecorded(ctx, log, m.ID, deliveryAttempt, err)...)
 
 				return a
 			}
 		} else {
 			a.pending = append(a.pending, d.pending(ctx, log, m.ID, deliveryAttempt))
+		}
+
+		if r.fault {
+			log.ErrorContext(ctx, "serving node rejected the short message request of the SMSC as malformed",
+				slog.String("node", t.name), slog.Any("error", err))
 		}
 
 		if r.cause != nil {
@@ -966,8 +1025,8 @@ func (d *Deliverer) attempt(stop context.Context, log *slog.Logger, m db.Message
 
 		a.rejected = a.rejected || r.rejected
 
-		if r.outcome != delivered && (!a.hasStatus || r.outcome == permanent) {
-			a.status, a.hasStatus = r.status, true
+		if r.outcome != delivered && (!a.hasStatus || r.outcome == permanent || a.faulted && !r.fault) {
+			a.status, a.hasStatus, a.faulted = r.status, true, r.fault
 		}
 
 		switch r.outcome {
@@ -1237,6 +1296,7 @@ func (d *Deliverer) forward(ctx context.Context, imsi string, t target, deliver 
 	return r, err
 }
 
+// TS 23.040 clause 3.3
 func classifyForwardAnswer(err error) forwardResult {
 	if err == nil {
 		return forwardResult{outcome: delivered, cause: ptr(s6c.DeliveryCauseSuccessfulTransfer)}
@@ -1249,11 +1309,11 @@ func classifyForwardAnswer(err error) forwardResult {
 
 	code := re.Code
 
-	if !re.Experimental {
-		if code >= 5000 && code < 6000 {
-			return forwardResult{outcome: targetFailed, status: statusCongestion}
-		}
+	if rejectsRequest(re.Result) {
+		return forwardResult{outcome: targetFailed, fault: true, status: tpdu.StatusRemoteProcedureError}
+	}
 
+	if !re.Experimental {
 		return forwardResult{outcome: temporary, status: statusCongestion}
 	}
 
@@ -1294,10 +1354,27 @@ func classifyForwardAnswer(err error) forwardResult {
 		default:
 			return forwardResult{outcome: temporary, status: statusErrorInSME}
 		}
-	case tgpp.ResultErrorFacilityNotSupported:
+	case tgpp.ResultErrorFacilityNotSupported, tgpp.ResultErrorServiceBarred:
 		return forwardResult{outcome: temporary, status: statusServiceRejected}
 	default:
 		return forwardResult{outcome: temporary, status: statusCongestion}
+	}
+}
+
+// RFC 6733 section 7.1.5
+func rejectsRequest(r tgpp.Result) bool {
+	if r.Experimental {
+		return false
+	}
+
+	switch r.Code {
+	case diameter.ResultAVPUnsupported, diameter.ResultInvalidAVPValue, diameter.ResultMissingAVP,
+		diameter.ResultContradictingAVPs, resultAVPNotAllowed, diameter.ResultAVPOccursTooManyTimes,
+		diameter.ResultUnsupportedVersion, resultInvalidBitInHeader, diameter.ResultInvalidAVPLength,
+		diameter.ResultInvalidMessageLength, resultInvalidAVPBitCombo:
+		return true
+	default:
+		return false
 	}
 }
 

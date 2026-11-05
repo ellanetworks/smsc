@@ -75,21 +75,27 @@ func TestMetricsTimeDeliveryFromSubmission(t *testing.T) {
 
 type statusFailingStore struct {
 	*fakeStore
+	stop context.CancelFunc
 }
 
 func (s statusFailingStore) CompleteMessage(context.Context, int64, db.MessageStatus, time.Time, *db.NewStatusReport, uint8,
 	db.Fence, ...db.DeliveryAttempt,
 ) error {
+	s.stop()
+
 	return errors.New("disk I/O error")
 }
 
 func TestMetricsDoNotCountUnstoredStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
-	d := newDeliverer(statusFailingStore{newFakeStore(pendingMessage(t))}, &fakeRouter{routing: mmeRouting()}, sender)
+	d := newDeliverer(statusFailingStore{newFakeStore(pendingMessage(t)), cancel}, &fakeRouter{routing: mmeRouting()}, sender)
 	d.Metrics = NewMetrics()
 
 	m, _, _ := nextDue(d)
-	if err := d.process(context.Background(), 0, m); err == nil {
+	if err := d.process(ctx, 0, m); err == nil {
 		t.Fatal("process succeeded although the status was not stored")
 	}
 

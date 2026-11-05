@@ -4,7 +4,7 @@ description: RESTful API reference for backing up and restoring Ella SMSC.
 
 # Backup
 
-A backup holds every message, user and setting, message content and the single sign-on client secret included.
+A backup holds every message, user and setting, message content and the single sign-on client secret included. It leaves out the cluster's secrets: the key that signs access tokens, the single sign-on cookie key, and the key and tokens to join a node.
 
 Both paths require Admin. Restoring requires an access token: an API token gets `403`.
 
@@ -28,7 +28,7 @@ A gzipped tar archive, with `Content-Type: application/gzip` and its file name i
 
 ## Restore
 
-This path replaces every message, user and setting with those of a backup, on every node of a cluster, and closes the SMPP sessions.
+This path replaces every message, user and setting with those of a backup, on every node of a cluster, and closes the SMPP sessions. The cluster keeps its nodes and its secrets.
 
 | Method | Path              |
 | ------ | ----------------- |

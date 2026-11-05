@@ -22,6 +22,7 @@ apps:
     install-mode: disable
     command: bin/smsc --config $SNAP_COMMON/smsc.yaml
     restart-condition: on-failure
+    stop-timeout: 50s
     plugs:
       - network-bind
 

@@ -74,6 +74,14 @@ func (n *Node) backupLocal(ctx context.Context, w io.Writer) error {
 
 	defer func() { _ = os.Remove(c.Path) }()
 
+	if err := db.StripSecrets(ctx, c.Path); err != nil {
+		return fmt.Errorf("leave the secrets out: %w", err)
+	}
+
+	return n.archive(ctx, w, c)
+}
+
+func (n *Node) archive(ctx context.Context, w io.Writer, c db.Copy) error {
 	seqs, err := db.Sequences(ctx, c.Path)
 	if err != nil {
 		return fmt.Errorf("read the sequences: %w", err)
@@ -197,7 +205,7 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 	}
 
 	if err := n.db.KeepClusterState(ctx, path); err != nil {
-		return fmt.Errorf("keep the cluster members: %w", err)
+		return fmt.Errorf("keep the cluster members and secrets: %w", err)
 	}
 
 	f, err := os.Open(path)

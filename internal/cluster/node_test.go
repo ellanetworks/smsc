@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -154,6 +155,43 @@ func TestRaftOverAnExistingDatabase(t *testing.T) {
 }
 
 func (e *env) storeFirstIndex() (uint64, error) { return e.node.store.FirstIndex() }
+
+func TestRefusesADatabaseBehindTheLog(t *testing.T) {
+	dir := t.TempDir()
+	e := open(t, dir)
+
+	if _, err := e.db.CreateUser(timeout(t), db.NewUser{Email: "a@example.com", Role: db.RoleAdmin}, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	if first, err := e.storeFirstIndex(); err != nil || first <= 1 {
+		t.Fatalf("log starts at %d, %v: want a compacted log", first, err)
+	}
+
+	e.close(t)
+
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(filepath.Join(dir, "smsc.db"+suffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
+
+	d, err := db.Open(context.Background(), filepath.Join(dir, "smsc.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = d.Close() }()
+
+	n, err := Open(context.Background(), Config{Dir: filepath.Join(dir, "raft")}, d)
+	if err == nil {
+		_ = n.Close()
+	}
+
+	if !errors.Is(err, ErrDatabaseBehindLog) {
+		t.Fatalf("Open over an empty database = %v, want %v", err, ErrDatabaseBehindLog)
+	}
+}
 
 func TestSnapshotInstallsOnAnotherDatabase(t *testing.T) {
 	ctx := context.Background()

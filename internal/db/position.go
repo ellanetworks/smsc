@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -315,7 +316,7 @@ func (d *DB) install(ctx context.Context, src string, at *Position) error {
 		}
 	}
 
-	backup := d.path + ".replaced"
+	backup := replacedPath(d.path)
 
 	if err := d.closeConns(); err != nil {
 		_ = d.openConns(ctx)
@@ -370,6 +371,40 @@ func (d *DB) install(ctx context.Context, src string, at *Position) error {
 		l.last = max(l.last, state.leaderTime)
 		l.mu.Unlock()
 	}
+
+	return nil
+}
+
+func replacedPath(path string) string {
+	return path + ".replaced"
+}
+
+func recoverInstall(path string) error {
+	backup := replacedPath(path)
+
+	if _, err := os.Stat(backup); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(path); err == nil {
+		return os.Remove(backup)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+
+	if err := os.Rename(backup, path); err != nil {
+		return err
+	}
+
+	syncDir(filepath.Dir(path))
 
 	return nil
 }
@@ -491,7 +526,38 @@ func (d *DB) Wipe(ctx context.Context, scratch string) (err error) {
 	return d.Install(ctx, path, &Position{})
 }
 
-var clusterTables = []string{"cluster", "cluster_members", "cluster_join_tokens"}
+var (
+	secretTables  = []string{"jwt_secret", "oidc_cookie_key", "cluster", "cluster_join_tokens"}
+	clusterTables = append([]string{"cluster_members"}, secretTables...)
+)
+
+func StripSecrets(ctx context.Context, path string) error {
+	conn, err := sql.Open("sqlite3", "file:"+path+"?_secure_delete=on")
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	for _, t := range secretTables {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return conn.Close()
+}
 
 func (d *DB) KeepClusterState(ctx context.Context, path string) (err error) {
 	defer d.observe(&err)()

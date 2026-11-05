@@ -41,9 +41,10 @@ const (
 )
 
 var (
-	ErrNotLeader    = errors.New("not the leader")
-	ErrRemoved      = errors.New("this node was removed from the cluster: delete its data directory to join it again")
-	ErrNotClustered = errors.New("this node has no cluster address: set cluster in its configuration file")
+	ErrNotLeader         = errors.New("not the leader")
+	ErrDatabaseBehindLog = errors.New("the database is missing entries that the raft log no longer holds; restore a backup, or remove this node from the cluster, wipe its data directory and join it again")
+	ErrRemoved           = errors.New("this node was removed from the cluster: delete its data directory to join it again")
+	ErrNotClustered      = errors.New("this node has no cluster address: set cluster in its configuration file")
 )
 
 type Config struct {
@@ -264,7 +265,18 @@ func (n *Node) startRaft(ctx context.Context) error {
 		return fmt.Errorf("read the raft state: %w", err)
 	}
 
-	if !existing {
+	if existing {
+		first, err := logs.FirstIndex()
+		if err != nil {
+			_ = store.Close()
+			return fmt.Errorf("read the raft log: %w", err)
+		}
+
+		if applied := n.db.AppliedIndex(); first > applied+1 {
+			_ = store.Close()
+			return fmt.Errorf("%w: the database is at index %d but the raft log starts at %d", ErrDatabaseBehindLog, applied, first)
+		}
+	} else {
 		reset := n.db.ResetPosition
 		if n.joined() {
 			reset = func(ctx context.Context) error { return n.db.Wipe(ctx, mkdirAll(n.scratch())) }

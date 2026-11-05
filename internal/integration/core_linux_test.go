@@ -47,12 +47,13 @@ type core struct {
 	delivered  map[int64]int
 	inflight   map[string]int
 	overlapped []string
+	servedBy   map[string]time.Time
 }
 
 func newCore(t *testing.T, nodes []*node) *core {
 	t.Helper()
 
-	c := &core{t: t, delivered: map[int64]int{}, inflight: map[string]int{}}
+	c := &core{t: t, delivered: map[int64]int{}, inflight: map[string]int{}, servedBy: map[string]time.Time{}}
 
 	n, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{
@@ -191,7 +192,16 @@ func (c *core) deliver(req *diameter.Message) *diameter.Message {
 		imsi = a.UTF8String()
 	}
 
+	host := ""
+	if a, ok := req.Find(diameter.AVPOriginHost, 0); ok {
+		host = strings.ToLower(a.UTF8String())
+	}
+
 	c.mu.Lock()
+	if _, ok := c.servedBy[host+"/"+imsi]; !ok {
+		c.servedBy[host+"/"+imsi] = time.Now()
+	}
+
 	c.inflight[imsi]++
 
 	if c.inflight[imsi] > 1 {
@@ -235,6 +245,15 @@ func (c *core) deliveredAll(ids []int64) error {
 	}
 
 	return nil
+}
+
+func (c *core) firstDelivery(by *node, to int) (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	at, ok := c.servedBy[strings.ToLower(by.diameterHost())+"/"+imsiOf(to)]
+
+	return at, ok
 }
 
 func (c *core) overlaps() []string {

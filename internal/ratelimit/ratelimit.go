@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"container/list"
 	"net/netip"
 	"sync"
 	"time"
@@ -14,28 +15,38 @@ type Limiter struct {
 	now    func() time.Time
 
 	mu      sync.Mutex
-	windows map[string]*rateWindow
-	swept   time.Time
+	windows map[string]*list.Element
+	order   *list.List
 }
 
 type rateWindow struct {
+	key   string
 	start time.Time
 	count int
 }
 
 func New(limit int, window time.Duration, now func() time.Time) *Limiter {
-	return &Limiter{limit: limit, window: window, now: now, windows: map[string]*rateWindow{}}
+	return &Limiter{limit: limit, window: window, now: now, windows: map[string]*list.Element{}, order: list.New()}
 }
 
 func (l *Limiter) Allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	w := l.current(key)
-	if w == nil {
-		return false
+	now := l.now()
+	l.sweep(now)
+
+	e, ok := l.windows[key]
+	if !ok {
+		if l.order.Len() >= MaxKeys {
+			l.remove(l.order.Front())
+		}
+
+		e = l.order.PushBack(&rateWindow{key: key, start: now})
+		l.windows[key] = e
 	}
 
+	w := e.Value.(*rateWindow)
 	w.count++
 
 	return w.count <= l.limit
@@ -45,43 +56,34 @@ func (l *Limiter) Exceeded(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	w := l.current(key)
+	e, ok := l.windows[key]
+	if !ok {
+		return false
+	}
 
-	return w == nil || w.count >= l.limit
+	w := e.Value.(*rateWindow)
+
+	return l.now().Sub(w.start) < l.window && w.count >= l.limit
 }
 
 func (l *Limiter) Reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	delete(l.windows, key)
+	if e, ok := l.windows[key]; ok {
+		l.remove(e)
+	}
 }
 
-func (l *Limiter) current(key string) *rateWindow {
-	now := l.now()
-
-	if now.Sub(l.swept) >= l.window {
-		for k, w := range l.windows {
-			if now.Sub(w.start) >= l.window {
-				delete(l.windows, k)
-			}
-		}
-
-		l.swept = now
+func (l *Limiter) sweep(now time.Time) {
+	for e := l.order.Front(); e != nil && now.Sub(e.Value.(*rateWindow).start) >= l.window; e = l.order.Front() {
+		l.remove(e)
 	}
+}
 
-	if w, ok := l.windows[key]; ok && now.Sub(w.start) < l.window {
-		return w
-	}
-
-	if _, ok := l.windows[key]; !ok && len(l.windows) >= MaxKeys {
-		return nil
-	}
-
-	w := &rateWindow{start: now}
-	l.windows[key] = w
-
-	return w
+func (l *Limiter) remove(e *list.Element) {
+	delete(l.windows, e.Value.(*rateWindow).key)
+	l.order.Remove(e)
 }
 
 func Key(addr netip.Addr) string {

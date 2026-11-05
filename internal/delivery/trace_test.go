@@ -158,15 +158,15 @@ func TestDeliveryAttemptSpansPerMessage(t *testing.T) {
 
 func TestDeliveryAttemptLogs(t *testing.T) {
 	tests := map[string]struct {
-		store   func(*fakeStore) Store
+		store   func(*fakeStore, context.CancelFunc) Store
 		message string
 	}{
 		"delivered": {
-			store:   func(s *fakeStore) Store { return s },
+			store:   func(s *fakeStore, _ context.CancelFunc) Store { return s },
 			message: "short message delivery attempt",
 		},
 		"outcome not stored": {
-			store:   func(s *fakeStore) Store { return statusFailingStore{s} },
+			store:   func(s *fakeStore, stop context.CancelFunc) Store { return statusFailingStore{s, stop} },
 			message: "failed to record delivery outcome",
 		},
 	}
@@ -175,15 +175,18 @@ func TestDeliveryAttemptLogs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var logs logtest.Recorder
 
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
 			rec := tracetest.NewSpanRecorder()
 			sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
 
-			d := newDeliverer(tc.store(newFakeStore(pendingMessage(t))), &fakeRouter{routing: mmeRouting()}, sender)
+			d := newDeliverer(tc.store(newFakeStore(pendingMessage(t)), cancel), &fakeRouter{routing: mmeRouting()}, sender)
 			d.TracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
 			d.Logger = logs.Logger()
 
 			m, _, _ := nextDue(d)
-			_ = d.process(context.Background(), 0, m)
+			_ = d.process(ctx, 0, m)
 
 			spans := rec.Ended()
 			if len(spans) != 1 {

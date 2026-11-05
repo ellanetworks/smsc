@@ -412,6 +412,19 @@ func smDeliveryFailure(cause sgd.DeliveryFailureCause, diagnostic ...byte) *diam
 		inner...))
 }
 
+func baseResult(code uint32) *diameter.Message {
+	return &diameter.Message{AVPs: []diameter.AVP{diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, code)}}
+}
+
+func mmeSGSNRouting() s6c.Routing {
+	routing := mmeRouting()
+	routing.Additional = &s6c.ServingNode{
+		SGSN: &s6c.NodeAddress{Name: "sgsn.example.org", Realm: "epc.example.org", Number: "15550000020"},
+	}
+
+	return routing
+}
+
 func mmeRouting() s6c.Routing {
 	return s6c.Routing{
 		IMSI: "001010000000002",
@@ -793,7 +806,11 @@ func TestDeliverOutcomes(t *testing.T) {
 		"base protocol error is retried":      {answer: &diameter.Message{AVPs: []diameter.AVP{diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, 3002)}}, wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
 		"single-shot is not retried":          {answer: experimental(tgpp.ResultErrorAbsentUser), singleShot: true, wantStatus: db.StatusFailed},
 		"unknown user at the only node waits": {answer: experimental(tgpp.ResultErrorUserUnknown), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
-		"base permanent error fails":          {answer: &diameter.Message{AVPs: []diameter.AVP{diameter.Unsigned32(diameter.AVPResultCode, diameter.AVPFlagMandatory, 0, 5004)}}, wantStatus: db.StatusFailed},
+		"invalid AVP value fails":             {answer: baseResult(diameter.ResultInvalidAVPValue), wantStatus: db.StatusFailed},
+		"missing AVP fails":                   {answer: baseResult(diameter.ResultMissingAVP), wantStatus: db.StatusFailed},
+		"unable to comply is retried":         {answer: baseResult(diameter.ResultUnableToComply), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
+		"authorization rejected is retried":   {answer: baseResult(diameter.ResultAuthorizationRejected), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
+		"service barred is retried":           {answer: experimental(tgpp.ResultErrorServiceBarred), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
 		"illegal user fails":                  {answer: experimental(tgpp.ResultErrorIllegalUser), wantStatus: db.StatusFailed},
 		"illegal equipment fails":             {answer: experimental(tgpp.ResultErrorIllegalEquipment), wantStatus: db.StatusFailed},
 		"equipment protocol error is retried": {answer: smDeliveryFailure(sgd.CauseEquipmentProtocolError), wantStatus: db.StatusPending, wantNext: testNow.Add(time.Minute)},
@@ -853,6 +870,8 @@ func TestDeliverRoutingOutcomes(t *testing.T) {
 		"absent user":      {&s6c.ResultError{Result: tgpp.Experimental(tgpp.ResultErrorAbsentUser)}, db.StatusPending},
 		"HSS unreachable":  {diameter.ErrNotConnected, db.StatusPending},
 		"malformed answer": {s6c.ErrMalformedAnswer, db.StatusPending},
+		"unable to comply": {&s6c.ResultError{Result: tgpp.Result{Code: diameter.ResultUnableToComply}}, db.StatusPending},
+		"missing AVP":      {&s6c.ResultError{Result: tgpp.Result{Code: diameter.ResultMissingAVP}}, db.StatusFailed},
 	}
 
 	for name, tt := range tests {
@@ -1873,6 +1892,27 @@ func TestCompletionRecordsTPStatus(t *testing.T) {
 				t.Fatalf("%d delivery attempts, the last %+v; want one, with the RP-ERROR report", deliveries, last)
 			}
 		})
+	}
+}
+
+func TestRejectedRequestDoesNotHideATemporaryFailure(t *testing.T) {
+	m := pendingMessage(t)
+	m.SingleShot = true
+
+	store := newFakeStore(m)
+	sender := &fakeSender{answers: map[string]*diameter.Message{
+		"mme.example.org":  baseResult(diameter.ResultInvalidAVPValue),
+		"sgsn.example.org": experimental(tgpp.ResultErrorAbsentUser),
+	}}
+
+	process(t, newDeliverer(store, &fakeRouter{routing: mmeSGSNRouting()}, sender))
+
+	if got := store.messages[1].Status; got != db.StatusFailed {
+		t.Fatalf("status = %s, want %s", got, db.StatusFailed)
+	}
+
+	if got, want := store.tpStatuses[1], uint8(tpdu.TemporaryNoResponse.GaveUp()); got != want {
+		t.Fatalf("TP-Status = %#x, want %#x", got, want)
 	}
 }
 

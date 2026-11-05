@@ -16,6 +16,7 @@ services:
     command: smsc --config /smsc.yaml
     startup: enabled
     on-failure: restart
+    kill-delay: 50s
 
 parts:
   core:

@@ -102,24 +102,42 @@ func (d *Deliverer) pending(ctx context.Context, log *slog.Logger, messageID int
 	return a
 }
 
-func (d *Deliverer) flush(ctx context.Context, attempts []db.DeliveryAttempt) {
+func (d *Deliverer) flush(stop context.Context, attempts []db.DeliveryAttempt) {
 	for _, a := range attempts {
-		if _, err := d.Store.CreateDeliveryAttempt(ctx, a); err != nil {
-			d.Logger.ErrorContext(ctx, "failed to record delivery attempt", slog.Int64("message_id", a.MessageID),
+		if err := d.persistAttempt(stop, a); err != nil {
+			d.Logger.ErrorContext(stop, "failed to record delivery attempt", slog.Int64("message_id", a.MessageID),
 				slog.Any("error", err))
 		}
 	}
 }
 
-func (d *Deliverer) record(ctx context.Context, log *slog.Logger, messageID int64, a db.DeliveryAttempt) {
+func (d *Deliverer) persistAttempt(stop context.Context, a db.DeliveryAttempt) error {
+	return d.persist(stop, func(ctx context.Context) error {
+		_, err := d.Store.CreateDeliveryAttempt(ctx, a)
+		return err
+	})
+}
+
+func (d *Deliverer) record(stop context.Context, log *slog.Logger, messageID int64, a db.DeliveryAttempt) {
+	ctx := context.WithoutCancel(stop)
 	a.MessageID, a.CompletedAt = messageID, d.Now()
 
-	if _, err := d.Store.CreateDeliveryAttempt(ctx, a); err != nil {
+	if err := d.persistAttempt(stop, a); err != nil {
 		log.ErrorContext(ctx, "failed to record delivery attempt", slog.Any("error", err))
 	}
 
 	log.DebugContext(ctx, "short message delivery attempt", slog.String("step", string(a.Step)), slog.String("node", a.Node),
 		slog.String("outcome", a.Outcome))
+}
+
+func (d *Deliverer) unrecorded(ctx context.Context, log *slog.Logger, messageID int64, a db.DeliveryAttempt,
+	err error,
+) []db.DeliveryAttempt {
+	if errors.Is(err, errSlowClaim) {
+		return nil
+	}
+
+	return []db.DeliveryAttempt{d.pending(ctx, log, messageID, a)}
 }
 
 func (k nodeKind) nodeType() db.NodeType {

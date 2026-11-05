@@ -13,6 +13,7 @@ import (
 
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/ratelimit"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -295,6 +296,20 @@ func TestAccountFailureLimit(t *testing.T) {
 
 	if code := a.loginFrom("203.0.113.3:4242", testAdmin, testPassword); code != http.StatusOK {
 		t.Fatalf("login after the window = %d, want %d", code, http.StatusOK)
+	}
+}
+
+func TestLoginsFromManyNetworksDoNotLockOutOthers(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	for i := range ratelimit.MaxKeys {
+		req := request(http.MethodPost, "/api/v1/auth/login", "", "")
+		req.RemoteAddr = fmt.Sprintf("[2001:db8:%x:%x::1]:4242", i>>16, i&0xffff)
+		serve(a.handler, req)
+	}
+
+	if code := a.loginFrom("203.0.113.30:4242", testAdmin, testPassword); code != http.StatusOK {
+		t.Fatalf("login once the clients are full = %d, want %d", code, http.StatusOK)
 	}
 }
 
