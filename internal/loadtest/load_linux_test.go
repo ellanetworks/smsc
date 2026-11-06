@@ -137,9 +137,13 @@ type core struct {
 
 	next atomic.Int64
 
-	mu        sync.Mutex
-	sent      map[int64]time.Time
-	delivered map[int64]time.Duration
+	mt     func(imsi string, id int64, req *diameter.Message) *diameter.Message
+	report func(req *diameter.Message)
+
+	mu         sync.Mutex
+	sent       map[int64]time.Time
+	delivered  map[int64]time.Duration
+	duplicates int
 }
 
 func newCore(t *testing.T, local netip.Addr, smscs []smscNode) *core {
@@ -336,6 +340,10 @@ func (c *core) serve(_ context.Context, _ *diameter.Conn, req *diameter.Message)
 	case sgd.CommandMTForwardShortMessage:
 		return c.deliver(req)
 	case s6c.CommandReportSMDeliveryStatus:
+		if c.report != nil {
+			c.report(req)
+		}
+
 		return c.answer(req, diameter.ResultSuccess)
 	default:
 		return c.answer(req, diameter.ResultCommandUnsupported)
@@ -375,18 +383,37 @@ func (c *core) route(req *diameter.Message) *diameter.Message {
 
 // TS 29.338 clause 6.2.2
 func (c *core) deliver(req *diameter.Message) *diameter.Message {
+	id := int64(-1)
+
 	if ui, ok := req.Find(sgd.AVPSMRPUI, tgpp.VendorID); ok {
 		if i := bytes.LastIndexByte(ui.Data, '#'); i >= 0 {
-			if id, err := strconv.ParseInt(string(ui.Data[i+1:]), 10, 64); err == nil {
-				c.mu.Lock()
-				if sent, ok := c.sent[id]; ok {
-					if _, done := c.delivered[id]; !done {
-						c.delivered[id] = time.Since(sent)
-					}
-				}
-				c.mu.Unlock()
+			if v, err := strconv.ParseInt(string(ui.Data[i+1:]), 10, 64); err == nil {
+				id = v
 			}
 		}
+	}
+
+	if c.mt != nil {
+		var imsi string
+		if a, ok := req.Find(diameter.AVPUserName, 0); ok {
+			imsi = string(a.Data)
+		}
+
+		if ans := c.mt(imsi, id, req); ans != nil {
+			return ans
+		}
+	}
+
+	if id >= 0 {
+		c.mu.Lock()
+		if sent, ok := c.sent[id]; ok {
+			if _, done := c.delivered[id]; done {
+				c.duplicates++
+			} else {
+				c.delivered[id] = time.Since(sent)
+			}
+		}
+		c.mu.Unlock()
 	}
 
 	return c.answer(req, diameter.ResultSuccess)

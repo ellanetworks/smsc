@@ -56,6 +56,19 @@ func TestLoadSMPP(t *testing.T) {
 	})
 	call(t, token, http.MethodPut, api+"/delivery", map[string]any{"default_validity_seconds": 3600, "retry_intervals_seconds": []int{60}})
 
+	ensureESME(t, token, api, local)
+
+	c := newCore(t, local, nodes)
+	e := newESME(t, netip.AddrPortFrom(smsc, uint16(*smppPort)).String())
+
+	for _, rate := range parseRates(t, *rates) {
+		e.run(t, c, api, rate)
+	}
+}
+
+func ensureESME(t *testing.T, token, api string, local netip.Addr) {
+	t.Helper()
+
 	pw := esmePassword
 	esme := map[string]any{"password": &pw, "allowed_networks": []string{netip.PrefixFrom(local, local.BitLen()).String()}}
 
@@ -64,13 +77,6 @@ func TestLoadSMPP(t *testing.T) {
 		call(t, token, http.MethodPost, api+"/esmes", esme)
 	} else if code/100 != 2 {
 		t.Fatalf("PUT %s/esmes/%s: %d", api, esmeSystemID, code)
-	}
-
-	c := newCore(t, local, nodes)
-	e := newESME(t, netip.AddrPortFrom(smsc, uint16(*smppPort)).String())
-
-	for _, rate := range parseRates(t, *rates) {
-		e.run(t, c, api, rate)
 	}
 }
 
@@ -81,12 +87,13 @@ type esme struct {
 	byMsgID  map[string]int64
 	receipts map[int64]time.Duration
 	early    map[string]time.Time
+	states   map[string]string
 }
 
 func newESME(t *testing.T, addr string) *esme {
 	t.Helper()
 
-	e := &esme{byMsgID: map[string]int64{}, receipts: map[int64]time.Duration{}, early: map[string]time.Time{}}
+	e := &esme{byMsgID: map[string]int64{}, receipts: map[int64]time.Duration{}, early: map[string]time.Time{}, states: map[string]string{}}
 
 	for range *sessions {
 		cl, err := smpp.NewClient(smpp.ClientConfig{
@@ -134,10 +141,18 @@ func (e *esme) serve(_ context.Context, _ *smpp.Session, req smpp.Request) smpp.
 	if msgID, ok := receiptID(d.ShortMessage); ok {
 		e.mu.Lock()
 		e.early[msgID] = now
+		e.states[msgID] = receiptState(d.ShortMessage)
 		e.mu.Unlock()
 	}
 
 	return smpp.Response{Status: smpp.StatusOK, PDU: &smpp.DeliverSMResp{}}
+}
+
+func receiptState(text []byte) string {
+	_, s, _ := strings.Cut(string(text), " stat:")
+	state, _, _ := strings.Cut(s, " ")
+
+	return state
 }
 
 func receiptID(text []byte) (string, bool) {
@@ -181,7 +196,7 @@ func (e *esme) run(t *testing.T, c *core, api string, rate float64) {
 			c.sent[id] = began
 			c.mu.Unlock()
 
-			msgID, err := e.submit(cl, to, id)
+			msgID, err := e.submit(cl, to, id, *withReceipts)
 			if err != nil {
 				submitted.fail(err)
 				return
@@ -284,12 +299,12 @@ func (e *esme) receiptsOf(c *core, ids []int64) int {
 }
 
 // SMPP 3.4 section 4.4.1
-func (e *esme) submit(cl *smpp.Client, to int, id int64) (string, error) {
+func (e *esme) submit(cl *smpp.Client, to int, id int64, receipts bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	var registered byte
-	if *withReceipts {
+	if receipts {
 		registered = 0x01
 	}
 

@@ -420,6 +420,11 @@ func (d *DB) openConns(ctx context.Context) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
+	if _, err := writer.ExecContext(ctx, "PRAGMA temp_store = MEMORY"); err != nil {
+		_ = writer.Close()
+		return fmt.Errorf("open database: %w", err)
+	}
+
 	d.writer = writer
 
 	if err := d.migrate(ctx); err != nil {
