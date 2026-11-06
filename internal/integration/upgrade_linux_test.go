@@ -169,7 +169,7 @@ func (c *cluster) otherThan(n *node) *node {
 	c.t.Helper()
 
 	for _, o := range c.nodes {
-		if o != n && o.running() && o.token != "" {
+		if o != n && o.running() && o.token() != "" {
 			return o
 		}
 	}

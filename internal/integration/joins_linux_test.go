@@ -13,13 +13,7 @@ func TestBackToBackJoins(t *testing.T) {
 	for round := range 3 {
 		t.Run("round"+strconv.Itoa(round), func(t *testing.T) {
 			first := newNode(t, "node0")
-
-			var login struct {
-				Token string `json:"token"`
-			}
-
-			first.must(http.MethodPost, "/api/v1/init", map[string]string{"email": adminEmail, "password": adminPassword}, &login)
-			first.token = login.Token
+			first.initialize()
 
 			cl := &cluster{t: t, nodes: []*node{first, newNode(t, "node1"), newNode(t, "node2")}}
 

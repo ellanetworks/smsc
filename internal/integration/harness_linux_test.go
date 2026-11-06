@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -106,7 +107,7 @@ type node struct {
 	bin          string
 	cmd          *exec.Cmd
 	exited       chan struct{}
-	token        string
+	session      atomic.Pointer[string]
 	id           string
 }
 
@@ -248,7 +249,23 @@ func (n *node) freeze() { _ = n.cmd.Process.Signal(syscall.SIGSTOP) }
 
 func (n *node) thaw() { _ = n.cmd.Process.Signal(syscall.SIGCONT) }
 
+func (n *node) token() string {
+	if t := n.session.Load(); t != nil {
+		return *t
+	}
+
+	return ""
+}
+
+func (n *node) authenticate(token string) {
+	n.session.Store(&token)
+}
+
 func (n *node) request(method, path string, body, out any) (int, error) {
+	return n.requestAs(n.token(), method, path, body, out)
+}
+
+func (n *node) requestAs(token, method, path string, body, out any) (int, error) {
 	var reader io.Reader
 
 	if body != nil {
@@ -270,8 +287,8 @@ func (n *node) request(method, path string, body, out any) (int, error) {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	if n.token != "" {
-		req.Header.Set("Authorization", "Bearer "+n.token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -310,27 +327,47 @@ func (n *node) must(method, path string, body, out any) {
 	}
 }
 
+func (n *node) login(email, password string) (string, error) {
+	var login struct {
+		Token string `json:"token"`
+	}
+
+	if _, err := n.requestAs("", http.MethodPost, "/api/v1/auth/login",
+		map[string]string{"email": email, "password": password}, &login); err != nil {
+		return "", err
+	}
+
+	return login.Token, nil
+}
+
 func (n *node) logIn() {
+	n.t.Helper()
+
+	eventually(n.t, n.name+" to accept the admin", func() error {
+		token, err := n.login(adminEmail, adminPassword)
+		if err != nil {
+			return err
+		}
+
+		if _, err := n.requestAs(token, http.MethodGet, "/api/v1/cluster", nil, nil); err != nil {
+			return err
+		}
+
+		n.authenticate(token)
+
+		return nil
+	})
+}
+
+func (n *node) initialize() {
 	n.t.Helper()
 
 	var login struct {
 		Token string `json:"token"`
 	}
 
-	eventually(n.t, n.name+" to accept the admin", func() error {
-		n.token = ""
-
-		if _, err := n.request(http.MethodPost, "/api/v1/auth/login",
-			map[string]string{"email": adminEmail, "password": adminPassword}, &login); err != nil {
-			return err
-		}
-
-		n.token = login.Token
-
-		_, err := n.status()
-
-		return err
-	})
+	n.must(http.MethodPost, "/api/v1/init", map[string]string{"email": adminEmail, "password": adminPassword}, &login)
+	n.authenticate(login.Token)
 }
 
 type member struct {
@@ -385,14 +422,7 @@ func newCluster(t *testing.T) *cluster {
 		c.nodes = append(c.nodes, newNode(t, "node"+strconv.Itoa(i)))
 	}
 
-	first := c.nodes[0]
-
-	var login struct {
-		Token string `json:"token"`
-	}
-
-	first.must(http.MethodPost, "/api/v1/init", map[string]string{"email": adminEmail, "password": adminPassword}, &login)
-	first.token = login.Token
+	c.nodes[0].initialize()
 
 	for _, n := range c.nodes[1:] {
 		c.join(n)
@@ -426,7 +456,7 @@ func (c *cluster) join(n *node) {
 
 func (c *cluster) live() *node {
 	for _, n := range c.nodes {
-		if n.running() && n.token != "" {
+		if n.running() && n.token() != "" {
 			return n
 		}
 	}

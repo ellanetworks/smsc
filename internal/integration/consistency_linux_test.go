@@ -12,8 +12,6 @@ func TestALoginWorksOnEveryNodeRightAway(t *testing.T) {
 	cl := newCluster(t)
 	leader := cl.leader()
 
-	credentials := map[string]any{"email": "ops@example.com", "password": "correct horse"}
-
 	leader.must(http.MethodPost, "/api/v1/users",
 		map[string]any{"email": "ops@example.com", "password": "correct horse", "role_id": 1}, nil)
 
@@ -26,19 +24,13 @@ func TestALoginWorksOnEveryNodeRightAway(t *testing.T) {
 
 	for i := range 6 {
 		for _, via := range cl.nodes {
-			var login struct {
-				Token string `json:"token"`
+			token, err := via.login("ops@example.com", "correct horse")
+			if err != nil {
+				t.Fatalf("round %d: logging in on %s: %v", i, via.name, err)
 			}
 
-			as := *via
-			as.token = ""
-			as.must(http.MethodPost, "/api/v1/auth/login", credentials, &login)
-
 			for _, other := range cl.nodes {
-				use := *other
-				use.token = login.Token
-
-				if _, err := use.request(http.MethodGet, "/api/v1/cluster", nil, nil); err != nil {
+				if _, err := other.requestAs(token, http.MethodGet, "/api/v1/cluster", nil, nil); err != nil {
 					t.Fatalf("round %d: a login on %s used on %s: %v", i, via.name, other.name, err)
 				}
 			}

@@ -40,6 +40,7 @@ var loopback = netip.MustParseAddr("127.0.0.1")
 type core struct {
 	t     *testing.T
 	node  *diameter.Node
+	hosts map[string]string
 	delay atomic.Int64
 	next  atomic.Int64
 
@@ -53,7 +54,10 @@ type core struct {
 func newCore(t *testing.T, nodes []*node) *core {
 	t.Helper()
 
-	c := &core{t: t, delivered: map[int64]int{}, inflight: map[string]int{}, servedBy: map[string]time.Time{}}
+	c := &core{
+		t: t, hosts: map[string]string{}, delivered: map[int64]int{}, inflight: map[string]int{},
+		servedBy: map[string]time.Time{},
+	}
 
 	n, err := diameter.New(diameter.Config{
 		Identity: diameter.Identity{
@@ -80,8 +84,10 @@ func newCore(t *testing.T, nodes []*node) *core {
 	var peers []diameter.Peer
 
 	for _, smsc := range nodes {
+		c.hosts[smsc.name] = smsc.diameterHost()
+
 		peers = append(peers, diameter.Peer{
-			ID: smsc.name, Host: smsc.diameterHost(), Addresses: []netip.Addr{loopback},
+			ID: smsc.name, Host: c.hosts[smsc.name], Addresses: []netip.Addr{loopback},
 			Transports: []diameter.Transport{diameter.TransportSCTP}, Dial: &diameter.Dial{Port: uint16(smsc.diameterPort)},
 			Applications: []diameter.Application{
 				{ID: sgd.ApplicationID, VendorID: tgpp.VendorID}, {ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
@@ -103,7 +109,7 @@ func newCore(t *testing.T, nodes []*node) *core {
 func (c *core) waitOpen(smsc *node) {
 	c.t.Helper()
 
-	host := smsc.diameterHost()
+	host := c.hosts[smsc.name]
 
 	eventually(c.t, "the core connected to "+smsc.name, func() error {
 		for _, p := range c.node.Peers() {
@@ -123,7 +129,7 @@ func (c *core) submit(via *node, from, to int) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ans, err := c.node.Do(ctx, via.name, c.request(via.diameterHost(), sgd.CommandMOForwardShortMessage, sgd.ApplicationID,
+	ans, err := c.node.Do(ctx, via.name, c.request(c.hosts[via.name], sgd.CommandMOForwardShortMessage, sgd.ApplicationID,
 		diameter.OctetString(tgpp.AVPSCAddress, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(scAddress)),
 		diameter.Grouped(tgpp.AVPUserIdentifier, diameter.AVPFlagMandatory, tgpp.VendorID,
 			diameter.UTF8String(diameter.AVPUserName, diameter.AVPFlagMandatory, 0, imsiOf(from)),
@@ -251,7 +257,7 @@ func (c *core) firstDelivery(by *node, to int) (time.Time, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	at, ok := c.servedBy[strings.ToLower(by.diameterHost())+"/"+imsiOf(to)]
+	at, ok := c.servedBy[strings.ToLower(c.hosts[by.name])+"/"+imsiOf(to)]
 
 	return at, ok
 }
