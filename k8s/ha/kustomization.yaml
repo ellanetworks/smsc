@@ -16,3 +16,7 @@ configMapGenerator:
         app.kubernetes.io/part-of: ella
 patches:
   - path: smsc-statefulset-patch.yaml
+  - path: smsc-statefulset-env-patch.yaml
+    target:
+      kind: StatefulSet
+      name: ella-smsc
