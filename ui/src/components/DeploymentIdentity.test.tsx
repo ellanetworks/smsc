@@ -25,7 +25,7 @@ describe("DeploymentIdentity", () => {
     expect(screen.queryByText("85faf74")).not.toBeInTheDocument();
   });
 
-  const serve = (displayName: string) =>
+  const serve = (displayName: string, diameterLabel = "smsc-013c0a7ca824") =>
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -39,15 +39,28 @@ describe("DeploymentIdentity", () => {
                 clustered: true,
                 node_id: "01a1ac75-e354-762b-b38f-013c0a7ca824",
                 display_name: displayName,
-                diameter_label: "smsc-013c0a7ca824",
+                diameter_label: diameterLabel,
+                diameter_host: `${diameterLabel}.node.epc.mnc001.mcc001.3gppnetwork.org`,
+                label_generated: diameterLabel === "smsc-013c0a7ca824",
               },
             }),
         }),
       ),
     );
 
-  it("shows the node's short id without a display name", async () => {
-    serve("");
+  it("shows the node's Diameter host label without a display name", async () => {
+    serve("", "paris-a");
+    renderWithClient(<DeploymentIdentity />);
+
+    const identity = await screen.findByText("v0.0.1 · Node paris-a");
+    expect(identity).toHaveAttribute(
+      "title",
+      "paris-a.node.epc.mnc001.mcc001.3gppnetwork.org",
+    );
+  });
+
+  it("shows the node's short id without a display name or host label", async () => {
+    serve("", "");
     renderWithClient(<DeploymentIdentity />);
 
     expect(

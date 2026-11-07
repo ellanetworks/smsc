@@ -18,7 +18,8 @@ This path returns the Diameter identity of the SMSC, its peers, and its routes.
 
 | Field                  | Type    | Description |
 | ---------------------- | ------- | ----------- |
-| `host`                 | string  | Origin-Host of the SMSC. |
+| `host`                 | string  | Origin-Host of the SMSC node. |
+| `label_generated`      | boolean | Whether the first label of `host` is the default, from the node ID. |
 | `realm`                | string  | Origin-Realm of the SMSC. |
 | `peers`                | array   | Connected and configured peers. |
 | `peers[].id`           | int     | ID of a configured peer. |
@@ -42,6 +43,7 @@ This path returns the Diameter identity of the SMSC, its peers, and its routes.
 {
     "result": {
         "host": "smsc-013c0a7ca824.node.epc.mnc001.mcc001.3gppnetwork.org",
+        "label_generated": true,
         "realm": "epc.mnc001.mcc001.3gppnetwork.org",
         "peers": [
             {

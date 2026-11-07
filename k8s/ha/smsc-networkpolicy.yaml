@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ella-smsc
+  labels:
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
+    app.kubernetes.io/part-of: ella
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ella-smsc
+      app.kubernetes.io/instance: ella-smsc
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ella-smsc
+          app.kubernetes.io/instance: ella-smsc
+    ports:
+    - protocol: TCP
+      port: cluster
+  - ports:
+    - protocol: TCP
+      port: http
+    - protocol: TCP
+      port: smpp
+    - protocol: SCTP
+      port: diameter

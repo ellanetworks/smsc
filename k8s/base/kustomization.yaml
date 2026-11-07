@@ -1,7 +1,9 @@
-# What the two variants share: k8s/, with Diameter on a Multus interface, and
-# k8s/pod-network/, with Diameter on the pod network.
+# What the variants share: k8s/, with Diameter on a Multus interface,
+# k8s/pod-network/, with Diameter on the pod network, and k8s/ha/, a cluster
+# of three nodes with Diameter on the pod network.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - smsc-statefulset.yaml
   - smsc-service.yaml
+  - smsc-internal-service.yaml

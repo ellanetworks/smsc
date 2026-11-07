@@ -56,13 +56,11 @@ func (s *Server) fenceOnRemoval(ctx context.Context, node *cluster.Node, nodes *
 
 	s.Logger.WarnContext(ctx, "removed from the cluster: closing the Diameter and SMPP edges")
 
-	s.draining.Store(true)
-
 	if smppServer != nil {
 		if err := smppServer.Shutdown(ctx); err != nil {
 			s.Logger.WarnContext(ctx, "SMPP sessions closed without unbind", slog.Any("error", err))
 		}
 	}
 
-	nodes.shutdown(ctx)
+	nodes.close(ctx)
 }

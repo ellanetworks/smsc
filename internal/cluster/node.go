@@ -16,6 +16,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/cluster/listener"
 	"github.com/ellanetworks/smsc/internal/cluster/pki"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
@@ -48,16 +49,22 @@ var (
 )
 
 type Config struct {
-	Dir       string
-	Address   string
-	Advertise string
-	Version   string
-	Now       func() time.Time
-	Logger    *slog.Logger
+	Dir             string
+	Address         string
+	Advertise       string
+	Version         string
+	DiameterLabel   string
+	Join            []string
+	BootstrapExpect int
+	SecretFile      string
+	Now             func() time.Time
+	Logger          *slog.Logger
 
 	transport       func(raft.Transport) raft.Transport
 	logStore        func(raft.LogStore) raft.LogStore
 	logStoreTimeout time.Duration
+	readyLag        uint64
+	removalAfter    time.Duration
 }
 
 func (c Config) clustered() bool {
@@ -65,10 +72,12 @@ func (c Config) clustered() bool {
 }
 
 type Node struct {
-	cfg   Config
-	id    string
-	db    *db.DB
-	certs *certs
+	cfg       Config
+	id        string
+	label     string
+	generated bool
+	db        *db.DB
+	certs     *certs
 
 	metrics *metrics
 	ln      *listener.Listener
@@ -94,6 +103,8 @@ type Node struct {
 
 	joinMu       sync.Mutex
 	checkpointed bool
+	formation    *formation
+	auth         *joinAuth
 	removed      chan struct{}
 	removedOnce  sync.Once
 	done         chan struct{}
@@ -118,13 +129,14 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 		return nil, fmt.Errorf("create the raft directory: %w", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(cfg.Dir, removedFile)); err == nil {
-		return nil, ErrRemoved
-	}
-
 	id, err := nodeID(cfg.Dir)
 	if err != nil {
 		return nil, err
+	}
+
+	label, generated := cfg.DiameterLabel, false
+	if label == "" {
+		label, generated = settings.NodeLabel(id), true
 	}
 
 	c, err := loadCerts(cfg.Dir, id)
@@ -133,12 +145,24 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 	}
 
 	n := &Node{
-		cfg: cfg, id: id, db: d, certs: c, notify: make(chan bool, 16), ready: make(chan struct{}),
+		cfg: cfg, id: id, label: label, generated: generated, db: d, certs: c, notify: make(chan bool, 16), ready: make(chan struct{}),
 		removed: make(chan struct{}), done: make(chan struct{}), stopped: make(chan struct{}),
 	}
 
 	n.health = newHealth(n)
 	n.metrics = newMetrics()
+	n.formation = newFormation(n)
+	n.auth = newJoinAuth(cfg.SecretFile, cfg.Now, cfg.Logger)
+
+	if _, err := os.Stat(filepath.Join(cfg.Dir, removedFile)); err == nil {
+		n.removedOnce.Do(func() { close(n.removed) })
+		n.formation.set(FormationRemoved, ErrRemoved.Error())
+		n.cfg.Logger.WarnContext(ctx, "this node was removed from the cluster: it stays fenced until its data directory is deleted")
+
+		go n.watch()
+
+		return n, nil
+	}
 
 	if _, err := os.Stat(filepath.Join(cfg.Dir, joiningFile)); err == nil {
 		if err := n.finishJoin(); err != nil {
@@ -154,7 +178,7 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 
 	if cfg.clustered() {
 		n.ln = listener.New(listener.Config{
-			Address: cfg.Address, Cert: n.certs.leaf, Pins: n.certs.pin, Logger: cfg.Logger,
+			Address: cfg.Address, Cert: n.certs.presented, Pins: n.certs.pin, Removed: n.certs.fenced, Logger: cfg.Logger,
 		})
 		n.peers = newPeerClient(n)
 		n.serveRPC()
@@ -173,6 +197,10 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 	go n.watch()
 
 	n.background.Go(n.maintain)
+
+	if n.cfg.clustered() {
+		n.background.Go(n.discover)
+	}
 
 	return n, nil
 }
@@ -336,7 +364,15 @@ func (n *Node) startRaft(ctx context.Context) error {
 		return fmt.Errorf("start raft: %w", err)
 	}
 
-	if !existing && !n.joined() {
+	forming := !existing && !n.joined() && n.cfg.clustered() && len(n.cfg.Join) > 0
+
+	if forming {
+		n.formation.set(FormationForming, "looking for the other nodes")
+	} else {
+		n.formation.set(FormationMember, "")
+	}
+
+	if !existing && !n.joined() && !forming {
 		err := r.BootstrapCluster(raft.Configuration{Servers: []raft.Server{
 			{Suffrage: raft.Voter, ID: conf.LocalID, Address: addr},
 		}}).Error()
@@ -411,6 +447,14 @@ func (p batcherProposer) Propose(ctx context.Context, cmds []db.Command) ([]db.R
 
 func (n *Node) ID() string {
 	return n.id
+}
+
+func (n *Node) DiameterLabel() string {
+	return n.label
+}
+
+func (n *Node) LabelGenerated() bool {
+	return n.generated
 }
 
 func (n *Node) Clustered() bool {
@@ -640,6 +684,19 @@ func (n *Node) Removed() <-chan struct{} {
 	return n.removed
 }
 
+func (n *Node) fence(ctx context.Context, peer string) {
+	select {
+	case <-n.removed:
+		return
+	default:
+	}
+
+	n.cfg.Logger.WarnContext(ctx, "a cluster member reports that this node was removed from the cluster",
+		slog.String("member", peer))
+
+	n.markRemoved()
+}
+
 func (n *Node) markRemoved() {
 	n.removedOnce.Do(func() {
 		if err := writeFile(filepath.Join(n.cfg.Dir, removedFile), nil); err != nil {
@@ -647,6 +704,8 @@ func (n *Node) markRemoved() {
 		}
 
 		n.cfg.Logger.Warn("this node was removed from the cluster")
+
+		n.formation.set(FormationRemoved, ErrRemoved.Error())
 
 		close(n.removed)
 	})

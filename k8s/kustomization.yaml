@@ -3,8 +3,16 @@ kind: Kustomization
 namespace: ella
 resources:
   - base
-  - smsc-configmap.yaml
   - smsc-diameter-nad.yaml
+configMapGenerator:
+  - name: smsc-config
+    files:
+      - smsc.yaml
+    options:
+      labels:
+        app.kubernetes.io/name: ella-smsc
+        app.kubernetes.io/instance: ella-smsc
+        app.kubernetes.io/part-of: ella
 patches:
   - patch: |
       apiVersion: apps/v1

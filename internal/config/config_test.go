@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -31,6 +32,25 @@ func writeConfig(t *testing.T, content string) string {
 	}
 
 	return path
+}
+
+func writeSecret(t *testing.T, content string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+const testSecret = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=\n"
+
+func cluster(t *testing.T, lines string) string {
+	t.Helper()
+
+	return validConfig + "cluster:\n" + lines + "  secret_file: " + writeSecret(t, testSecret) + "\n"
 }
 
 func TestLoad(t *testing.T) {
@@ -233,7 +253,7 @@ func TestLoadTelemetry(t *testing.T) {
 }
 
 func TestLoadCluster(t *testing.T) {
-	cfg, err := Load(writeConfig(t, validConfig+"cluster:\n  address: 10.0.0.1\n"))
+	cfg, err := Load(writeConfig(t, cluster(t, "  address: 10.0.0.1\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,19 +263,189 @@ func TestLoadCluster(t *testing.T) {
 		t.Fatalf("cluster = %+v", c)
 	}
 
-	cfg, err = Load(writeConfig(t, validConfig+"cluster:\n  address: 0.0.0.0\n  advertise: smsc-0.smsc:7000\n"))
+	cfg, err = Load(writeConfig(t, cluster(t, "  address: 0.0.0.0\n  advertise: smsc-0.smsc:7000\n")))
 	if err != nil || cfg.Cluster.AdvertiseAddress() != "smsc-0.smsc:7000" {
 		t.Fatalf("cluster = %+v, %v", cfg.Cluster, err)
 	}
 
 	for name, block := range map[string]string{
-		"no address":             "cluster:\n  port: 7000\n",
-		"unspecified, no advert": "cluster:\n  address: 0.0.0.0\n",
-		"advertise without port": "cluster:\n  address: 10.0.0.1\n  advertise: smsc-0\n",
-		"unspecified advertise":  "cluster:\n  address: 10.0.0.1\n  advertise: 0.0.0.0:7000\n",
+		"no address":             "  port: 7000\n",
+		"unspecified, no advert": "  address: 0.0.0.0\n",
+		"advertise without port": "  address: 10.0.0.1\n  advertise: smsc-0\n",
+		"unspecified advertise":  "  address: 10.0.0.1\n  advertise: 0.0.0.0:7000\n",
+		"expect of 1":            "  address: 10.0.0.1\n  join: [smsc:7000]\n  bootstrap_expect: 1\n",
+		"negative expect":        "  address: 10.0.0.1\n  join: [smsc:7000]\n  bootstrap_expect: -3\n",
+		"expect without join":    "  address: 10.0.0.1\n  bootstrap_expect: 3\n",
+		"join with a bad port":   "  address: 10.0.0.1\n  join: [smsc:70000]\n",
 	} {
-		if _, err := Load(writeConfig(t, validConfig+block)); err == nil {
+		if _, err := Load(writeConfig(t, cluster(t, block))); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+func TestLoadClusterJoin(t *testing.T) {
+	cfg, err := Load(writeConfig(t, cluster(t,
+		"  address: 0.0.0.0\n  advertise: smsc-0.smsc:7000\n  port: 7001\n  join: [smsc.ella.svc:7000, 10.0.0.2]\n  bootstrap_expect: 3\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := cfg.Cluster.JoinAddresses(), []string{"smsc.ella.svc:7000", "10.0.0.2:7001"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("join = %v, want %v", got, want)
+	}
+
+	if cfg.Cluster.BootstrapExpect != 3 || len(cfg.Warnings()) != 0 {
+		t.Fatalf("bootstrap_expect = %d, warnings %v", cfg.Cluster.BootstrapExpect, cfg.Warnings())
+	}
+
+	for expect, warns := range map[int]int{2: 1, 4: 1, 5: 0, 6: 2, 7: 1} {
+		cfg, err := Load(writeConfig(t, cluster(t, "  address: 10.0.0.1\n  join: [smsc:7000]\n  bootstrap_expect: "+
+			strconv.Itoa(expect)+"\n")))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := len(cfg.Warnings()); got != warns {
+			t.Errorf("bootstrap_expect %d: warnings %v, want %d", expect, cfg.Warnings(), warns)
+		}
+	}
+}
+
+func TestLoadClusterSecret(t *testing.T) {
+	if _, err := Load(writeConfig(t, validConfig+"cluster:\n  address: 10.0.0.1\n")); err != nil {
+		t.Fatalf("Load without join and secret_file = %v", err)
+	}
+
+	if _, err := Load(writeConfig(t, validConfig+"cluster:\n  address: 10.0.0.1\n  join: [smsc:7000]\n")); err == nil ||
+		!strings.Contains(err.Error(), "secret_file") {
+		t.Fatalf("Load with join and without secret_file = %v", err)
+	}
+
+	for name, content := range map[string]string{
+		"empty":      "\n\n",
+		"short":      "c2hvcnQ=\n",
+		"not base64": "not base64 at all!\n",
+	} {
+		block := validConfig + "cluster:\n  address: 10.0.0.1\n  secret_file: " + writeSecret(t, content) + "\n"
+		if _, err := Load(writeConfig(t, block)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+
+	block := validConfig + "cluster:\n  address: 10.0.0.1\n  secret_file: " + filepath.Join(t.TempDir(), "missing") + "\n"
+	if _, err := Load(writeConfig(t, block)); err == nil {
+		t.Error("missing secret file: expected an error")
+	}
+
+	rotated := testSecret + "\n" + "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=\n"
+	block = validConfig + "cluster:\n  address: 10.0.0.1\n  secret_file: " + writeSecret(t, rotated) + "\n"
+
+	if _, err := Load(writeConfig(t, block)); err != nil {
+		t.Fatalf("two secrets: %v", err)
+	}
+}
+
+func TestLoadDiameterHostLabel(t *testing.T) {
+	tests := []struct {
+		label string
+		valid bool
+	}{
+		{label: "smsc-a", valid: true},
+		{label: "a", valid: true},
+		{label: "0smsc", valid: true},
+		{label: "smsc-01a1ac75e354", valid: true},
+		{label: strings.Repeat("a", 63), valid: true},
+		{label: strings.Repeat("a", 64)},
+		{label: "SMSC-A"},
+		{label: "smsc.a"},
+		{label: "-smsc"},
+		{label: "smsc-"},
+		{label: "smsc_a"},
+		{label: "smsc a"},
+		{label: "smsé"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, validConfig+"  host_label: \""+tt.label+"\"\n"))
+
+			switch {
+			case tt.valid && err != nil:
+				t.Fatalf("Load: %v", err)
+			case tt.valid && cfg.Diameter.HostLabel != tt.label:
+				t.Fatalf("HostLabel = %q, want %q", cfg.Diameter.HostLabel, tt.label)
+			case !tt.valid && err == nil:
+				t.Fatalf("Load accepted the host label %q", tt.label)
+			case !tt.valid && !strings.Contains(err.Error(), "diameter.host_label"):
+				t.Fatalf("Load = %v, want a diameter.host_label error", err)
+			}
+		})
+	}
+}
+
+func TestLoadHostLabelFromEnvironment(t *testing.T) {
+	t.Setenv(EnvDiameterHostLabel, "ella-smsc-1")
+
+	cfg, err := Load(writeConfig(t, validConfig+"  host_label: smsc-a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Diameter.HostLabel != "ella-smsc-1" {
+		t.Fatalf("HostLabel = %q, want the environment's", cfg.Diameter.HostLabel)
+	}
+
+	cfg, err = Load(writeConfig(t, validConfig))
+	if err != nil || cfg.Diameter.HostLabel != "ella-smsc-1" {
+		t.Fatalf("HostLabel = %q, %v", cfg.Diameter.HostLabel, err)
+	}
+
+	t.Setenv(EnvDiameterHostLabel, "Smsc_1")
+
+	_, err = Load(writeConfig(t, validConfig+"  host_label: smsc-a\n"))
+	if err == nil || !strings.Contains(err.Error(), EnvDiameterHostLabel) {
+		t.Fatalf("Load = %v, want an error naming %s", err, EnvDiameterHostLabel)
+	}
+
+	t.Setenv(EnvDiameterHostLabel, "")
+
+	cfg, err = Load(writeConfig(t, validConfig+"  host_label: smsc-a\n"))
+	if err != nil || cfg.Diameter.HostLabel != "smsc-a" {
+		t.Fatalf("HostLabel = %q, %v, want the file's when the variable is empty", cfg.Diameter.HostLabel, err)
+	}
+}
+
+func TestLoadAdvertiseFromEnvironment(t *testing.T) {
+	t.Setenv(EnvClusterAdvertise, "ella-smsc-2.ella-smsc-internal:7000")
+
+	cfg, err := Load(writeConfig(t, cluster(t, "  address: 0.0.0.0\n  advertise: smsc-0.smsc:7000\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := cfg.Cluster.AdvertiseAddress(); got != "ella-smsc-2.ella-smsc-internal:7000" {
+		t.Fatalf("advertise = %s, want the environment's", got)
+	}
+
+	cfg, err = Load(writeConfig(t, cluster(t, "  address: 0.0.0.0\n")))
+	if err != nil || cfg.Cluster.AdvertiseAddress() != "ella-smsc-2.ella-smsc-internal:7000" {
+		t.Fatalf("cluster = %+v, %v", cfg.Cluster, err)
+	}
+
+	cfg, err = Load(writeConfig(t, validConfig))
+	if err != nil || cfg.Cluster != nil {
+		t.Fatalf("Load without a cluster section = %+v, %v, want it to ignore %s", cfg.Cluster, err, EnvClusterAdvertise)
+	}
+
+	if w := cfg.Warnings(); len(w) != 1 || !strings.Contains(w[0], EnvClusterAdvertise) {
+		t.Fatalf("warnings = %v, want one naming %s", w, EnvClusterAdvertise)
+	}
+
+	t.Setenv(EnvClusterAdvertise, "ella-smsc-2")
+
+	_, err = Load(writeConfig(t, cluster(t, "  address: 0.0.0.0\n")))
+	if err == nil || !strings.Contains(err.Error(), EnvClusterAdvertise) {
+		t.Fatalf("Load = %v, want an error naming %s", err, EnvClusterAdvertise)
 	}
 }

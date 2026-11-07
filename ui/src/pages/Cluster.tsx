@@ -29,6 +29,7 @@ import {
   ResumeNodeDialog,
 } from "@/components/ClusterDialogs";
 import ClusterStateCard from "@/components/ClusterStateCard";
+import DiameterHost from "@/components/DiameterHost";
 import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import { useAuth } from "@/contexts/AuthContext";
@@ -38,7 +39,6 @@ import {
   type ClusterMember,
   type DrainState,
 } from "@/queries/cluster";
-import { getDiameterStatus } from "@/queries/diameter";
 import { CLUSTER_DOCS_URL } from "@/utils/docs";
 import { GRID_SX } from "@/utils/layout";
 
@@ -113,7 +113,6 @@ function HealthChip({ member }: { member: ClusterMember }) {
 
 const columns = (
   selfId: string | undefined,
-  realm: string | undefined,
   versionsDiffer: boolean,
   manageable: boolean,
   act: (action: Action, member: ClusterMember) => void,
@@ -164,17 +163,16 @@ const columns = (
     valueGetter: (_value, row) => row.address || "—",
   },
   {
-    field: "diameter_label",
+    field: "diameter_host",
     headerName: "Diameter Host",
-    flex: 1,
-    minWidth: 150,
-    valueGetter: (_value, row) =>
-      realm ? `${row.diameter_label}.node.${realm}` : row.diameter_label,
-    renderCell: ({ value }) => (
+    flex: 1.5,
+    minWidth: 220,
+    renderCell: ({ row }) => (
       <CenteredCell>
-        <Typography variant="body2" noWrap title={value}>
-          {value}
-        </Typography>
+        <DiameterHost
+          host={row.diameter_host}
+          generated={row.label_generated}
+        />
       </CenteredCell>
     ),
   },
@@ -281,11 +279,6 @@ export default function Cluster() {
     queryFn: getCluster,
     refetchInterval: CLUSTER_REFRESH_MS,
   });
-  const diameter = useQuery({
-    queryKey: ["diameter"],
-    queryFn: getDiameterStatus,
-    enabled: auth.can("diameter:read"),
-  });
   const status = cluster.data;
   const members = useMemo(() => status?.members ?? [], [status]);
   const manageable = auth.can("cluster:manage") && status?.clustered === true;
@@ -347,7 +340,6 @@ export default function Cluster() {
             rows={members}
             columns={columns(
               status.node_id,
-              diameter.data?.realm,
               new Set(members.map((m) => m.version).filter(Boolean)).size > 1,
               manageable,
               (action, member) => setTarget({ action, member }),

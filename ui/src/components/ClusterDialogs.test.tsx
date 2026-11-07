@@ -132,7 +132,7 @@ describe("DrainNodeDialog", () => {
       />,
     );
 
-    expect(dialog()).toHaveAccessibleName("Drain node 1f0c2d3e4f50?");
+    expect(dialog()).toHaveAccessibleName("Drain node smsc-1f0c2d3e4f50?");
     expect(screen.getByText(MEMBER.node_id)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
@@ -196,7 +196,7 @@ describe("ResumeNodeDialog", () => {
       />,
     );
 
-    expect(dialog()).toHaveAccessibleName("Resume node 1f0c2d3e4f50?");
+    expect(dialog()).toHaveAccessibleName("Resume node smsc-1f0c2d3e4f50?");
     fireEvent.click(button("Resume"));
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -218,7 +218,7 @@ describe("RemoveNodeDialog", () => {
       />,
     );
 
-    expect(dialog()).toHaveAccessibleName("Remove node 1f0c2d3e4f50?");
+    expect(dialog()).toHaveAccessibleName("Remove node smsc-1f0c2d3e4f50?");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
     fireEvent.click(button("Remove"));
@@ -281,7 +281,7 @@ describe("RenameNodeDialog", () => {
     expect(name()).toHaveValue("");
     expect(
       screen.getByText(
-        "Leave empty to show the node identity instead (max 63 characters).",
+        "Leave empty to show the Diameter host label smsc-1f0c2d3e4f50 instead (max 63 characters).",
       ),
     ).toBeInTheDocument();
     expect(button("Save")).toBeDisabled();

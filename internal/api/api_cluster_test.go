@@ -11,6 +11,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/cluster"
 	"github.com/ellanetworks/smsc/internal/cluster/pki"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/settings"
 )
 
 type fakeCluster struct {
@@ -37,6 +38,14 @@ func (f fakeCluster) SetDisplayName(context.Context, string, string) error { ret
 
 func (fakeCluster) DisplayName(context.Context) string { return "" }
 
+func (fakeCluster) DiameterLabel() string { return "smsc-a" }
+
+func (fakeCluster) LabelGenerated() bool { return false }
+
+func (fakeCluster) Formation() cluster.Formation {
+	return cluster.Formation{State: cluster.FormationMember}
+}
+
 func clusterHandler(t *testing.T, err error) http.Handler {
 	t.Helper()
 
@@ -60,6 +69,9 @@ func TestJoinClusterErrorCodes(t *testing.T) {
 		"no member":       {cluster.ErrJoinUnavailable, http.StatusBadGateway},
 		"already member":  {cluster.ErrAlreadyMember, http.StatusConflict},
 		"invalid request": {cluster.ErrInvalidJoin, http.StatusBadRequest},
+		"label taken": {
+			&cluster.RemoteError{Status: http.StatusConflict, Code: db.CodeOf(settings.ErrConflict)}, http.StatusConflict,
+		},
 	}
 
 	for name, tt := range tests {

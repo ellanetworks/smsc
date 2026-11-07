@@ -1,5 +1,14 @@
 import { apiFetch } from "@/queries/utils";
 
+export interface Formation {
+  state: "forming" | "joining" | "member" | "removed";
+  expected?: number;
+  found?: number;
+  candidate?: string;
+  detail?: string;
+  foreign_peers?: number;
+}
+
 export interface Status {
   version: string;
   revision: string;
@@ -8,6 +17,9 @@ export interface Status {
   node_id: string;
   display_name: string;
   diameter_label: string;
+  diameter_host: string;
+  label_generated: boolean;
+  formation?: Formation;
 }
 
 export const getStatus = (): Promise<Status> =>

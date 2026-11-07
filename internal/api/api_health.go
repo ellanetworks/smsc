@@ -2,7 +2,15 @@ package api
 
 import (
 	"net/http"
+	"strconv"
+
+	"github.com/ellanetworks/smsc/internal/cluster"
 )
+
+type Readiness struct {
+	Ready  bool            `json:"ready"`
+	Checks []cluster.Check `json:"checks"`
+}
 
 func Livez() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -12,15 +20,34 @@ func Livez() http.Handler {
 
 func Readyz(cfg Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cfg.Ready != nil {
-			if err := cfg.Ready(r.Context()); err != nil {
-				cfg.Logger.WarnContext(r.Context(), "not ready", "error", err)
-				writeJSON(w, r, ErrorResponse{Error: "Not ready"}, http.StatusServiceUnavailable, cfg.Logger)
+		withCluster := false
 
+		if v := r.URL.Query().Get("cluster"); v != "" {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				writeError(w, r, http.StatusBadRequest, "cluster must be true or false", err, cfg.Logger)
 				return
 			}
+
+			withCluster = b
 		}
 
-		w.WriteHeader(http.StatusNoContent)
+		res := Readiness{Ready: true, Checks: []cluster.Check{}}
+
+		if cfg.Ready != nil {
+			res.Checks = cfg.Ready(r.Context(), withCluster)
+		}
+
+		for _, c := range res.Checks {
+			res.Ready = res.Ready && c.OK
+		}
+
+		status := http.StatusOK
+		if !res.Ready {
+			status = http.StatusServiceUnavailable
+		}
+
+		w.Header().Set("Cache-Control", "no-store")
+		writeResponse(w, r, res, status, cfg.Logger)
 	})
 }

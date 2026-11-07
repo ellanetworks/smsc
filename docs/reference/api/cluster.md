@@ -32,7 +32,9 @@ This path returns the node that answered, its cluster, and every member.
 | `failure_tolerance`           | int     | Voters that can fail without stopping writes. Absent when no leader answers. |
 | `members[].node_id`           | string  | ID of the member. |
 | `members[].address`           | string  | Cluster address of the member. |
-| `members[].diameter_label`    | string  | First label of the member's Diameter host: `smsc-` and the last 12 hex characters of `node_id`. |
+| `members[].diameter_label`    | string  | First label of the member's Diameter host. |
+| `members[].diameter_host`     | string  | Diameter host of the member. |
+| `members[].label_generated`   | boolean | Whether `diameter_label` is the default, from `node_id`. |
 | `members[].display_name`      | string  | Display name of the member. Empty when unset. See [Update a Member](#update-a-member). |
 | `members[].version`           | string  | Version of the member. |
 | `members[].joined_at`         | string  | Time the member joined. |
@@ -63,7 +65,9 @@ This path returns the node that answered, its cluster, and every member.
             {
                 "node_id": "0199f6a2-5c1e-7d3a-9b1f-2a4c6e8d0f12",
                 "address": "10.0.0.1:7000",
-                "diameter_label": "smsc-2a4c6e8d0f12",
+                "diameter_label": "paris-1",
+                "diameter_host": "paris-1.node.epc.mnc001.mcc001.3gppnetwork.org",
+                "label_generated": false,
                 "display_name": "paris-1",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:12:44Z",
@@ -77,6 +81,8 @@ This path returns the node that answered, its cluster, and every member.
                 "node_id": "0199f6a3-0b77-7c21-a4e0-6f1e2d3c4b5a",
                 "address": "10.0.0.2:7000",
                 "diameter_label": "smsc-6f1e2d3c4b5a",
+                "diameter_host": "smsc-6f1e2d3c4b5a.node.epc.mnc001.mcc001.3gppnetwork.org",
+                "label_generated": true,
                 "display_name": "",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:14:02Z",
@@ -164,7 +170,7 @@ This path joins a node with no user and no message to a cluster. It takes no acc
 | ----- | ----------- |
 | `400` | The token is not valid or expired, or the node runs an older version than the cluster. |
 | `403` | The node has a user. |
-| `409` | The node has a message, is already in a cluster, or has no `cluster` block, the token was used, or a peer has the node's Diameter host. |
+| `409` | The node has a message, is already in a cluster, or has no `cluster` block, the token was used, or a peer or another member has the node's Diameter host. |
 | `429` | Too many attempts from the client address. |
 | `502` | No member answered. |
 
@@ -224,7 +230,7 @@ This path sets the display name of a member.
 
 ## Remove a Member
 
-This path removes a drained member from the cluster. The removed node stops serving.
+This path removes a drained member from the cluster. The removed node stops serving until its data directory is deleted.
 
 | Method | Path                                |
 | ------ | ----------------------------------- |

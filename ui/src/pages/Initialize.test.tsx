@@ -101,4 +101,81 @@ describe("Initialize", () => {
       }),
     ).toBeDisabled();
   });
+
+  it("shows the formation progress until the node is a member", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        stubApi({
+          "/api/v1/status": () => {
+            calls += 1;
+            const formation =
+              calls < 3
+                ? {
+                    state: "forming",
+                    expected: 3,
+                    found: 2,
+                    detail: "found 2 of 3 nodes",
+                  }
+                : { state: "member" };
+            return json(200, {
+              result: {
+                version: "v0.0.1",
+                revision: "",
+                initialized: false,
+                clustered: true,
+                formation,
+              },
+            });
+          },
+        }),
+      ),
+    );
+    renderInitialize();
+
+    expect(
+      await screen.findByRole("heading", { name: "Forming 2/3" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("found 2 of 3 nodes")).toBeInTheDocument();
+
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "Initialize Ella SMSC" },
+        { timeout: 5000 },
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("explains that a removed node is fenced", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        stubApi({
+          "/api/v1/status": () =>
+            json(200, {
+              result: {
+                version: "v0.0.1",
+                revision: "",
+                initialized: false,
+                clustered: true,
+                formation: {
+                  state: "removed",
+                  detail: "delete its data directory to join it again",
+                },
+              },
+            }),
+        }),
+      ),
+    );
+    renderInitialize();
+
+    expect(
+      await screen.findByRole("heading", { name: "Removed from the cluster" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("delete its data directory to join it again"),
+    ).toBeInTheDocument();
+  });
 });

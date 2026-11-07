@@ -34,9 +34,13 @@ type nodeManager struct {
 	metrics        *peerMetrics
 	tracerProvider trace.TracerProvider
 	logger         *slog.Logger
-	label          string
+
+	lifecycle sync.Mutex
 
 	mu       sync.Mutex
+	label    string
+	serving  bool
+	closed   bool
 	node     *diameter.Node
 	listener *sctp.Listener
 	replaced chan struct{}
@@ -136,7 +140,58 @@ func (m *nodeManager) Addr() net.Addr {
 }
 
 func (m *nodeManager) host(operator settings.Operator) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return operator.Host(m.label)
+}
+
+func (m *nodeManager) currentLabel() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.label
+}
+
+func (m *nodeManager) setServing(ctx context.Context, on bool, label string, live *settings.Live) {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+
+	m.mu.Lock()
+	if m.closed || m.serving == on && (!on || m.label == label) {
+		m.mu.Unlock()
+		return
+	}
+
+	m.serving = on
+	if on {
+		m.label = label
+	}
+	m.mu.Unlock()
+
+	if on {
+		m.logger.InfoContext(ctx, "opening Diameter", slog.String("label", label))
+	} else {
+		m.logger.WarnContext(ctx, "closing Diameter")
+	}
+
+	m.shutdown(ctx)
+
+	current := live.Get()
+	if err := m.start(ctx, current.Operator, current.Peers); err != nil {
+		m.logger.ErrorContext(ctx, "failed to restart Diameter", slog.Any("error", err))
+	}
+}
+
+func (m *nodeManager) close(ctx context.Context) {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+
+	m.mu.Lock()
+	m.closed, m.serving = true, false
+	m.mu.Unlock()
+
+	m.shutdown(ctx)
 }
 
 func (m *nodeManager) start(ctx context.Context, operator settings.Operator, peers []settings.Peer) error {
@@ -160,7 +215,21 @@ func (m *nodeManager) start(ctx context.Context, operator settings.Operator, pee
 
 	m.mu.Lock()
 	m.peers, m.open = nil, nil
+	serving := m.serving
 	m.mu.Unlock()
+
+	if !serving {
+		m.mu.Lock()
+		m.node, m.listener = node, nil
+
+		if m.replaced != nil {
+			close(m.replaced)
+			m.replaced = nil
+		}
+		m.mu.Unlock()
+
+		return nil
+	}
 
 	m.setPeers(node, peers)
 
@@ -206,24 +275,37 @@ func (m *nodeManager) follow(ctx context.Context, live *settings.Live) {
 		changed := live.Changed()
 		current := live.Get()
 
-		if operator, host := current.Operator, m.host(current.Operator); host != m.Identity().OriginHost {
-			m.logger.InfoContext(ctx, "restarting Diameter for the new identity; cores reconnect",
-				slog.String("host", host), slog.String("realm", operator.Realm()))
-
-			m.shutdown(ctx)
-
-			if err := m.start(ctx, operator, current.Peers); err != nil {
-				m.logger.ErrorContext(ctx, "failed to restart Diameter", slog.String("host", host), slog.Any("error", err))
-			}
-		} else if !slices.EqualFunc(current.Peers, m.configuredPeers(), settings.Peer.Equal) {
-			m.setPeers(m.Node(), current.Peers)
-		}
+		m.reconcile(ctx, current)
 
 		select {
 		case <-ctx.Done():
 			return
 		case <-changed:
 		}
+	}
+}
+
+func (m *nodeManager) reconcile(ctx context.Context, current settings.Settings) {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+
+	m.mu.Lock()
+	closed, serving := m.closed, m.serving
+	m.mu.Unlock()
+
+	switch operator, host := current.Operator, m.host(current.Operator); {
+	case closed:
+	case host != m.Identity().OriginHost:
+		m.logger.InfoContext(ctx, "restarting Diameter for the new identity; cores reconnect",
+			slog.String("host", host), slog.String("realm", operator.Realm()))
+
+		m.shutdown(ctx)
+
+		if err := m.start(ctx, operator, current.Peers); err != nil {
+			m.logger.ErrorContext(ctx, "failed to restart Diameter", slog.String("host", host), slog.Any("error", err))
+		}
+	case serving && !slices.EqualFunc(current.Peers, m.configuredPeers(), settings.Peer.Equal):
+		m.setPeers(m.Node(), current.Peers)
 	}
 }
 
