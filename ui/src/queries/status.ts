@@ -4,9 +4,7 @@ export interface Formation {
   state: "forming" | "joining" | "member" | "removed";
   expected?: number;
   found?: number;
-  candidate?: string;
   detail?: string;
-  foreign_peers?: number;
 }
 
 export interface Status {

@@ -52,9 +52,7 @@ This path returns the version of the SMSC, whether it is initialized, and the id
 | `state`         | string | `forming`, `joining`, `member` or `removed`. |
 | `expected`      | int    | `cluster.bootstrap_expect`. |
 | `found`         | int    | Nodes found, this one included. While forming. |
-| `candidate`     | string | Node ID of the node that forms the cluster. While forming. |
 | `detail`        | string | What the node is waiting for. |
-| `foreign_peers` | int    | Nodes behind `cluster.join` that are members of another cluster. |
 
 ## Check Liveness
 

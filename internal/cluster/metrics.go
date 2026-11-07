@@ -7,12 +7,9 @@ import (
 )
 
 type metrics struct {
-	mismatches      prometheus.Counter
-	formationState  *prometheus.GaugeVec
-	discoveredPeers prometheus.Gauge
-	joinAttempts    *prometheus.CounterVec
-	joinRequests    *prometheus.CounterVec
-	foreignPeers    prometheus.Gauge
+	mismatches   prometheus.Counter
+	joinRequests *prometheus.CounterVec
+	foreignPeers prometheus.Gauge
 }
 
 func newMetrics() *metrics {
@@ -21,18 +18,6 @@ func newMetrics() *metrics {
 			Name: "ellasmsc_cluster_state_mismatches_total",
 			Help: "Members whose database was found to differ from the leader's.",
 		}),
-		formationState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "ellasmsc_cluster_formation_state",
-			Help: "1 for the node's cluster formation state (forming, joining, member, removed), 0 for the others.",
-		}, []string{"state"}),
-		discoveredPeers: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "ellasmsc_cluster_discovered_peers",
-			Help: "Other nodes behind cluster.join that answered the last hello of this forming node.",
-		}),
-		joinAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "ellasmsc_cluster_join_attempts_total",
-			Help: "Attempts of this node to join a cluster through cluster.join, by result.",
-		}, []string{"result"}),
 		joinRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ellasmsc_cluster_join_requests_total",
 			Help: "Join and hello requests received from other nodes, by result.",
@@ -62,7 +47,7 @@ func RegisterRaftMetrics(reg prometheus.Registerer) error {
 
 func (n *Node) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		n.metrics.mismatches, n.metrics.formationState, n.metrics.discoveredPeers, n.metrics.joinAttempts,
+		n.metrics.mismatches,
 		n.metrics.joinRequests, n.metrics.foreignPeers,
 		toleranceCollector{n},
 		lagCollector{n},

@@ -44,9 +44,11 @@ In the Ella Core UI, go to **Operator** and scroll to the **SMS** section:
 
 - Check that **SMS Number** is set, e.g. `+15550001111`, Ella Core's default.
 - Click **Add Service Center**, enter:
-    - **Address**: `10.3.0.7`
+    - **Name**: `smsc`
     - **Numbers**: `+15550000000`
+    - **Address**: Ella SMSC's Diameter address or host name, e.g. `10.3.0.7`
     - **Diameter Identity**: the **Host** of step 2.
+- For every other Ella SMSC node, click **Add Node**, and enter its address or host name, and its **Diameter Host** from the **Cluster** page.
 - Click **Add**.
 
 The service center shows **Connected**.

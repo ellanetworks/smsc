@@ -34,10 +34,7 @@ Ella SMSC exposes Prometheus metrics at [`GET /api/v1/metrics`](api/metrics.md).
 | `ellasmsc_cluster_failure_tolerance` | Gauge | Voters that can fail without stopping writes. Leader only. |
 | `ellasmsc_cluster_state_mismatches_total` | Counter | Members whose database differs from the leader's. |
 | `ellasmsc_cluster_apply_lag_entries` | Gauge | Log entries the leader has committed that this node has not yet applied to its database. Absent while the leader's commit index is unknown. |
-| `ellasmsc_cluster_formation_state` | Gauge | 1 for the node's formation state (`forming`, `joining`, `member`, `removed`), 0 for the others. |
-| `ellasmsc_cluster_discovered_peers` | Gauge | Nodes behind `cluster.join` that answered this forming node. |
 | `ellasmsc_cluster_foreign_peers` | Gauge | Nodes behind `cluster.join` that are members of another cluster. |
-| `ellasmsc_cluster_join_attempts_total` | Counter | Attempts of this node to join a cluster through `cluster.join`, by result. |
 | `ellasmsc_cluster_join_requests_total` | Counter | Join and hello requests from other nodes, by result. |
 | `ellasmsc_ready_check` | Gauge | 1 when the readiness check passes, 0 when it fails, by check (`shutdown`, `member`, `initialized`, `diameter_label`, `drain`, `consistent`, `database`, `leader`, `caught_up`). |
 | `go_*` | Gauge, Counter, Summary | Go runtime: goroutines, heap, garbage-collection pauses. |

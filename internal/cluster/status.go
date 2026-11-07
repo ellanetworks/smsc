@@ -50,13 +50,12 @@ type Status struct {
 	Healthy          *bool          `json:"healthy,omitempty"`
 	FailureTolerance *int           `json:"failure_tolerance,omitempty"`
 	Members          []MemberStatus `json:"members"`
-	Formation        Formation      `json:"formation"`
 }
 
 func (n *Node) Status(ctx context.Context) (Status, error) {
 	st := Status{
 		NodeID: n.id, Clustered: n.cfg.clustered(), AppliedIndex: n.db.AppliedIndex(), Schema: n.db.Schema(),
-		Formation: n.Formation(), Members: []MemberStatus{},
+		Members: []MemberStatus{},
 	}
 
 	r, _ := n.current()

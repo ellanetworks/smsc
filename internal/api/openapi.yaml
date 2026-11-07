@@ -3279,23 +3279,14 @@ components:
         found:
           type: integer
           description: While forming, the forming nodes found, this one included.
-        candidate:
-          type: string
-          format: uuid
-          description: While forming, the node with the lowest ID once enough nodes are found; it forms the cluster.
         detail:
           type: string
           description: What the node waits for, or why it does not form.
           example: found 2 of 3 nodes
-        foreign_peers:
-          type: integer
-          description: Nodes behind cluster.join that are members of another cluster.
     ClusterStatus:
       type: object
-      required: [node_id, cluster_id, clustered, term, applied_index, commit_index, schema, members, formation]
+      required: [node_id, cluster_id, clustered, term, applied_index, commit_index, schema, members]
       properties:
-        formation:
-          $ref: "#/components/schemas/Formation"
         node_id:
           type: string
           format: uuid

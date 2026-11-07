@@ -24,7 +24,6 @@ This path returns the node that answered, its cluster, and every member.
 | `cluster_id`                  | string  | ID of the cluster. |
 | `clustered`                   | boolean | The node has a `cluster` block. |
 | `leader_id`                   | string  | ID of the leader. Absent when there is none. |
-| `formation`                   | object  | This node's [formation](status.md#formation). |
 | `term`                        | int     | Election term. |
 | `applied_index`               | int     | Last log entry applied by the node. |
 | `commit_index`                | int     | Last log entry committed by the cluster. |

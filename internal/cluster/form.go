@@ -38,15 +38,12 @@ const (
 	joinMethodSecret = "secret"
 )
 
-var formationStates = []string{FormationForming, FormationJoining, FormationMember, FormationRemoved}
-
 type Formation struct {
-	State        string `json:"state"`
-	Expected     int    `json:"expected,omitempty"`
-	Found        int    `json:"found,omitempty"`
-	Candidate    string `json:"candidate,omitempty"`
-	Detail       string `json:"detail,omitempty"`
-	ForeignPeers int    `json:"foreign_peers,omitempty"`
+	State     string `json:"state"`
+	Expected  int    `json:"expected,omitempty"`
+	Found     int    `json:"found,omitempty"`
+	Candidate string `json:"-"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 type formation struct {
@@ -57,7 +54,6 @@ type formation struct {
 	detail    string
 	found     int
 	candidate string
-	foreign   int
 	formed    chan struct{}
 	logged    string
 }
@@ -81,15 +77,6 @@ func (f *formation) set(state, detail string) {
 			close(f.formed)
 		}
 	}
-
-	for _, s := range formationStates {
-		v := 0.0
-		if s == state {
-			v = 1
-		}
-
-		f.n.metrics.formationState.WithLabelValues(s).Set(v)
-	}
 }
 
 func (f *formation) progress(found int, candidate, detail string) {
@@ -103,7 +90,6 @@ func (f *formation) setForeign(count int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	f.foreign = count
 	f.n.metrics.foreignPeers.Set(float64(count))
 }
 
@@ -113,7 +99,6 @@ func (f *formation) get() Formation {
 
 	return Formation{
 		State: f.state, Expected: f.n.cfg.BootstrapExpect, Found: f.found, Candidate: f.candidate, Detail: f.detail,
-		ForeignPeers: f.foreign,
 	}
 }
 
@@ -498,7 +483,6 @@ func (n *Node) hasLeader() bool {
 
 func (n *Node) formStep(ctx context.Context) {
 	rd := n.helloRound(ctx, n.resolveJoin(ctx))
-	n.metrics.discoveredPeers.Set(float64(len(rd.peers)))
 
 	if rd.wrongSecret > 0 {
 		n.formation.logOnce("wrong-secret", func() {
@@ -535,16 +519,12 @@ func (n *Node) formJoin(ctx context.Context, d decision) {
 
 	switch {
 	case err == nil:
-		n.metrics.joinAttempts.WithLabelValues("joined").Inc()
 		n.cfg.Logger.InfoContext(ctx, "joined the cluster", slog.String("cluster", d.ClusterID))
 
 		return
 	case errors.Is(err, ErrWrongSecret), errors.Is(err, errBadProof):
-		n.metrics.joinAttempts.WithLabelValues("unauthorized").Inc()
 	case errors.Is(err, errRetry):
-		n.metrics.joinAttempts.WithLabelValues("unavailable").Inc()
 	default:
-		n.metrics.joinAttempts.WithLabelValues("rejected").Inc()
 	}
 
 	if n.formation.current() == FormationJoining {

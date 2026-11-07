@@ -117,11 +117,6 @@ func TestRemovedWhileDownIsFencedOnRestart(t *testing.T) {
 		t.Fatalf("formation = %+v, want %s", f, FormationRemoved)
 	}
 
-	st, err := fenced.Status(context.Background())
-	if err != nil || st.Formation.State != FormationRemoved {
-		t.Fatalf("status = %+v, %v", st, err)
-	}
-
 	checks := fenced.Readiness(context.Background(), true)
 	if i := slices.IndexFunc(checks, func(c Check) bool { return c.Name == CheckMember }); i < 0 || checks[i].OK {
 		t.Fatalf("checks of the reopened node = %+v, want member failing", checks)

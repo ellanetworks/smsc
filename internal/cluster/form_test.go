@@ -402,24 +402,11 @@ func TestFormingNodeIsUnreadyAndWaits(t *testing.T) {
 
 	waitFailing(t, e, CheckMember, "forming")
 
-	st, err := e.node.Status(context.Background())
-	if err != nil || st.Formation.State != FormationForming {
-		t.Fatalf("status = %+v, %v", st, err)
-	}
-
-	if v := testutil.ToFloat64(e.node.metrics.formationState.WithLabelValues(FormationForming)); v != 1 {
-		t.Fatalf("ellasmsc_cluster_formation_state{state=forming} = %v", v)
-	}
-
 	c.start(1)
 
 	eventually(t, "two of three found", func() error {
 		if f := e.node.Formation(); f.Found != 2 {
 			return fmt.Errorf("formation %+v", f)
-		}
-
-		if v := testutil.ToFloat64(e.node.metrics.discoveredPeers); v != 1 {
-			return fmt.Errorf("discovered peers %v", v)
 		}
 
 		return nil
