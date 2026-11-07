@@ -11,25 +11,41 @@ This guide walks through upgrading every node in a running Ella SMSC high-availa
 - A running cluster deployed via [Deploy a High Availability Cluster](deploy_ha_cluster.md).
 - The next version of `ella-smsc` available.
 
-## Upgrade one node
+## Upgrade the nodes
 
-Repeat these steps for each node.
+=== "Snap"
 
-1. Open the **Cluster** page on any healthy node other than the one you are about to upgrade.
-2. In the node's **Node actions** menu, click **Drain this node**. Wait until its **Drain** column shows **Drained**.
-3. On that host, refresh the snap:
+    Repeat these steps for each node.
 
-    ```shell
-    sudo snap refresh ella-smsc
-    ```
+    1. Open the **Cluster** page on any healthy node other than the one you are about to upgrade.
+    2. In the node's **Node actions** menu, click **Drain this node**. Wait until its **Drain** column shows **Drained**.
+    3. On that host, refresh the snap:
 
-4. On the **Cluster** page, wait for the node to return to **Healthy**.
-5. In the node's **Node actions** menu, click **Resume this node**. Wait until its **Drain** column shows **Active**.
-6. Move to the next node.
+        ```shell
+        sudo snap refresh ella-smsc
+        ```
+
+    4. On the **Cluster** page, wait for the node to return to **Healthy**.
+    5. In the node's **Node actions** menu, click **Resume this node**. Wait until its **Drain** column shows **Active**.
+    6. Move to the next node.
+
+=== "Kubernetes"
+
+    1. Set the new image:
+
+        ```shell
+        kubectl set image statefulset/ella-smsc -n ella smsc=ghcr.io/ellanetworks/ella-smsc:<version>
+        ```
+
+    2. Wait for the rollout:
+
+        ```shell
+        kubectl rollout status statefulset/ella-smsc -n ella
+        ```
 
 ## Verify the upgrade
 
-After every node has been refreshed, open the **Cluster** page and confirm:
+After every node has been upgraded, open the **Cluster** page and confirm:
 
 - Every node's **Version** column shows the target release.
 - Every node is **Healthy** and its **Drain** column shows **Active**.

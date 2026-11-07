@@ -416,7 +416,7 @@ export function RenameNodeDialog({
         label="Display name"
         value={displayName}
         onChange={(e) => setDisplayName(e.target.value)}
-        helperText={`Leave empty to show the node identity instead (max ${MAX_DISPLAY_NAME_LENGTH} characters).`}
+        helperText={`Leave empty to show the Diameter host label ${member.diameter_label} instead (max ${MAX_DISPLAY_NAME_LENGTH} characters).`}
         autoFocus
         slotProps={{ htmlInput: { maxLength: MAX_DISPLAY_NAME_LENGTH } }}
       />

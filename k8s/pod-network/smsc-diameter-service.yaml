@@ -3,10 +3,13 @@ kind: Service
 metadata:
   name: ella-smsc-diameter
   labels:
-    app: ella-smsc
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
+    app.kubernetes.io/part-of: ella
 spec:
   selector:
-    app: ella-smsc
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
   type: NodePort
   ports:
   - name: diameter

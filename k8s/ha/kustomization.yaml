@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ella
+resources:
+  - ../base
+  - smsc-pdb.yaml
+  - smsc-networkpolicy.yaml
+configMapGenerator:
+  - name: smsc-config
+    files:
+      - smsc.yaml
+    options:
+      labels:
+        app.kubernetes.io/name: ella-smsc
+        app.kubernetes.io/instance: ella-smsc
+        app.kubernetes.io/part-of: ella
+patches:
+  - path: smsc-statefulset-patch.yaml

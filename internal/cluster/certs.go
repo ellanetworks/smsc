@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +30,10 @@ type certs struct {
 	cert      atomic.Pointer[tls.Certificate]
 	pins      atomic.Pointer[map[string]string]
 	bootstrap atomic.Pointer[map[string]string]
+	removed   atomic.Pointer[map[string]bool]
+
+	provisionalOnce sync.Once
+	provisional     *tls.Certificate
 }
 
 func loadCerts(dir, nodeID string) (*certs, error) {
@@ -74,8 +79,19 @@ func loadCerts(dir, nodeID string) (*certs, error) {
 	return c, nil
 }
 
-func (c *certs) leaf() *tls.Certificate {
-	return c.cert.Load()
+func (c *certs) presented() *tls.Certificate {
+	if cert := c.cert.Load(); cert != nil {
+		return cert
+	}
+
+	c.provisionalOnce.Do(func() {
+		cert, err := pki.GenerateCert(pki.ProvisionalCluster, c.nodeID, time.Now())
+		if err == nil {
+			c.provisional = &cert
+		}
+	})
+
+	return c.provisional
 }
 
 func (c *certs) fingerprint() string {
@@ -116,11 +132,32 @@ func (c *certs) pin(fp string) (string, bool) {
 	return "", false
 }
 
+func (c *certs) fenced(fp string) bool {
+	m := c.removed.Load()
+
+	return m != nil && (*m)[fp]
+}
+
 func (c *certs) refresh(ctx context.Context, d *db.DB) error {
 	members, err := d.Members(ctx)
 	if err != nil {
 		return err
 	}
+
+	tombstones, err := d.Tombstones(ctx)
+	if err != nil {
+		return err
+	}
+
+	removed := make(map[string]bool, len(tombstones))
+
+	for _, t := range tombstones {
+		if t.Fingerprint != "" {
+			removed[t.Fingerprint] = true
+		}
+	}
+
+	c.removed.Store(&removed)
 
 	pins := make(map[string]string, len(members))
 
@@ -175,8 +212,11 @@ func (c *certs) install(cert tls.Certificate, bootstrap map[string]string) error
 	return nil
 }
 
-func (c *certs) member(address, version string) db.Member {
-	m := db.Member{NodeID: c.nodeID, Address: address, SchemaVersion: db.SchemaVersion(), Version: version}
+func (c *certs) member(address, version, label string, generated bool) db.Member {
+	m := db.Member{
+		NodeID: c.nodeID, Address: address, SchemaVersion: db.SchemaVersion(), Version: version, DiameterLabel: label,
+		LabelGenerated: generated,
+	}
 
 	if cert := c.cert.Load(); cert != nil {
 		m.Fingerprint = pki.Fingerprint(cert.Leaf)

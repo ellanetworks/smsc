@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ella-smsc-internal
+  labels:
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
+    app.kubernetes.io/part-of: ella
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
+  ports:
+  - name: cluster
+    protocol: TCP
+    port: 7000
+    targetPort: cluster
+  - name: diameter
+    protocol: SCTP
+    port: 3868
+    targetPort: diameter

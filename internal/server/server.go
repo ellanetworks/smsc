@@ -52,13 +52,25 @@ type Server struct {
 	purgeNow        func() time.Time
 	purgeInterval   time.Duration
 
+	started       bool
 	database      *db.DB
 	draining      atomic.Bool
-	nodes         *nodeManager
-	stopFollowing context.CancelFunc
+	node          *cluster.Node
+	metrics       *metrics
+	tp            trace.TracerProvider
 	apiServer     *http.Server
 	apiListener   net.Listener
-	node          *cluster.Node
+	apiTLS        *tls.Config
+	handler       atomic.Pointer[http.Handler]
+	readiness     *readiness
+	stopReadiness context.CancelFunc
+	stopForming   context.CancelFunc
+	forming       sync.WaitGroup
+	errs          chan error
+
+	mu            sync.Mutex
+	nodes         *nodeManager
+	stopFollowing context.CancelFunc
 	deliverer     *delivery.Deliverer
 	esmes         *esme.Service
 	drain         *drainer
@@ -76,8 +88,22 @@ const smppInboundWindow = 64
 
 const smppSystemID = "EllaSMSC"
 
+const labelCheckInterval = time.Second
+
+func (s *Server) Err() <-chan error {
+	return s.errs
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	(*s.handler.Load()).ServeHTTP(w, r)
+}
+
+func (s *Server) setHandler(h http.Handler) {
+	s.handler.Store(&h)
+}
+
 func (s *Server) Start(ctx context.Context) (err error) {
-	if s.nodes != nil {
+	if s.started {
 		return ErrAlreadyStarted
 	}
 
@@ -123,12 +149,15 @@ func (s *Server) Start(ctx context.Context) (err error) {
 
 	clusterCfg := cluster.Config{
 		Dir: filepath.Join(filepath.Dir(cfg.DB.Path), "raft"), Version: version.Get().Version, Now: time.Now,
-		Logger: s.Logger,
+		Logger: s.Logger, DiameterLabel: cfg.Diameter.HostLabel,
 	}
 
 	if c := cfg.Cluster; c != nil {
 		clusterCfg.Address = netip.AddrPortFrom(c.Address, uint16(c.Port)).String()
 		clusterCfg.Advertise = c.AdvertiseAddress()
+		clusterCfg.Join = c.JoinAddresses()
+		clusterCfg.BootstrapExpect = c.BootstrapExpect
+		clusterCfg.SecretFile = c.SecretFile
 	}
 
 	node, err := cluster.Open(ctx, clusterCfg, database)
@@ -145,31 +174,146 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		}
 	}
 
-	initial, err := database.GetSettings(ctx)
-	if err != nil {
-		closeStore()
-		return err
-	}
-
-	secrets, err := newSecrets(ctx, database)
-	if err != nil {
-		closeStore()
-		return err
-	}
-
-	oidcSettings, err := database.GetOIDC(ctx)
-	if err != nil {
-		closeStore()
-		return err
-	}
-
-	live := settings.NewLive(database, initial)
-
 	m, err := newMetrics(database, node)
 	if err != nil {
 		closeStore()
 		return err
 	}
+
+	var apiLC net.ListenConfig
+
+	apiLn, err := apiLC.Listen(ctx, "tcp", netip.AddrPortFrom(cfg.API.Address, uint16(cfg.API.Port)).String())
+	if err != nil {
+		closeStore()
+		return fmt.Errorf("listen for the API: %w", err)
+	}
+
+	base := context.WithoutCancel(ctx)
+
+	s.readiness = &readiness{
+		node: node, clustered: node.Clustered(), stopping: s.draining.Load, metrics: m.readiness,
+		logger: s.Logger, now: time.Now,
+	}
+
+	readinessCtx, stopReadiness := context.WithCancel(base)
+	go s.readiness.run(readinessCtx)
+
+	s.database, s.node, s.metrics, s.tp, s.apiListener, s.apiTLS = database, node, m, tp, apiLn, tlsConfig
+	s.shutdownTracing, s.stopReadiness, s.errs, s.started = shutdownTracing, stopReadiness, make(chan error, 1), true
+	s.stopForming = func() {}
+
+	s.setHandler(api.NewLimitedHandler(api.Config{
+		Frontend: ui.FS(), Cluster: node, Auth: database, Ready: s.readiness.checks, Metrics: m.registry,
+		Requests: m.requests, SecureCookie: tlsConfig != nil, Logger: s.Logger,
+	}, s.unavailable))
+
+	s.apiServer = &http.Server{
+		Handler:           s,
+		ErrorLog:          slog.NewLogLogger(s.Logger.Handler(), slog.LevelWarn),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       time.Minute,
+		WriteTimeout:      time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		TLSConfig:         tlsConfig,
+	}
+
+	select {
+	case <-node.Removed():
+		s.serveAPI()
+		s.Logger.WarnContext(ctx, "smsc started fenced: this node was removed from the cluster; delete its data "+
+			"directory to join it again", "api", apiLn.Addr().String())
+
+		return nil
+	case <-node.Formed():
+		if err := s.finish(ctx, base, addresses, smppTLS); err != nil {
+			stopReadiness()
+
+			_ = apiLn.Close()
+
+			closeStore()
+
+			return err
+		}
+
+		s.serveAPI()
+
+		return nil
+	default:
+	}
+
+	s.serveAPI()
+
+	formCtx, stopForming := context.WithCancel(base)
+	s.stopForming = stopForming
+
+	s.Logger.InfoContext(ctx, "smsc waiting for the cluster to form", "api", apiLn.Addr().String(),
+		"expected", clusterCfg.BootstrapExpect)
+
+	s.forming.Go(func() {
+		select {
+		case <-formCtx.Done():
+			return
+		case <-node.Formed():
+		}
+
+		if err := s.finish(formCtx, base, addresses, smppTLS); err != nil {
+			if formCtx.Err() == nil {
+				s.Logger.ErrorContext(formCtx, "failed to start after the cluster formed", slog.Any("error", err))
+
+				s.errs <- err
+			}
+		}
+	})
+
+	return nil
+}
+
+func (s *Server) unavailable() (int, string) {
+	if f := s.node.Formation(); f.State == cluster.FormationRemoved {
+		return http.StatusGone, cluster.ErrRemoved.Error()
+	}
+
+	f := s.node.Formation()
+
+	message := "The cluster is forming"
+	if f.Expected > 0 {
+		message += fmt.Sprintf(": found %d of %d nodes", f.Found, f.Expected)
+	}
+
+	if f.Detail != "" {
+		message += " (" + f.Detail + ")"
+	}
+
+	return http.StatusServiceUnavailable, message
+}
+
+func (s *Server) serveAPI() {
+	if s.apiTLS != nil {
+		go func() { _ = s.apiServer.ServeTLS(s.apiListener, "", "") }()
+	} else {
+		go func() { _ = s.apiServer.Serve(s.apiListener) }()
+	}
+}
+
+func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppTLS *tls.Config) error {
+	cfg, database, node, m, tp := s.Config, s.database, s.node, s.metrics, s.tp
+
+	initial, err := database.GetSettings(ctx)
+	if err != nil {
+		return err
+	}
+
+	secrets, err := newSecrets(ctx, database)
+	if err != nil {
+		return err
+	}
+
+	oidcSettings, err := database.GetOIDC(ctx)
+	if err != nil {
+		return err
+	}
+
+	live := settings.NewLive(database, initial)
 
 	mux := diameter.NewMux()
 
@@ -180,7 +324,11 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		metrics:        m.peers,
 		tracerProvider: tp,
 		logger:         s.Logger,
-		label:          settings.NodeLabel(node.ID()),
+		label:          node.DiameterLabel(),
+	}
+
+	if label, err := node.CommittedLabel(ctx); err == nil {
+		nodes.label, nodes.serving = label, true
 	}
 
 	if tp == nil {
@@ -223,7 +371,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		Logger:         s.Logger,
 	}
 
-	s.drain = &drainer{
+	drain := &drainer{
 		node: node, store: database, esmes: esmes, logger: s.Logger,
 		wake: make(chan struct{}, 1),
 	}
@@ -251,71 +399,41 @@ func (s *Server) Start(ctx context.Context) (err error) {
 	})
 
 	if err := nodes.start(ctx, initial.Operator, initial.Peers); err != nil {
-		closeStore()
 		return err
 	}
 
-	var apiLC net.ListenConfig
+	s.setHandler(api.NewHandler(api.Config{
+		Store:          database,
+		Diameter:       diameterStatus{nodes: nodes, hss: hss},
+		Frontend:       ui.FS(),
+		Settings:       live,
+		Submitter:      submitter,
+		Notify:         deliverer.Notify,
+		ESMEs:          database,
+		OIDC:           oidcLive,
+		Backups:        node,
+		Cluster:        node,
+		SMPP:           smppSessions{database},
+		Ready:          s.readiness.checks,
+		Received:       m.received,
+		Metrics:        m.registry,
+		Requests:       m.requests,
+		Auth:           database,
+		JWTSecret:      secrets.jwt,
+		OIDCCookieKey:  secrets.cookieKey,
+		BcryptCost:     s.bcryptCost,
+		SecureCookie:   s.apiTLS != nil,
+		TracerProvider: tp,
+		Now:            time.Now,
+		Logger:         s.Logger,
+	}))
 
-	apiLn, err := apiLC.Listen(ctx, "tcp", netip.AddrPortFrom(cfg.API.Address, uint16(cfg.API.Port)).String())
-	if err != nil {
-		nodes.shutdown(ctx)
-
-		closeStore()
-
-		return fmt.Errorf("listen for the API: %w", err)
-	}
-
-	s.apiListener = apiLn
-	s.apiServer = &http.Server{
-		Handler: api.NewHandler(api.Config{
-			Store:          database,
-			Diameter:       diameterStatus{nodes: nodes, hss: hss},
-			Frontend:       ui.FS(),
-			Settings:       live,
-			Submitter:      submitter,
-			Notify:         deliverer.Notify,
-			ESMEs:          database,
-			OIDC:           oidcLive,
-			Backups:        node,
-			Cluster:        node,
-			SMPP:           smppSessions{database},
-			Ready:          func(ctx context.Context) error { return s.ready(ctx, database, node) },
-			Received:       m.received,
-			Metrics:        m.registry,
-			Requests:       m.requests,
-			Auth:           database,
-			JWTSecret:      secrets.jwt,
-			OIDCCookieKey:  secrets.cookieKey,
-			BcryptCost:     s.bcryptCost,
-			SecureCookie:   tlsConfig != nil,
-			TracerProvider: tp,
-			Now:            time.Now,
-			Logger:         s.Logger,
-		}),
-		ErrorLog:          slog.NewLogLogger(s.Logger.Handler(), slog.LevelWarn),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       time.Minute,
-		WriteTimeout:      time.Minute,
-		IdleTimeout:       2 * time.Minute,
-		TLSConfig:         tlsConfig,
-	}
-
-	if tlsConfig != nil {
-		go func() { _ = s.apiServer.ServeTLS(apiLn, "", "") }()
-	} else {
-		go func() { _ = s.apiServer.Serve(apiLn) }()
-	}
-
-	base := context.WithoutCancel(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if cfg.SMPP != nil {
 		if err := s.startSMPP(ctx, esmes, smppTLS); err != nil {
-			_ = s.apiServer.Close()
-
-			nodes.shutdown(ctx)
-
-			closeStore()
+			nodes.close(ctx)
 
 			return err
 		}
@@ -367,13 +485,15 @@ func (s *Server) Start(ctx context.Context) (err error) {
 
 	go s.fenceOnRemoval(base, node, nodes, s.smppServer)
 
-	go s.drain.run(followCtx)
+	go s.gateDiameter(followCtx, node, nodes, live)
 
-	s.database = database
+	go drain.run(followCtx)
+
+	s.readiness.setDrain(drain)
+
+	s.drain = drain
 	s.deliverer = deliverer
 	s.esmes = esmes
-	s.node = node
-	s.shutdownTracing = shutdownTracing
 	s.nodes = nodes
 	s.stopFollowing = stopFollowing
 	s.stopLeading = stopLeading
@@ -385,11 +505,45 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		smppAddr = s.smppListener.Addr().String()
 	}
 
+	diameterAddr := ""
+	if a := nodes.Addr(); a != nil {
+		diameterAddr = a.String()
+	}
+
 	s.Logger.InfoContext(ctx, "smsc started", "version", v.Version, "revision", v.Revision, "db", cfg.DB.Path,
-		"diameter", nodes.Addr().String(), "api", apiLn.Addr().String(), "tls", tlsConfig != nil, "smpp", smppAddr,
+		"diameter", diameterAddr, "api", s.apiListener.Addr().String(), "tls", s.apiTLS != nil, "smpp", smppAddr,
 		"smpp_tls", smppTLS != nil)
 
+	if diameterAddr == "" {
+		s.Logger.WarnContext(ctx, "Diameter stays closed until the cluster records this node's Diameter host label",
+			"label", node.DiameterLabel())
+	}
+
 	return nil
+}
+
+func (s *Server) gateDiameter(ctx context.Context, node *cluster.Node, nodes *nodeManager, live *settings.Live) {
+	ticker := time.NewTicker(labelCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-node.Removed():
+			return
+		case <-ticker.C:
+		}
+
+		label, err := node.CommittedLabel(ctx)
+
+		switch {
+		case err == nil:
+			nodes.setServing(ctx, true, label, live)
+		case ctx.Err() == nil:
+			nodes.setServing(ctx, false, "", live)
+		}
+	}
 }
 
 func (s *Server) startSMPP(ctx context.Context, esmes *esme.Service, tlsConfig *tls.Config) error {
@@ -442,15 +596,19 @@ func (s *Server) APIAddr() net.Addr {
 }
 
 func (s *Server) Addr() net.Addr {
-	if s.nodes == nil {
+	s.mu.Lock()
+	nodes := s.nodes
+	s.mu.Unlock()
+
+	if nodes == nil {
 		return nil
 	}
 
-	return s.nodes.Addr()
+	return nodes.Addr()
 }
 
 func (s *Server) Shutdown(ctx context.Context) {
-	if s.nodes == nil {
+	if !s.started {
 		return
 	}
 
@@ -458,44 +616,57 @@ func (s *Server) Shutdown(ctx context.Context) {
 
 	s.draining.Store(true)
 
-	s.stopLeading()
+	s.stopForming()
+	s.forming.Wait()
 
-	if err := s.node.HandOver(); err != nil {
-		s.Logger.WarnContext(ctx, "failed to hand the leadership over", slog.Any("error", err))
-	}
+	s.mu.Lock()
+	running := s.nodes != nil
+	s.mu.Unlock()
 
-	s.stopFollowing()
+	if running {
+		s.stopLeading()
 
-	if s.smppServer != nil {
-		smppCtx, cancel := context.WithTimeout(ctx, smppShutdownTimeout)
-		if err := s.smppServer.Shutdown(smppCtx); err != nil {
-			s.Logger.WarnContext(ctx, "SMPP sessions closed without unbind", slog.Any("error", err))
+		if err := s.node.HandOver(); err != nil {
+			s.Logger.WarnContext(ctx, "failed to hand the leadership over", slog.Any("error", err))
 		}
 
-		cancel()
+		s.stopFollowing()
+
+		if s.smppServer != nil {
+			smppCtx, cancel := context.WithTimeout(ctx, smppShutdownTimeout)
+			if err := s.smppServer.Shutdown(smppCtx); err != nil {
+				s.Logger.WarnContext(ctx, "SMPP sessions closed without unbind", slog.Any("error", err))
+			}
+
+			cancel()
+		}
 	}
 
 	if err := s.apiServer.Shutdown(ctx); err != nil {
 		s.Logger.WarnContext(ctx, "failed to stop the API cleanly", slog.Any("error", err))
 	}
 
-	engines := make(chan struct{})
+	if running {
+		engines := make(chan struct{})
 
-	go func() {
-		s.engines.Wait()
-		close(engines)
-	}()
+		go func() {
+			s.engines.Wait()
+			close(engines)
+		}()
 
-	select {
-	case <-engines:
-	case <-ctx.Done():
+		select {
+		case <-engines:
+		case <-ctx.Done():
+		}
+
+		if err := errors.Join(s.deliverer.Wait(ctx), s.esmes.Wait(ctx)); err != nil {
+			s.Logger.WarnContext(ctx, "shutting down with short message deliveries still in flight")
+		}
+
+		s.nodes.close(ctx)
 	}
 
-	if err := errors.Join(s.deliverer.Wait(ctx), s.esmes.Wait(ctx)); err != nil {
-		s.Logger.WarnContext(ctx, "shutting down with short message deliveries still in flight")
-	}
-
-	s.nodes.shutdown(ctx)
+	s.stopReadiness()
 
 	if err := errors.Join(s.node.Close(), s.database.Close()); err != nil {
 		s.Logger.ErrorContext(ctx, "failed to close the database", slog.Any("error", err))
@@ -525,18 +696,6 @@ func (s *Server) newTracerProvider(ctx context.Context) (trace.TracerProvider, f
 	}
 
 	return tp, tp.Shutdown, nil
-}
-
-func (s *Server) ready(ctx context.Context, database *db.DB, node *cluster.Node) error {
-	if s.draining.Load() {
-		return errors.New("shutting down")
-	}
-
-	if err := node.Ready(); err != nil {
-		return err
-	}
-
-	return database.Ping(ctx)
 }
 
 type hssSender struct {

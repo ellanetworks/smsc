@@ -20,21 +20,23 @@ import (
 const pendingTimeout = 2 * time.Second
 
 type metrics struct {
-	registry *prometheus.Registry
-	received *intake.Received
-	delivery *delivery.Metrics
-	peers    *peerMetrics
-	smpp     *esme.Metrics
-	requests *api.RequestMetrics
+	registry  *prometheus.Registry
+	received  *intake.Received
+	delivery  *delivery.Metrics
+	peers     *peerMetrics
+	smpp      *esme.Metrics
+	requests  *api.RequestMetrics
+	readiness *readinessMetrics
 }
 
 func newMetrics(database *db.DB, node *cluster.Node) (*metrics, error) {
 	m := &metrics{
-		registry: prometheus.NewRegistry(),
-		received: intake.New(),
-		delivery: delivery.NewMetrics(),
-		peers:    newPeerMetrics(),
-		requests: api.NewRequestMetrics(),
+		registry:  prometheus.NewRegistry(),
+		received:  intake.New(),
+		delivery:  delivery.NewMetrics(),
+		peers:     newPeerMetrics(),
+		requests:  api.NewRequestMetrics(),
+		readiness: newReadinessMetrics(),
 	}
 	leading := func() bool { leading, _ := node.Leader(); return leading }
 	m.smpp = esme.NewMetrics(database, leading)
@@ -64,6 +66,7 @@ func newMetrics(database *db.DB, node *cluster.Node) (*metrics, error) {
 	m.registry.MustRegister(m.peers.collectors()...)
 	m.registry.MustRegister(m.smpp.Collectors()...)
 	m.registry.MustRegister(m.requests.Collectors()...)
+	m.registry.MustRegister(m.readiness.collectors()...)
 
 	return m, nil
 }

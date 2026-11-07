@@ -2,16 +2,26 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: ella-smsc
+  labels:
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
+    app.kubernetes.io/part-of: ella
 spec:
   replicas: 1
-  serviceName: ella-smsc
+  serviceName: ella-smsc-internal
+  # Start and replace pods without waiting for the others to be ready: a
+  # survivor without a leader stays unready until the missing pods return.
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
-      app: ella-smsc
+      app.kubernetes.io/name: ella-smsc
+      app.kubernetes.io/instance: ella-smsc
   template:
     metadata:
       labels:
-        app: ella-smsc
+        app.kubernetes.io/name: ella-smsc
+        app.kubernetes.io/instance: ella-smsc
+        app.kubernetes.io/part-of: ella
     spec:
       terminationGracePeriodSeconds: 50
       automountServiceAccountToken: false
@@ -27,6 +37,19 @@ spec:
         image: ghcr.io/ellanetworks/ella-smsc:latest
         command: ["smsc"]
         args: ["--config", "/config/smsc.yaml"]
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: SMSC_DIAMETER_HOST_LABEL
+          value: $(POD_NAME)
+        - name: SMSC_CLUSTER_ADVERTISE
+          value: $(POD_NAME).ella-smsc-internal.$(POD_NAMESPACE).svc.cluster.local:7000
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -40,26 +63,33 @@ spec:
           protocol: SCTP
         - name: smpp
           containerPort: 2775
+        - name: cluster
+          containerPort: 7000
         startupProbe:
           httpGet:
-            path: /api/v1/readyz
+            path: /api/v1/livez
             port: http
           periodSeconds: 2
-          timeoutSeconds: 5
+          timeoutSeconds: 3
           failureThreshold: 150
         readinessProbe:
           httpGet:
             path: /api/v1/readyz
             port: http
-          periodSeconds: 10
-          timeoutSeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
         livenessProbe:
           httpGet:
             path: /api/v1/livez
             port: http
-          periodSeconds: 20
-          timeoutSeconds: 5
-          failureThreshold: 3
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: 5
         resources:
           requests:
             cpu: 500m

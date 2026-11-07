@@ -25,10 +25,13 @@ type Pins func(fingerprint string) (nodeID string, ok bool)
 
 const AnyNode = ""
 
+type Removed func(fingerprint string) bool
+
 type Config struct {
 	Address string
 	Cert    func() *tls.Certificate
 	Pins    Pins
+	Removed Removed
 	Logger  *slog.Logger
 }
 
@@ -39,6 +42,7 @@ type Listener struct {
 	mu       sync.Mutex
 	handlers map[string]func(net.Conn)
 	conns    map[*tls.Conn]string
+	fenced   map[*tls.Conn]bool
 	closed   bool
 	wg       sync.WaitGroup
 }
@@ -48,7 +52,9 @@ func New(cfg Config) *Listener {
 		cfg.Logger = slog.Default()
 	}
 
-	l := &Listener{cfg: cfg, handlers: map[string]func(net.Conn){}, conns: map[*tls.Conn]string{}}
+	l := &Listener{
+		cfg: cfg, handlers: map[string]func(net.Conn){}, conns: map[*tls.Conn]string{}, fenced: map[*tls.Conn]bool{},
+	}
 	l.tls = &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		ClientAuth: tls.RequestClientCert,
@@ -74,12 +80,19 @@ func New(cfg Config) *Listener {
 			}
 
 			_, err := verify(cs, cfg.Pins)
+			if err != nil && cfg.removed(cs) {
+				return nil
+			}
 
 			return err
 		},
 	}
 
 	return l
+}
+
+func (c Config) removed(cs tls.ConnectionState) bool {
+	return c.Removed != nil && len(cs.PeerCertificates) > 0 && c.Removed(pki.Fingerprint(cs.PeerCertificates[0]))
 }
 
 func verify(cs tls.ConnectionState, pins Pins) (string, error) {
@@ -185,16 +198,31 @@ func (l *Listener) serve(raw net.Conn) {
 
 	cs := conn.ConnectionState()
 
+	removed, rejected := false, false
+
+	if cs.NegotiatedProtocol != ALPNJoin {
+		if _, err := verify(cs, l.cfg.Pins); err != nil {
+			removed, rejected = l.cfg.removed(cs), !l.cfg.removed(cs)
+		}
+	}
+
 	l.mu.Lock()
 	h, ok := l.handlers[cs.NegotiatedProtocol]
 
 	fp := ""
-	if len(cs.PeerCertificates) > 0 && cs.NegotiatedProtocol != ALPNJoin {
+	if len(cs.PeerCertificates) > 0 && cs.NegotiatedProtocol != ALPNJoin && !removed {
 		fp = pki.Fingerprint(cs.PeerCertificates[0])
+	}
+
+	if rejected || removed && cs.NegotiatedProtocol != ALPNHTTP {
+		ok = false
 	}
 
 	if ok && !l.closed {
 		l.conns[conn] = fp
+		if removed {
+			l.fenced[conn] = true
+		}
 	} else {
 		ok = false
 	}
@@ -218,6 +246,7 @@ func (t *tracked) Close() error {
 	t.once.Do(func() {
 		t.l.mu.Lock()
 		delete(t.l.conns, t.Conn)
+		delete(t.l.fenced, t.Conn)
 		t.l.mu.Unlock()
 	})
 
@@ -275,6 +304,29 @@ func (l *Listener) Dial(ctx context.Context, addr, alpn string, pins Pins) (*tls
 	}
 
 	return tc, peer, nil
+}
+
+func Fenced(conn net.Conn) bool {
+	t, ok := conn.(*tracked)
+	if !ok {
+		return false
+	}
+
+	t.l.mu.Lock()
+	defer t.l.mu.Unlock()
+
+	return t.l.fenced[t.Conn]
+}
+
+func State(conn net.Conn) (tls.ConnectionState, bool) {
+	switch c := conn.(type) {
+	case *tracked:
+		return c.ConnectionState(), true
+	case *tls.Conn:
+		return c.ConnectionState(), true
+	}
+
+	return tls.ConnectionState{}, false
 }
 
 func PeerNodeID(conn net.Conn) string {

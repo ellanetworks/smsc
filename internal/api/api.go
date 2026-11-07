@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/smsc/internal/cluster"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/oidc"
@@ -89,7 +90,7 @@ type Config struct {
 	Submitter      *submission.Submitter
 	Notify         func()
 	Received       *intake.Received
-	Ready          func(ctx context.Context) error
+	Ready          func(ctx context.Context, withCluster bool) []cluster.Check
 	Metrics        prometheus.Gatherer
 	Requests       *RequestMetrics
 	Auth           AuthStore
@@ -231,6 +232,41 @@ func NewHandler(cfg Config) http.Handler {
 	}
 
 	return traced(cfg, securityHeaders(cfg, http.NewCrossOriginProtection().Handler(mux)))
+}
+
+func NewLimitedHandler(cfg Config, unavailable func() (int, string)) http.Handler {
+	mux := http.NewServeMux()
+
+	for _, rt := range []route{
+		{"GET /api/v1/livez", public, Livez()},
+		{"GET /api/v1/readyz", public, Readyz(cfg)},
+		{"GET /api/v1/status", public, GetStatus(cfg)},
+		{"GET /api/v1/metrics", public, GetMetrics(cfg)},
+		{"GET /api/v1/openapi.yaml", public, OpenAPISpec()},
+	} {
+		mux.Handle(rt.pattern, cfg.Requests.instrument(rt.pattern, rt.handler))
+	}
+
+	frontend := http.NotFoundHandler()
+	if cfg.Frontend != nil {
+		frontend = Frontend(cfg.Frontend)
+	}
+
+	return securityHeaders(cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := mux.Handler(r); pattern != "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			status, message := unavailable()
+			writeError(w, r, status, message, nil, cfg.Logger)
+
+			return
+		}
+
+		frontend.ServeHTTP(w, r)
+	}))
 }
 
 var untraced = map[string]bool{"/api/v1/livez": true, "/api/v1/readyz": true, "/api/v1/metrics": true}

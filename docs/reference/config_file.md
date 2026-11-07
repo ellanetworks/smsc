@@ -24,6 +24,7 @@ The operator and delivery settings are not in this file: they are in the databas
     - `name` (string): The network interface to listen on, on all its addresses, advertised to peers. Either `name` or `address` must be set.
     - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`. Either `name` or `address` must be set.
     - `port` (int, optional): The SCTP port to listen on. Default `3868`.
+    - `host_label` (string, optional): The first label of the node's [Diameter host](connectivity.md#diameter-identity).
 - `smpp` (object, optional): The [SMPP 3.4](smpp.md) listener for ESMEs, such as OTA platforms. Without it, Ella SMSC does not listen for SMPP. The ESME accounts are in the database, managed with the [API](api/esmes.md).
     - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
     - `port` (int, optional): The TCP port to listen on. Default `2775`. Not the API's port.

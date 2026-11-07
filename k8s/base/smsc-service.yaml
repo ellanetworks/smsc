@@ -3,10 +3,13 @@ kind: Service
 metadata:
   name: ella-smsc
   labels:
-    app: ella-smsc
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
+    app.kubernetes.io/part-of: ella
 spec:
   selector:
-    app: ella-smsc
+    app.kubernetes.io/name: ella-smsc
+    app.kubernetes.io/instance: ella-smsc
   type: NodePort
   # Keeps the client address, which the API's rate limits and each ESME's
   # allowed networks are checked against: Cluster may SNAT it to a node's.

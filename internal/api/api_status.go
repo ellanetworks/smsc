@@ -3,18 +3,21 @@ package api
 import (
 	"net/http"
 
-	"github.com/ellanetworks/smsc/internal/settings"
+	"github.com/ellanetworks/smsc/internal/cluster"
 	"github.com/ellanetworks/smsc/version"
 )
 
 type Status struct {
-	Version       string `json:"version"`
-	Revision      string `json:"revision"`
-	Initialized   bool   `json:"initialized"`
-	Clustered     bool   `json:"clustered"`
-	NodeID        string `json:"node_id"`
-	DisplayName   string `json:"display_name"`
-	DiameterLabel string `json:"diameter_label"`
+	Version       string            `json:"version"`
+	Revision      string            `json:"revision"`
+	Initialized   bool              `json:"initialized"`
+	Clustered     bool              `json:"clustered"`
+	NodeID        string            `json:"node_id"`
+	DisplayName   string            `json:"display_name"`
+	DiameterLabel string            `json:"diameter_label"`
+	DiameterHost  string            `json:"diameter_host"`
+	Generated     bool              `json:"label_generated"`
+	Formation     cluster.Formation `json:"formation"`
 }
 
 func GetStatus(cfg Config) http.Handler {
@@ -34,7 +37,12 @@ func GetStatus(cfg Config) http.Handler {
 		if cfg.Cluster != nil {
 			st.NodeID = cfg.Cluster.ID()
 			st.DisplayName = cfg.Cluster.DisplayName(r.Context())
-			st.DiameterLabel = settings.NodeLabel(st.NodeID)
+			st.DiameterLabel, st.Generated = cfg.Cluster.DiameterLabel(), cfg.Cluster.LabelGenerated()
+			st.Formation = cfg.Cluster.Formation()
+
+			if cfg.Settings != nil {
+				st.DiameterHost = cfg.Settings.Get().Operator.Host(st.DiameterLabel)
+			}
 		}
 
 		writeResponse(w, r, st, http.StatusOK, cfg.Logger)

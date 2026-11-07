@@ -7,6 +7,7 @@ import { json, renderWithClient, stubApi } from "@/test/render";
 
 const status = {
   host: "smsc.example.org",
+  label_generated: false,
   realm: "epc.example.org",
   peers: [
     {
@@ -128,6 +129,16 @@ afterEach(() => {
 });
 
 describe("Diameter", () => {
+  it("marks a generated host", async () => {
+    serve(() => json(200, { result: { ...status, label_generated: true } }));
+
+    renderWithClient(<Diameter />);
+
+    await waitFor(() =>
+      expect(settingRows()[0]).toBe("Hostsmsc.example.orgGenerated"),
+    );
+  });
+
   it("shows this SMSC, the HSS settings and its connected peers", async () => {
     serve(() => json(200, { result: status }));
 
