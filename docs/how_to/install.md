@@ -121,15 +121,13 @@ Choose one of the installation methods below.
 
 === "Kubernetes"
 
-    Ensure your Kubernetes cluster is running with the [Multus CNI](https://github.com/k8snetworkplumbingwg/multus-cni) installed, and the `sctp` kernel module loaded on its nodes.
+    Ensure your Kubernetes cluster nodes meet the [system requirements](../reference/system_reqs.md).
 
     Download the Ella SMSC manifests:
 
     ```shell
     git clone --depth 1 https://github.com/ellanetworks/smsc.git
     ```
-
-    Edit `smsc/k8s/smsc-diameter-nad.yaml` to set `master` to the host interface that connects to your core, and set the Diameter address. Use the same address for `diameter.address` in `smsc/k8s/smsc-configmap.yaml`.
 
     Deploy Ella SMSC:
 
@@ -138,7 +136,13 @@ Choose one of the installation methods below.
     kubectl apply -k smsc/k8s
     ```
 
-    Ella SMSC's UI and API are on the `ella-smsc` NodePort Service.
+    Open the UI and API on your machine:
+
+    ```shell
+    kubectl port-forward -n ella svc/ella-smsc 5010:5010
+    ```
+
+    Diameter is at `ella-smsc-diameter.ella.svc.cluster.local:3868`.
 
 Ella SMSC's UI and API are at `http://<host-ip>:5010`. Open the UI and create the first user.
 

@@ -78,19 +78,23 @@ describe("Cluster", () => {
       "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.org",
     );
     expect(rowCells("10.0.0.11:7000").slice(0, 7)).toEqual([
-      "1f0c2d3e4f50LeaderThis node",
+      "smsc-1f0c2d3e4f50LeaderThis node",
       "10.0.0.11:7000",
-      "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.org",
+      "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.orgGenerated",
       "Voter",
       "Active",
       "v0.1.0",
       "Healthy",
     ]);
-    expect(rowCells("10.0.0.12:7000")[0]).toBe("paris-2");
+    expect(rowCells("10.0.0.12:7000").slice(0, 3)).toEqual([
+      "paris-2",
+      "10.0.0.12:7000",
+      "smsc-b.node.epc.mnc001.mcc001.3gppnetwork.org",
+    ]);
     expect(rowCells("10.0.0.13:7000").slice(0, 5)).toEqual([
-      "3b2e4f5a6b72",
+      "smsc-3b2e4f5a6b72",
       "10.0.0.13:7000",
-      "smsc-3b2e4f5a6b72.node.epc.mnc001.mcc001.3gppnetwork.org",
+      "smsc-3b2e4f5a6b72.node.epc.mnc001.mcc001.3gppnetwork.orgGenerated",
       "Nonvoter",
       "Drained",
     ]);
@@ -180,7 +184,9 @@ describe("Cluster", () => {
     );
     fireEvent.click(screen.getByRole("menuitem", { name: "Resume this node" }));
     expect(
-      await screen.findByRole("dialog", { name: "Resume node 3b2e4f5a6b72?" }),
+      await screen.findByRole("dialog", {
+        name: "Resume node smsc-3b2e4f5a6b72?",
+      }),
     ).toBeInTheDocument();
   });
 

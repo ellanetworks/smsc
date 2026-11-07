@@ -639,16 +639,36 @@ paths:
       security: []
       summary: Check readiness
       description: >-
-        Whether the SMSC can serve requests: its database answers, and it is not shutting down.
+        Whether this node should receive traffic: it is not shutting down or removed, it is initialized or joined
+        when it has a cluster section, not draining, its database is
+        consistent with the leader's and answers, it has a leader, and it is caught up with the leader's log. The
+        checks read state the node already holds, without asking other nodes. A load balancer or a Kubernetes
+        readiness probe calls it without parameters.
+      parameters:
+        - name: cluster
+          in: query
+          required: false
+          description: >-
+            Add the cluster check: every voter is healthy in the leader's view. For scripts and rolling upgrades, not
+            for probes, since one failed voter makes every node fail it.
+          schema:
+            type: boolean
+            default: false
       responses:
-        "204":
-          description: Ready.
-        "503":
-          description: Not ready.
+        "200":
+          description: Ready. Every check passes.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/ReadinessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: Not ready. At least one check fails.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
 
   /api/v1/status:
     get:
@@ -940,10 +960,14 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/Removed"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Forming"
 
   /api/v1/auth/login:
     post:
@@ -2257,6 +2281,22 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Forming:
+      description: >-
+        The cluster is forming. Until the node is a member, only livez, readyz, status, metrics, openapi.yaml and the
+        UI answer; every other API path answers 503.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Removed:
+      description: >-
+        The node was removed from the cluster and started fenced. Until its data directory is deleted, only livez,
+        readyz, status, metrics, openapi.yaml and the UI answer; every other API path answers 410.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
     Error:
@@ -2840,10 +2880,56 @@ components:
         smsf_non_3gpp:
           type: string
 
+    ReadinessResponse:
+      type: object
+      required: [result]
+      properties:
+        result:
+          $ref: "#/components/schemas/Readiness"
+
+    Readiness:
+      type: object
+      required: [ready, checks]
+      properties:
+        ready:
+          type: boolean
+          description: Whether every check passes.
+        checks:
+          type: array
+          description: The checks, in the order they run.
+          items:
+            $ref: "#/components/schemas/ReadinessCheck"
+
+    ReadinessCheck:
+      type: object
+      required: [name, ok, detail]
+      properties:
+        name:
+          type: string
+          enum: [shutdown, member, initialized, diameter_label, drain, consistent, database, leader, caught_up, cluster]
+          description: >-
+            shutdown: the node is not stopping. member: the node was not removed from the cluster and is not
+            forming one. initialized: the node has no cluster section, or its first user exists. diameter_label: the
+            cluster has committed this node's member record with the configured Diameter host label; until then
+            Diameter stays closed. drain: the node is
+            active, not draining or drained. consistent: the leader has not found this node's database to differ from
+            its own. database: the database answers. leader: the node leads with an established term, or heard from the
+            leader within twice the election timeout. caught_up: the database is at most 1000 log entries behind the
+            leader's commit index, learned within the last 3 seconds. cluster: with cluster=true only, every voter is
+            healthy in the leader's view.
+        ok:
+          type: boolean
+        detail:
+          type: string
+          description: Why the check fails. Empty when it passes.
+          example: no contact with the cluster leader for 12s
+
     Status:
       type: object
-      required: [version, revision, initialized, clustered, node_id, display_name, diameter_label]
+      required: [version, revision, initialized, clustered, node_id, display_name, diameter_label, diameter_host, label_generated, formation]
       properties:
+        formation:
+          $ref: "#/components/schemas/Formation"
         initialized:
           type: boolean
           description: Whether the first user exists. Until it does, POST /api/v1/init creates it.
@@ -2866,16 +2952,29 @@ components:
         diameter_label:
           type: string
           description: >-
-            The first label of the answering node's Diameter host, <label>.node.<realm>: smsc- and the last 12 hex
-            characters of the node ID.
-          example: smsc-013c0a7ca824
+            The first label of the answering node's Diameter host, <label>.node.<realm>: diameter.host_label from its
+            configuration file or, when unset, smsc- and the last 12 hex characters of the node ID.
+          example: smsc-a
+        diameter_host:
+          type: string
+          description: The answering node's Diameter host, <diameter_label>.node.<realm>.
+          example: smsc-a.node.epc.mnc001.mcc001.3gppnetwork.org
+        label_generated:
+          type: boolean
+          description: >-
+            Whether diameter_label was generated from the node ID because diameter.host_label is unset. A generated
+            host changes when the node is reinstalled.
 
     DiameterStatus:
       type: object
-      required: [host, realm, peers, routes]
+      required: [host, label_generated, realm, peers, routes]
       properties:
         host:
           type: string
+          description: This node's Diameter host, <label>.node.<realm>.
+        label_generated:
+          type: boolean
+          description: Whether the host's first label was generated from the node ID because diameter.host_label is unset.
         realm:
           type: string
         peers:
@@ -3163,6 +3262,27 @@ components:
         error:
           type: string
           description: Why the last connection to the peer failed or closed.
+    Formation:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [forming, joining, member, removed]
+          description: >-
+            forming: the node has no cluster data and waits for the nodes behind cluster.join. joining: it joins a
+            member it found. member: it is a cluster member. removed: it was removed from the cluster and is fenced
+            until its data directory is deleted.
+        expected:
+          type: integer
+          description: cluster.bootstrap_expect. Absent when unset.
+        found:
+          type: integer
+          description: While forming, the forming nodes found, this one included.
+        detail:
+          type: string
+          description: What the node waits for, or why it does not form.
+          example: found 2 of 3 nodes
     ClusterStatus:
       type: object
       required: [node_id, cluster_id, clustered, term, applied_index, commit_index, schema, members]
@@ -3203,7 +3323,7 @@ components:
             $ref: "#/components/schemas/ClusterMember"
     ClusterMember:
       type: object
-      required: [node_id, address, diameter_label, display_name, version, joined_at, drain_state, suffrage, leader]
+      required: [node_id, address, diameter_label, diameter_host, label_generated, display_name, version, joined_at, drain_state, suffrage, leader]
       properties:
         node_id:
           type: string
@@ -3214,9 +3334,17 @@ components:
         diameter_label:
           type: string
           description: >-
-            The first label of the member's Diameter host, <label>.node.<realm>: smsc- and the last 12 hex characters
-            of the node ID.
-          example: smsc-013c0a7ca824
+            The first label of the member's Diameter host, <label>.node.<realm>: diameter.host_label from its
+            configuration file or, when unset, smsc- and the last 12 hex characters of the node ID. Unique among
+            members.
+          example: smsc-a
+        diameter_host:
+          type: string
+          description: The member's Diameter host, <diameter_label>.node.<realm>.
+          example: smsc-a.node.epc.mnc001.mcc001.3gppnetwork.org
+        label_generated:
+          type: boolean
+          description: Whether diameter_label was generated from the node ID because diameter.host_label is unset.
         display_name:
           type: string
           description: Name set by the operator. Empty when unset.

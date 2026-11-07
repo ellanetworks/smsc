@@ -17,11 +17,13 @@ Defaults are in parentheses. SMPP listens only when the configuration file has a
 
 Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the configured peers, and reconnects after 1 to 30 seconds. In a cluster, every node connects to the configured peers, and every other peer connects to every node.
 
+On Kubernetes, the Diameter address of node `<n>` is `ella-smsc-<n>.ella-smsc-internal.<namespace>.svc.cluster.local`.
+
 ## Diameter identity
 
 | Item | Value |
 | ---- | ----- |
-| Host | `smsc-<id>.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
+| Host | `<label>.node.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
 | Realm | `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` |
 
-`<MCC>` and `<MNC>` are the operator's, with a 2-digit MNC padded to 3. `<id>` is the last 12 hex characters of the node ID. The host does not change for the life of the node.
+`<MCC>` and `<MNC>` are the operator's, with a 2-digit MNC padded to 3. `<label>` is the node's `diameter.host_label`, by default `smsc-` and the last 12 hex characters of the node ID.

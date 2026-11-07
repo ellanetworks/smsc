@@ -5,18 +5,24 @@
 # set, across an upgrade. This host plays the core with the load client of
 # internal/loadtest.
 #
-# MODE multus deploys k8s/. The kind node gets a second interface, eth1, on a
+# MODE multus deploys k8s/examples/multus/. The kind node gets a second interface, eth1, on a
 # Docker network that stands for the signalling network: 192.168.252.0/24, as
 # in the manifests, so the NAD and the ConfigMap are deployed as shipped. This
 # host is 192.168.252.1 on it, and reaches Diameter and the API on the SMSC's
 # Multus address.
 #
-# MODE pod-network deploys k8s/pod-network/, with no Multus. This host reaches
-# Diameter and the API on the node, through their NodePort Services.
+# MODE pod-network deploys k8s/, with no Multus. This host reaches
+# Diameter and the API on the node, through the NodePort Services its overlay sets.
+#
+# MODE ha deploys k8s/ha/ on a kind cluster of three worker nodes, with the
+# cluster secret created as the deploy guide says. It checks that the three
+# pods form one cluster on their own, become ready once the first admin is
+# created on ella-smsc-0 through a port forward, and survive a rolling
+# restart. PREVIOUS_IMAGE is ignored.
 #
 # Needs docker, kind, kubectl, kubeconform, go, curl, jq and the sctp kernel
 # module. Environment:
-#   MODE            multus or pod-network (multus)
+#   MODE            multus, pod-network or ha (multus)
 #   IMAGE           the image under test, in the local Docker (ella-smsc:latest)
 #   PREVIOUS_IMAGE  an image to deploy first and upgrade from (none)
 #   SIGNALLING_NET  the first three octets of the signalling network
@@ -36,7 +42,7 @@ SUBNET="${NET}.0/24"
 # Docker gives addresses from the upper half only, so the SMSC's address stays free.
 IP_RANGE="${NET}.128/25"
 GATEWAY="${NET}.1"
-# The address in the NAD and the ConfigMap of k8s/.
+# The address in the NAD and the ConfigMap of k8s/examples/multus/.
 SHIPPED_IP=192.168.252.7
 SMSC_IP="${NET}.7"
 NS=ella
@@ -47,6 +53,7 @@ CNI_PLUGINS_VERSION=v1.9.1
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 WATCH_PID=""
+FORWARD_PID=""
 
 k() { kubectl -n "${NS}" "$@"; }
 
@@ -54,19 +61,22 @@ step() { echo "::group::$*"; }
 endstep() { echo "::endgroup::"; }
 
 fail() {
-  echo "::error::$*"
+  echo "::error::$*" >&2
   exit 1
 }
 
 cleanup() {
   status=$?
   [ -n "${WATCH_PID}" ] && kill "${WATCH_PID}" 2>/dev/null || true
+  [ -n "${FORWARD_PID}" ] && kill "${FORWARD_PID}" 2>/dev/null || true
   if [ "${status}" -ne 0 ]; then
     echo "== Diagnostics"
-    k get all,pvc,network-attachment-definitions -o wide || true
-    k describe pod ella-smsc-0 || true
-    k logs ella-smsc-0 --tail=100 || true
-    k logs ella-smsc-0 --previous --tail=100 2>/dev/null || true
+    k get all,pvc,pdb,networkpolicy,network-attachment-definitions -o wide || true
+    for pod in $(k get pods -o name 2>/dev/null); do
+      k describe "${pod}" || true
+      k logs "${pod}" --tail=100 || true
+      k logs "${pod}" --previous --tail=100 2>/dev/null || true
+    done
     kubectl -n kube-system logs -l app=multus --tail=50 || true
   fi
   if [ -z "${KEEP:-}" ]; then
@@ -79,8 +89,8 @@ cleanup() {
 trap cleanup EXIT
 
 case "${MODE}" in
-multus | pod-network) ;;
-*) fail "MODE must be multus or pod-network, not ${MODE}" ;;
+multus | pod-network | ha) ;;
+*) fail "MODE must be multus, pod-network or ha, not ${MODE}" ;;
 esac
 
 # Where this host reaches the SMSC, set once it is deployed.
@@ -166,9 +176,119 @@ deploy() {
   wait_api
 }
 
+PODS=(ella-smsc-0 ella-smsc-1 ella-smsc-2)
+FORWARD_PORT=15010
+
+# Forwards FORWARD_PORT on this host to the API of pod $1, and points api at it.
+forward() {
+  [ -z "${FORWARD_PID}" ] || kill "${FORWARD_PID}" 2>/dev/null || true
+  k port-forward "pod/$1" "${FORWARD_PORT}:5010" >"${WORK}/forward.log" 2>&1 &
+  FORWARD_PID=$!
+  SMSC_ADDR=127.0.0.1
+  API_PORT="${FORWARD_PORT}"
+  wait_api
+}
+
+# Waits for every pod of the StatefulSet to be ready, and for the rollout to end.
+wait_all_ready() {
+  k rollout status statefulset/ella-smsc --timeout=300s
+  k wait --for=condition=Ready pod -l app.kubernetes.io/name=ella-smsc --timeout=180s
+}
+
+# Creates the first admin on the pod behind the port forward, retrying while
+# the cluster forms: until then the node answers 503.
+initialize() {
+  local credentials code
+  credentials="$(jq -n --arg email "${ADMIN_EMAIL}" --arg password "${ADMIN_PASSWORD}" '{email: $email, password: $password}')"
+  for _ in $(seq 60); do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H 'Content-Type: application/json' \
+      -d "${credentials}" "http://${SMSC_ADDR}:${API_PORT}/api/v1/init" || true)"
+    case "${code}" in
+    201 | 403) return 0 ;;
+    esac
+    sleep 5
+  done
+  fail "cannot create the first admin on ella-smsc-0, last answer ${code}"
+}
+
+# Checks that the cluster has the three pods as voters, each with its pod name
+# as its Diameter label, and prints its members.
+check_members() {
+  local cluster
+  cluster="$(api /cluster)"
+  echo "${cluster}" | jq -c '.result.members[] | {node_id, address, diameter_host, suffrage, healthy}'
+  echo "${cluster}" | jq -e '
+    [.result.members[] | select(.suffrage == "voter") | .diameter_label] | sort == ["ella-smsc-0", "ella-smsc-1", "ella-smsc-2"]
+  ' >/dev/null || fail "the cluster does not have the three pods as voters"
+  echo "${cluster}" | jq -e '.result.members | all(.address | test("^ella-smsc-[0-2]\\.ella-smsc-internal\\."))' >/dev/null \
+    || fail "a member does not advertise its per-pod DNS name"
+  echo "${cluster}" | jq -r '[.result.members[].node_id] | sort | join(" ")'
+}
+
+ha_smoke() {
+  step "Deploy ${IMAGE}"
+  docker tag "${IMAGE}" ella-smsc:ci
+  kind load docker-image ella-smsc:ci --name "${CLUSTER}"
+  kubectl apply -k "${ROOT}/ci/k8s/namespace"
+  k create secret generic ella-smsc-cluster --from-literal=secret="$(head -c 32 /dev/urandom | base64)"
+  kubectl apply -k "${ROOT}/ci/k8s/ha"
+  k get pods -o wide
+  endstep
+
+  step "Form the cluster and create the first admin on ella-smsc-0"
+  for _ in $(seq 60); do
+    [ "$(k get pods -l app.kubernetes.io/name=ella-smsc -o name | wc -l)" = 3 ] && break
+    sleep 2
+  done
+  k wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=ella-smsc --timeout=180s
+  forward ella-smsc-0
+  initialize
+  wait_all_ready
+  k get pods -o wide
+  log_in
+  local cluster_id members
+  cluster_id="$(api /cluster | jq -er .result.cluster_id)"
+  members="$(check_members)"
+  echo "${members}"
+  for pod in "${PODS[@]:1}"; do
+    forward "${pod}"
+    [ "$(api /cluster | jq -r .result.cluster_id)" = "${cluster_id}" ] || fail "${pod} is in another cluster"
+  done
+  endstep
+
+  step "Rolling restart"
+  forward ella-smsc-0
+  local stored
+  stored="$(api /messages -X POST -H 'Content-Type: application/json' \
+    -d '{"from": "+15550001000", "to": "+15551230002", "text": "stored before the rolling restart"}' | jq -e '.result.items[0].id')"
+  k rollout restart statefulset/ella-smsc
+  wait_all_ready
+  forward ella-smsc-0
+  for _ in $(seq 30); do
+    curl -fsS --max-time 10 "http://${SMSC_ADDR}:${API_PORT}/api/v1/readyz?cluster=true" >/dev/null 2>&1 && break
+    sleep 2
+  done
+  curl -fsS --max-time 10 "http://${SMSC_ADDR}:${API_PORT}/api/v1/readyz?cluster=true" >/dev/null \
+    || fail "the cluster is not healthy after the rolling restart"
+  local after
+  after="$(check_members)"
+  echo "${after}"
+  [ "$(tail -n 1 <<<"${after}")" = "$(tail -n 1 <<<"${members}")" ] \
+    || fail "the members changed across the rolling restart"
+  [ "$(api /cluster | jq -r .result.cluster_id)" = "${cluster_id}" ] || fail "the cluster changed across the rolling restart"
+  api "/messages/${stored}/content" | jq -e '.result.text == "stored before the rolling restart"' >/dev/null \
+    || fail "the message stored before the rolling restart is gone"
+  for pod in "${PODS[@]}"; do
+    restarts="$(k get pod "${pod}" -o jsonpath='{.status.containerStatuses[0].restartCount}')"
+    [ "${restarts}" = 0 ] || fail "${pod} restarted ${restarts} times"
+  done
+  k get pods -o wide
+  endstep
+}
+
 step "Lint the manifests"
 version="$(cat "${ROOT}/version/VERSION")"
-for dir in k8s k8s/pod-network ci/k8s/multus ci/k8s/pod-network; do
+for dir in k8s k8s/ha k8s/examples/multus ci/k8s/multus ci/k8s/pod-network ci/k8s/ha; do
   kubectl kustomize "${ROOT}/${dir}" | kubeconform -strict -summary -skip NetworkAttachmentDefinition
 done
 endstep
@@ -180,7 +300,20 @@ if [ "${MODE}" = multus ]; then
   fi
   docker network create "${NETWORK}" --subnet "${SUBNET}" --ip-range "${IP_RANGE}" --gateway "${GATEWAY}" >/dev/null
 fi
-kind create cluster --name "${CLUSTER}" --wait 120s
+if [ "${MODE}" = ha ]; then
+  cat >"${WORK}/kind.yaml" <<'KIND'
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+- role: worker
+- role: worker
+- role: worker
+KIND
+  kind create cluster --name "${CLUSTER}" --config "${WORK}/kind.yaml" --wait 120s
+else
+  kind create cluster --name "${CLUSTER}" --wait 120s
+fi
 if [ "${MODE}" = multus ]; then
   docker network connect "${NETWORK}" "${NODE}"
   docker exec "${NODE}" ip -br addr show eth1
@@ -190,6 +323,12 @@ else
   LOCAL_IP="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}' | tr ' ' '\n' | grep -m1 -F .)"
 fi
 endstep
+
+if [ "${MODE}" = ha ]; then
+  ha_smoke
+  echo "Kubernetes smoke test passed"
+  exit 0
+fi
 
 if [ "${MODE}" = multus ]; then
 step "Install the CNI plugins and Multus"

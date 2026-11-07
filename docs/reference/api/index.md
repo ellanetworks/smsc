@@ -50,7 +50,7 @@ A failed response carries an `error`:
 }
 ```
 
-`GET /api/v1/livez` and `GET /api/v1/readyz` answer 204 with no body when they succeed. `GET /api/v1/metrics` returns text in the [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details), `GET /api/v1/openapi.yaml` returns YAML, and unknown paths and methods answer in plain text.
+`GET /api/v1/livez` answers 204 with no body. `GET /api/v1/readyz` answers 200 when ready and 503 when not, with the same body in both cases. `GET /api/v1/metrics` returns text in the [Prometheus exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details), `GET /api/v1/openapi.yaml` returns YAML, and unknown paths and methods answer in plain text.
 
 Times are RFC 3339, in UTC.
 

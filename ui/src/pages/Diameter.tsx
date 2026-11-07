@@ -27,6 +27,7 @@ import {
 } from "@/queries/diameter";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { DiameterStateChip } from "@/components/chips";
+import DiameterHost from "@/components/DiameterHost";
 import DomainName from "@/components/DomainName";
 import PageHeader from "@/components/PageHeader";
 import PeerDialog from "@/components/PeerDialog";
@@ -280,8 +281,10 @@ export default function Diameter() {
         rows={[
           {
             label: "Host",
-            help: "This SMSC's Diameter name. Set by the Operator ID (MCC/MNC).",
-            value: data && <DomainName name={data.host} />,
+            help: "This node's Diameter name: its host label, then node., then the realm. Set the label with diameter.host_label in the node's configuration file.",
+            value: data && (
+              <DiameterHost host={data.host} generated={data.label_generated} />
+            ),
           },
           {
             label: "Realm",

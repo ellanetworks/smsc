@@ -3,23 +3,36 @@ package server
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/cluster"
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/esme"
 )
 
 const drainTick = time.Second
 
+type binds interface {
+	SetDraining(draining bool)
+	CloseAll()
+}
+
 type drainer struct {
 	node   *cluster.Node
 	store  *db.DB
-	esmes  *esme.Service
+	esmes  binds
 	logger *slog.Logger
 	wake   chan struct{}
 
-	draining bool
+	leaderless     atomic.Bool
+	memberDraining bool
+	refusing       bool
+}
+
+func (d *drainer) setLeaderless(leaderless bool) {
+	if d.leaderless.Swap(leaderless) != leaderless {
+		d.changed()
+	}
 }
 
 func (d *drainer) changed() {
@@ -47,25 +60,14 @@ func (d *drainer) run(ctx context.Context) {
 
 func (d *drainer) reconcile(ctx context.Context) {
 	m, err := d.store.Member(ctx, d.node.ID())
-	if err != nil {
-		return
+	if err == nil {
+		d.memberDraining = m.DrainState != db.DrainActive
 	}
 
-	if m.DrainState == db.DrainActive {
-		if d.draining {
-			d.logger.InfoContext(ctx, "drain cancelled: accepting SMPP binds again")
-			d.esmes.SetDraining(false)
-			d.draining = false
-		}
+	d.refuseBinds(ctx)
 
+	if err != nil || !d.memberDraining {
 		return
-	}
-
-	if !d.draining {
-		d.logger.InfoContext(ctx, "draining: closing the SMPP sessions and refusing new binds")
-		d.esmes.SetDraining(true)
-		d.esmes.CloseAll()
-		d.draining = true
 	}
 
 	if err := d.node.HandOver(); err != nil {
@@ -83,4 +85,30 @@ func (d *drainer) reconcile(ctx context.Context) {
 	}
 
 	d.logger.InfoContext(ctx, "drained")
+}
+
+func (d *drainer) refuseBinds(ctx context.Context) {
+	refuse := d.memberDraining || d.leaderless.Load()
+
+	if refuse == d.refusing {
+		return
+	}
+
+	d.refusing = refuse
+
+	if !refuse {
+		d.logger.InfoContext(ctx, "accepting SMPP binds again")
+		d.esmes.SetDraining(false)
+
+		return
+	}
+
+	if d.memberDraining {
+		d.logger.InfoContext(ctx, "draining: closing the SMPP sessions and refusing new binds")
+	} else {
+		d.logger.WarnContext(ctx, "no cluster leader for 30s: closing the SMPP sessions and refusing new binds, so that ESMEs bind to a node with a leader")
+	}
+
+	d.esmes.SetDraining(true)
+	d.esmes.CloseAll()
 }

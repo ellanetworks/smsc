@@ -24,6 +24,7 @@ export interface DiameterRoute {
 
 export interface DiameterStatus {
   host: string;
+  label_generated: boolean;
   realm: string;
   peers: DiameterPeer[];
   routes: DiameterRoute[];

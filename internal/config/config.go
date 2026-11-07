@@ -8,7 +8,10 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 
+	"github.com/ellanetworks/smsc/internal/cluster/pki"
+	"github.com/ellanetworks/smsc/internal/settings"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,7 +22,14 @@ const (
 	defaultClusterPort  = 7000
 )
 
+const (
+	EnvDiameterHostLabel = "SMSC_DIAMETER_HOST_LABEL"
+	EnvClusterAdvertise  = "SMSC_CLUSTER_ADVERTISE"
+)
+
 type Config struct {
+	warnings []string
+
 	Logging   Logging   `yaml:"logging"`
 	DB        DB        `yaml:"db"`
 	API       API       `yaml:"api"`
@@ -55,9 +65,26 @@ type SMPP struct {
 }
 
 type Cluster struct {
-	Address   netip.Addr `yaml:"address"`
-	Port      int        `yaml:"port"`
-	Advertise string     `yaml:"advertise"`
+	Address         netip.Addr `yaml:"address"`
+	Port            int        `yaml:"port"`
+	Advertise       string     `yaml:"advertise"`
+	Join            []string   `yaml:"join"`
+	BootstrapExpect int        `yaml:"bootstrap_expect"`
+	SecretFile      string     `yaml:"secret_file"`
+}
+
+func (c Cluster) JoinAddresses() []string {
+	out := make([]string, 0, len(c.Join))
+
+	for _, j := range c.Join {
+		if _, _, err := net.SplitHostPort(j); err != nil {
+			j = net.JoinHostPort(j, strconv.Itoa(c.Port))
+		}
+
+		out = append(out, j)
+	}
+
+	return out
 }
 
 func (c Cluster) AdvertiseAddress() string {
@@ -74,9 +101,10 @@ type Telemetry struct {
 }
 
 type Diameter struct {
-	Name    string     `yaml:"name"`
-	Address netip.Addr `yaml:"address"`
-	Port    int        `yaml:"port"`
+	Name      string     `yaml:"name"`
+	Address   netip.Addr `yaml:"address"`
+	Port      int        `yaml:"port"`
+	HostLabel string     `yaml:"host_label"`
 }
 
 func Load(path string) (Config, error) {
@@ -92,6 +120,8 @@ func Load(path string) (Config, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
+
+	cfg.applyEnv()
 
 	if cfg.Diameter.Port == 0 {
 		cfg.Diameter.Port = defaultDiameterPort
@@ -118,6 +148,58 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
+func (c *Config) applyEnv() {
+	if v := os.Getenv(EnvDiameterHostLabel); v != "" {
+		c.Diameter.HostLabel = v
+	}
+
+	if v := os.Getenv(EnvClusterAdvertise); v != "" {
+		if c.Cluster == nil {
+			c.warnings = append(c.warnings, EnvClusterAdvertise+" is set, but the configuration has no cluster section: ignoring it")
+			return
+		}
+
+		c.Cluster.Advertise = v
+	}
+}
+
+func (c Config) Warnings() []string {
+	out := append([]string(nil), c.warnings...)
+
+	if cl := c.Cluster; cl != nil {
+		switch {
+		case cl.BootstrapExpect == 2:
+			out = append(out, "cluster.bootstrap_expect is 2: a cluster of 2 voters tolerates no failure")
+		case cl.BootstrapExpect > 2 && cl.BootstrapExpect%2 == 0:
+			out = append(out, fmt.Sprintf("cluster.bootstrap_expect is %d, an even number: it tolerates no more failures than %d",
+				cl.BootstrapExpect, cl.BootstrapExpect-1))
+		}
+
+		if cl.BootstrapExpect > 5 {
+			out = append(out, fmt.Sprintf("cluster.bootstrap_expect is %d: the cluster keeps at most 5 voters, the other "+
+				"nodes stay standbys", cl.BootstrapExpect))
+		}
+	}
+
+	return out
+}
+
+func hostLabelSource() string {
+	if os.Getenv(EnvDiameterHostLabel) != "" {
+		return EnvDiameterHostLabel
+	}
+
+	return "diameter.host_label"
+}
+
+func advertiseSource() string {
+	if os.Getenv(EnvClusterAdvertise) != "" {
+		return EnvClusterAdvertise
+	}
+
+	return "cluster.advertise"
+}
+
 func (c Config) validate() error {
 	switch {
 	case c.DB.Path == "":
@@ -136,6 +218,12 @@ func (c Config) validate() error {
 		return fmt.Errorf("diameter.port %d is out of range", c.Diameter.Port)
 	case c.Telemetry.Enabled && c.Telemetry.OTLPEndpoint == "":
 		return errors.New("telemetry.otlp_endpoint is required when telemetry.enabled is true")
+	}
+
+	if c.Diameter.HostLabel != "" {
+		if err := settings.ValidLabel(c.Diameter.HostLabel); err != nil {
+			return fmt.Errorf("%s %q %w", hostLabelSource(), c.Diameter.HostLabel, err)
+		}
 	}
 
 	if err := c.API.TLS.validate("api"); err != nil {
@@ -176,17 +264,53 @@ func (c Cluster) validate() error {
 		return errors.New("cluster.advertise is required when cluster.address is unspecified")
 	}
 
+	if err := c.validateJoin(); err != nil {
+		return err
+	}
+
+	if len(c.Join) > 0 && c.SecretFile == "" {
+		return errors.New("cluster.secret_file is required with cluster.join")
+	}
+
+	if c.SecretFile != "" {
+		if _, err := pki.ReadSecrets(c.SecretFile); err != nil {
+			return fmt.Errorf("cluster.secret_file: %w", err)
+		}
+	}
+
 	if c.Advertise == "" {
 		return nil
 	}
 
 	host, port, err := net.SplitHostPort(c.Advertise)
 	if err != nil || host == "" || port == "" {
-		return fmt.Errorf("cluster.advertise %q is not a host:port", c.Advertise)
+		return fmt.Errorf("%s %q is not a host:port", advertiseSource(), c.Advertise)
 	}
 
 	if ip, err := netip.ParseAddr(host); err == nil && ip.IsUnspecified() {
-		return fmt.Errorf("cluster.advertise %q must be a specific address", c.Advertise)
+		return fmt.Errorf("%s %q must be a specific address", advertiseSource(), c.Advertise)
+	}
+
+	return nil
+}
+
+func (c Cluster) validateJoin() error {
+	switch {
+	case c.BootstrapExpect < 0 || c.BootstrapExpect == 1:
+		return fmt.Errorf("cluster.bootstrap_expect %d must be at least 2, or unset", c.BootstrapExpect)
+	case c.BootstrapExpect > 0 && len(c.Join) == 0:
+		return errors.New("cluster.bootstrap_expect requires cluster.join")
+	}
+
+	for _, j := range c.JoinAddresses() {
+		host, port, err := net.SplitHostPort(j)
+		if err != nil || host == "" {
+			return fmt.Errorf("cluster.join %q is not a host or host:port", j)
+		}
+
+		if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+			return fmt.Errorf("cluster.join %q has an invalid port", j)
+		}
 	}
 
 	return nil

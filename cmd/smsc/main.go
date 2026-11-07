@@ -30,6 +30,10 @@ func main() {
 
 	logger := logging.New(os.Stdout, cfg.Logging.Level)
 
+	for _, w := range cfg.Warnings() {
+		logger.Warn(w)
+	}
+
 	if err := run(cfg, logger); err != nil {
 		logger.Error("smsc stopped", "error", err)
 		os.Exit(1)
@@ -46,12 +50,17 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	<-ctx.Done()
+	var failed error
+
+	select {
+	case <-ctx.Done():
+	case failed = <-srv.Err():
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), delivery.DefaultAttemptTimeout+shutdownTimeout)
 	defer cancel()
 
 	srv.Shutdown(shutdownCtx)
 
-	return nil
+	return failed
 }

@@ -40,6 +40,28 @@ func NodeLabel(nodeID string) string {
 	return "smsc-" + id[max(len(id)-12, 0):]
 }
 
+const MaxLabelLength = 63
+
+// RFC 1035 section 2.3.1
+// RFC 1123 section 2.1
+func ValidLabel(label string) error {
+	if label == "" || len(label) > MaxLabelLength {
+		return fmt.Errorf("must be 1 to %d characters", MaxLabelLength)
+	}
+
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return errors.New("must not start or end with a hyphen")
+	}
+
+	for _, c := range label {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return errors.New("must contain only lowercase letters, digits and hyphens")
+		}
+	}
+
+	return nil
+}
+
 func (s Settings) Hosts() []string {
 	hosts := make([]string, len(s.Labels))
 	for i, l := range s.Labels {
