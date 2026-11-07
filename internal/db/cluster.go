@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -16,14 +17,16 @@ var (
 )
 
 type Member struct {
-	NodeID        string     `json:"node_id"`
-	Address       string     `json:"address"`
-	Fingerprint   string     `json:"fingerprint,omitempty"`
-	SchemaVersion int        `json:"schema_version"`
-	Version       string     `json:"version"`
-	JoinedAt      time.Time  `json:"joined_at"`
-	DrainState    DrainState `json:"drain_state,omitempty"`
-	DisplayName   string     `json:"display_name,omitempty"`
+	NodeID         string     `json:"node_id"`
+	Address        string     `json:"address"`
+	Fingerprint    string     `json:"fingerprint,omitempty"`
+	SchemaVersion  int        `json:"schema_version"`
+	Version        string     `json:"version"`
+	JoinedAt       time.Time  `json:"joined_at"`
+	DrainState     DrainState `json:"drain_state,omitempty"`
+	DisplayName    string     `json:"display_name,omitempty"`
+	DiameterLabel  string     `json:"diameter_label,omitempty"`
+	LabelGenerated bool       `json:"label_generated,omitempty"`
 }
 
 type DrainState string
@@ -35,7 +38,7 @@ const (
 )
 
 func memberLabels(ctx context.Context, q querier) ([]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT node_id FROM cluster_members ORDER BY node_id`)
+	rows, err := q.QueryContext(ctx, `SELECT diameter_label FROM cluster_members ORDER BY node_id`)
 	if err != nil {
 		return nil, fmt.Errorf("get diameter labels: %w", err)
 	}
@@ -45,19 +48,19 @@ func memberLabels(ctx context.Context, q querier) ([]string, error) {
 	var labels []string
 
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var label string
+		if err := rows.Scan(&label); err != nil {
 			return nil, fmt.Errorf("get diameter labels: %w", err)
 		}
 
-		labels = append(labels, settings.NodeLabel(id))
+		labels = append(labels, label)
 	}
 
 	return labels, rows.Err()
 }
 
 const (
-	memberColumns     = `node_id, address, fingerprint, schema_version, version, joined_at`
+	memberColumns     = `node_id, address, fingerprint, schema_version, version, joined_at, diameter_label, label_generated`
 	memberReadColumns = memberColumns + `, drain_state, display_name`
 )
 
@@ -69,7 +72,7 @@ func scanMember(scan func(...any) error) (Member, error) {
 	)
 
 	if err := scan(&m.NodeID, &m.Address, &fingerprint, &m.SchemaVersion, &m.Version,
-		&joined, &m.DrainState, &m.DisplayName); err != nil {
+		&joined, &m.DiameterLabel, &m.LabelGenerated, &m.DrainState, &m.DisplayName); err != nil {
 		return Member{}, err
 	}
 
@@ -134,7 +137,46 @@ func (d *DB) RegisterMemberVia(ctx context.Context, via Proposer, m Member) (err
 	return err
 }
 
+func withLabel(m Member) (Member, error) {
+	if m.DiameterLabel == "" {
+		m.DiameterLabel, m.LabelGenerated = settings.NodeLabel(m.NodeID), true
+	}
+
+	if err := settings.ValidLabel(m.DiameterLabel); err != nil {
+		return Member{}, fmt.Errorf("%w: Diameter host label %q %w", ErrInvalid, m.DiameterLabel, err)
+	}
+
+	return m, nil
+}
+
+func checkLabel(a *applyCtx, m Member) error {
+	var holder string
+
+	err := a.tx.QueryRowContext(a.ctx, `SELECT node_id FROM cluster_members WHERE diameter_label = ? AND node_id != ?`,
+		m.DiameterLabel, m.NodeID).Scan(&holder)
+
+	switch {
+	case err == nil:
+		return fmt.Errorf("%w: the Diameter host label %s is member %s's: remove that member first, or choose another label",
+			settings.ErrConflict, m.DiameterLabel, holder)
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+
+	s, err := getSettings(a.ctx, a.tx)
+	if err != nil {
+		return err
+	}
+
+	return s.Operator.Conflict(s.Peers, []string{m.DiameterLabel})
+}
+
 func applyRegisterMember(a *applyCtx, m Member) (struct{}, error) {
+	m, err := withLabel(m)
+	if err != nil {
+		return struct{}{}, err
+	}
+
 	existing, err := member(a.ctx, a.tx, m.NodeID)
 
 	switch {
@@ -144,9 +186,16 @@ func applyRegisterMember(a *applyCtx, m Member) (struct{}, error) {
 		return struct{}{}, err
 	}
 
+	relabeled := existing.DiameterLabel != m.DiameterLabel
+	if relabeled {
+		if err := checkLabel(a, m); err != nil {
+			return struct{}{}, err
+		}
+	}
+
 	if _, err := a.tx.ExecContext(a.ctx, `UPDATE cluster_members SET address = ?, fingerprint = ?,
-		schema_version = ?, version = ? WHERE node_id = ?`, m.Address, nullString(m.Fingerprint),
-		m.SchemaVersion, m.Version, m.NodeID); err != nil {
+		schema_version = ?, version = ?, diameter_label = ?, label_generated = ? WHERE node_id = ?`, m.Address,
+		nullString(m.Fingerprint), m.SchemaVersion, m.Version, m.DiameterLabel, m.LabelGenerated, m.NodeID); err != nil {
 		if isUnique(err) {
 			return struct{}{}, fmt.Errorf("%w: another member has the address %s or the certificate", settings.ErrConflict,
 				m.Address)
@@ -155,26 +204,30 @@ func applyRegisterMember(a *applyCtx, m Member) (struct{}, error) {
 		return struct{}{}, err
 	}
 
-	if existing.Fingerprint != m.Fingerprint || existing.Address != m.Address {
+	if existing.Fingerprint != m.Fingerprint || existing.Address != m.Address || relabeled ||
+		existing.LabelGenerated != m.LabelGenerated {
 		a.events.Members = true
+	}
+
+	if relabeled {
+		a.events.Settings = true
 	}
 
 	return struct{}{}, nil
 }
 
 func insertMember(a *applyCtx, m Member) error {
-	s, err := getSettings(a.ctx, a.tx)
-	if err != nil {
+	if err := checkTombstone(a, m.NodeID); err != nil {
 		return err
 	}
 
-	if err := s.Operator.Conflict(s.Peers, []string{settings.NodeLabel(m.NodeID)}); err != nil {
+	if err := checkLabel(a, m); err != nil {
 		return err
 	}
 
-	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO cluster_members (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?)`,
+	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO cluster_members (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.NodeID, m.Address, nullString(m.Fingerprint), m.SchemaVersion, m.Version,
-		a.leaderTime); err != nil {
+		a.leaderTime, m.DiameterLabel, m.LabelGenerated); err != nil {
 		if isUnique(err) {
 			return fmt.Errorf("%w: another member has the address %s or the certificate", settings.ErrConflict, m.Address)
 		}
@@ -225,6 +278,10 @@ func (d *DB) AdmitMember(ctx context.Context, tokenID string, m Member) (err err
 }
 
 func applyAdmitMember(a *applyCtx, p admitMember) (struct{}, error) {
+	if p.TokenID == "" {
+		return admitWithSecret(a, p.Member)
+	}
+
 	var (
 		expiresAt   int64
 		nodeID      sql.NullString
@@ -241,7 +298,10 @@ func applyAdmitMember(a *applyCtx, p admitMember) (struct{}, error) {
 		return struct{}{}, err
 	}
 
-	m := p.Member
+	m, err := withLabel(p.Member)
+	if err != nil {
+		return struct{}{}, err
+	}
 
 	if nodeID.Valid {
 		if nodeID.String != m.NodeID || fingerprint.String != m.Fingerprint {
@@ -277,33 +337,152 @@ func applyAdmitMember(a *applyCtx, p admitMember) (struct{}, error) {
 	return struct{}{}, insertMember(a, m)
 }
 
-func (d *DB) RemoveMember(ctx context.Context, nodeID string) (err error) {
-	defer d.observe(&err)()
-
-	_, err = submit[struct{}](ctx, d, cmdRemoveMember, nodeID)
-
-	return err
-}
-
-func applyRemoveMember(a *applyCtx, nodeID string) (struct{}, error) {
-	res, err := a.tx.ExecContext(a.ctx, `DELETE FROM cluster_members WHERE node_id = ?`, nodeID)
+func admitWithSecret(a *applyCtx, m Member) (struct{}, error) {
+	m, err := withLabel(m)
 	if err != nil {
 		return struct{}{}, err
 	}
 
-	if n, _ := res.RowsAffected(); n == 0 {
-		return struct{}{}, fmt.Errorf("member %s: %w", nodeID, ErrNotFound)
+	existing, err := member(a.ctx, a.tx, m.NodeID)
+
+	switch {
+	case err == nil && (existing.Fingerprint != m.Fingerprint || existing.Address != m.Address):
+		return struct{}{}, fmt.Errorf("%w: node %s is already a member", settings.ErrConflict, m.NodeID)
+	case err == nil:
+		return applyRegisterMember(a, m)
+	case !errors.Is(err, ErrNotFound):
+		return struct{}{}, err
 	}
 
-	if err := dropSMPPSessions(a, nodeID, nil); err != nil {
+	return struct{}{}, insertMember(a, m)
+}
+
+type RemovalReason string
+
+const (
+	RemovedDrained RemovalReason = "drained"
+	RemovedForced  RemovalReason = "forced"
+)
+
+type Tombstone struct {
+	NodeID      string        `json:"node_id"`
+	Fingerprint string        `json:"fingerprint,omitempty"`
+	RemovedAt   time.Time     `json:"removed_at"`
+	Reason      RemovalReason `json:"reason"`
+}
+
+type removeMember struct {
+	NodeID string        `json:"node_id"`
+	Reason RemovalReason `json:"reason"`
+}
+
+func (r *removeMember) UnmarshalJSON(b []byte) error {
+	var id string
+	if err := json.Unmarshal(b, &id); err == nil {
+		*r = removeMember{NodeID: id, Reason: RemovedForced}
+		return nil
+	}
+
+	type plain removeMember
+
+	return json.Unmarshal(b, (*plain)(r))
+}
+
+func (d *DB) RemoveMember(ctx context.Context, nodeID string, reason RemovalReason) (err error) {
+	defer d.observe(&err)()
+
+	_, err = submit[struct{}](ctx, d, cmdRemoveMember, removeMember{NodeID: nodeID, Reason: reason})
+
+	return err
+}
+
+func applyRemoveMember(a *applyCtx, p removeMember) (struct{}, error) {
+	switch p.Reason {
+	case RemovedDrained, RemovedForced:
+	default:
+		return struct{}{}, fmt.Errorf("%w: removal reason %q", ErrInvalid, p.Reason)
+	}
+
+	var fingerprint sql.NullString
+
+	err := a.tx.QueryRowContext(a.ctx, `SELECT fingerprint FROM cluster_members WHERE node_id = ?`, p.NodeID).
+		Scan(&fingerprint)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return struct{}{}, fmt.Errorf("member %s: %w", p.NodeID, ErrNotFound)
+	case err != nil:
+		return struct{}{}, err
+	}
+
+	if _, err := a.tx.ExecContext(a.ctx, `DELETE FROM cluster_members WHERE node_id = ?`, p.NodeID); err != nil {
+		return struct{}{}, err
+	}
+
+	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO cluster_removed_members (node_id, fingerprint, removed_at, reason)
+		VALUES (?, ?, ?, ?) ON CONFLICT (node_id) DO UPDATE SET fingerprint = excluded.fingerprint,
+		removed_at = excluded.removed_at, reason = excluded.reason`, p.NodeID, fingerprint, a.leaderTime,
+		p.Reason); err != nil {
+		return struct{}{}, err
+	}
+
+	if err := dropSMPPSessions(a, p.NodeID, nil); err != nil {
 		return struct{}{}, err
 	}
 
 	a.events.Members = true
 	a.events.Settings = true
-	a.events.Removed = append(a.events.Removed, nodeID)
+	a.events.Removed = append(a.events.Removed, p.NodeID)
 
 	return struct{}{}, nil
+}
+
+func (d *DB) Tombstones(ctx context.Context) (_ []Tombstone, err error) {
+	defer d.observe(&err)()
+
+	rows, err := d.reader().QueryContext(ctx, `SELECT node_id, fingerprint, removed_at, reason
+		FROM cluster_removed_members ORDER BY removed_at, node_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list removed members: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var out []Tombstone
+
+	for rows.Next() {
+		var (
+			t           Tombstone
+			fingerprint sql.NullString
+			removed     int64
+		)
+
+		if err := rows.Scan(&t.NodeID, &fingerprint, &removed, &t.Reason); err != nil {
+			return nil, fmt.Errorf("list removed members: %w", err)
+		}
+
+		t.Fingerprint, t.RemovedAt = fingerprint.String, time.Unix(0, removed).UTC()
+		out = append(out, t)
+	}
+
+	return out, rows.Err()
+}
+
+func checkTombstone(a *applyCtx, nodeID string) error {
+	var removed int64
+
+	err := a.tx.QueryRowContext(a.ctx, `SELECT removed_at FROM cluster_removed_members WHERE node_id = ?`, nodeID).
+		Scan(&removed)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	}
+
+	return fmt.Errorf("%w: node %s was removed from the cluster: delete its data directory to join it again",
+		settings.ErrConflict, nodeID)
 }
 
 const MaxDisplayNameLength = 63

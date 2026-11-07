@@ -8,6 +8,8 @@ export interface ClusterMember {
   node_id: string;
   address: string;
   diameter_label: string;
+  diameter_host: string;
+  label_generated: boolean;
   display_name: string;
   version: string;
   joined_at: string;
@@ -85,8 +87,14 @@ export const removeMember = (nodeId: string, force: boolean) =>
 export const shortNodeId = (nodeId: string) =>
   nodeId.length > 12 ? nodeId.slice(-12) : nodeId;
 
-export const nodeLabel = (displayName: string | undefined, nodeId: string) =>
-  displayName ? displayName : shortNodeId(nodeId);
+export const nodeLabel = (
+  displayName: string | undefined,
+  diameterLabel: string | undefined,
+  nodeId: string,
+) => displayName || diameterLabel || shortNodeId(nodeId);
 
 export const memberLabel = (member: ClusterMember) =>
-  nodeLabel(member.display_name, member.node_id);
+  nodeLabel(member.display_name, member.diameter_label, member.node_id);
+
+export const GENERATED_HOST_HINT =
+  "Generated from the node ID. A reinstalled node gets a new host. Set diameter.host_label in the node's configuration file to keep it.";

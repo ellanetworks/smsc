@@ -58,6 +58,7 @@ nav:
   - Tutorials:
     - tutorials/index.md
     - Send Your First SMS: tutorials/first_sms.md
+    - Run a High Availability Cluster on GKE: tutorials/ha_cluster_on_gke.md
   - How-to Guides:
     - how_to/index.md
     - Install: how_to/install.md
@@ -94,6 +95,7 @@ nav:
       - Metrics: reference/api/metrics.md
       - Pprof: reference/api/pprof.md
     - Configuration File: reference/config_file.md
+    - Environment Variables: reference/environment_variables.md
     - Observability: reference/observability.md
     - Connectivity: reference/connectivity.md
     - SMPP: reference/smpp.md

@@ -29,13 +29,29 @@ const (
 	codeUnknown       = "outcome_unknown"
 	codeNotDrained    = "not_drained"
 	codeQuorum        = "quorum"
+	codeRemoved       = "removed"
+	codeInvalidProof  = "invalid_proof"
 )
 
-type peerKey struct{}
+type (
+	peerKey   struct{}
+	fencedKey struct{}
+)
 
 func peerOf(r *http.Request) string {
 	id, _ := r.Context().Value(peerKey{}).(string)
 	return id
+}
+
+func fenced(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if removed, _ := r.Context().Value(fencedKey{}).(bool); removed {
+			writeJSON(w, http.StatusGone, rpcError{Error: ErrRemoved.Error(), Code: codeRemoved})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (n *Node) serveRPC() {
@@ -50,12 +66,14 @@ func (n *Node) serveRPC() {
 	errorLog := slog.NewLogLogger(n.cfg.Logger.Handler(), slog.LevelDebug)
 
 	n.rpc = &http.Server{
-		Handler:           mux,
+		Handler:           fenced(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       rpcReadTimeout,
 		WriteTimeout:      rpcWriteTimeout,
 		ErrorLog:          errorLog,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			ctx = context.WithValue(ctx, fencedKey{}, listener.Fenced(c))
+
 			return context.WithValue(ctx, peerKey{}, listener.PeerNodeID(c))
 		},
 	}
@@ -64,6 +82,7 @@ func (n *Node) serveRPC() {
 
 	join := http.NewServeMux()
 	join.HandleFunc("POST /cluster/v1/join", n.handleBootstrapJoin)
+	join.HandleFunc("POST /cluster/v1/hello", n.withSecret(n.handleHello))
 
 	joinServer := &http.Server{
 		Handler:           join,
@@ -71,6 +90,9 @@ func (n *Node) serveRPC() {
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      time.Minute,
 		ErrorLog:          errorLog,
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			return context.WithValue(ctx, connKey{}, c)
+		},
 	}
 
 	go func() { _ = joinServer.Serve(n.ln.Stream(listener.ALPNJoin, n.cfg.Advertise)) }()
@@ -89,33 +111,38 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeRPCError(w http.ResponseWriter, err error) {
+	status, e := rpcErrorOf(err)
+	writeJSON(w, status, e)
+}
+
+func rpcErrorOf(err error) (int, rpcError) {
 	var remote *RemoteError
 
 	switch {
 	case errors.Is(err, errUnknown):
-		writeJSON(w, http.StatusServiceUnavailable, rpcError{Error: err.Error(), Code: codeUnknown})
+		return http.StatusServiceUnavailable, rpcError{Error: err.Error(), Code: codeUnknown}
 	case errors.Is(err, errRetry), errors.Is(err, raft.ErrRaftShutdown):
-		writeJSON(w, http.StatusServiceUnavailable, rpcError{Error: err.Error()})
+		return http.StatusServiceUnavailable, rpcError{Error: err.Error()}
 	case errors.As(err, &remote):
-		writeJSON(w, remote.Status, rpcError{Error: remote.Message, Code: remote.Code})
+		return remote.Status, rpcError{Error: remote.Message, Code: remote.Code}
 	case errors.Is(err, ErrInvalidJoin):
-		writeJSON(w, http.StatusBadRequest, rpcError{Error: err.Error(), Code: codeInvalidJoin})
+		return http.StatusBadRequest, rpcError{Error: err.Error(), Code: codeInvalidJoin}
 	case errors.Is(err, ErrNotDrained):
-		writeJSON(w, http.StatusConflict, rpcError{Error: err.Error(), Code: codeNotDrained})
+		return http.StatusConflict, rpcError{Error: err.Error(), Code: codeNotDrained}
 	case errors.Is(err, ErrQuorum):
-		writeJSON(w, http.StatusConflict, rpcError{Error: err.Error(), Code: codeQuorum})
+		return http.StatusConflict, rpcError{Error: err.Error(), Code: codeQuorum}
 	case errors.Is(err, ErrInvalidBackup):
-		writeJSON(w, http.StatusBadRequest, rpcError{Error: err.Error(), Code: codeInvalidBackup})
-	default:
-		code := db.CodeOf(err)
-
-		status := http.StatusInternalServerError
-		if code != "" {
-			status = http.StatusConflict
-		}
-
-		writeJSON(w, status, rpcError{Error: err.Error(), Code: code})
+		return http.StatusBadRequest, rpcError{Error: err.Error(), Code: codeInvalidBackup}
 	}
+
+	code := db.CodeOf(err)
+
+	status := http.StatusInternalServerError
+	if code != "" {
+		status = http.StatusConflict
+	}
+
+	return status, rpcError{Error: err.Error(), Code: code}
 }
 
 func (n *Node) leaderOnly(h http.HandlerFunc) http.HandlerFunc {
@@ -175,9 +202,12 @@ func (n *Node) handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	n.health.record(peerOf(r), rep)
+	peer := peerOf(r)
+	n.health.record(peer, rep)
 
-	writeJSON(w, http.StatusOK, struct{}{})
+	raftNode, _ := n.current()
+
+	writeJSON(w, http.StatusOK, n.health.reply(peer, raftNode.CommitIndex()))
 }
 
 func (n *Node) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -200,40 +230,79 @@ func (n *Node) handleJoin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (n *Node) handleBootstrapJoin(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get(headerProof) != "" {
+		n.withSecret(n.handleSecretJoin)(w, r)
+		return
+	}
+
 	var req joinRequest
 	if !decodeBody(w, r, maxJoinBody, &req) {
 		return
 	}
+
+	req.Method = ""
 
 	if _, err := n.verifyToken(r.Context(), req.Token); err != nil {
 		if !errors.Is(err, ErrInvalidJoin) {
 			err = fmt.Errorf("%w: %w", errRetry, err)
 		}
 
+		n.metrics.joinRequests.WithLabelValues("rejected").Inc()
 		writeRPCError(w, err)
 
 		return
 	}
 
-	if leading, _ := n.Leader(); leading {
-		reply, err := n.admit(r.Context(), req)
-		if err != nil {
-			writeRPCError(w, err)
-			return
-		}
-
-		writeJSON(w, http.StatusOK, reply)
-
-		return
-	}
-
-	var reply joinReply
-	if err := n.peers.call(r.Context(), "/cluster/v1/join", req, &reply); err != nil {
+	reply, err := n.relayJoin(r.Context(), req)
+	if err != nil {
 		writeRPCError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, reply)
+}
+
+func (n *Node) handleSecretJoin(r *http.Request, c caller, body []byte) (int, any) {
+	var req joinRequest
+	if err := json.Unmarshal(body, &req); err != nil || req.NodeID != c.NodeID {
+		n.metrics.joinRequests.WithLabelValues("rejected").Inc()
+		return http.StatusBadRequest, rpcError{Error: "invalid join request", Code: codeInvalidJoin}
+	}
+
+	req.Token, req.Method = "", joinMethodSecret
+
+	reply, err := n.relayJoin(r.Context(), req)
+	if err != nil {
+		return rpcErrorOf(err)
+	}
+
+	return http.StatusOK, reply
+}
+
+func (n *Node) relayJoin(ctx context.Context, req joinRequest) (joinReply, error) {
+	var (
+		reply joinReply
+		err   error
+	)
+
+	if leading, _ := n.Leader(); leading {
+		reply, err = n.admit(ctx, req)
+	} else if n.formation.current() != FormationMember {
+		err = fmt.Errorf("%w: this node is not a cluster member yet", errRetry)
+	} else {
+		err = n.peers.call(ctx, "/cluster/v1/join", req, &reply)
+	}
+
+	switch {
+	case err == nil:
+		n.metrics.joinRequests.WithLabelValues("admitted").Inc()
+	case errors.Is(err, errRetry), errors.Is(err, errUnknown):
+		n.metrics.joinRequests.WithLabelValues("unavailable").Inc()
+	default:
+		n.metrics.joinRequests.WithLabelValues("rejected").Inc()
+	}
+
+	return reply, err
 }
 
 type removeRequest struct {

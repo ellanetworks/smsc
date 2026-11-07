@@ -22,6 +22,9 @@ type Cluster interface {
 	SetDrainState(ctx context.Context, nodeID string, state db.DrainState) error
 	SetDisplayName(ctx context.Context, nodeID, name string) error
 	DisplayName(ctx context.Context) string
+	DiameterLabel() string
+	LabelGenerated() bool
+	Formation() cluster.Formation
 }
 
 const (

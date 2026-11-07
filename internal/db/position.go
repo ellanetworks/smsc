@@ -132,7 +132,7 @@ const (
 	snapshotMagic         = "SMSN"
 	snapshotHeaderSize    = 16
 	snapshotFormatVersion = 1
-	ProtocolVersion       = 1
+	ProtocolVersion       = 2
 )
 
 var ErrSnapshotHeader = errors.New("unsupported snapshot")
@@ -528,7 +528,7 @@ func (d *DB) Wipe(ctx context.Context, scratch string) (err error) {
 
 var (
 	secretTables  = []string{"jwt_secret", "oidc_cookie_key", "cluster", "cluster_join_tokens"}
-	clusterTables = append([]string{"cluster_members"}, secretTables...)
+	clusterTables = append([]string{"cluster_members", "cluster_removed_members"}, secretTables...)
 )
 
 func StripSecrets(ctx context.Context, path string) error {

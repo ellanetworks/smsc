@@ -5,6 +5,8 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -28,7 +31,7 @@ const (
 	waitTimeout   = 60 * time.Second
 )
 
-var binary, upgraded string
+var binary, upgraded, sharedSecret string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "smsc-integration-*")
@@ -38,6 +41,12 @@ func TestMain(m *testing.M) {
 	}
 
 	binary, upgraded = filepath.Join(dir, "smsc"), filepath.Join(dir, "smsc-next")
+	sharedSecret = filepath.Join(dir, "cluster-secret")
+
+	if err := writeSecret(sharedSecret); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	builds := []*exec.Cmd{
 		exec.CommandContext(context.Background(), "go", "build", "-o", binary, "../../cmd/smsc"),
@@ -109,17 +118,25 @@ type node struct {
 	exited       chan struct{}
 	session      atomic.Pointer[string]
 	id           string
+	secret       string
+	join         []string
+	expect       int
 }
 
-func newNode(t *testing.T, name string) *node {
+func writeSecret(path string) error {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+
+	return os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(b)+"\n"), 0o600)
+}
+
+func newIdleNode(t *testing.T, name string) *node {
 	t.Helper()
 
 	n := &node{
 		t: t, name: name, bin: binary, dir: t.TempDir(), apiPort: freePort(t), diameterPort: freePort(t),
-		clusterPort: freePort(t), smppPort: freePort(t),
+		clusterPort: freePort(t), smppPort: freePort(t), secret: sharedSecret,
 	}
-
-	n.configure()
 
 	t.Cleanup(func() {
 		n.kill()
@@ -131,6 +148,18 @@ func newNode(t *testing.T, name string) *node {
 		}
 	})
 
+	return n
+}
+
+func (n *node) clusterAddress() string {
+	return "127.0.0.1:" + strconv.Itoa(n.clusterPort)
+}
+
+func newNode(t *testing.T, name string) *node {
+	t.Helper()
+
+	n := newIdleNode(t, name)
+	n.configure()
 	n.start()
 
 	return n
@@ -155,7 +184,16 @@ smpp:
 cluster:
   address: 127.0.0.1
   port: %d
-`, filepath.Join(n.dir, "smsc.db"), n.apiPort, n.diameterPort, n.smppPort, n.clusterPort)
+  secret_file: %s
+`, filepath.Join(n.dir, "smsc.db"), n.apiPort, n.diameterPort, n.smppPort, n.clusterPort, n.secret)
+
+	if len(n.join) > 0 {
+		config += "  join: [" + strings.Join(n.join, ", ") + "]\n"
+	}
+
+	if n.expect > 0 {
+		config += "  bootstrap_expect: " + strconv.Itoa(n.expect) + "\n"
+	}
 
 	if err := os.WriteFile(filepath.Join(n.dir, "smsc.yaml"), []byte(config), 0o600); err != nil {
 		n.t.Fatal(err)

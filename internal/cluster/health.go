@@ -35,7 +35,21 @@ type report struct {
 	LastIndex    uint64 `json:"last_index"`
 	Schema       int    `json:"schema"`
 	Version      string `json:"version"`
+	Label        string `json:"diameter_label,omitempty"`
+	Generated    bool   `json:"label_generated,omitempty"`
 	Hash         []byte `json:"hash,omitempty"`
+}
+
+type reportReply struct {
+	CommitIndex uint64   `json:"commit_index"`
+	Diverged    bool     `json:"diverged,omitempty"`
+	Voters      *bool    `json:"voters_healthy,omitempty"`
+	Unhealthy   []string `json:"unhealthy_voters,omitempty"`
+}
+
+type leaderView struct {
+	reportReply
+	At time.Time
 }
 
 type peerReport struct {
@@ -49,6 +63,7 @@ type health struct {
 	mu      sync.Mutex
 	reports map[string]peerReport
 	state   *autopilot.State
+	view    leaderView
 }
 
 func newHealth(n *Node) *health {
@@ -76,6 +91,54 @@ func (h *health) record(nodeID string, r report) {
 		h.n.cfg.Logger.Error("a member's database differs from the leader's: remove it and join it again with an empty data directory",
 			slog.String("node", nodeID), slog.Uint64("index", r.AppliedIndex))
 	}
+}
+
+func (h *health) voters() (bool, []string) {
+	h.mu.Lock()
+	state := h.state
+	h.mu.Unlock()
+
+	if state == nil {
+		return false, nil
+	}
+
+	var unhealthy []string
+
+	for id, s := range state.Servers {
+		if s.HasVotingRights() && !s.Health.Healthy {
+			unhealthy = append(unhealthy, string(id))
+		}
+	}
+
+	slices.Sort(unhealthy)
+
+	return true, unhealthy
+}
+
+func (h *health) reply(nodeID string, commitIndex uint64) reportReply {
+	r, _ := h.get(nodeID)
+	out := reportReply{CommitIndex: commitIndex, Diverged: r.Diverged}
+
+	if known, unhealthy := h.voters(); known {
+		healthy := len(unhealthy) == 0
+		out.Voters, out.Unhealthy = &healthy, unhealthy
+	}
+
+	return out
+}
+
+func (h *health) setView(r reportReply) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.view = leaderView{reportReply: r, At: h.n.cfg.Now()}
+}
+
+func (h *health) leaderView() leaderView {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.view
 }
 
 func (h *health) get(nodeID string) (peerReport, bool) {
@@ -411,6 +474,7 @@ func (n *Node) sendReport() {
 	rep := report{
 		Address: n.cfg.Advertise, AppliedIndex: n.db.AppliedIndex(), LastTerm: parseUint(stats["last_log_term"]),
 		LastIndex: parseUint(stats["last_log_index"]), Schema: db.SchemaVersion(), Version: n.cfg.Version,
+		Label: n.label, Generated: n.generated,
 	}
 
 	if h, ok := n.db.HashAt(rep.AppliedIndex); ok {
@@ -422,9 +486,14 @@ func (n *Node) sendReport() {
 		return
 	}
 
-	if err := n.peers.call(ctx, "/cluster/v1/report", rep, nil); err != nil {
-		n.cfg.Logger.Debug("failed to report to the leader", slog.Any("error", err))
+	var reply reportReply
+
+	if err := n.peers.call(ctx, "/cluster/v1/report", rep, &reply); err != nil {
+		n.cfg.Logger.DebugContext(ctx, "failed to report to the leader", slog.Any("error", err))
+		return
 	}
+
+	n.health.setView(reply)
 }
 
 func (n *Node) reportToServers(ctx context.Context, r *raft.Raft, rep report) {
@@ -441,7 +510,11 @@ func (n *Node) reportToServers(ctx context.Context, r *raft.Raft, rep report) {
 		}
 
 		wg.Go(func() {
-			_ = n.peers.callAt(ctx, string(s.Address), string(s.ID), "/cluster/v1/report", rep, nil)
+			var reply reportReply
+
+			if err := n.peers.callAt(ctx, string(s.Address), string(s.ID), "/cluster/v1/report", rep, &reply); err == nil {
+				n.health.setView(reply)
+			}
 		})
 	}
 
@@ -475,7 +548,7 @@ func (n *Node) registerSelf(ctx context.Context, via db.Proposer) error {
 		}
 	}
 
-	want := n.certs.member(address, n.cfg.Version)
+	want := n.certs.member(address, n.cfg.Version, n.label, n.generated)
 
 	have, err := n.db.Member(ctx, n.id)
 	if err == nil && sameMember(have, want) {
@@ -491,7 +564,7 @@ func (n *Node) registerSelf(ctx context.Context, via db.Proposer) error {
 
 func sameMember(a, b db.Member) bool {
 	return a.Address == b.Address && a.Fingerprint == b.Fingerprint && a.SchemaVersion == b.SchemaVersion &&
-		a.Version == b.Version
+		a.Version == b.Version && a.DiameterLabel == b.DiameterLabel && a.LabelGenerated == b.LabelGenerated
 }
 
 func (n *Node) registerMembers() {
@@ -515,6 +588,10 @@ func (n *Node) registerMembers() {
 
 		want := m
 		want.Address, want.SchemaVersion, want.Version = r.Address, r.Schema, r.Version
+
+		if r.Label != "" {
+			want.DiameterLabel, want.LabelGenerated = r.Label, r.Generated
+		}
 
 		if sameMember(m, want) {
 			continue
@@ -608,7 +685,12 @@ func (n *Node) removeAsLeader(ctx context.Context, nodeID string, force bool) er
 		}
 	}
 
-	err := n.db.RemoveMember(ctx, nodeID)
+	reason := db.RemovedDrained
+	if force {
+		reason = db.RemovedForced
+	}
+
+	err := n.db.RemoveMember(ctx, nodeID, reason)
 
 	switch {
 	case errors.Is(err, db.ErrNotFound) && !inRaft:

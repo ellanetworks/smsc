@@ -12,33 +12,79 @@ This guide walks through adding a node to an existing Ella SMSC high-availabilit
 
 ## Add a node
 
-1. Prepare a host with Ella SMSC installed per the [Install](install.md) guide, with a `cluster` block in the configuration file.
-2. Open the **Cluster** page on any node in the cluster.
-3. Click **Add Node**, click **Create Token**, and copy the token.
-4. Start Ella SMSC on the new host.
-5. Open the new node's UI in a browser. Click **Join an existing cluster instead**, paste the token, and click **Join**.
-6. Connect every Diameter peer to the new node, unless they connect through a Diameter routing agent.
-7. On the **Cluster** page, verify the new node appears and is shown as **Healthy**.
+=== "Snap"
+
+    1. Prepare a host with Ella SMSC installed per the [Install](install.md) guide, with a `cluster` block in the configuration file.
+    2. Open the **Cluster** page on any node in the cluster.
+    3. Click **Add Node**, click **Create Token**, and copy the token.
+    4. Start Ella SMSC on the new host.
+    5. Open the new node's UI in a browser. Click **Join an existing cluster instead**, paste the token, and click **Join**.
+    6. Connect every Diameter peer to the new node, unless they connect through a Diameter routing agent.
+    7. On the **Cluster** page, verify the new node appears and is shown as **Healthy**.
+
+=== "Kubernetes"
+
+    1. Add a Kubernetes node for the new pod.
+    2. Add a pod:
+
+        ```shell
+        kubectl scale statefulset ella-smsc -n ella --replicas=4
+        ```
+
+    3. Connect every Diameter peer to the new pod.
+    4. On the **Cluster** page, verify the new node appears and is shown as **Healthy**.
 
 ## Remove a node
 
-1. Open the **Cluster** page on any node in the cluster.
-2. In the node's **Node actions** menu, click **Drain this node**. Wait until its **Drain** column shows **Drained**.
-3. In the same menu, click **Remove from cluster**. For a node that is down for good, check **Force remove (skip drain)**.
-4. Disconnect the Diameter peers from the removed node.
+=== "Snap"
+
+    1. Open the **Cluster** page on any node in the cluster.
+    2. In the node's **Node actions** menu, click **Drain this node**. Wait until its **Drain** column shows **Drained**.
+    3. In the same menu, click **Remove from cluster**. For a node that is down for good, check **Force remove (skip drain)**.
+    4. Disconnect the Diameter peers from the removed node.
+
+=== "Kubernetes"
+
+    1. Open the **Cluster** page.
+    2. In the **Node actions** menu of the node with the highest pod number, click **Drain this node**. Wait until its **Drain** column shows **Drained**.
+    3. In the same menu, click **Remove from cluster**.
+    4. Remove its pod and volume:
+
+        ```shell
+        kubectl scale statefulset ella-smsc -n ella --replicas=3
+        kubectl delete pvc data-ella-smsc-3 -n ella
+        ```
+
+    5. Disconnect the Diameter peers from the removed node.
 
 ## Replace a diverged node
 
 A node whose database differs from the leader's shows **Diverged** in the **Healthy** column of the **Cluster** page, and increments `ellasmsc_cluster_state_mismatches_total`.
 
-1. Remove the node, as in [Remove a node](#remove-a-node).
-2. On the removed node, stop Ella SMSC and delete its data:
+=== "Snap"
 
-    ```shell
-    sudo snap stop ella-smsc.smscd
-    sudo rm -rf /var/snap/ella-smsc/common/smsc.db* /var/snap/ella-smsc/common/raft
-    sudo snap start ella-smsc.smscd
-    ```
+    1. Remove the node, as in [Remove a node](#remove-a-node).
+    2. On the removed node, stop Ella SMSC and delete its data:
 
-3. Add the node back, as in [Add a node](#add-a-node), steps 2, 3, 5 and 6. It gets a new **Diameter Host**.
-4. On the **Cluster** page, verify the node is shown as **Healthy**.
+        ```shell
+        sudo snap stop ella-smsc.smscd
+        sudo rm -rf /var/snap/ella-smsc/common/smsc.db* /var/snap/ella-smsc/common/raft
+        sudo snap start ella-smsc.smscd
+        ```
+
+    3. Add the node back, as in [Add a node](#add-a-node), steps 2, 3, 5 and 6.
+    4. On the **Cluster** page, verify the node is shown as **Healthy**.
+
+=== "Kubernetes"
+
+    1. Open the **Cluster** page.
+    2. In the diverged node's **Node actions** menu, click **Drain this node**. Wait until its **Drain** column shows **Drained**.
+    3. In the same menu, click **Remove from cluster**.
+    4. Delete its volume and pod:
+
+        ```shell
+        kubectl delete pvc data-ella-smsc-<n> -n ella --wait=false
+        kubectl delete pod ella-smsc-<n> -n ella
+        ```
+
+    5. On the **Cluster** page, verify the node is shown as **Healthy**.

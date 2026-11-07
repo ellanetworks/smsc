@@ -42,6 +42,9 @@ type joinRequest struct {
 	Schema      int    `json:"schema"`
 	Protocol    int    `json:"protocol"`
 	Version     string `json:"version"`
+	Label       string `json:"diameter_label,omitempty"`
+	Generated   bool   `json:"label_generated,omitempty"`
+	Method      string `json:"method,omitempty"`
 }
 
 type joinReply struct {
@@ -125,9 +128,22 @@ func (n *Node) verifyToken(ctx context.Context, token string) (pki.Claims, error
 }
 
 func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
-	claims, err := n.verifyToken(ctx, req.Token)
-	if err != nil {
-		return joinReply{}, err
+	var tokenID, clusterID string
+
+	if req.Method == joinMethodSecret {
+		secrets, err := n.db.ReadSecrets(ctx)
+		if err != nil {
+			return joinReply{}, fmt.Errorf("%w: %w", errRetry, err)
+		}
+
+		clusterID = secrets.ClusterID
+	} else {
+		claims, err := n.verifyToken(ctx, req.Token)
+		if err != nil {
+			return joinReply{}, err
+		}
+
+		tokenID, clusterID = claims.ID, claims.ClusterID
 	}
 
 	cert, err := pki.ParseCert([]byte(req.Certificate))
@@ -135,12 +151,12 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 		return joinReply{}, fmt.Errorf("%w: %w", ErrInvalidJoin, err)
 	}
 
-	clusterID, nodeID, err := pki.Identity(cert)
+	certCluster, nodeID, err := pki.Identity(cert)
 
 	switch {
 	case err != nil:
 		return joinReply{}, fmt.Errorf("%w: %w", ErrInvalidJoin, err)
-	case clusterID != claims.ClusterID || nodeID != req.NodeID:
+	case certCluster != clusterID || nodeID != req.NodeID:
 		return joinReply{}, fmt.Errorf("%w: the certificate is not node %s's in this cluster", ErrInvalidJoin, req.NodeID)
 	case cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature) != nil:
 		return joinReply{}, fmt.Errorf("%w: the certificate is not self-signed", ErrInvalidJoin)
@@ -157,10 +173,10 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 
 	m := db.Member{
 		NodeID: req.NodeID, Address: req.Address, Fingerprint: pki.Fingerprint(cert),
-		SchemaVersion: req.Schema, Version: req.Version,
+		SchemaVersion: req.Schema, Version: req.Version, DiameterLabel: req.Label, LabelGenerated: req.Generated,
 	}
 
-	if err := n.db.AdmitMember(ctx, claims.ID, m); err != nil {
+	if err := n.db.AdmitMember(ctx, tokenID, m); err != nil {
 		return joinReply{}, err
 	}
 
@@ -263,7 +279,8 @@ func (n *Node) Join(ctx context.Context, token string) error {
 
 	req := joinRequest{
 		Token: strings.TrimSpace(token), NodeID: n.id, Address: n.cfg.Advertise, Certificate: string(certPEM),
-		Schema: db.SchemaVersion(), Protocol: db.ProtocolVersion, Version: n.cfg.Version,
+		Schema: db.SchemaVersion(), Protocol: db.ProtocolVersion, Version: n.cfg.Version, Label: n.label,
+		Generated: n.generated,
 	}
 
 	reply, err := n.redeem(ctx, claims, req)

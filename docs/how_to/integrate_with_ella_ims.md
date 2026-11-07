@@ -23,6 +23,8 @@ Follow Ella IMS's [Enable SMS over IP](https://docs.ellanetworks.com/ims/how_to/
 - **Transport**: **SCTP**
 - **Host**: the **Host** of Ella SMSC's **Diameter** page, e.g. `smsc-013c0a7ca824.node.epc.mnc001.mcc001.3gppnetwork.org`
 
+Add a peer the same way for every other Ella SMSC node, with its address and its **Diameter Host** from the **Cluster** page.
+
 ## 2. Verify
 
 In the Ella SMSC UI, go to **Diameter**. Under **Connected Peers**, Ella IMS shows **open**, with **Applications** set to **SGd** and **HSS** set to **no**.

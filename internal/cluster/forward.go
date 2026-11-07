@@ -275,6 +275,19 @@ func (p *peerClient) send(ctx context.Context, client *http.Client, addr, id, me
 		return nil, fmt.Errorf("%w: %w", errRetry, err)
 	case err != nil:
 		return nil, fmt.Errorf("%w: %w", errUnknown, err)
+	case resp.StatusCode == http.StatusGone:
+		var e rpcError
+
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&e)
+		_ = resp.Body.Close()
+
+		if e.Code != codeRemoved {
+			return nil, &RemoteError{Status: resp.StatusCode, Code: e.Code, Message: e.Error}
+		}
+
+		p.n.fence(ctx, id)
+
+		return nil, ErrRemoved
 	}
 
 	return resp, nil

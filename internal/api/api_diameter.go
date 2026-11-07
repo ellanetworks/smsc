@@ -29,10 +29,11 @@ type DiameterRoute struct {
 }
 
 type DiameterStatus struct {
-	Host   string          `json:"host"`
-	Realm  string          `json:"realm"`
-	Peers  []DiameterPeer  `json:"peers"`
-	Routes []DiameterRoute `json:"routes"`
+	Host           string          `json:"host"`
+	LabelGenerated bool            `json:"label_generated"`
+	Realm          string          `json:"realm"`
+	Peers          []DiameterPeer  `json:"peers"`
+	Routes         []DiameterRoute `json:"routes"`
 }
 
 func GetDiameterStatus(cfg Config) http.Handler {
@@ -44,6 +45,10 @@ func GetDiameterStatus(cfg Config) http.Handler {
 			Realm:  identity.OriginRealm,
 			Peers:  []DiameterPeer{},
 			Routes: []DiameterRoute{},
+		}
+
+		if cfg.Cluster != nil {
+			resp.LabelGenerated = cfg.Cluster.LabelGenerated()
 		}
 
 		for _, r := range cfg.Diameter.Routes() {

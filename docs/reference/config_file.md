@@ -24,6 +24,7 @@ The operator and delivery settings are not in this file: they are in the databas
     - `name` (string): The network interface to listen on, on all its addresses, advertised to peers. Either `name` or `address` must be set.
     - `address` (string): The IP address to listen on, advertised to peers. A specific address, not `0.0.0.0` or `::`. Either `name` or `address` must be set.
     - `port` (int, optional): The SCTP port to listen on. Default `3868`.
+    - `host_label` (string, optional): The first label of the node's [Diameter host](connectivity.md#diameter-identity).
 - `smpp` (object, optional): The [SMPP 3.4](smpp.md) listener for ESMEs, such as OTA platforms. Without it, Ella SMSC does not listen for SMPP. The ESME accounts are in the database, managed with the [API](api/esmes.md).
     - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses.
     - `port` (int, optional): The TCP port to listen on. Default `2775`. Not the API's port.
@@ -34,6 +35,9 @@ The operator and delivery settings are not in this file: they are in the databas
     - `address` (string): The IP address to listen on. `0.0.0.0` or `::` for all addresses, with `advertise` set.
     - `port` (int, optional): The TCP port to listen on. Default `7000`.
     - `advertise` (string, optional): The `host:port` the other nodes reach this node at. Default `address:port`.
+    - `join` (list of strings, optional): The `host:port` of the other nodes. Each name resolves to all its addresses.
+    - `bootstrap_expect` (int, optional): The number of nodes that form a new cluster together. 2 or more. Requires `join`.
+    - `secret_file` (string): The path to the cluster secret: base64 keys of at least 32 bytes, one per line, the first used to sign. Required with `join`.
 - `telemetry` (object, optional): The [traces](observability.md#traces).
     - `enabled` (boolean, optional): Export traces. Default `false`.
     - `otlp_endpoint` (string): The `host:port` of an OTLP/gRPC collector, over plain gRPC. Required when `enabled` is `true`.

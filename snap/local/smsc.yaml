@@ -15,3 +15,7 @@ api:
 diameter:
   address: 127.0.0.1
   port: 3868
+  # Optional: the first label of the Diameter host, <host_label>.node.<realm>.
+  # Without it, the label is generated from the node ID, and changes when the
+  # node's data is deleted.
+  # host_label: smsc-a
