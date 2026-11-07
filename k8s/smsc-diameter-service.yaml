@@ -10,7 +10,6 @@ spec:
   selector:
     app.kubernetes.io/name: ella-smsc
     app.kubernetes.io/instance: ella-smsc
-  type: NodePort
   ports:
   - name: diameter
     protocol: SCTP

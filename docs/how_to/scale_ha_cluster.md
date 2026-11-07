@@ -24,14 +24,15 @@ This guide walks through adding a node to an existing Ella SMSC high-availabilit
 
 === "Kubernetes"
 
-    1. Add a pod:
+    1. Add a Kubernetes node for the new pod.
+    2. Add a pod:
 
         ```shell
         kubectl scale statefulset ella-smsc -n ella --replicas=4
         ```
 
-    2. Connect every Diameter peer to the new pod.
-    3. On the **Cluster** page, verify the new node appears and is shown as **Healthy**.
+    3. Connect every Diameter peer to the new pod.
+    4. On the **Cluster** page, verify the new node appears and is shown as **Healthy**.
 
 ## Remove a node
 

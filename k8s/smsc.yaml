@@ -15,5 +15,5 @@ api:
 #     cert: /tls/tls.crt
 #     key: /tls/tls.key
 diameter:
-  address: 192.168.252.7
+  name: eth0
   port: 3868

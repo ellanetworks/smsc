@@ -1,10 +1,19 @@
-# The manifests of k8s as the smoke test deploys them, with the image it loads.
+# The manifests of k8s/examples/multus as the smoke test deploys them, with the image it loads.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../namespace
-  - ../../../k8s
+  - ../../../k8s/examples/multus
 images:
   - name: ghcr.io/ellanetworks/ella-smsc
     newName: ella-smsc
     newTag: ci
+patches:
+  - patch: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: ella-smsc
+      spec:
+        type: NodePort
+        externalTrafficPolicy: Local

@@ -25,6 +25,7 @@ This path returns the version of the SMSC, whether it is initialized, and the id
 | `diameter_label` | string | First label of the node's Diameter host. |
 | `diameter_host` | string | Diameter host of the node. |
 | `label_generated` | boolean | Whether `diameter_label` is the default, from `node_id`. |
+| `formation` | object | See [Formation](#formation). |
 
 ### Sample Response
 
@@ -43,6 +44,17 @@ This path returns the version of the SMSC, whether it is initialized, and the id
     }
 }
 ```
+
+### Formation
+
+| Field           | Type   | Description |
+| --------------- | ------ | ----------- |
+| `state`         | string | `forming`, `joining`, `member` or `removed`. |
+| `expected`      | int    | `cluster.bootstrap_expect`. |
+| `found`         | int    | Nodes found, this one included. While forming. |
+| `candidate`     | string | Node ID of the node that forms the cluster. While forming. |
+| `detail`        | string | What the node is waiting for. |
+| `foreign_peers` | int    | Nodes behind `cluster.join` that are members of another cluster. |
 
 ## Check Liveness
 
@@ -75,6 +87,7 @@ This path returns whether the node is ready to receive traffic.
 | `shutdown`    | The node is not stopping. |
 | `member`      | The node was not removed from the cluster. |
 | `initialized` | The node has no `cluster` block, or a user exists. |
+| `diameter_label` | The cluster recorded this node's Diameter host label. |
 | `drain`       | The node is not draining or drained. |
 | `consistent`  | The node's database matches the leader's. |
 | `database`    | The database answers. |
@@ -109,6 +122,7 @@ This path returns whether the node is ready to receive traffic.
             {"name": "shutdown", "ok": true, "detail": ""},
             {"name": "member", "ok": true, "detail": ""},
             {"name": "initialized", "ok": true, "detail": ""},
+            {"name": "diameter_label", "ok": true, "detail": ""},
             {"name": "drain", "ok": true, "detail": ""},
             {"name": "consistent", "ok": true, "detail": ""},
             {"name": "database", "ok": true, "detail": ""},

@@ -5,14 +5,14 @@
 # set, across an upgrade. This host plays the core with the load client of
 # internal/loadtest.
 #
-# MODE multus deploys k8s/. The kind node gets a second interface, eth1, on a
+# MODE multus deploys k8s/examples/multus/. The kind node gets a second interface, eth1, on a
 # Docker network that stands for the signalling network: 192.168.252.0/24, as
 # in the manifests, so the NAD and the ConfigMap are deployed as shipped. This
 # host is 192.168.252.1 on it, and reaches Diameter and the API on the SMSC's
 # Multus address.
 #
-# MODE pod-network deploys k8s/pod-network/, with no Multus. This host reaches
-# Diameter and the API on the node, through their NodePort Services.
+# MODE pod-network deploys k8s/, with no Multus. This host reaches
+# Diameter and the API on the node, through the NodePort Services its overlay sets.
 #
 # MODE ha deploys k8s/ha/ on a kind cluster of three worker nodes, with the
 # cluster secret created as the deploy guide says. It checks that the three
@@ -42,7 +42,7 @@ SUBNET="${NET}.0/24"
 # Docker gives addresses from the upper half only, so the SMSC's address stays free.
 IP_RANGE="${NET}.128/25"
 GATEWAY="${NET}.1"
-# The address in the NAD and the ConfigMap of k8s/.
+# The address in the NAD and the ConfigMap of k8s/examples/multus/.
 SHIPPED_IP=192.168.252.7
 SMSC_IP="${NET}.7"
 NS=ella
@@ -288,7 +288,7 @@ ha_smoke() {
 
 step "Lint the manifests"
 version="$(cat "${ROOT}/version/VERSION")"
-for dir in k8s k8s/pod-network k8s/ha ci/k8s/multus ci/k8s/pod-network ci/k8s/ha; do
+for dir in k8s k8s/ha k8s/examples/multus ci/k8s/multus ci/k8s/pod-network ci/k8s/ha; do
   kubectl kustomize "${ROOT}/${dir}" | kubeconform -strict -summary -skip NetworkAttachmentDefinition
 done
 endstep
