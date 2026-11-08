@@ -70,6 +70,7 @@ nav:
     - Integrate with Ella IMS: how_to/integrate_with_ella_ims.md
     - Integrate with a Third-Party Core: how_to/integrate_with_third_party_core.md
     - Connect through Diameter Agents: how_to/connect_through_diameter_agents.md
+    - Connect a Core at Another Site: how_to/connect_a_core_at_another_site.md
     - Configure Single Sign-On: how_to/configure_single_sign_on.md
     - Manage Single Sign-On Users: how_to/manage_single_sign_on_users.md
     - Send Messages from an Application: how_to/send_messages_from_an_application.md
