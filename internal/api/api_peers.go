@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 
+	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/smsc/internal/settings"
 )
 
@@ -190,12 +192,20 @@ func decodePeer(w http.ResponseWriter, r *http.Request, cfg Config) (settings.Pe
 
 	for _, s := range params.Addresses {
 		a, err := netip.ParseAddr(s)
-		if err != nil || a.Zone() != "" {
-			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("address %q must be an IP address", s), nil, cfg.Logger)
-			return settings.Peer{}, false
+		if err == nil && a.Zone() == "" {
+			p.Addresses = append(p.Addresses, a.Unmap())
+			continue
 		}
 
-		p.Addresses = append(p.Addresses, a.Unmap())
+		if err != nil && len(params.Addresses) == 1 && diameter.IsValidHostname(s) {
+			p.Name = strings.ToLower(s)
+			continue
+		}
+
+		writeError(w, r, http.StatusBadRequest,
+			fmt.Sprintf("address %q must be an IP address, or a host name listed alone", s), nil, cfg.Logger)
+
+		return settings.Peer{}, false
 	}
 
 	for _, rt := range params.Routes {
@@ -232,6 +242,10 @@ func peerSaved(w http.ResponseWriter, r *http.Request, err error, cfg Config, ac
 
 func peerResponse(p settings.Peer) Peer {
 	resp := Peer{ID: p.ID, Host: p.Host, Addresses: []string{}, Port: p.Port, Routes: []PeerRoute{}}
+
+	if p.Name != "" {
+		resp.Addresses = append(resp.Addresses, p.Name)
+	}
 
 	for _, a := range p.Addresses {
 		resp.Addresses = append(resp.Addresses, a.String())

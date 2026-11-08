@@ -34,6 +34,9 @@ const IPV4 =
 const isIPAddress = (s: string): boolean =>
   IPV4.test(s) || (s.includes(":") && /^[0-9A-Fa-f:.]+$/.test(s));
 
+const isHostName = (s: string): boolean =>
+  isDiameterIdentity(s) && !/^\d+$/.test(s.split(".").pop() ?? "");
+
 const splitAddresses = (s: string): string[] =>
   s
     .split(/[\s,]+/)
@@ -156,13 +159,17 @@ export default function PeerDialog({
       ? undefined
       : "Enter a Diameter host, such as dea1.ipx.example.net.";
   const addressList = splitAddresses(addresses);
-  const badAddress = addressList.find((a) => !isIPAddress(a));
+  const badAddress = addressList.find(
+    (a) => !isIPAddress(a) && !(addressList.length === 1 && isHostName(a)),
+  );
   const addressError =
-    badAddress !== undefined
-      ? `${badAddress} is not an IP address.`
-      : addresses !== "" && addressList.length === 0
+    badAddress === undefined
+      ? addresses !== "" && addressList.length === 0
         ? "Enter at least one address."
-        : undefined;
+        : undefined
+      : isHostName(badAddress)
+        ? `${badAddress} is a host name: enter it alone, or IP addresses only.`
+        : `${badAddress} is not an IP address or a host name.`;
   const portNumber = Number(port);
   const portError =
     /^\d+$/.test(port) && portNumber >= 1 && portNumber <= 65535
@@ -207,9 +214,10 @@ export default function PeerDialog({
         onChange={(e) => setAddresses(e.target.value)}
         error={addressError !== undefined}
         helperText={
-          addressError ?? "Every SCTP address of the peer, comma-separated."
+          addressError ??
+          "Every SCTP address of the peer, comma-separated, or a host name that resolves to them."
         }
-        placeholder="192.0.2.10, 198.51.100.10"
+        placeholder="192.0.2.10, 198.51.100.10 or dea1.ipx.example.net"
         required
       />
       <TextField

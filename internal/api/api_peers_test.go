@@ -154,7 +154,10 @@ func TestPeerValidation(t *testing.T) {
 		"not JSON":           `{`,
 		"unknown field":      `{"addresses": ["192.0.2.10"], "transport": "tcp"}`,
 		"no address":         `{"addresses": []}`,
-		"hostname address":   `{"addresses": ["dea1.ipx.example.net"]}`,
+		"name and address":   `{"addresses": ["dea1.ipx.example.net", "192.0.2.10"]}`,
+		"two names":          `{"addresses": ["dea1.ipx.example.net", "dea2.ipx.example.net"]}`,
+		"invalid name":       `{"addresses": ["dea1..example.net"]}`,
+		"name with a port":   `{"addresses": ["dea1.ipx.example.net:3868"]}`,
 		"zoned address":      `{"addresses": ["fe80::1%eth0"]}`,
 		"mapped unspecified": `{"addresses": ["::ffff:0.0.0.0"]}`,
 		"mapped twice":       `{"addresses": ["::ffff:192.0.2.10", "192.0.2.10"]}`,
@@ -227,6 +230,25 @@ func TestPeerAddressesAreStoredUnmapped(t *testing.T) {
 
 	for name, result := range map[string]json.RawMessage{"POST": created, "PUT": updated, "GET": got} {
 		if p := decodePeer(t, result); !reflect.DeepEqual(p.Addresses, []string{"192.0.2.10"}) {
+			t.Errorf("%s addresses = %v", name, p.Addresses)
+		}
+	}
+}
+
+func TestPeerHostNameIsStoredLowercase(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+
+	body := `{"addresses": ["IMS.ella.svc.cluster.local"], "routes": [{"default": true, "application": "sgd"}]}`
+
+	code, created, errMsg := a.do(t, http.MethodPost, "/api/v1/diameter/peers", body)
+	if code != http.StatusCreated {
+		t.Fatalf("POST = %d %s", code, errMsg)
+	}
+
+	_, got, _ := a.do(t, http.MethodGet, "/api/v1/diameter/peers/1", "")
+
+	for name, result := range map[string]json.RawMessage{"POST": created, "GET": got} {
+		if p := decodePeer(t, result); !reflect.DeepEqual(p.Addresses, []string{"ims.ella.svc.cluster.local"}) {
 			t.Errorf("%s addresses = %v", name, p.Addresses)
 		}
 	}

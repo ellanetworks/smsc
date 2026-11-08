@@ -359,6 +359,7 @@ func toDiameterPeers(peers []settings.Peer) []diameter.Peer {
 		out = append(out, diameter.Peer{
 			ID:           p.NodeID(),
 			Host:         p.Host,
+			Name:         p.Name,
 			Addresses:    p.Addresses,
 			Transports:   []diameter.Transport{diameter.TransportSCTP},
 			Applications: applications,

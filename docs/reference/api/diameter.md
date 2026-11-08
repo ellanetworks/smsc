@@ -127,7 +127,7 @@ This path returns the Diameter identity of the SMSC, its peers, and its routes.
 | Field                  | Type    | Required | Description |
 | ---------------------- | ------- | -------- | ----------- |
 | `host`                 | string  | No       | Origin-Host the peer must give. Empty accepts any. |
-| `addresses`            | array   | Yes      | IP addresses of the peer. A peer with a `host` must connect from one of them. |
+| `addresses`            | array   | Yes      | IP addresses of the peer, or a single host name, such as `ims.ella.svc.cluster.local`. A peer with a `host` must connect from one of them. |
 | `port`                 | int     | No       | Default `3868`. |
 | `routes`               | array   | No       | Routes of the peer. |
 | `routes[].realm`       | string  | Unless `default` | Destination-Realm, e.g. `epc.mnc002.mcc208.3gppnetwork.org`. |
@@ -154,7 +154,7 @@ This path returns the Diameter identity of the SMSC, its peers, and its routes.
 | ----- | ----------- |
 | `201` | The peer, with its `id`. |
 | `400` | Invalid peer. |
-| `409` | `host` is another peer's or the SMSC's, or two peers without a `host` share an address. |
+| `409` | `host` is another peer's or the SMSC's, or two peers without a `host` share an address or a host name. |
 
 ## Get a Peer
 

@@ -54,6 +54,11 @@ func TestPeersPersist(t *testing.T) {
 		t.Fatalf("CreatePeer without a host: %v", err)
 	}
 
+	named := settings.Peer{Host: "ims.ella.svc.cluster.local", Name: "ims.ella.svc.cluster.local", Port: 3868}
+	if named.ID, err = d.CreatePeer(ctx, named); err != nil {
+		t.Fatalf("CreatePeer with a host name: %v", err)
+	}
+
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +70,8 @@ func TestPeersPersist(t *testing.T) {
 	t.Cleanup(func() { _ = d.Close() })
 
 	got := peersOf(t, d)
-	if len(got) != 2 || !got[0].Equal(dea1) || !got[1].Equal(hostless) {
-		t.Fatalf("Peers = %+v, want %+v and %+v", got, dea1, hostless)
+	if len(got) != 3 || !got[0].Equal(dea1) || !got[1].Equal(hostless) || !got[2].Equal(named) {
+		t.Fatalf("Peers = %+v, want %+v, %+v and %+v", got, dea1, hostless, named)
 	}
 }
 
@@ -89,6 +94,16 @@ func TestUpdatePeer(t *testing.T) {
 
 	if err := d.UpdatePeer(ctx, p); err != nil {
 		t.Fatalf("UpdatePeer: %v", err)
+	}
+
+	if got := peersOf(t, d); len(got) != 1 || !got[0].Equal(p) {
+		t.Fatalf("Peers = %+v, want %+v", got, p)
+	}
+
+	p.Name, p.Addresses = "dea1.ipx.example.net", nil
+
+	if err := d.UpdatePeer(ctx, p); err != nil {
+		t.Fatalf("UpdatePeer to a host name: %v", err)
 	}
 
 	if got := peersOf(t, d); len(got) != 1 || !got[0].Equal(p) {

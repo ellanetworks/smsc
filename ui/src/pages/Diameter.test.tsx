@@ -440,12 +440,59 @@ describe("Diameter", () => {
     expect(add).toBeDisabled();
 
     fireEvent.change(within(dialog).getByLabelText(/Addresses/), {
-      target: { value: "dea1.ipx.example.net" },
+      target: { value: "dea1.ipx.example.net:3868" },
     });
     expect(
-      within(dialog).getByText("dea1.ipx.example.net is not an IP address."),
+      within(dialog).getByText(
+        "dea1.ipx.example.net:3868 is not an IP address or a host name.",
+      ),
     ).toBeVisible();
     expect(add).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByLabelText(/Addresses/), {
+      target: { value: "dea1.ipx.example.net, 192.0.2.20" },
+    });
+    expect(
+      within(dialog).getByText(
+        "dea1.ipx.example.net is a host name: enter it alone, or IP addresses only.",
+      ),
+    ).toBeVisible();
+    expect(add).toBeDisabled();
+  });
+
+  it("adds a peer by host name", async () => {
+    const calls = serve(
+      () => json(200, { result: status }),
+      (_url, init) =>
+        init?.method === "POST"
+          ? json(201, { result: { ...dea, id: 2 } })
+          : json(200, { result: { items: [] } }),
+    );
+
+    renderWithClient(<Diameter />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add Peer" }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.change(within(dialog).getByLabelText(/Addresses/), {
+      target: { value: "ims.ella.svc.cluster.local" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(calls).toEqual([
+        {
+          method: "POST",
+          path: "/api/v1/diameter/peers",
+          body: {
+            host: "",
+            addresses: ["ims.ella.svc.cluster.local"],
+            port: 3868,
+            routes: [],
+          },
+        },
+      ]),
+    );
   });
 
   it("shows the server's reason when it refuses a peer", async () => {

@@ -43,3 +43,27 @@ func TestFailedSetPeersKeepsThePeersTheNodeHas(t *testing.T) {
 		t.Fatal("the node lost its peer")
 	}
 }
+
+func TestPeerWithAHostNameIsDialledByName(t *testing.T) {
+	peers := toDiameterPeers([]settings.Peer{{ID: 1, Name: "ims.ella.svc.cluster.local", Port: 3868}})
+
+	if len(peers) != 1 || peers[0].Name != "ims.ella.svc.cluster.local" || len(peers[0].Addresses) != 0 ||
+		peers[0].Dial == nil || peers[0].Dial.Port != 3868 {
+		t.Fatalf("peers = %+v", peers)
+	}
+
+	node, err := diameter.New(diameter.Config{
+		Identity: diameter.Identity{OriginHost: "smsc.example.org", OriginRealm: "example.org", ProductName: "smsc"},
+		Handler:  diameter.NewMux(),
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = node.Shutdown(context.Background()) })
+
+	if err := node.SetPeers(peers); err != nil {
+		t.Fatalf("SetPeers: %v", err)
+	}
+}

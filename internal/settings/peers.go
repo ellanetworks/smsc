@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ellanetworks/core/diameter"
 )
 
 // RFC 6733 section 2.1
@@ -28,6 +30,7 @@ var (
 type Peer struct {
 	ID        int64
 	Host      string
+	Name      string
 	Addresses []netip.Addr
 	Port      int
 	Routes    []Route
@@ -59,8 +62,13 @@ func (p Peer) Validate() error {
 		return fmt.Errorf("host %q must be a Diameter identity such as dea1.ipx.example.net", p.Host)
 	}
 
-	if len(p.Addresses) == 0 {
-		return errors.New("addresses must list at least one address")
+	switch {
+	case p.Name != "" && len(p.Addresses) > 0:
+		return errors.New("addresses must list either IP addresses or a single host name")
+	case p.Name != "" && (!diameter.IsValidHostname(p.Name) || strings.ToLower(p.Name) != p.Name):
+		return fmt.Errorf("host name %q must be a lowercase host name such as ims.ella.svc.cluster.local", p.Name)
+	case p.Name == "" && len(p.Addresses) == 0:
+		return errors.New("addresses must list at least one IP address, or a host name")
 	}
 
 	for i, a := range p.Addresses {
@@ -116,7 +124,7 @@ func (r Route) sameKey(o Route) bool {
 }
 
 func (p Peer) Equal(q Peer) bool {
-	return p.ID == q.ID && p.Host == q.Host && slices.Equal(p.Addresses, q.Addresses) && p.Port == q.Port &&
+	return p.ID == q.ID && p.Host == q.Host && p.Name == q.Name && slices.Equal(p.Addresses, q.Addresses) && p.Port == q.Port &&
 		slices.Equal(p.Routes, q.Routes)
 }
 
@@ -132,6 +140,8 @@ func (p Peer) Conflict(peers []Peer, selves []string) error {
 		case o.ID == p.ID:
 		case p.Host != "" && strings.EqualFold(o.Host, p.Host):
 			return fmt.Errorf("%w: peer %d has the host %s", ErrConflict, o.ID, p.Host)
+		case p.Host == "" && o.Host == "" && p.Name != "" && p.Name == o.Name:
+			return fmt.Errorf("%w: peer %d without a host has the host name %s", ErrConflict, o.ID, p.Name)
 		case p.Host == "" && o.Host == "":
 			for _, a := range p.Addresses {
 				if slices.Contains(o.Addresses, a) {

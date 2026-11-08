@@ -26,7 +26,7 @@ The examples use these values:
 In the Ella SMSC UI, go to **Diameter** and click **Add Peer**:
 
 - **Host**: `dea1.ipx.example.net`
-- **Addresses**: `192.0.2.10, 198.51.100.10`, every SCTP address of the agent.
+- **Addresses**: `192.0.2.10, 198.51.100.10`, every SCTP address of the agent, or a host name that resolves to them, such as `dea1.ipx.example.net`.
 - **Port**: `3868`
 
 Click **Add Route**, and keep **Application** set to **SGd** and **Destination** to **Default**. Click **Add**.

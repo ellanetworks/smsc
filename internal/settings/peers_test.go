@@ -55,6 +55,10 @@ func TestPeerValidate(t *testing.T) {
 		"host with a scheme":     func(p *Peer) { p.Host = "aaa://dea1.ipx.example.net" },
 		"realm with a wildcard":  func(p *Peer) { p.Routes[1].Realm = "*.3gppnetwork.org" },
 		"realm with whitespaces": func(p *Peer) { p.Routes[1].Realm = " " + visitedRealm },
+		"name and addresses":     func(p *Peer) { p.Name = "dea1.ipx.example.net" },
+		"invalid name":           func(p *Peer) { p.Name, p.Addresses = "dea1..example.net", nil },
+		"numeric name":           func(p *Peer) { p.Name, p.Addresses = "192.0.2", nil },
+		"uppercase name":         func(p *Peer) { p.Name, p.Addresses = "DEA1.ipx.example.net", nil },
 	}
 
 	if err := validPeer().Validate(); err != nil {
@@ -77,6 +81,15 @@ func TestPeerValidate(t *testing.T) {
 
 	if err := hostless.Validate(); err != nil {
 		t.Fatalf("a peer without a host or routes: %v", err)
+	}
+}
+
+func TestPeerValidateName(t *testing.T) {
+	p := validPeer()
+	p.Name, p.Addresses = "ims.ella.svc.cluster.local", nil
+
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a peer with a host name: %v", err)
 	}
 }
 
@@ -187,6 +200,23 @@ func TestLivePeerConflicts(t *testing.T) {
 	b.Host = "dea2.ipx.example.net"
 
 	if _, err := live.CreatePeer(ctx, b); err != nil {
+		t.Fatalf("CreatePeer: %v", err)
+	}
+
+	c := validPeer()
+	c.Host, c.Name, c.Addresses = "", "ims.ella.svc.cluster.local", nil
+
+	if _, err := live.CreatePeer(ctx, c); err != nil {
+		t.Fatalf("CreatePeer with a host name: %v", err)
+	}
+
+	if _, err := live.CreatePeer(ctx, c); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CreatePeer of two peers without a host on one host name = %v", err)
+	}
+
+	c.Host = "ims.ella.svc.cluster.local"
+
+	if _, err := live.CreatePeer(ctx, c); err != nil {
 		t.Fatalf("CreatePeer: %v", err)
 	}
 }

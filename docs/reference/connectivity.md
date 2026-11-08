@@ -9,7 +9,7 @@ description: Reference of the network interfaces and ports of Ella SMSC.
 | API and UI | Operators, applications, Prometheus | TCP | `api.address` | `api.port` (`5010`) |
 | Diameter: S6c | HSS | SCTP | `diameter.address`, or the addresses of `diameter.name` | `diameter.port` (`3868`) |
 | Diameter: SGd and Gdd | MME, SMSF, IP-SM-GW over SGd; SGSN over Gdd | SCTP | `diameter.address`, or the addresses of `diameter.name` | `diameter.port` (`3868`) |
-| Diameter: S6c and SGd, outbound | [Configured peers](api/diameter.md#create-a-peer): DEA, DRA | SCTP | The peer's `addresses` | The peer's `port` (`3868`) |
+| Diameter: S6c and SGd, outbound | [Configured peers](api/diameter.md#create-a-peer): DEA, DRA | SCTP | The peer's `addresses`, or the addresses of its host name | The peer's `port` (`3868`) |
 | [SMPP 3.4](smpp.md) | ESMEs, such as OTA platforms | TCP, or TLS with `smpp.tls` | `smpp.address` | `smpp.port` (`2775`) |
 | Cluster | The other Ella SMSC nodes | TCP, mutual TLS 1.3 | `cluster.address`, advertised as `cluster.advertise` | `cluster.port` (`7000`) |
 

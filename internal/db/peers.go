@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/smsc/internal/settings"
 )
 
@@ -65,13 +66,17 @@ func peerAddresses(ctx context.Context, q querier, peers []settings.Peer, index 
 			return fmt.Errorf("get peer addresses: %w", err)
 		}
 
+		p := &peers[index[id]]
+
 		a, err := netip.ParseAddr(address)
-		if err != nil {
+		switch {
+		case err == nil:
+			p.Addresses = append(p.Addresses, a)
+		case diameter.IsValidHostname(address):
+			p.Name = address
+		default:
 			return fmt.Errorf("get peer addresses: peer %d: %w", id, err)
 		}
-
-		p := &peers[index[id]]
-		p.Addresses = append(p.Addresses, a)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -233,9 +238,18 @@ func applyUpdatePeer(a *applyCtx, p settings.Peer) (struct{}, error) {
 }
 
 func insertPeerDetails(ctx context.Context, tx *sql.Tx, id int64, p settings.Peer) error {
-	for i, a := range p.Addresses {
+	addresses := make([]string, 0, len(p.Addresses)+1)
+	if p.Name != "" {
+		addresses = append(addresses, p.Name)
+	}
+
+	for _, a := range p.Addresses {
+		addresses = append(addresses, a.String())
+	}
+
+	for i, a := range addresses {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO diameter_peer_addresses (peer_id, position, address)
-			VALUES (?, ?, ?)`, id, i, a.String()); err != nil {
+			VALUES (?, ?, ?)`, id, i, a); err != nil {
 			return err
 		}
 	}
