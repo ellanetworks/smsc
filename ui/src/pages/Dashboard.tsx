@@ -20,13 +20,8 @@ import {
 import Grid from "@mui/material/Grid";
 import { useQuery } from "@tanstack/react-query";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
-import DomainName from "@/components/DomainName";
 import PageHeader from "@/components/PageHeader";
-import {
-  DiameterStateChip,
-  MessageStatusChip,
-  messageStatusColors,
-} from "@/components/chips";
+import { MessageStatusChip, messageStatusColors } from "@/components/chips";
 import { useAuth } from "@/contexts/AuthContext";
 import { getCluster, type ClusterStatus } from "@/queries/cluster";
 import {
@@ -39,7 +34,7 @@ import { getMessageCounts, type MessageStatus } from "@/queries/messages";
 import { getMetrics, sumOf } from "@/queries/metrics";
 import { getOIDCLogin } from "@/queries/oidc";
 import { getOperator } from "@/queries/operator";
-import { listESMEs } from "@/queries/smpp";
+import { type ESME, listESMEs } from "@/queries/smpp";
 import { formatDateTime } from "@/utils/dates";
 
 export const DASHBOARD_REFRESH_MS = 5000;
@@ -249,18 +244,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
-  return (
-    <TableRow>
-      <TableCell colSpan={colSpan}>
-        <Typography variant="body2" color="textSecondary">
-          {text}
-        </Typography>
-      </TableCell>
-    </TableRow>
-  );
-}
-
 const QUARTER = { xs: 12, sm: 6, md: 3 };
 
 const HA_HINTS = {
@@ -296,6 +279,70 @@ function clusterHealth(status?: ClusterStatus): {
   return {
     hint: status.healthy ? HA_HINTS.healthy : HA_HINTS.degraded,
     value: `${healthy}/${voters.length}`,
+  };
+}
+
+function Ratio({
+  value,
+  color,
+}: {
+  value: string;
+  color?: "warning.main" | "error.main";
+}) {
+  return (
+    <Typography variant="h4" sx={{ color }}>
+      {value}
+    </Typography>
+  );
+}
+
+function peersHealth(
+  peers: DiameterPeer[],
+  hss: string[],
+  nameOf: (peer: DiameterPeer) => string,
+): { hint: string; value: ReactNode; caption?: string } {
+  if (peers.length === 0) {
+    return { hint: "No Diameter peers are configured.", value: "None" };
+  }
+  const notOpen = peers.filter((p) => p.state !== "open");
+  const hssOpen = peers.some((p) => p.state === "open" && hss.includes(p.host));
+  const color =
+    notOpen.length === 0
+      ? undefined
+      : notOpen.length === peers.length || (hss.length > 0 && !hssOpen)
+        ? "error.main"
+        : "warning.main";
+  const hssCaption =
+    hss.length === 0 ? "No HSS route" : hssOpen ? "HSS open" : "HSS down";
+  return {
+    hint:
+      notOpen.length === 0
+        ? "Peers with an open connection out of all peers."
+        : `Not open: ${notOpen.map(nameOf).join(", ")}.`,
+    value: (
+      <Ratio
+        value={`${peers.length - notOpen.length}/${peers.length}`}
+        color={color}
+      />
+    ),
+    caption: `Open · ${hssCaption}`,
+  };
+}
+
+function esmesHealth(esmes: ESME[]): {
+  hint: string;
+  value: ReactNode;
+  caption?: string;
+} {
+  if (esmes.length === 0) {
+    return { hint: "No ESMEs are configured.", value: "None" };
+  }
+  const bound = esmes.filter((e) => e.sessions.length > 0).length;
+  const sessions = esmes.reduce((n, e) => n + e.sessions.length, 0);
+  return {
+    hint: "ESMEs with at least one bound session out of all ESMEs.",
+    value: <Ratio value={`${bound}/${esmes.length}`} />,
+    caption: `Bound · ${nf.format(sessions)} ${sessions === 1 ? "session" : "sessions"}`,
   };
 }
 
@@ -344,11 +391,12 @@ export default function Dashboard() {
     (configured.data ?? []).map((p) => [p.id, p.addresses.join(", ")]),
   );
   const peerName = (peer: DiameterPeer) =>
-    peer.host ? (
-      <DomainName name={peer.host} />
-    ) : (
-      peer.address || (peer.id !== undefined && addressesOf.get(peer.id)) || "—"
-    );
+    peer.host ||
+    peer.address ||
+    (peer.id !== undefined && addressesOf.get(peer.id)) ||
+    "unknown peer";
+  const diameterHealth = peersHealth(peers, hss, peerName);
+  const smppHealth = esmesHealth(esmes.data ?? []);
 
   const samples = metrics.data ?? [];
   const due = sumOf(samples, "ellasmsc_messages_pending", { state: "due" });
@@ -398,84 +446,26 @@ export default function Dashboard() {
           </Panel>
         </Grid>
         <Grid size={QUARTER}>
-          <Panel
+          <KpiCard
             title="Diameter Peers"
-            to="/diameter"
+            hint={diameterHealth.hint}
             loading={diameter.isPending}
             error={failedToLoad(diameter)}
-            alignTop
-          >
-            <TableContainer>
-              <Table size="small" aria-label="Diameter Peers">
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={headSx}>Host</TableCell>
-                    <TableCell sx={headSx}>State</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {peers.map((peer) => (
-                    <TableRow key={peer.id ?? `${peer.host}|${peer.address}`}>
-                      <TableCell>
-                        {peerName(peer)}
-                        {hss.includes(peer.host) && (
-                          <Chip
-                            label="HSS"
-                            size="small"
-                            variant="outlined"
-                            sx={{ ml: 1 }}
-                          />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <DiameterStateChip state={peer.state} />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {peers.length === 0 && (
-                    <EmptyRow colSpan={2} text="No Diameter peers." />
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Panel>
+            value={diameterHealth.value}
+            caption={diameterHealth.caption}
+            to="/diameter"
+          />
         </Grid>
         <Grid size={QUARTER}>
-          <Panel
+          <KpiCard
             title="SMPP"
-            to="/smpp"
+            hint={smppHealth.hint}
             loading={esmes.isPending}
             error={failedToLoad(esmes)}
-            alignTop
-          >
-            <TableContainer>
-              <Table size="small" aria-label="ESMEs">
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={headSx}>ESME</TableCell>
-                    <TableCell sx={headSx}>State</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {(esmes.data ?? []).map((esme) => (
-                    <TableRow key={esme.system_id}>
-                      <TableCell>{esme.system_id}</TableCell>
-                      <TableCell>
-                        {esme.sessions.length > 0 ? (
-                          <Chip label="Bound" color="success" size="small" />
-                        ) : (
-                          <Chip label="Not bound" size="small" />
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {esmes.data?.length === 0 && (
-                    <EmptyRow colSpan={2} text="No ESMEs." />
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Panel>
+            value={smppHealth.value}
+            caption={smppHealth.caption}
+            to="/smpp"
+          />
         </Grid>
         {auth.can("cluster:read") && (
           <Grid size={QUARTER}>
@@ -595,7 +585,7 @@ export default function Dashboard() {
         </Grid>
         <Grid size={{ xs: 12, md: 4 }}>
           <Tooltip
-            title="Short messages and status reports waiting for delivery, whatever their age. Due ones are being delivered now; if they stay due, delivery is falling behind. Waiting ones wait for a retry or for the phone to be reachable."
+            title="Due: being delivered now; a growing number means delivery is falling behind. Waiting: held for a retry or until the phone is reachable."
             arrow
             describeChild
           >

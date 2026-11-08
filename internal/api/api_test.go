@@ -876,6 +876,7 @@ func TestGetDiameterStatus(t *testing.T) {
 				{ID: s6c.ApplicationID, VendorID: tgpp.VendorID},
 				{ID: sgd.ApplicationID, VendorID: tgpp.VendorID},
 				{ID: 42},
+				{ID: diameter.RelayApplicationID},
 			},
 		}},
 	})
@@ -898,7 +899,7 @@ func TestGetDiameterStatus(t *testing.T) {
 			Realm:        "epc.mnc001.mcc001.3gppnetwork.org",
 			Address:      "10.0.0.5",
 			State:        "open",
-			Applications: []string{"s6c", "sgd", "42"},
+			Applications: []string{"s6c", "sgd", "42", "relay"},
 			Since:        "2026-09-29T09:59:00.000Z",
 		}},
 	}

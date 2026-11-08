@@ -124,7 +124,7 @@ const columns = (
                   aria-label={`Delete ${row.system_id}`}
                   onClick={() => onDelete(row)}
                 >
-                  <DeleteIcon fontSize="small" color="error" />
+                  <DeleteIcon fontSize="small" color="primary" />
                 </IconButton>
               </Tooltip>
             </>

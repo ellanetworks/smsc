@@ -12,6 +12,7 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
+  WarningAmber as WarningIcon,
 } from "@mui/icons-material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { GRID_SX } from "@/utils/layout";
@@ -20,7 +21,6 @@ import {
   deletePeer,
   type DiameterPeer,
   getDiameterStatus,
-  hssPeers,
   listPeers,
   type Peer,
   type PeerRoute,
@@ -30,6 +30,7 @@ import { DiameterStateChip } from "@/components/chips";
 import DiameterHost from "@/components/DiameterHost";
 import DomainName from "@/components/DomainName";
 import PageHeader from "@/components/PageHeader";
+import { HostInRealm, RealmName } from "@/components/RealmRelative";
 import PeerDialog from "@/components/PeerDialog";
 import QueryAlert from "@/components/QueryAlert";
 import SettingsTable from "@/components/SettingsTable";
@@ -42,6 +43,7 @@ export const DIAMETER_REFRESH_MS = 5000;
 const applicationLabels: Record<string, string> = {
   s6c: "S6c",
   sgd: "SGd",
+  relay: "Relay",
 };
 
 const applicationLabel = (name: string) => applicationLabels[name] ?? name;
@@ -52,6 +54,36 @@ const endpoint = (address: string, port: number) =>
 const routeLabel = (r: PeerRoute) =>
   `${applicationLabel(r.application)} → ${r.default ? "Default" : r.realm}` +
   (r.priority > 0 ? ` (priority ${r.priority})` : "");
+
+function Applications({
+  applications,
+  routed = [],
+}: {
+  applications: string[];
+  routed?: string[];
+}) {
+  if (applications.length === 0) {
+    return "—";
+  }
+  const missing = applications.includes("relay")
+    ? []
+    : [...new Set(routed)].filter((a) => !applications.includes(a));
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+      <span>{applications.map(applicationLabel).join(", ")}</span>
+      {missing.length > 0 && (
+        <Tooltip
+          title={`Routes ${missing.map(applicationLabel).join(", ")}, which the peer does not advertise: those requests fail.`}
+          arrow
+        >
+          <Box component="span" tabIndex={0} sx={{ display: "inline-flex" }}>
+            <WarningIcon fontSize="small" color="warning" />
+          </Box>
+        </Tooltip>
+      )}
+    </Stack>
+  );
+}
 
 function PeerStateChip({ peer }: { peer: Peer }) {
   const status = peer.status;
@@ -70,15 +102,14 @@ function PeerStateChip({ peer }: { peer: Peer }) {
   );
 }
 
-type ConnectedRow = DiameterPeer & { hss: boolean };
-
-const connectedColumns: GridColDef<ConnectedRow>[] = [
+const connectedColumns = (realm: string): GridColDef<DiameterPeer>[] => [
   {
     field: "host",
     headerName: "Host",
     flex: 1,
     minWidth: 180,
-    renderCell: ({ row }) => (row.host ? <DomainName name={row.host} /> : "—"),
+    renderCell: ({ row }) =>
+      row.host ? <HostInRealm host={row.host} realm={realm} /> : "—",
   },
   {
     field: "realm",
@@ -86,7 +117,7 @@ const connectedColumns: GridColDef<ConnectedRow>[] = [
     flex: 1,
     minWidth: 180,
     renderCell: ({ row }) =>
-      row.realm ? <DomainName name={row.realm} /> : "—",
+      row.realm ? <RealmName name={row.realm} realm={realm} /> : "—",
   },
   {
     field: "address",
@@ -96,26 +127,18 @@ const connectedColumns: GridColDef<ConnectedRow>[] = [
     valueGetter: (_value, row) => row.address || "—",
   },
   {
+    field: "applications",
+    headerName: "Applications",
+    flex: 0.5,
+    minWidth: 120,
+    renderCell: ({ row }) => <Applications applications={row.applications} />,
+  },
+  {
     field: "state",
     headerName: "State",
     flex: 0.4,
     minWidth: 110,
     renderCell: ({ row }) => <DiameterStateChip state={row.state} />,
-  },
-  {
-    field: "hss",
-    headerName: "HSS",
-    flex: 0.3,
-    minWidth: 80,
-    valueGetter: (_value, row) => (row.hss ? "yes" : "no"),
-  },
-  {
-    field: "applications",
-    headerName: "Applications",
-    flex: 0.5,
-    minWidth: 120,
-    valueGetter: (_value, row) =>
-      row.applications.map(applicationLabel).join(", ") || "—",
   },
   {
     field: "since",
@@ -126,9 +149,10 @@ const connectedColumns: GridColDef<ConnectedRow>[] = [
   },
 ];
 
-type ConfiguredRow = Peer & { hss: boolean };
+type ConfiguredRow = Peer & { applications: string[] };
 
 const configuredColumns = (
+  realm: string,
   editable: boolean,
   onEdit: (peer: Peer) => void,
   onDelete: (peer: Peer) => void,
@@ -140,7 +164,7 @@ const configuredColumns = (
     minWidth: 180,
     renderCell: ({ row }) => {
       const host = row.host || row.status?.host;
-      return host ? <DomainName name={host} /> : "—";
+      return host ? <HostInRealm host={host} realm={realm} /> : "—";
     },
   },
   {
@@ -169,7 +193,11 @@ const configuredColumns = (
           {row.routes.map((r) => (
             <span key={routeLabel(r)}>
               {applicationLabel(r.application)} →{" "}
-              {r.default ? "Default" : <DomainName name={r.realm ?? ""} />}
+              {r.default ? (
+                "Default"
+              ) : (
+                <RealmName name={r.realm ?? ""} realm={realm} />
+              )}
               {r.priority > 0 ? ` (priority ${r.priority})` : ""}
             </span>
           ))}
@@ -177,18 +205,23 @@ const configuredColumns = (
       ),
   },
   {
+    field: "applications",
+    headerName: "Applications",
+    flex: 0.5,
+    minWidth: 120,
+    renderCell: ({ row }) => (
+      <Applications
+        applications={row.applications}
+        routed={row.routes.map((r) => r.application)}
+      />
+    ),
+  },
+  {
     field: "state",
     headerName: "State",
     flex: 0.4,
     minWidth: 110,
     renderCell: ({ row }) => <PeerStateChip peer={row} />,
-  },
-  {
-    field: "hss",
-    headerName: "HSS",
-    flex: 0.3,
-    minWidth: 80,
-    valueGetter: (_value, row) => (row.hss ? "yes" : "no"),
   },
   ...(editable
     ? [
@@ -217,7 +250,7 @@ const configuredColumns = (
                     aria-label={`Delete ${name}`}
                     onClick={() => onDelete(row)}
                   >
-                    <DeleteIcon fontSize="small" color="error" />
+                    <DeleteIcon fontSize="small" color="primary" />
                   </IconButton>
                 </Tooltip>
               </>
@@ -250,7 +283,11 @@ export default function Diameter() {
     refetchInterval: DIAMETER_REFRESH_MS,
   });
   const { data, isPending } = diameter;
-  const hss = data ? hssPeers(data) : [];
+  const advertised = new Map(
+    (data?.peers ?? [])
+      .filter((p) => p.configured && p.id !== undefined)
+      .map((p) => [p.id, p.applications]),
+  );
   const connected = data?.peers.filter((p) => !p.configured);
 
   const remove = useMutation({
@@ -330,10 +367,14 @@ export default function Diameter() {
           aria-label="Configured Peers"
           rows={configured.data.map((peer) => ({
             ...peer,
-            hss:
-              peer.status?.host !== undefined && hss.includes(peer.status.host),
+            applications: advertised.get(peer.id) ?? [],
           }))}
-          columns={configuredColumns(editable, setEditing, setDeleting)}
+          columns={configuredColumns(
+            data?.realm ?? "",
+            editable,
+            setEditing,
+            setDeleting,
+          )}
           getRowHeight={() => "auto"}
           disableColumnSorting
           disableColumnFilter
@@ -362,13 +403,10 @@ export default function Diameter() {
       </Box>
       {isPending && <Skeleton variant="rounded" height={160} />}
       {connected && (
-        <DataGrid<ConnectedRow>
+        <DataGrid<DiameterPeer>
           aria-label="Connected Peers"
-          rows={connected.map((peer) => ({
-            ...peer,
-            hss: hss.includes(peer.host),
-          }))}
-          columns={connectedColumns}
+          rows={connected}
+          columns={connectedColumns(data?.realm ?? "")}
           getRowId={(peer) => `${peer.host}|${peer.address}`}
           disableColumnSorting
           disableColumnFilter

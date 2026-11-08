@@ -160,62 +160,43 @@ describe("Diameter", () => {
       within(connectedGrid())
         .getAllByRole("columnheader")
         .map((h) => h.textContent),
-    ).toEqual([
-      "Host",
-      "Realm",
-      "Address",
-      "State",
-      "HSS",
-      "Applications",
-      "Since",
-    ]);
+    ).toEqual(["Host", "Realm", "Address", "Applications", "State", "Since"]);
     expect(rowCells("10.0.0.5")).toEqual([
-      "hss.epc.example.org",
-      "epc.example.org",
+      "hss",
+      "Home realm",
       "10.0.0.5",
-      "Open",
-      "yes",
       "S6c, SGd, 16777999",
+      "Open",
       "2026-09-30 12:05:18",
     ]);
     expect(rowCells("10.0.0.6")).toEqual([
       "—",
       "—",
       "10.0.0.6",
-      "Connecting",
-      "no",
       "—",
+      "Connecting",
       "2026-09-30 12:05:18",
     ]);
   });
 
-  it("marks only the peers of the S6c route to this SMSC's realm as HSSs", async () => {
-    serve(() =>
-      json(200, {
-        result: {
-          ...status,
-          routes: [
-            {
-              realm: "epc.other.org",
-              default: false,
-              application: "s6c",
-              peers: ["hss.epc.example.org"],
-            },
-            {
-              realm: "EPC.example.org",
-              default: false,
-              application: "s6c",
-              peers: [],
-            },
-          ],
-        },
-      }),
-    );
+  it("names the peers and realms of this SMSC's realm relative to it", async () => {
+    serve(() => json(200, { result: status }));
 
     renderWithClient(<Diameter />);
 
     await screen.findByText("10.0.0.5");
-    expect(rowCells("10.0.0.5")[4]).toBe("no");
+    const host = within(connectedGrid()).getByText("hss");
+    expect(host).toHaveAccessibleName("hss.epc.example.org");
+    expect(
+      within(connectedGrid()).getByLabelText("epc.example.org"),
+    ).toHaveTextContent("Home realm");
+    fireEvent.mouseOver(host);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "hss.epc.example.org",
+    );
+    expect(
+      await within(configuredGrid()).findByText("dea1.ipx.example.net"),
+    ).toBeInTheDocument();
   });
 
   it("shows an empty table without peers", async () => {
@@ -322,12 +303,53 @@ describe("Diameter", () => {
       expect(rowCells("dea1.ipx.example.net", configuredGrid())).toEqual([
         "dea1.ipx.example.net",
         "192.0.2.10:3868[2001:db8::10]:3868",
-        "SGd → DefaultS6c → epc.example.org (priority 1)",
+        "SGd → DefaultS6c → Home realm (priority 1)",
+        "S6c, SGd",
         "Open",
-        "yes",
         "",
       ]),
     );
+  });
+
+  it("warns when a configured peer does not advertise a routed application", async () => {
+    serve(() =>
+      json(200, {
+        result: {
+          ...status,
+          peers: [{ ...status.peers[2], applications: ["sgd"] }],
+        },
+      }),
+    );
+
+    renderWithClient(<Diameter />);
+
+    expect(
+      await screen.findByLabelText(
+        "Routes S6c, which the peer does not advertise: those requests fail.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("names the relay application and does not warn for a relay agent", async () => {
+    serve(() =>
+      json(200, {
+        result: {
+          ...status,
+          peers: [{ ...status.peers[2], applications: ["relay"] }],
+        },
+      }),
+    );
+
+    renderWithClient(<Diameter />);
+
+    await waitFor(() =>
+      expect(rowCells("dea1.ipx.example.net", configuredGrid())[3]).toBe(
+        "Relay",
+      ),
+    );
+    expect(
+      within(configuredGrid()).queryByLabelText(/does not advertise/),
+    ).not.toBeInTheDocument();
   });
 
   it("shows a configured peer that is down with its error", async () => {

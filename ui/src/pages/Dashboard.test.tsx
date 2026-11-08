@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { authFor } from "@/contexts/AuthContext";
 import Dashboard from "@/pages/Dashboard";
@@ -162,7 +162,7 @@ describe("Dashboard", () => {
         .getAllByRole("heading", { level: 3 })
         .map((h) => h.textContent);
 
-    await screen.findByRole("table", { name: "Diameter Peers" });
+    await within(card("Diameter Peers")).findByText("1/2");
     expect(titles("Overview")).toEqual([
       "This SMSC",
       "Diameter Peers",
@@ -188,26 +188,48 @@ describe("Dashboard", () => {
     expect(card("This SMSC")).toHaveTextContent("+15550000000");
   });
 
-  it("lists the Diameter peers, tagging the HSS", async () => {
+  it("counts the open Diameter peers and says whether the HSS is open", async () => {
     serve();
     render();
 
-    await screen.findByRole("table", { name: "Diameter Peers" });
-    expect(rows("Diameter Peers")).toEqual([
-      ["hss.epc.example.orgHSS", "Open"],
-      ["mme.epc.example.org", "Down"],
-    ]);
+    expect(
+      await within(card("Diameter Peers")).findByText("1/2"),
+    ).toBeInTheDocument();
+    expect(card("Diameter Peers")).toHaveTextContent("Open · HSS open");
+    expect(
+      screen.getByRole("link", { name: /Diameter Peers/ }),
+    ).toHaveAccessibleDescription("Not open: mme.epc.example.org.");
   });
 
-  it("lists the ESMEs, bound or not", async () => {
+  it("says when the HSS is down", async () => {
+    serve({
+      routes: {
+        "/api/v1/diameter": () =>
+          json(200, {
+            result: {
+              ...diameter,
+              peers: [
+                peer("hss.epc.example.org", "down", "10.0.0.5"),
+                peer("mme.epc.example.org", "open", "10.0.0.6"),
+              ],
+            },
+          }),
+      },
+    });
+    render();
+
+    expect(
+      await within(card("Diameter Peers")).findByText("1/2"),
+    ).toBeInTheDocument();
+    expect(card("Diameter Peers")).toHaveTextContent("HSS down");
+  });
+
+  it("counts the bound ESMEs and their sessions", async () => {
     serve();
     render();
 
-    await screen.findByRole("table", { name: "ESMEs" });
-    expect(rows("ESMEs")).toEqual([
-      ["billing", "Bound"],
-      ["alerts", "Not bound"],
-    ]);
+    expect(await within(card("SMPP")).findByText("1/2")).toBeInTheDocument();
+    expect(card("SMPP")).toHaveTextContent("Bound · 2 sessions");
   });
 
   it("counts the messages of the last 24 hours by status", async () => {
@@ -290,11 +312,11 @@ describe("Dashboard", () => {
     serve();
     render();
 
-    await screen.findByRole("table", { name: "Diameter Peers" });
+    await within(card("Diameter Peers")).findByText("1/2");
     expect(
-      screen.getByRole("link", { name: "Diameter Peers" }),
+      screen.getByRole("link", { name: /Diameter Peers/ }),
     ).toHaveAttribute("href", "/diameter");
-    expect(screen.getByRole("link", { name: "SMPP" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /SMPP/ })).toHaveAttribute(
       "href",
       "/smpp",
     );
@@ -346,11 +368,14 @@ describe("Dashboard", () => {
     });
     render();
 
-    await screen.findByText("192.0.2.10");
-    expect(rows("Diameter Peers")).toEqual([
-      ["192.0.2.10", "Connecting"],
-      ["192.0.2.20, 2001:db8::20", "Connecting"],
-    ]);
+    await within(card("Diameter Peers")).findByText("0/2");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: /Diameter Peers/ }),
+      ).toHaveAccessibleDescription(
+        "Not open: 192.0.2.10, 192.0.2.20, 2001:db8::20.",
+      ),
+    );
   });
 
   it("says when there are no peers and no ESMEs", async () => {
@@ -363,8 +388,10 @@ describe("Dashboard", () => {
     });
     render();
 
-    expect(await screen.findByText("No Diameter peers.")).toBeInTheDocument();
-    expect(await screen.findByText("No ESMEs.")).toBeInTheDocument();
+    expect(
+      await within(card("Diameter Peers")).findByText("None"),
+    ).toBeInTheDocument();
+    expect(await within(card("SMPP")).findByText("None")).toBeInTheDocument();
   });
 
   it("shows no share when there are no messages", async () => {

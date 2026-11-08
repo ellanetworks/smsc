@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/s6c"
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/smsc/internal/settings"
@@ -99,6 +100,8 @@ func applicationName(id uint32) string {
 		return "s6c"
 	case sgd.ApplicationID:
 		return "sgd"
+	case diameter.RelayApplicationID:
+		return "relay"
 	default:
 		return strconv.FormatUint(uint64(id), 10)
 	}
