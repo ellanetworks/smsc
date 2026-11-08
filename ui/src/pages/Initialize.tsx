@@ -71,7 +71,7 @@ export default function Initialize() {
 
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poller: { timer?: ReturnType<typeof setTimeout> } = {};
     const check = async () => {
       let poll = false;
       try {
@@ -88,12 +88,12 @@ export default function Initialize() {
       } catch {}
       if (cancelled) return;
       setChecking(false);
-      if (poll) timer = setTimeout(check, FORMATION_POLL_MS);
+      if (poll) poller.timer = setTimeout(check, FORMATION_POLL_MS);
     };
     check();
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      clearTimeout(poller.timer);
     };
   }, [navigate]);
 
