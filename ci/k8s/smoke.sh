@@ -214,12 +214,19 @@ initialize() {
 # Checks that the cluster has the three pods as voters, each with its pod name
 # as its Diameter label, and prints its members.
 check_members() {
-  local cluster
-  cluster="$(api /cluster)"
+  local cluster voters=false
+  for _ in $(seq 30); do
+    cluster="$(api /cluster)"
+    if echo "${cluster}" | jq -e '
+      [.result.members[] | select(.suffrage == "voter") | .diameter_label] | sort == ["ella-smsc-0", "ella-smsc-1", "ella-smsc-2"]
+    ' >/dev/null; then
+      voters=true
+      break
+    fi
+    sleep 2
+  done
   echo "${cluster}" | jq -c '.result.members[] | {node_id, address, diameter_host, suffrage, healthy}'
-  echo "${cluster}" | jq -e '
-    [.result.members[] | select(.suffrage == "voter") | .diameter_label] | sort == ["ella-smsc-0", "ella-smsc-1", "ella-smsc-2"]
-  ' >/dev/null || fail "the cluster does not have the three pods as voters"
+  [ "${voters}" = true ] || fail "the cluster does not have the three pods as voters"
   echo "${cluster}" | jq -e '.result.members | all(.address | test("^ella-smsc-[0-2]\\.ella-smsc-internal\\."))' >/dev/null \
     || fail "a member does not advertise its per-pod DNS name"
   echo "${cluster}" | jq -r '[.result.members[].node_id] | sort | join(" ")'
