@@ -15,8 +15,6 @@ spec:
     protocol: TCP
     port: 5010
     targetPort: 5010
-  # SMPP. The listener runs only with an smpp block in the ConfigMap. TLS, if
-  # any, is terminated in the pod.
   - name: smpp
     protocol: TCP
     port: 2775

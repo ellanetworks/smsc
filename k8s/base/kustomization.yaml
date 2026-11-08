@@ -1,5 +1,3 @@
-# What the variants share: k8s/, one node, k8s/ha/, a cluster of three nodes,
-# and k8s/examples/multus/, one node with Diameter on a Multus interface.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

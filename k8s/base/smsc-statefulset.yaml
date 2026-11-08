@@ -9,8 +9,6 @@ metadata:
 spec:
   replicas: 1
   serviceName: ella-smsc-internal
-  # Start and replace pods without waiting for the others to be ready: a
-  # survivor without a leader stays unready until the missing pods return.
   podManagementPolicy: Parallel
   selector:
     matchLabels:

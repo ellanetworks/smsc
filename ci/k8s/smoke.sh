@@ -1,33 +1,4 @@
 #!/usr/bin/env bash
-# Smoke test of the Kubernetes manifests in k8s/: deploys them, through the
-# overlay ci/k8s/<MODE>, on a single-node kind cluster, and checks the SMSC over
-# its API Service, over Diameter, across a restart and, when PREVIOUS_IMAGE is
-# set, across an upgrade. This host plays the core with the load client of
-# internal/loadtest.
-#
-# MODE multus deploys k8s/examples/multus/. The kind node gets a second interface, eth1, on a
-# Docker network that stands for the signalling network: 192.168.252.0/24, as
-# in the manifests, so the NAD and the ConfigMap are deployed as shipped. This
-# host is 192.168.252.1 on it, and reaches Diameter and the API on the SMSC's
-# Multus address.
-#
-# MODE pod-network deploys k8s/, with no Multus. This host reaches
-# Diameter and the API on the node, through the NodePort Services its overlay sets.
-#
-# MODE ha deploys k8s/ha/ on a kind cluster of three worker nodes, with the
-# cluster secret created as the deploy guide says. It checks that the three
-# pods form one cluster on their own, become ready once the first admin is
-# created on ella-smsc-0 through a port forward, and survive a rolling
-# restart. PREVIOUS_IMAGE is ignored.
-#
-# Needs docker, kind, kubectl, kubeconform, go, curl, jq and the sctp kernel
-# module. Environment:
-#   MODE            multus, pod-network or ha (multus)
-#   IMAGE           the image under test, in the local Docker (ella-smsc:latest)
-#   PREVIOUS_IMAGE  an image to deploy first and upgrade from (none)
-#   SIGNALLING_NET  the first three octets of the signalling network
-#                   (192.168.252), to change on a host that already has it
-#   KEEP            set to keep the cluster and the network afterwards
 set -euo pipefail
 
 MODE="${MODE:-multus}"
@@ -39,10 +10,8 @@ NODE="${CLUSTER}-control-plane"
 NETWORK=smsc-signalling
 NET="${SIGNALLING_NET:-192.168.252}"
 SUBNET="${NET}.0/24"
-# Docker gives addresses from the upper half only, so the SMSC's address stays free.
 IP_RANGE="${NET}.128/25"
 GATEWAY="${NET}.1"
-# The address in the NAD and the ConfigMap of k8s/examples/multus/.
 SHIPPED_IP=192.168.252.7
 SMSC_IP="${NET}.7"
 NS=ella
@@ -93,27 +62,20 @@ multus | pod-network | ha) ;;
 *) fail "MODE must be multus, pod-network or ha, not ${MODE}" ;;
 esac
 
-# Where this host reaches the SMSC, set once it is deployed.
 SMSC_ADDR=""
 DIAMETER_PORT=3868
 API_PORT=5010
 
-# The admin that the smoke test creates, and the API token with which it calls
-# the API, set by log_in.
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD="smoke test password"
 TOKEN=""
 
-# The JSON result of an API call, with the API token once there is one.
 api() {
   local auth=()
   [ -z "${TOKEN}" ] || auth=(-H "Authorization: Bearer ${TOKEN}")
   curl -fsS --max-time 10 "${auth[@]}" "http://${SMSC_ADDR}:${API_PORT}/api/v1$1" "${@:2}"
 }
 
-# Creates the admin if the SMSC has no user yet, logs it in, and creates the
-# API token that api sends from then on. Unlike an access token, it outlives
-# the smoke test.
 log_in() {
   local credentials jwt
   credentials="$(jq -n --arg email "${ADMIN_EMAIL}" --arg password "${ADMIN_PASSWORD}" '{email: $email, password: $password}')"
@@ -128,8 +90,6 @@ log_in() {
 
 node_port() { k get service "$1" -o jsonpath="{.spec.ports[?(@.name==\"$2\")].nodePort}"; }
 
-# Waits for ella-smsc-0 to be ready, not being deleted, and another pod than
-# the one of UID $1, if given: the replacement of a deleted pod has its name.
 wait_ready() {
   k rollout status statefulset/ella-smsc --timeout=180s
   local deadline=$((SECONDS + 120)) uid deleting ready
@@ -144,7 +104,6 @@ wait_ready() {
   fail "ella-smsc-0 did not become ready"
 }
 
-# Waits for the API to answer, through the address and port this host uses.
 wait_api() {
   for _ in $(seq 30); do
     api /status >/dev/null 2>&1 && return 0
@@ -153,12 +112,10 @@ wait_api() {
   fail "the API does not answer at ${SMSC_ADDR}:${API_PORT}"
 }
 
-# Deploys the overlay with the given image, loaded into the cluster as ella-smsc:ci.
 deploy() {
   docker tag "$1" ella-smsc:ci
   kind load docker-image ella-smsc:ci --name "${CLUSTER}"
   kubectl kustomize "${ROOT}/ci/k8s/${MODE}" | sed "s/${SHIPPED_IP//./\\.}/${SMSC_IP}/g" | kubectl apply -f -
-  # The tag does not change between deploys, so restart to run the new image.
   local old=""
   if [ "${2:-}" = restart ]; then
     old="$(k get pod ella-smsc-0 -o jsonpath='{.metadata.uid}')"
@@ -179,7 +136,6 @@ deploy() {
 PODS=(ella-smsc-0 ella-smsc-1 ella-smsc-2)
 FORWARD_PORT=15010
 
-# Forwards FORWARD_PORT on this host to the API of pod $1, and points api at it.
 forward() {
   [ -z "${FORWARD_PID}" ] || kill "${FORWARD_PID}" 2>/dev/null || true
   k port-forward "pod/$1" "${FORWARD_PORT}:5010" >"${WORK}/forward.log" 2>&1 &
@@ -189,14 +145,11 @@ forward() {
   wait_api
 }
 
-# Waits for every pod of the StatefulSet to be ready, and for the rollout to end.
 wait_all_ready() {
   k rollout status statefulset/ella-smsc --timeout=300s
   k wait --for=condition=Ready pod -l app.kubernetes.io/name=ella-smsc --timeout=180s
 }
 
-# Creates the first admin on the pod behind the port forward, retrying while
-# the cluster forms: until then the node answers 503.
 initialize() {
   local credentials code
   credentials="$(jq -n --arg email "${ADMIN_EMAIL}" --arg password "${ADMIN_PASSWORD}" '{email: $email, password: $password}')"
@@ -211,8 +164,6 @@ initialize() {
   fail "cannot create the first admin on ella-smsc-0, last answer ${code}"
 }
 
-# Checks that the cluster has the three pods as voters, each with its pod name
-# as its Diameter label, and prints its members.
 check_members() {
   local cluster voters=false
   for _ in $(seq 30); do
@@ -326,7 +277,6 @@ if [ "${MODE}" = multus ]; then
   docker exec "${NODE}" ip -br addr show eth1
   LOCAL_IP="${GATEWAY}"
 else
-  # This host on the kind network.
   LOCAL_IP="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}' | tr ' ' '\n' | grep -m1 -F .)"
 fi
 endstep
@@ -405,8 +355,6 @@ step "Exchange short messages over Diameter at ${SMSC_ADDR}:${DIAMETER_PORT}"
 "${WORK}/loadtest.test" -test.run TestLoad -test.v -load -smsc "${SMSC_ADDR}" -local "${LOCAL_IP}" \
   -diameter-port "${DIAMETER_PORT}" -api-port "${API_PORT}" -email "${ADMIN_EMAIL}" -password "${ADMIN_PASSWORD}" \
   -subs 100 -rates 20 -step 10s -drain 30s
-# The load client reports, but does not check, the deliveries. The message
-# stored before the upgrade is to a phone no core serves, so it stays pending.
 for status in pending failed expired; do
   left="$(api "/messages?status=${status}&per_page=100" \
     | jq --argjson before "${BEFORE_UPGRADE:-0}" '[.result.items[] | select(.id != $before)] | length')"
@@ -419,8 +367,6 @@ endstep
 
 step "Restart the pod"
 uid="$(k get pod ella-smsc-0 -o jsonpath='{.metadata.uid}')"
-# The pod keeps its name, so its logs and exit code are gone once it is
-# replaced: follow them from before the deletion.
 k logs -f ella-smsc-0 >"${WORK}/stopped.log" 2>&1 &
 k get pod ella-smsc-0 -w -o jsonpath='{.metadata.uid} {.status.containerStatuses[0].state.terminated.exitCode}{"\n"}' \
   >"${WORK}/watch.txt" 2>&1 &
