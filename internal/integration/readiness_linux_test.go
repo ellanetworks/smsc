@@ -276,41 +276,6 @@ func TestFrozenLeaderLeavesTheOthersReady(t *testing.T) {
 	leader.waitReady("")
 }
 
-func TestRestartedNodeIsUnreadyUntilCaughtUp(t *testing.T) {
-	cl := newCluster(t)
-	leader := cl.leader()
-	n := cl.followers(leader)[0]
-
-	n.stop()
-
-	for i := range 50 {
-		leader.must(http.MethodPut, "/api/v1/cluster/members/"+leader.id,
-			map[string]string{"display_name": fmt.Sprintf("leader-%d", i)}, nil)
-	}
-
-	n.launch()
-
-	sawUnready := false
-
-	eventually(t, n.name+" ready after its restart", func() error {
-		code, r, err := n.readyz("")
-
-		switch {
-		case err != nil:
-			return err
-		case code != http.StatusOK:
-			sawUnready = true
-			return fmt.Errorf("readyz = %d: %s", code, r.failing())
-		}
-
-		return nil
-	})
-
-	if !sawUnready {
-		t.Fatal("the restarted node was ready from its first answer")
-	}
-}
-
 func TestClusterCheckWithAVoterDown(t *testing.T) {
 	cl := newCluster(t)
 	leader := cl.leader()

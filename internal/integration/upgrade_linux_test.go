@@ -340,7 +340,7 @@ func TestSchemaWaitsForADownMemberUntilRemoved(t *testing.T) {
 	behind.kill()
 	cl.holdsSchema(from, upgradeSettle)
 
-	cl.otherThan(behind).must(http.MethodDelete, "/api/v1/cluster/members/"+behind.id+"?force=true", nil, nil)
+	cl.leader().must(http.MethodDelete, "/api/v1/cluster/members/"+behind.id+"?force=true", nil, nil)
 
 	eventually(t, "the cluster on the next schema", func() error { return cl.expectSchema(from + 1) })
 
