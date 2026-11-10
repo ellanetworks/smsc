@@ -137,8 +137,11 @@ PODS=(ella-smsc-0 ella-smsc-1 ella-smsc-2)
 FORWARD_PORT=15010
 
 forward() {
-  [ -z "${FORWARD_PID}" ] || kill "${FORWARD_PID}" 2>/dev/null || true
-  k port-forward "pod/$1" "${FORWARD_PORT}:5010" >"${WORK}/forward.log" 2>&1 &
+  if [ -n "${FORWARD_PID}" ]; then
+    kill "${FORWARD_PID}" 2>/dev/null || true
+    wait "${FORWARD_PID}" 2>/dev/null || true
+  fi
+  kubectl -n "${NS}" port-forward "pod/$1" "${FORWARD_PORT}:5010" >"${WORK}/forward.log" 2>&1 &
   FORWARD_PID=$!
   SMSC_ADDR=127.0.0.1
   API_PORT="${FORWARD_PORT}"
@@ -368,7 +371,7 @@ endstep
 step "Restart the pod"
 uid="$(k get pod ella-smsc-0 -o jsonpath='{.metadata.uid}')"
 k logs -f ella-smsc-0 >"${WORK}/stopped.log" 2>&1 &
-k get pod ella-smsc-0 -w -o jsonpath='{.metadata.uid} {.status.containerStatuses[0].state.terminated.exitCode}{"\n"}' \
+kubectl -n "${NS}" get pod ella-smsc-0 -w -o jsonpath='{.metadata.uid} {.status.containerStatuses[0].state.terminated.exitCode}{"\n"}' \
   >"${WORK}/watch.txt" 2>&1 &
 WATCH_PID=$!
 k delete pod ella-smsc-0 --wait=false
