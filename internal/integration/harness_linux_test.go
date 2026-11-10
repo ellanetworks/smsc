@@ -284,7 +284,27 @@ func (n *node) stop() {
 	}
 }
 
-func (n *node) freeze() { _ = n.cmd.Process.Signal(syscall.SIGSTOP) }
+func (n *node) freeze() {
+	n.t.Helper()
+
+	_ = n.cmd.Process.Signal(syscall.SIGSTOP)
+
+	stat := filepath.Join("/proc", strconv.Itoa(n.cmd.Process.Pid), "stat")
+
+	eventually(n.t, n.name+" stopped", func() error {
+		raw, err := os.ReadFile(stat)
+		if err != nil {
+			return err
+		}
+
+		_, after, ok := bytes.Cut(raw, []byte(") "))
+		if !ok || len(after) == 0 || after[0] != 'T' {
+			return fmt.Errorf("state %q", after[:min(1, len(after))])
+		}
+
+		return nil
+	})
+}
 
 func (n *node) thaw() { _ = n.cmd.Process.Signal(syscall.SIGCONT) }
 
