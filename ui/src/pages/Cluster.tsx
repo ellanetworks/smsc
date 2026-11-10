@@ -34,6 +34,7 @@ import PageHeader from "@/components/PageHeader";
 import QueryAlert from "@/components/QueryAlert";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  answersAsLeader,
   getCluster,
   memberLabel,
   type ClusterMember,
@@ -88,13 +89,6 @@ function SuffrageChip({ suffrage }: { suffrage: ClusterMember["suffrage"] }) {
 }
 
 function HealthChip({ member }: { member: ClusterMember }) {
-  if (member.diverged) {
-    return (
-      <Tooltip title="This node's database differs from the leader's." arrow>
-        <Chip label="Diverged" size="small" color="error" />
-      </Tooltip>
-    );
-  }
   if (member.healthy === undefined) {
     return (
       <Tooltip title="The leader has not reported on this node yet." arrow>
@@ -114,6 +108,7 @@ function HealthChip({ member }: { member: ClusterMember }) {
 const columns = (
   selfId: string | undefined,
   versionsDiffer: boolean,
+  showHealth: boolean,
   manageable: boolean,
   act: (action: Action, member: ClusterMember) => void,
 ): GridColDef<ClusterMember>[] => [
@@ -161,6 +156,29 @@ const columns = (
     flex: 1,
     minWidth: 140,
     valueGetter: (_value, row) => row.address || "—",
+  },
+  {
+    field: "api_address",
+    headerName: "API Address",
+    flex: 1.2,
+    minWidth: 180,
+    renderCell: ({ row }) => (
+      <CenteredCell>
+        {row.api_address ? (
+          <Link
+            href={row.api_address}
+            target="_blank"
+            rel="noreferrer"
+            underline="hover"
+            noWrap
+          >
+            {row.api_address}
+          </Link>
+        ) : (
+          <Typography variant="body2">—</Typography>
+        )}
+      </CenteredCell>
+    ),
   },
   {
     field: "diameter_host",
@@ -215,16 +233,20 @@ const columns = (
       </CenteredCell>
     ),
   },
-  {
-    field: "healthy",
-    headerName: "Healthy",
-    width: 100,
-    renderCell: ({ row }) => (
-      <CenteredCell>
-        <HealthChip member={row} />
-      </CenteredCell>
-    ),
-  },
+  ...(showHealth
+    ? [
+        {
+          field: "healthy",
+          headerName: "Healthy",
+          width: 100,
+          renderCell: ({ row }) => (
+            <CenteredCell>
+              <HealthChip member={row} />
+            </CenteredCell>
+          ),
+        } satisfies GridColDef<ClusterMember>,
+      ]
+    : []),
   ...(manageable
     ? [
         {
@@ -341,6 +363,7 @@ export default function Cluster() {
             columns={columns(
               status.node_id,
               new Set(members.map((m) => m.version).filter(Boolean)).size > 1,
+              answersAsLeader(status),
               manageable,
               (action, member) => setTarget({ action, member }),
             )}

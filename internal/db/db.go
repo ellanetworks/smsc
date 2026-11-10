@@ -40,8 +40,6 @@ type DB struct {
 	appliedCh   chan struct{}
 	leaderTime  atomic.Int64
 	schema      atomic.Int64
-	hashMu      sync.Mutex
-	hashes      []appliedHash
 	subscribers []func(Events)
 }
 
@@ -324,13 +322,12 @@ var migrations = []string{
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		applied_index INTEGER NOT NULL,
 		applied_term INTEGER NOT NULL,
-		hash BLOB NOT NULL,
 		leader_time INTEGER NOT NULL,
 		configuration BLOB,
 		configuration_index INTEGER NOT NULL,
 		durable_writes INTEGER NOT NULL
 	);
-	INSERT INTO fsm_state VALUES (1, 0, 0, zeroblob(32), 0, NULL, 0, 0);
+	INSERT INTO fsm_state VALUES (1, 0, 0, 0, NULL, 0, 0);
 	CREATE TABLE applied_requests (
 		request_id BLOB PRIMARY KEY CHECK (length(request_id) = 16),
 		result BLOB NOT NULL,
@@ -352,7 +349,8 @@ var migrations = []string{
 		drain_state TEXT NOT NULL DEFAULT 'active' CHECK (drain_state IN ('active', 'draining', 'drained')),
 		display_name TEXT NOT NULL DEFAULT '',
 		diameter_label TEXT NOT NULL UNIQUE CHECK (length(diameter_label) BETWEEN 1 AND 63),
-		label_generated INTEGER NOT NULL CHECK (label_generated IN (0, 1))
+		label_generated INTEGER NOT NULL CHECK (label_generated IN (0, 1)),
+		api_address TEXT NOT NULL DEFAULT ''
 	);
 	CREATE UNIQUE INDEX cluster_members_address ON cluster_members (address) WHERE address != '';
 	CREATE TABLE cluster_removed_members (

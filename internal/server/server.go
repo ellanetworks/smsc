@@ -142,8 +142,16 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		}
 	}()
 
+	var apiLC net.ListenConfig
+
+	apiLn, err := apiLC.Listen(ctx, "tcp", netip.AddrPortFrom(cfg.API.Address, uint16(cfg.API.Port)).String())
+	if err != nil {
+		return fmt.Errorf("listen for the API: %w", err)
+	}
+
 	database, err := db.Open(ctx, cfg.DB.Path)
 	if err != nil {
+		_ = apiLn.Close()
 		return err
 	}
 
@@ -158,11 +166,14 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		clusterCfg.Join = c.JoinAddresses()
 		clusterCfg.BootstrapExpect = c.BootstrapExpect
 		clusterCfg.SecretFile = c.SecretFile
+		clusterCfg.APIAddress = apiAddress(cfg, apiLn.Addr())
 	}
 
 	node, err := cluster.Open(ctx, clusterCfg, database)
 	if err != nil {
+		_ = apiLn.Close()
 		_ = database.Close()
+
 		return err
 	}
 
@@ -176,16 +187,11 @@ func (s *Server) Start(ctx context.Context) (err error) {
 
 	m, err := newMetrics(database, node)
 	if err != nil {
+		_ = apiLn.Close()
+
 		closeStore()
+
 		return err
-	}
-
-	var apiLC net.ListenConfig
-
-	apiLn, err := apiLC.Listen(ctx, "tcp", netip.AddrPortFrom(cfg.API.Address, uint16(cfg.API.Port)).String())
-	if err != nil {
-		closeStore()
-		return fmt.Errorf("listen for the API: %w", err)
 	}
 
 	base := context.WithoutCancel(ctx)

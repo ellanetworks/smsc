@@ -56,6 +56,9 @@ func Restore(a *auth) http.Handler {
 		_ = rc.SetWriteDeadline(time.Time{})
 
 		err := cfg.Backups.Restore(r.Context(), r.Body)
+		if notLeader(w, r, cfg, err) {
+			return
+		}
 
 		switch {
 		case errors.Is(err, cluster.ErrInvalidBackup):

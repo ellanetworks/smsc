@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,7 +44,15 @@ func (n *node) raw(method, path, contentType string, body []byte) ([]byte, error
 	}
 
 	if resp.StatusCode >= 300 {
-		return out, fmt.Errorf("%s %s = %d: %s", method, path, resp.StatusCode, out)
+		var envelope struct {
+			Error  string `json:"error"`
+			Leader string `json:"leader"`
+		}
+
+		_ = json.Unmarshal(out, &envelope)
+
+		return out, fmt.Errorf("%s %s = %w", method, path,
+			&apiError{code: resp.StatusCode, msg: envelope.Error, leader: envelope.Leader})
 	}
 
 	return out, nil
@@ -73,7 +82,7 @@ func (n *node) identify() {
 }
 
 func (c *cluster) member(n *node) (member, error) {
-	st, err := c.otherThan(n).status()
+	st, err := c.leaderStatus()
 	if err != nil {
 		return member{}, err
 	}
@@ -220,7 +229,12 @@ func TestRestoreABackupInACluster(t *testing.T) {
 
 	leader.must(http.MethodPost, "/api/v1/users", user("after@example.com"), nil)
 
-	if _, err := target.raw(http.MethodPost, "/api/v1/restore", "application/gzip", backup); err != nil {
+	_, err = target.raw(http.MethodPost, "/api/v1/restore", "application/gzip", backup)
+	if got := leaderOf(err); got != leader.apiAddress() {
+		t.Fatalf("restoring on a follower = %v, want a pointer to the leader %s", err, leader.apiAddress())
+	}
+
+	if _, err := leader.raw(http.MethodPost, "/api/v1/restore", "application/gzip", backup); err != nil {
 		t.Fatal(err)
 	}
 

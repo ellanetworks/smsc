@@ -96,7 +96,13 @@ func (n *node) waitReady(query string) {
 func (n *node) waitFailing(query, name string) {
 	n.t.Helper()
 
-	eventually(n.t, n.name+" failing "+name, func() error {
+	n.waitFailingWithin(waitTimeout, query, name)
+}
+
+func (n *node) waitFailingWithin(timeout time.Duration, query, name string) {
+	n.t.Helper()
+
+	within(n.t, timeout, n.name+" failing "+name, func() error {
 		code, r, err := n.readyz(query)
 		if err != nil {
 			return err
@@ -176,7 +182,7 @@ func TestReadinessOfASingleNode(t *testing.T) {
 		names = append(names, c.Name)
 	}
 
-	want := "shutdown,member,initialized,diameter_label,drain,consistent,database,leader,caught_up,cluster"
+	want := "shutdown,member,initialized,diameter_label,drain,database,leader,cluster"
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("checks = %s, want %s", got, want)
 	}
@@ -312,6 +318,8 @@ func TestClusterCheckWithAVoterDown(t *testing.T) {
 	up := cl.followers(leader)[1]
 
 	leader.waitReady("?cluster=true")
+	up.waitFailing("?cluster=true", "cluster")
+	up.waitReady("")
 
 	down.stop()
 

@@ -123,7 +123,7 @@ func openWith(t testing.TB, dir, address string, edit func(*Config)) *env {
 		t.Fatal(err)
 	}
 
-	cfg := Config{Dir: filepath.Join(dir, "raft"), Address: address, Version: "test"}
+	cfg := Config{Dir: filepath.Join(dir, "raft"), Address: address, Version: "test", removalAfter: time.Second}
 	edit(&cfg)
 
 	n, err := Open(ctx, cfg, d)
@@ -263,7 +263,7 @@ func TestReadinessOfASingleNode(t *testing.T) {
 		names = append(names, c.Name)
 	}
 
-	want := []string{CheckMember, CheckInitialized, CheckLabel, CheckDrain, CheckConsistent, CheckDatabase, CheckLeader, CheckCaughtUp, CheckCluster}
+	want := []string{CheckMember, CheckInitialized, CheckLabel, CheckDrain, CheckDatabase, CheckLeader, CheckCluster}
 	if !slices.Equal(names, want) {
 		t.Fatalf("checks = %v, want %v", names, want)
 	}
@@ -272,10 +272,6 @@ func TestReadinessOfASingleNode(t *testing.T) {
 		return c.Name == CheckCluster
 	}) {
 		t.Fatalf("checks without cluster = %+v", checks)
-	}
-
-	if lag, known := e.node.ApplyLag(); !known || lag != 0 {
-		t.Fatalf("ApplyLag = %d, %t", lag, known)
 	}
 
 	waitMember(t, e, e.node.ID())
@@ -303,71 +299,6 @@ func TestReadinessOfAFollower(t *testing.T) {
 	leader, follower := c.leader(), c.follower()
 
 	waitReady(t, leader, true)
-	waitReady(t, follower, true)
-
-	var index uint64
-
-	eventually(t, "a report with a hash from the follower", func() error {
-		r, ok := leader.node.health.get(follower.node.ID())
-		if !ok || r.Hash == nil {
-			return errors.New("no report with a hash yet")
-		}
-
-		if _, ok := leader.db.HashAt(r.AppliedIndex); !ok {
-			return errors.New("no leader hash at the reported index")
-		}
-
-		index = r.AppliedIndex
-
-		return nil
-	})
-
-	leader.node.health.record(follower.node.ID(), report{AppliedIndex: index, Hash: []byte("not the leader's hash")})
-
-	waitFailing(t, follower, CheckConsistent, "differs")
-
-	if c := checkOf(leader.node.Readiness(context.Background(), false), CheckConsistent); !c.OK {
-		t.Fatalf("the leader's consistent check = %+v", c)
-	}
-}
-
-func TestReadinessOfALaggingFollower(t *testing.T) {
-	lags := []*lag{{}, {}, {}}
-	c := newClusterWith(t, 3, func(i int, dir, address string) *env {
-		return openWith(t, dir, address, func(cfg *Config) {
-			cfg.transport, cfg.readyLag = lags[i].wrap, 5
-		})
-	})
-
-	c.initialize()
-
-	follower := c.follower()
-	i := slices.Index(c.nodes, follower)
-
-	waitReady(t, follower, false)
-
-	lags[i].on.Store(true)
-
-	ctx := timeout(t)
-
-	for n := range 20 {
-		if err := c.leader().node.SetDisplayName(ctx, c.leader().node.ID(), fmt.Sprintf("n%d", n)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	waitFailing(t, follower, CheckCaughtUp, "behind")
-
-	if c := checkOf(follower.node.Readiness(ctx, false), CheckLeader); !c.OK {
-		t.Fatalf("the lagging follower's leader check = %+v, want heartbeats to keep it", c)
-	}
-
-	if lag, known := follower.node.ApplyLag(); !known || lag <= 5 {
-		t.Fatalf("ApplyLag = %d, %t", lag, known)
-	}
-
-	lags[i].on.Store(false)
-
 	waitReady(t, follower, false)
 }
 
@@ -441,8 +372,13 @@ func TestClusterCheckWithAVoterDown(t *testing.T) {
 
 	leader, follower := c.leader(), c.follower()
 
+	waitReady(t, leader, true)
+
 	for _, e := range c.nodes {
-		waitReady(t, e, true)
+		if e != leader {
+			waitReady(t, e, false)
+			waitFailing(t, e, CheckCluster, "only the leader")
+		}
 	}
 
 	_ = follower.node.Close()
@@ -458,7 +394,6 @@ func TestClusterCheckWithAVoterDown(t *testing.T) {
 
 	for _, e := range c.nodes {
 		if e != nil && e != leader {
-			waitFailing(t, e, CheckCluster, follower.node.ID())
 			waitReady(t, e, false)
 		}
 	}

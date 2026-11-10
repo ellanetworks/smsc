@@ -2,9 +2,7 @@ package db
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,15 +87,14 @@ func (e *FatalError) Unwrap() error { return e.Err }
 type fsmState struct {
 	appliedIndex uint64
 	appliedTerm  uint64
-	hash         []byte
 	leaderTime   int64
 }
 
 func readFSMState(ctx context.Context, q querier) (fsmState, error) {
 	var s fsmState
 
-	err := q.QueryRowContext(ctx, `SELECT applied_index, applied_term, hash, leader_time FROM fsm_state WHERE id = 1`).
-		Scan(&s.appliedIndex, &s.appliedTerm, &s.hash, &s.leaderTime)
+	err := q.QueryRowContext(ctx, `SELECT applied_index, applied_term, leader_time FROM fsm_state WHERE id = 1`).
+		Scan(&s.appliedIndex, &s.appliedTerm, &s.leaderTime)
 
 	return s, err
 }
@@ -143,48 +140,6 @@ func (d *DB) WaitApplied(ctx context.Context, index uint64) error {
 
 func (d *DB) LeaderTime() int64 {
 	return d.leaderTime.Load()
-}
-
-const recentHashes = 4096
-
-type appliedHash struct {
-	index uint64
-	hash  []byte
-}
-
-func (d *DB) remember(index uint64, hash []byte) {
-	d.hashMu.Lock()
-	defer d.hashMu.Unlock()
-
-	if d.hashes == nil {
-		d.hashes = make([]appliedHash, recentHashes)
-	}
-
-	d.hashes[index%recentHashes] = appliedHash{index: index, hash: hash}
-}
-
-func (d *DB) HashAt(index uint64) ([]byte, bool) {
-	d.hashMu.Lock()
-	defer d.hashMu.Unlock()
-
-	if d.hashes == nil {
-		return nil, false
-	}
-
-	h := d.hashes[index%recentHashes]
-
-	return h.hash, h.index == index && h.hash != nil
-}
-
-func (d *DB) Hash(ctx context.Context) (_ []byte, _ uint64, err error) {
-	defer d.observe(&err)()
-
-	s, err := readFSMState(ctx, d.reader())
-	if err != nil {
-		return nil, 0, fmt.Errorf("read state: %w", err)
-	}
-
-	return s.hash, s.appliedIndex, nil
 }
 
 type Entry struct {
@@ -255,7 +210,6 @@ func (d *DB) applyBatches(entries []Entry, batches []Batch) ([][]Result, Events,
 	}
 
 	results := make([][]Result, len(entries))
-	hashes := make([][]byte, len(entries))
 
 	var events Events
 
@@ -290,11 +244,8 @@ func (d *DB) applyBatches(entries []Entry, batches []Batch) ([][]Result, Events,
 			if ev.Migrated > 0 {
 				schema = ev.Migrated
 			}
-
-			state.hash = chain(state.hash, e.Index, c, r)
 		}
 
-		hashes[i] = state.hash
 		state.appliedIndex, state.appliedTerm = e.Index, e.Term
 	}
 
@@ -309,8 +260,8 @@ func (d *DB) applyBatches(entries []Entry, batches []Batch) ([][]Result, Events,
 		return fatal(last, err)
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE fsm_state SET applied_index = ?, applied_term = ?, hash = ?,
-		leader_time = ? WHERE id = 1`, state.appliedIndex, state.appliedTerm, state.hash, state.leaderTime); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE fsm_state SET applied_index = ?, applied_term = ?, leader_time = ?
+		WHERE id = 1`, state.appliedIndex, state.appliedTerm, state.leaderTime); err != nil {
 		return fatal(last, err)
 	}
 
@@ -323,12 +274,6 @@ func (d *DB) applyBatches(entries []Entry, batches []Batch) ([][]Result, Events,
 
 	if events.Migrated > 0 {
 		d.schema.Store(int64(events.Migrated))
-	}
-
-	for i, e := range entries {
-		if hashes[i] != nil {
-			d.remember(e.Index, hashes[i])
-		}
 	}
 
 	return results, events, nil
@@ -419,24 +364,6 @@ func applyCommand(a *applyCtx, c Command) (Result, Events, error) {
 	}
 
 	return r, events, nil
-}
-
-func chain(prev []byte, index uint64, c Command, r Result) []byte {
-	h := sha256.New()
-	h.Write(prev)
-
-	var head [12]byte
-	binary.BigEndian.PutUint64(head[:8], index)
-	binary.BigEndian.PutUint16(head[8:10], uint16(c.Type))
-	binary.BigEndian.PutUint16(head[10:], c.Version)
-	h.Write(head[:])
-	h.Write(c.RequestID[:])
-
-	h.Write([]byte(r.Code))
-	h.Write([]byte{0})
-	h.Write(r.Value)
-
-	return h.Sum(nil)
 }
 
 func isConstraint(err error) bool {

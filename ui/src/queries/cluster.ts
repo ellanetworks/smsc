@@ -7,6 +7,7 @@ export type Suffrage = "voter" | "nonvoter" | "none";
 export interface ClusterMember {
   node_id: string;
   address: string;
+  api_address?: string;
   diameter_label: string;
   diameter_host: string;
   label_generated: boolean;
@@ -18,8 +19,6 @@ export interface ClusterMember {
   leader: boolean;
   healthy?: boolean;
   last_contact?: string;
-  applied_index?: number;
-  diverged?: boolean;
 }
 
 export interface ClusterStatus {
@@ -95,6 +94,12 @@ export const nodeLabel = (
 
 export const memberLabel = (member: ClusterMember) =>
   nodeLabel(member.display_name, member.diameter_label, member.node_id);
+
+export const leaderOf = (status: ClusterStatus) =>
+  status.members?.find((m) => m.node_id === status.leader_id);
+
+export const answersAsLeader = (status: ClusterStatus) =>
+  status.leader_id !== undefined && status.leader_id === status.node_id;
 
 export const GENERATED_HOST_HINT =
   "Generated from the node ID. A reinstalled node gets a new host. Set diameter.host_label in the node's configuration file to keep it.";

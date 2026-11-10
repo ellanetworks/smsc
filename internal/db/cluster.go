@@ -27,6 +27,7 @@ type Member struct {
 	DisplayName    string     `json:"display_name,omitempty"`
 	DiameterLabel  string     `json:"diameter_label,omitempty"`
 	LabelGenerated bool       `json:"label_generated,omitempty"`
+	APIAddress     string     `json:"api_address,omitempty"`
 }
 
 type DrainState string
@@ -60,7 +61,8 @@ func memberLabels(ctx context.Context, q querier) ([]string, error) {
 }
 
 const (
-	memberColumns     = `node_id, address, fingerprint, schema_version, version, joined_at, diameter_label, label_generated`
+	memberColumns = `node_id, address, fingerprint, schema_version, version, joined_at, diameter_label, label_generated,
+		api_address`
 	memberReadColumns = memberColumns + `, drain_state, display_name`
 )
 
@@ -72,7 +74,7 @@ func scanMember(scan func(...any) error) (Member, error) {
 	)
 
 	if err := scan(&m.NodeID, &m.Address, &fingerprint, &m.SchemaVersion, &m.Version,
-		&joined, &m.DiameterLabel, &m.LabelGenerated, &m.DrainState, &m.DisplayName); err != nil {
+		&joined, &m.DiameterLabel, &m.LabelGenerated, &m.APIAddress, &m.DrainState, &m.DisplayName); err != nil {
 		return Member{}, err
 	}
 
@@ -194,8 +196,9 @@ func applyRegisterMember(a *applyCtx, m Member) (struct{}, error) {
 	}
 
 	if _, err := a.tx.ExecContext(a.ctx, `UPDATE cluster_members SET address = ?, fingerprint = ?,
-		schema_version = ?, version = ?, diameter_label = ?, label_generated = ? WHERE node_id = ?`, m.Address,
-		nullString(m.Fingerprint), m.SchemaVersion, m.Version, m.DiameterLabel, m.LabelGenerated, m.NodeID); err != nil {
+		schema_version = ?, version = ?, diameter_label = ?, label_generated = ?, api_address = ? WHERE node_id = ?`,
+		m.Address, nullString(m.Fingerprint), m.SchemaVersion, m.Version, m.DiameterLabel, m.LabelGenerated, m.APIAddress,
+		m.NodeID); err != nil {
 		if isUnique(err) {
 			return struct{}{}, fmt.Errorf("%w: another member has the address %s or the certificate", settings.ErrConflict,
 				m.Address)
@@ -205,7 +208,7 @@ func applyRegisterMember(a *applyCtx, m Member) (struct{}, error) {
 	}
 
 	if existing.Fingerprint != m.Fingerprint || existing.Address != m.Address || relabeled ||
-		existing.LabelGenerated != m.LabelGenerated {
+		existing.LabelGenerated != m.LabelGenerated || existing.APIAddress != m.APIAddress {
 		a.events.Members = true
 	}
 
@@ -225,9 +228,9 @@ func insertMember(a *applyCtx, m Member) error {
 		return err
 	}
 
-	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO cluster_members (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO cluster_members (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.NodeID, m.Address, nullString(m.Fingerprint), m.SchemaVersion, m.Version,
-		a.leaderTime, m.DiameterLabel, m.LabelGenerated); err != nil {
+		a.leaderTime, m.DiameterLabel, m.LabelGenerated, m.APIAddress); err != nil {
 		if isUnique(err) {
 			return fmt.Errorf("%w: another member has the address %s or the certificate", settings.ErrConflict, m.Address)
 		}

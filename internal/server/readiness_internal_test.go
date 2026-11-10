@@ -138,7 +138,7 @@ func TestReadinessLogsTransitionsOnly(t *testing.T) {
 
 	ok := []cluster.Check{{Name: CheckShutdown, OK: true}, {Name: cluster.CheckLeader, OK: true}}
 	behind := func(n int) []cluster.Check {
-		return []cluster.Check{{Name: CheckShutdown, OK: true}, {Name: cluster.CheckCaughtUp, Detail: string(rune('a' + n))}}
+		return []cluster.Check{{Name: CheckShutdown, OK: true}, {Name: cluster.CheckDatabase, Detail: string(rune('a' + n))}}
 	}
 
 	r.observe(ctx, ok)
@@ -164,7 +164,7 @@ func TestReadinessLogsTransitionsOnly(t *testing.T) {
 
 	r.observe(ctx, behind(0))
 
-	if v := testutil.ToFloat64(r.metrics.checks.WithLabelValues(cluster.CheckCaughtUp)); v != 0 {
-		t.Fatalf("ellasmsc_ready_check{check=caught_up} = %v", v)
+	if v := testutil.ToFloat64(r.metrics.checks.WithLabelValues(cluster.CheckDatabase)); v != 0 {
+		t.Fatalf("ellasmsc_ready_check{check=database} = %v", v)
 	}
 }

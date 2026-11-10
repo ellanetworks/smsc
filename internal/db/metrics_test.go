@@ -103,7 +103,7 @@ func TestEveryCallIsObserved(t *testing.T) {
 	unobserved := map[string]bool{
 		"Close": true, "Collectors": true, "CreateMessage": true, "Ping": true, "Apply": true, "ApplyEntries": true, "AppliedIndex": true, "WaitApplied": true,
 		"OnEvents": true, "SetProposer": true, "RecordConfiguration": true, "MakeDurable": true, "ResetPosition": true, "JWTSecret": true, "OIDCCookieKey": true,
-		"HashAt": true, "LeaderTime": true, "Schema": true, "RegisterMember": true, "Secrets": true,
+		"LeaderTime": true, "Schema": true, "RegisterMember": true, "Secrets": true,
 	}
 
 	files, err := filepath.Glob("*.go")

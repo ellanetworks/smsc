@@ -50,7 +50,6 @@ export const clusterMember = (
   leader: false,
   healthy: true,
   last_contact: "12ms",
-  applied_index: 42,
   ...overrides,
 });
 
@@ -77,7 +76,6 @@ export const clusterStatus = (
       label_generated: false,
       display_name: "paris-2",
       last_contact: "35ms",
-      applied_index: 41,
     }),
     clusterMember({
       node_id: "2d7e8c2a-4444-4e3a-9c77-3b2e4f5a6b72",
@@ -89,8 +87,6 @@ export const clusterStatus = (
       drain_state: "drained",
       healthy: false,
       last_contact: "9.5s",
-      applied_index: 30,
-      diverged: true,
     }),
   ],
   ...overrides,

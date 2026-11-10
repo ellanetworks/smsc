@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net"
 	"sync/atomic"
 
 	"github.com/ellanetworks/smsc/internal/cluster"
+	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
 	"github.com/ellanetworks/smsc/smpp"
 )
@@ -63,4 +65,33 @@ func (s *Server) fenceOnRemoval(ctx context.Context, node *cluster.Node, nodes *
 	}
 
 	nodes.close(ctx)
+}
+
+func apiAddress(cfg config.Config, listening net.Addr) string {
+	if cfg.Cluster == nil {
+		return ""
+	}
+
+	scheme := "http"
+	if cfg.API.TLS != nil {
+		scheme = "https"
+	}
+
+	host := cfg.API.Address.Unmap().String()
+
+	if !cfg.API.Address.IsValid() || cfg.API.Address.IsUnspecified() {
+		h, _, err := net.SplitHostPort(cfg.Cluster.AdvertiseAddress())
+		if err != nil {
+			return ""
+		}
+
+		host = h
+	}
+
+	_, port, err := net.SplitHostPort(listening.String())
+	if err != nil {
+		return ""
+	}
+
+	return scheme + "://" + net.JoinHostPort(host, port)
 }

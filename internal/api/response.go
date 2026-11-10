@@ -14,7 +14,8 @@ type Response struct {
 }
 
 type ErrorResponse struct {
-	Error string `json:"error"`
+	Error  string `json:"error"`
+	Leader string `json:"leader,omitempty"`
 }
 
 func writeResponse(w http.ResponseWriter, r *http.Request, v any, status int, logger *slog.Logger) {

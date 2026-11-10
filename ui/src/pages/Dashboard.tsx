@@ -23,7 +23,11 @@ import { Link as RouterLink, useNavigate } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
 import { MessageStatusChip, messageStatusColors } from "@/components/chips";
 import { useAuth } from "@/contexts/AuthContext";
-import { getCluster, type ClusterStatus } from "@/queries/cluster";
+import {
+  answersAsLeader,
+  getCluster,
+  type ClusterStatus,
+} from "@/queries/cluster";
 import {
   type DiameterPeer,
   getDiameterStatus,
@@ -252,6 +256,7 @@ const HA_HINTS = {
   degraded: "At least one node is unhealthy.",
   noLeader:
     "No node holds leadership. The cluster cannot accept writes until enough voters recover.",
+  follower: "Cluster health is shown on the leader.",
   unknown: "Cluster health could not be read from this node.",
 };
 
@@ -270,6 +275,9 @@ function clusterHealth(status?: ClusterStatus): {
       hint: HA_HINTS.noLeader,
       value: <Chip label="No leader" color="error" />,
     };
+  }
+  if (!answersAsLeader(status)) {
+    return { hint: HA_HINTS.follower, value: <Chip label="Follower" /> };
   }
   if (status.healthy === undefined) {
     return { hint: HA_HINTS.unknown, value: <Chip label="Unknown" /> };

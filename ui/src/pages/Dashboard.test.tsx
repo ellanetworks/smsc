@@ -525,6 +525,22 @@ describe("Dashboard", () => {
     ).toBeInTheDocument();
   });
 
+  it("leaves the cluster health to the leader on a follower", async () => {
+    serve({
+      routes: {
+        "/api/v1/cluster": () =>
+          json(200, {
+            result: clusterStatus({ leader_id: "b", healthy: undefined }),
+          }),
+      },
+    });
+    render();
+
+    expect(
+      await within(card("High Availability")).findByText("Follower"),
+    ).toBeInTheDocument();
+  });
+
   it("shows high availability off on a standalone node", async () => {
     serve({
       routes: {

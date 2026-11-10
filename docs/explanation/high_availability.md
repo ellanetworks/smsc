@@ -32,6 +32,10 @@ An ESME binds to any node. Its limit of 4 sessions applies across the cluster. D
 
 When the leader fails, the other nodes elect a new one within a few seconds. Until then, Ella SMSC answers new messages with a temporary error, so the sender retries, and delivers nothing.
 
+## The leader's view
+
+The leader sees every other node through the heartbeats it sends them, so only the leader knows the health of the cluster. It alone shows that health, removes members and restores backups. The other nodes point to the leader's API address.
+
 ## Draining
 
 Draining a node prepares it for an upgrade or removal: it closes its SMPP sessions, and hands over the leadership. It keeps its Diameter connections and its vote.

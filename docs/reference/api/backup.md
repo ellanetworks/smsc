@@ -53,4 +53,5 @@ An archive from [Back Up](#back-up), with `Content-Type: application/gzip`.
 | Code  | Description |
 | ----- | ----------- |
 | `400` | Not a backup, a checksum does not match, or the backup's schema is newer than this version's. |
-| `503` | Not ready to restore. Retry. |
+| `421` | The node is not the leader. See [Leader-Only Paths](cluster.md#leader-only-paths). |
+| `503` | No leader, or not ready to restore. Retry. |

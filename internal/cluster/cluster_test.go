@@ -194,28 +194,13 @@ func TestJoinReplicatesAndForwards(t *testing.T) {
 		})
 	}
 
-	hashes := map[string]bool{}
-
-	eventually(t, "equal hashes", func() error {
-		clear(hashes)
-
+	eventually(t, "every node at the leader's index", func() error {
 		index := c.leader().db.AppliedIndex()
 
 		for _, e := range c.nodes {
-			h, at, err := e.db.Hash(ctx)
-			if err != nil {
-				return err
-			}
-
-			if at != index {
+			if at := e.db.AppliedIndex(); at != index {
 				return fmt.Errorf("%s at %d, leader at %d", e.node.ID(), at, index)
 			}
-
-			hashes[string(h)] = true
-		}
-
-		if len(hashes) != 1 {
-			return fmt.Errorf("%d different hashes", len(hashes))
 		}
 
 		return nil
@@ -357,7 +342,7 @@ func TestUnreachableMember(t *testing.T) {
 	c := newCluster(t, 2)
 	leader, follower := c.leader(), c.follower()
 
-	eventually(t, "the follower's report", func() error {
+	eventually(t, "the follower's heartbeat", func() error {
 		if leader.node.Unreachable(follower.node.ID()) {
 			return errors.New("unreachable")
 		}
@@ -382,38 +367,6 @@ func TestUnreachableMember(t *testing.T) {
 		}
 
 		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func TestLeaderNoticesADivergedMember(t *testing.T) {
-	c := newCluster(t, 2)
-	leader, follower := c.leader(), c.follower()
-
-	eventually(t, "a matching report from the follower", func() error {
-		r, ok := leader.node.health.get(follower.node.ID())
-		if !ok || r.Hash == nil {
-			return errors.New("no report with a hash yet")
-		}
-
-		if r.Diverged {
-			return errors.New("diverged")
-		}
-
-		return nil
-	})
-
-	index := leader.db.AppliedIndex()
-	leader.node.health.record(follower.node.ID(), report{AppliedIndex: index, Hash: []byte("not the leader's hash")})
-
-	st, err := leader.node.Status(timeout(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, m := range st.Members {
-		if m.NodeID == follower.node.ID() && !m.Diverged {
-			t.Fatalf("member %+v not marked diverged", m)
-		}
 	}
 }
 

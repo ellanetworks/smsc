@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -54,7 +55,35 @@ func noCluster(w http.ResponseWriter, r *http.Request, cfg Config) bool {
 	return true
 }
 
+func notLeader(w http.ResponseWriter, r *http.Request, cfg Config, err error) bool {
+	var le *cluster.LeaderError
+	if !errors.As(err, &le) {
+		return false
+	}
+
+	if le.NodeID == "" {
+		writeError(w, r, http.StatusServiceUnavailable, "The cluster has no leader, retry later", err, cfg.Logger)
+		return true
+	}
+
+	message := "This node is not the cluster leader: send the request to "
+	if le.APIAddress != "" {
+		message += le.APIAddress
+	} else {
+		message += "node " + le.NodeID
+	}
+
+	cfg.Logger.DebugContext(r.Context(), message, slog.Any("error", err))
+	writeJSON(w, r, ErrorResponse{Error: message, Leader: le.APIAddress}, http.StatusMisdirectedRequest, cfg.Logger)
+
+	return true
+}
+
 func clusterError(w http.ResponseWriter, r *http.Request, cfg Config, message string, err error) {
+	if notLeader(w, r, cfg, err) {
+		return
+	}
+
 	switch {
 	case errors.Is(err, cluster.ErrNotClustered), errors.Is(err, cluster.ErrAlreadyMember):
 		writeError(w, r, http.StatusConflict, err.Error(), err, cfg.Logger)

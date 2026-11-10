@@ -119,6 +119,7 @@ func TestRemoveAndRejoin(t *testing.T) {
 	cl := newCluster(t)
 	leader := cl.leader()
 	gone := cl.followers(leader)[0]
+	other := cl.followers(leader)[1]
 
 	if code, _ := leader.request(http.MethodDelete, "/api/v1/cluster/members/"+gone.id, nil, nil); code != http.StatusConflict {
 		t.Fatalf("removing an active member = %d, want %d", code, http.StatusConflict)
@@ -140,6 +141,15 @@ func TestRemoveAndRejoin(t *testing.T) {
 
 		return nil
 	})
+
+	code, err := other.request(http.MethodDelete, "/api/v1/cluster/members/"+gone.id, nil, nil)
+	if code != http.StatusMisdirectedRequest {
+		t.Fatalf("removing a member on a follower = %d, want %d: %v", code, http.StatusMisdirectedRequest, err)
+	}
+
+	if got := leaderOf(err); got != leader.apiAddress() {
+		t.Fatalf("a follower points at %q, want the leader %q", got, leader.apiAddress())
+	}
 
 	leader.must(http.MethodDelete, "/api/v1/cluster/members/"+gone.id, nil, nil)
 

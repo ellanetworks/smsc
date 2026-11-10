@@ -28,23 +28,22 @@ This path returns the node that answered, its cluster, and every member.
 | `applied_index`               | int     | Last log entry applied by the node. |
 | `commit_index`                | int     | Last log entry committed by the cluster. |
 | `schema`                      | int     | Database schema version of the cluster. |
-| `healthy`                     | boolean | The cluster is healthy. Absent when no leader answers. |
-| `failure_tolerance`           | int     | Voters that can fail without stopping writes. Absent when no leader answers. |
+| `healthy`                     | boolean | The cluster is healthy. Only from the leader. |
+| `failure_tolerance`           | int     | Voters that can fail without stopping writes. Only from the leader. |
 | `members[].node_id`           | string  | ID of the member. |
 | `members[].address`           | string  | Cluster address of the member. |
 | `members[].diameter_label`    | string  | First label of the member's Diameter host. |
 | `members[].diameter_host`     | string  | Diameter host of the member. |
 | `members[].label_generated`   | boolean | Whether `diameter_label` is the default, from `node_id`. |
 | `members[].display_name`      | string  | Display name of the member. Empty when unset. See [Update a Member](#update-a-member). |
+| `members[].api_address`       | string  | API address of the member. |
 | `members[].version`           | string  | Version of the member. |
 | `members[].joined_at`         | string  | Time the member joined. |
 | `members[].drain_state`       | string  | `active`, `draining` or `drained`. See [Drain a Member](#drain-a-member). |
 | `members[].suffrage`          | string  | `voter`, `nonvoter` (catching up, or standby), or `none`. |
 | `members[].leader`            | boolean | The member is the leader. |
-| `members[].healthy`           | boolean | The member is healthy. Absent when no leader answers. |
-| `members[].last_contact`      | string  | Time since the leader last heard from the member. |
-| `members[].applied_index`     | int     | Last log entry applied by the member. |
-| `members[].diverged`          | boolean | The member's database differs from the leader's. Absent when it does not. |
+| `members[].healthy`           | boolean | The member is healthy. Only from the leader. |
+| `members[].last_contact`      | string  | Time since the leader last heard from the member. Only from the leader. |
 
 ### Sample Response
 
@@ -69,13 +68,13 @@ This path returns the node that answered, its cluster, and every member.
                 "diameter_host": "paris-1.node.epc.mnc001.mcc001.3gppnetwork.org",
                 "label_generated": false,
                 "display_name": "paris-1",
+                "api_address": "http://10.0.0.1:5010",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:12:44Z",
                 "drain_state": "active",
                 "suffrage": "voter",
                 "leader": true,
-                "healthy": true,
-                "applied_index": 18342
+                "healthy": true
             },
             {
                 "node_id": "0199f6a3-0b77-7c21-a4e0-6f1e2d3c4b5a",
@@ -84,14 +83,14 @@ This path returns the node that answered, its cluster, and every member.
                 "diameter_host": "smsc-6f1e2d3c4b5a.node.epc.mnc001.mcc001.3gppnetwork.org",
                 "label_generated": true,
                 "display_name": "",
+                "api_address": "http://10.0.0.2:5010",
                 "version": "v0.9.0",
                 "joined_at": "2026-11-05T09:14:02Z",
                 "drain_state": "active",
                 "suffrage": "voter",
                 "leader": false,
                 "healthy": true,
-                "last_contact": "312ms",
-                "applied_index": 18342
+                "last_contact": "312ms"
             }
         ]
     }
@@ -248,4 +247,23 @@ This path removes a drained member from the cluster. The removed node stops serv
 | ----- | ----------- |
 | `404` | No such member. |
 | `409` | The member is not drained, or the cluster would lose its majority without it. |
+| `421` | The node is not the leader. See [Leader-Only Paths](#leader-only-paths). |
 | `503` | No leader. Retry. |
+
+## Leader-Only Paths
+
+[Remove a Member](#remove-a-member) and [Restore](backup.md#restore) run on the leader only. Any other node answers `421`, with the leader's API address in `leader`.
+
+| Field    | Type   | Description |
+| -------- | ------ | ----------- |
+| `error`  | string | The error. |
+| `leader` | string | API address of the leader. Absent when the leader has none. |
+
+### Sample Response
+
+```json
+{
+    "error": "This node is not the cluster leader: send the request to http://10.0.0.1:5010",
+    "leader": "http://10.0.0.1:5010"
+}
+```

@@ -23,7 +23,7 @@ func openLabeled(t testing.TB, dir, address, label string) (*env, error) {
 		t.Fatal(err)
 	}
 
-	n, err := Open(ctx, Config{Dir: filepath.Join(dir, "raft"), Address: address, Version: "test", DiameterLabel: label}, d)
+	n, err := Open(ctx, Config{Dir: filepath.Join(dir, "raft"), Address: address, Version: "test", DiameterLabel: label, removalAfter: time.Second}, d)
 	if err != nil {
 		_ = d.Close()
 		return nil, err

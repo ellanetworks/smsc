@@ -67,6 +67,7 @@ describe("Cluster", () => {
     ).toEqual([
       "Node",
       "Cluster Address",
+      "API Address",
       "Diameter Host",
       "Suffrage",
       "Drain",
@@ -77,28 +78,69 @@ describe("Cluster", () => {
     await within(grid()).findByText(
       "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.org",
     );
-    expect(rowCells("10.0.0.11:7000").slice(0, 7)).toEqual([
+    expect(rowCells("10.0.0.11:7000").slice(0, 8)).toEqual([
       "smsc-1f0c2d3e4f50LeaderThis node",
       "10.0.0.11:7000",
+      "—",
       "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.orgGenerated",
       "Voter",
       "Active",
       "v0.1.0",
       "Healthy",
     ]);
-    expect(rowCells("10.0.0.12:7000").slice(0, 3)).toEqual([
+    expect(rowCells("10.0.0.12:7000").slice(0, 4)).toEqual([
       "paris-2",
       "10.0.0.12:7000",
+      "—",
       "smsc-b.node.epc.mnc001.mcc001.3gppnetwork.org",
     ]);
-    expect(rowCells("10.0.0.13:7000").slice(0, 5)).toEqual([
+    expect(rowCells("10.0.0.13:7000").slice(0, 6)).toEqual([
       "smsc-3b2e4f5a6b72",
       "10.0.0.13:7000",
+      "—",
       "smsc-3b2e4f5a6b72.node.epc.mnc001.mcc001.3gppnetwork.orgGenerated",
       "Nonvoter",
       "Drained",
     ]);
-    expect(rowCells("10.0.0.13:7000")[6]).toBe("Diverged");
+    expect(rowCells("10.0.0.13:7000")[7]).toBe("Unhealthy");
+  });
+
+  it("shows the per-node view on a follower and points to the leader", async () => {
+    const leader = clusterMember({
+      node_id: "1c6d7b1f-3333-4d2f-8b66-2a1d3e4f5a61",
+      address: "10.0.0.12:7000",
+      api_address: "https://10.0.0.12:5002",
+      display_name: "paris-2",
+      leader: true,
+      healthy: undefined,
+      last_contact: undefined,
+    });
+    serve(
+      clusterStatus({
+        leader_id: leader.node_id,
+        healthy: undefined,
+        failure_tolerance: undefined,
+        members: [
+          clusterMember({ healthy: undefined, last_contact: undefined }),
+          leader,
+        ],
+      }),
+    );
+    renderWithClient(<Cluster />);
+
+    await screen.findByRole("heading", { level: 2, name: "Nodes (2)" });
+    expect(settingRows()[1]).toBe(
+      "HealthShown on the leader (node paris-2): https://10.0.0.12:5002",
+    );
+    expect(
+      within(screen.getByRole("table", { name: "Cluster state" })).getByRole(
+        "link",
+        { name: "https://10.0.0.12:5002" },
+      ),
+    ).toHaveAttribute("href", "https://10.0.0.12:5002");
+    expect(
+      within(grid()).queryByRole("columnheader", { name: "Healthy" }),
+    ).not.toBeInTheDocument();
   });
 
   it("says when no leader answers", async () => {

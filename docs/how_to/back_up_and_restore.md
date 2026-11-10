@@ -61,14 +61,14 @@ A backup holds message content, user accounts, and the single sign-on client sec
           --data-binary @smsc-backup-<time>.tar.gz
         ```
 
-        In a cluster, restore on any node.
+        In a cluster, restore on the leader. Another node answers `421` with the leader's address.
 
 === "Kubernetes"
 
-    1. Open the API:
+    1. Open the API of the leader's pod, named on the **Cluster** page, or `ella-smsc-0` for a standalone node:
 
         ```shell
-        kubectl port-forward -n ella svc/ella-smsc 5010:5010
+        kubectl port-forward -n ella pod/ella-smsc-<n> 5010:5010
         ```
 
     2. Log in as an admin, and keep the token:

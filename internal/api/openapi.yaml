@@ -640,17 +640,16 @@ paths:
       summary: Check readiness
       description: >-
         Whether this node should receive traffic: it is not shutting down or removed, it is initialized or joined
-        when it has a cluster section, not draining, its database is
-        consistent with the leader's and answers, it has a leader, and it is caught up with the leader's log. The
-        checks read state the node already holds, without asking other nodes. A load balancer or a Kubernetes
+        when it has a cluster section, not draining, its database answers, and it has a leader. The checks read
+        state the node already holds, without asking other nodes. A load balancer or a Kubernetes
         readiness probe calls it without parameters.
       parameters:
         - name: cluster
           in: query
           required: false
           description: >-
-            Add the cluster check: every voter is healthy in the leader's view. For scripts and rolling upgrades, not
-            for probes, since one failed voter makes every node fail it.
+            Add the cluster check: the node leads, and every voter is healthy. For scripts and rolling upgrades, not
+            for probes, since only the leader passes it.
           schema:
             type: boolean
             default: false
@@ -1415,7 +1414,7 @@ paths:
       description: >-
         Removes a drained member from the cluster. The removed node closes its Diameter and SMPP listeners, fails
         readiness, and refuses to start until its data directory is deleted. Refused when the remaining voters could
-        not commit writes. Needs a login, not an API token.
+        not commit writes. Runs on the leader only. Needs a login, not an API token.
       responses:
         "200":
           $ref: "#/components/responses/Success"
@@ -1427,6 +1426,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "421":
+          $ref: "#/components/responses/NotLeader"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -1521,7 +1522,8 @@ paths:
       description: >-
         Replaces every message, user and setting with those of an archive from GET /api/v1/backup, after checking
         its checksums and that its schema is not newer than this version's. IDs keep increasing: a message ID
-        already returned is never reused. SMPP sessions are closed. Needs a login, not an API token.
+        already returned is never reused. SMPP sessions are closed. Runs on the leader only. Needs a login, not an API
+        token.
       requestBody:
         required: true
         content:
@@ -1538,6 +1540,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "421":
+          $ref: "#/components/responses/NotLeader"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -2191,6 +2195,12 @@ components:
         Set-Cookie:
           schema:
             type: string
+    NotLeader:
+      description: This node is not the cluster leader. Send the request to the address in leader.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     ServiceUnavailable:
       description: Too busy, or not ready. Retry later.
       content:
@@ -2307,6 +2317,10 @@ components:
       properties:
         error:
           type: string
+        leader:
+          type: string
+          description: With 421 only, the API address of the cluster leader. Absent when the leader has none.
+          example: http://10.0.0.1:5010
 
     LoginParams:
       type: object
@@ -2908,17 +2922,15 @@ components:
       properties:
         name:
           type: string
-          enum: [shutdown, member, initialized, diameter_label, drain, consistent, database, leader, caught_up, cluster]
+          enum: [shutdown, member, initialized, diameter_label, drain, database, leader, cluster]
           description: >-
             shutdown: the node is not stopping. member: the node was not removed from the cluster and is not
             forming one. initialized: the node has no cluster section, or its first user exists. diameter_label: the
             cluster has committed this node's member record with the configured Diameter host label; until then
             Diameter stays closed. drain: the node is
-            active, not draining or drained. consistent: the leader has not found this node's database to differ from
-            its own. database: the database answers. leader: the node leads with an established term, or heard from the
-            leader within twice the election timeout. caught_up: the database is at most 1000 log entries behind the
-            leader's commit index, learned within the last 3 seconds. cluster: with cluster=true only, every voter is
-            healthy in the leader's view.
+            active, not draining or drained. database: the database answers. leader: the node leads with an established
+            term, or heard from the leader within twice the election timeout. cluster: with cluster=true only, the node
+            leads and every voter is healthy.
         ok:
           type: boolean
         detail:
@@ -3316,9 +3328,10 @@ components:
           description: Database schema version of the cluster.
         healthy:
           type: boolean
+          description: Only from the leader.
         failure_tolerance:
           type: integer
-          description: How many voters can fail without stopping writes.
+          description: How many voters can fail without stopping writes. Only from the leader.
         members:
           type: array
           items:
@@ -3350,6 +3363,10 @@ components:
         display_name:
           type: string
           description: Name set by the operator. Empty when unset.
+        api_address:
+          type: string
+          description: The member's API address. Empty when the node has none.
+          example: http://10.0.0.1:5010
         version:
           type: string
         joined_at:
@@ -3365,15 +3382,10 @@ components:
           type: boolean
         healthy:
           type: boolean
+          description: Only from the leader.
         last_contact:
           type: string
-          description: Time since the leader last heard from the member, as a Go duration.
-        applied_index:
-          type: integer
-          format: int64
-        diverged:
-          type: boolean
-          description: The member's database differs from the leader's.
+          description: Time since the leader last heard from the member, as a Go duration. Only from the leader.
     CreateJoinTokenParams:
       type: object
       properties:

@@ -57,13 +57,13 @@ type Config struct {
 	Join            []string
 	BootstrapExpect int
 	SecretFile      string
+	APIAddress      string
 	Now             func() time.Time
 	Logger          *slog.Logger
 
 	transport       func(raft.Transport) raft.Transport
 	logStore        func(raft.LogStore) raft.LogStore
 	logStoreTimeout time.Duration
-	readyLag        uint64
 	removalAfter    time.Duration
 }
 

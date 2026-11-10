@@ -1,8 +1,23 @@
-import { Box, Chip, IconButton, Tooltip, Typography } from "@mui/material";
-import { ContentCopy as ContentCopyIcon } from "@mui/icons-material";
+import {
+  Box,
+  Chip,
+  IconButton,
+  Link,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import {
+  ContentCopy as ContentCopyIcon,
+  OpenInNew as OpenInNewIcon,
+} from "@mui/icons-material";
 import SettingsTable from "@/components/SettingsTable";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
-import { type ClusterStatus } from "@/queries/cluster";
+import {
+  answersAsLeader,
+  leaderOf,
+  memberLabel,
+  type ClusterStatus,
+} from "@/queries/cluster";
 
 function CopyableValue({ value, label }: { value: string; label: string }) {
   const copy = useCopyToClipboard();
@@ -57,12 +72,45 @@ function ToleranceChip({ failureTolerance }: { failureTolerance: number }) {
   );
 }
 
+export function LeaderLink({ address }: { address: string }) {
+  return (
+    <Link
+      href={address}
+      target="_blank"
+      rel="noreferrer"
+      underline="hover"
+      sx={{ display: "inline-flex", alignItems: "center" }}
+    >
+      {address}
+      <OpenInNewIcon sx={{ fontSize: 16, ml: 0.5 }} />
+    </Link>
+  );
+}
+
 function HealthValue({ status }: { status: ClusterStatus }) {
   if (!status.leader_id) {
     return (
       <Tooltip title="No node holds leadership. The cluster cannot accept writes until enough voters recover for an election to succeed.">
         <Chip label="No leader" size="small" color="error" />
       </Tooltip>
+    );
+  }
+
+  if (!answersAsLeader(status)) {
+    const leader = leaderOf(status);
+    return (
+      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+        Shown on the leader
+        {leader ? ` (node ${memberLabel(leader)})` : ""}
+        {leader?.api_address ? (
+          <>
+            {": "}
+            <LeaderLink address={leader.api_address} />
+          </>
+        ) : (
+          "."
+        )}
+      </Typography>
     );
   }
 
@@ -111,7 +159,7 @@ export default function ClusterStateCard({
         },
         {
           label: "Health",
-          help: "Reported by the leader: whether every voter is healthy, and how many voters can fail without stopping writes.",
+          help: "Reported by the leader only: whether every voter is healthy, and how many voters can fail without stopping writes.",
           value: status && <HealthValue status={status} />,
         },
         {

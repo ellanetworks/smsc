@@ -42,37 +42,38 @@ Wait until the three pods are `Running`, then press `Ctrl+C`.
 kubectl port-forward -n ella pod/ella-smsc-0 5010:5010
 ```
 
-Open `http://localhost:5010` and create the first user. Then stop the port-forward with `Ctrl+C`.
+Open `http://localhost:5010` and create the first user.
 
 ## 4. Look at the cluster
 
-Expose the UI on a load balancer:
+Open the **Cluster** page. It names the leader. Only the leader shows the health of the nodes: if `ella-smsc-0` is not the leader, stop the port-forward with `Ctrl+C`, and start it again on the leader's pod:
 
 ```shell
-kubectl patch service ella-smsc -n ella -p '{"spec":{"type":"LoadBalancer"}}'
-kubectl get service ella-smsc -n ella --watch
+kubectl port-forward -n ella pod/ella-smsc-<n> 5010:5010
 ```
 
-Wait until `EXTERNAL-IP` shows an address, then press `Ctrl+C`. Open `http://<EXTERNAL-IP>:5010` and log in. On the **Cluster** page, the three nodes appear as **Healthy**, each with its own **Diameter Host**. Note the leader.
+On the leader's **Cluster** page, the three nodes appear as **Healthy**, each with its own **Diameter Host**.
 
 ## 5. Lose a node
 
-Delete the leader's pod:
+In another terminal, delete the leader's pod:
 
 ```shell
 kubectl delete pod -n ella ella-smsc-<n>
 ```
 
-On the **Cluster** page, another node becomes the leader. The pod comes back, and its node returns to **Healthy** with the same **Diameter Host**.
+The port-forward stops with the pod. Start it again on another pod, and open the **Cluster** page: another node is the leader. Open the new leader's page as in step 4. The deleted pod comes back, and its node returns to **Healthy** with the same **Diameter Host**.
 
 ## 6. Restart the nodes one at a time
+
+Stop the port-forward, then:
 
 ```shell
 kubectl rollout restart statefulset/ella-smsc -n ella
 kubectl rollout status statefulset/ella-smsc -n ella
 ```
 
-On the **Cluster** page, the nodes restart one at a time, and all three return to **Healthy**.
+Open the leader's **Cluster** page as in step 4: all three nodes are **Healthy**.
 
 ## 7. Clean up
 

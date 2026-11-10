@@ -29,6 +29,7 @@ const (
 	adminEmail    = "admin@example.com"
 	adminPassword = "integration password"
 	waitTimeout   = 60 * time.Second
+	fenceTimeout  = 90 * time.Second
 )
 
 var binary, upgraded, sharedSecret string
@@ -339,13 +340,15 @@ func (n *node) requestAs(token, method, path string, body, out any) (int, error)
 	var envelope struct {
 		Result json.RawMessage `json:"result"`
 		Error  string          `json:"error"`
+		Leader string          `json:"leader"`
 	}
 
 	raw, _ := io.ReadAll(resp.Body)
 	_ = json.Unmarshal(raw, &envelope)
 
 	if resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("%s %s = %d: %s", method, path, resp.StatusCode, envelope.Error)
+		return resp.StatusCode, fmt.Errorf("%s %s = %w", method, path,
+			&apiError{code: resp.StatusCode, msg: envelope.Error, leader: envelope.Leader})
 	}
 
 	if out != nil && len(envelope.Result) > 0 {
@@ -355,6 +358,29 @@ func (n *node) requestAs(token, method, path string, body, out any) (int, error)
 	}
 
 	return resp.StatusCode, nil
+}
+
+type apiError struct {
+	code   int
+	msg    string
+	leader string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("%d: %s", e.code, e.msg)
+}
+
+func leaderOf(err error) string {
+	var e *apiError
+	if errors.As(err, &e) {
+		return e.leader
+	}
+
+	return ""
+}
+
+func (n *node) apiAddress() string {
+	return "http://127.0.0.1:" + strconv.Itoa(n.apiPort)
 }
 
 func (n *node) must(method, path string, body, out any) {
@@ -504,13 +530,28 @@ func (c *cluster) live() *node {
 	return nil
 }
 
+func (c *cluster) leaderStatus() (status, error) {
+	for _, n := range c.nodes {
+		if !n.running() || n.token() == "" {
+			continue
+		}
+
+		st, err := n.status()
+		if err == nil && st.LeaderID != "" && st.LeaderID == st.NodeID {
+			return st, nil
+		}
+	}
+
+	return status{}, errors.New("no node answers as the leader")
+}
+
 func (c *cluster) waitStable() {
 	const voters = 3
 
 	c.t.Helper()
 
 	eventually(c.t, fmt.Sprintf("%d healthy voters", voters), func() error {
-		st, err := c.live().status()
+		st, err := c.leaderStatus()
 		if err != nil {
 			return err
 		}
@@ -576,7 +617,13 @@ func (c *cluster) followers(leader *node) []*node {
 func eventually(t *testing.T, what string, f func() error) {
 	t.Helper()
 
-	deadline := time.Now().Add(waitTimeout)
+	within(t, waitTimeout, what, f)
+}
+
+func within(t *testing.T, timeout time.Duration, what string, f func() error) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
 
 	var err error
 

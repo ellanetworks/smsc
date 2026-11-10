@@ -85,10 +85,18 @@ func startJoiner(t *testing.T, cfg smscConfig) *smsc {
 	return s
 }
 
+const fenceWait = 90 * time.Second
+
 func eventuallyOK(t *testing.T, what string, f func() bool) {
 	t.Helper()
 
-	deadline := time.Now().Add(waitTimeout)
+	eventuallyWithin(t, waitTimeout, what, f)
+}
+
+func eventuallyWithin(t *testing.T, timeout time.Duration, what string, f func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
 		if f() {
@@ -521,7 +529,7 @@ func TestNodeRemovedWhileDownIsFencedOnRestart(t *testing.T) {
 		t.Fatalf("Diameter address %v", b.server.Addr())
 	}
 
-	eventuallyOK(t, "the restarted node to fail its member check", func() bool {
+	eventuallyWithin(t, fenceWait, "the restarted node to fail its member check", func() bool {
 		code, res := b.readyz(t)
 
 		for _, c := range res.Checks {

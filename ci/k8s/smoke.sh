@@ -167,6 +167,19 @@ initialize() {
   fail "cannot create the first admin on ella-smsc-0, last answer ${code}"
 }
 
+forward_leader() {
+  local leader=""
+  forward ella-smsc-0
+  for _ in $(seq 30); do
+    leader="$(api /cluster | jq -r '.result.members[] | select(.leader) | .diameter_label')"
+    [ -n "${leader}" ] && break
+    sleep 2
+  done
+  [ -n "${leader}" ] || fail "the cluster has no leader"
+  echo "leader ${leader}"
+  forward "${leader}"
+}
+
 check_members() {
   local cluster voters=false
   for _ in $(seq 30); do
@@ -224,7 +237,7 @@ ha_smoke() {
     -d '{"from": "+15550001000", "to": "+15551230002", "text": "stored before the rolling restart"}' | jq -e '.result.items[0].id')"
   k rollout restart statefulset/ella-smsc
   wait_all_ready
-  forward ella-smsc-0
+  forward_leader
   for _ in $(seq 30); do
     curl -fsS --max-time 10 "http://${SMSC_ADDR}:${API_PORT}/api/v1/readyz?cluster=true" >/dev/null 2>&1 && break
     sleep 2

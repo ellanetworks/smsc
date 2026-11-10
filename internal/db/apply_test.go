@@ -209,8 +209,6 @@ func dump(t *testing.T, d *DB) string {
 }
 
 func TestApplyIsDeterministic(t *testing.T) {
-	ctx := context.Background()
-
 	leader := openTestDB(t)
 	r := &recorder{d: leader}
 	leader.SetProposer(r)
@@ -225,11 +223,9 @@ func TestApplyIsDeterministic(t *testing.T) {
 		}
 	}
 
-	leaderHash, leaderIndex := must2(leader.Hash(ctx))
-	replicaHash, replicaIndex := must2(replica.Hash(ctx))
-
-	if leaderIndex != uint64(len(r.entries)) || replicaIndex != leaderIndex || !bytes.Equal(leaderHash, replicaHash) {
-		t.Fatalf("leader at %d %x, replica at %d %x", leaderIndex, leaderHash, replicaIndex, replicaHash)
+	if leaderIndex, replicaIndex := leader.AppliedIndex(), replica.AppliedIndex(); leaderIndex != uint64(len(r.entries)) ||
+		replicaIndex != leaderIndex {
+		t.Fatalf("leader at %d, replica at %d", leaderIndex, replicaIndex)
 	}
 
 	if a, b := dump(t, leader), dump(t, replica); a != b {
@@ -238,8 +234,6 @@ func TestApplyIsDeterministic(t *testing.T) {
 }
 
 func TestGroupedEntriesMatchSingleEntries(t *testing.T) {
-	ctx := context.Background()
-
 	leader := openTestDB(t)
 	r := &recorder{d: leader}
 	leader.SetProposer(r)
@@ -260,19 +254,8 @@ func TestGroupedEntriesMatchSingleEntries(t *testing.T) {
 		}
 	}
 
-	leaderHash, leaderIndex := must2(leader.Hash(ctx))
-	replicaHash, replicaIndex := must2(replica.Hash(ctx))
-
-	if replicaIndex != leaderIndex || !bytes.Equal(leaderHash, replicaHash) {
-		t.Fatalf("leader at %d %x, replica at %d %x", leaderIndex, leaderHash, replicaIndex, replicaHash)
-	}
-
-	for i := range r.entries {
-		want, _ := leader.HashAt(uint64(i + 1))
-
-		if h, ok := replica.HashAt(uint64(i + 1)); !ok || !bytes.Equal(h, want) {
-			t.Fatalf("hash at %d differs", i+1)
-		}
+	if leaderIndex, replicaIndex := leader.AppliedIndex(), replica.AppliedIndex(); replicaIndex != leaderIndex {
+		t.Fatalf("leader at %d, replica at %d", leaderIndex, replicaIndex)
 	}
 
 	if a, b := dump(t, leader), dump(t, replica); a != b {
@@ -318,14 +301,6 @@ func TestExpiredRequestIDIsAppliedAgainInAnyGrouping(t *testing.T) {
 	if a, b := dump(t, single), dump(t, grouped); a != b {
 		t.Fatalf("grouping changed the state:\nsingle:\n%s\ngrouped:\n%s", a, b)
 	}
-}
-
-func must2(h []byte, i uint64, err error) ([]byte, uint64) {
-	if err != nil {
-		panic(err)
-	}
-
-	return h, i
 }
 
 func store(t *testing.T, id RequestID, messages ...NewMessage) Command {
@@ -505,7 +480,7 @@ func TestStateSurvivesReopening(t *testing.T) {
 
 	must(d.Secrets(ctx))
 
-	hash, index := must2(d.Hash(ctx))
+	index := d.AppliedIndex()
 
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
@@ -518,9 +493,8 @@ func TestStateSurvivesReopening(t *testing.T) {
 
 	defer func() { _ = d.Close() }()
 
-	again, againIndex := must2(d.Hash(ctx))
-	if index != 1 || againIndex != index || d.AppliedIndex() != index || !bytes.Equal(hash, again) {
-		t.Fatalf("index %d hash %x before, %d %x after", index, hash, againIndex, again)
+	if again := d.AppliedIndex(); index != 1 || again != index {
+		t.Fatalf("index %d before, %d after", index, again)
 	}
 }
 
