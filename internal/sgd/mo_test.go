@@ -20,8 +20,13 @@ import (
 )
 
 type fakeStore struct {
-	stored []db.NewMessage
-	err    error
+	stored    []db.NewMessage
+	err       error
+	noRouting bool
+}
+
+func (s *fakeStore) Routing() bool {
+	return !s.noRouting
 }
 
 func (s *fakeStore) CreateMessage(_ context.Context, m db.NewMessage) (int64, error) {
@@ -293,7 +298,6 @@ func TestMOForwardSubmitRejections(t *testing.T) {
 		"alphanumeric destination":  {"01" + "00" + "04d0" + "c1e1" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"named destination":         {"01" + "00" + "07d0" + "45363b0c" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"empty destination":         {"01" + "00" + "0091" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
-		"network-specific number":   {"01" + "00" + "04b1" + "2143" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"21-digit destination":      {"01" + "00" + "1591" + "21436587092143658709f1" + "00" + "00" + "00", tpdu.FailureInvalidSMEAddress},
 		"sms-command":               {"02" + "00" + "00" + "00" + "00" + "0281" + "21" + "00", tpdu.FailureCommandUnsupported},
 		"reserved message type":     {"03" + "00", tpdu.FailureTPDUNotSupported},
@@ -330,6 +334,51 @@ func TestMOForwardDuplicate(t *testing.T) {
 
 	cause, diag := deliveryFailure(t, ans)
 	if cause != sgd.CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tpdu.FailureRejectedDuplicate)) {
+		t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
+	}
+}
+
+func TestMOForwardToAServiceNumber(t *testing.T) {
+	store := &fakeStore{}
+
+	ans := newTestHandler(store).ServeDiameter(context.Background(), nil,
+		ofrWithSubmit(t, "01"+"00"+"04b1"+"2143"+"00"+"00"+"00"))
+	assertCommon(t, ans)
+
+	if len(store.stored) != 1 {
+		t.Fatalf("stored = %d messages; a network-specific number is for the routes to resolve", len(store.stored))
+	}
+
+	if m := store.stored[0]; m.MSISDN != "1234" || m.Recipient != (db.Address{Digits: "1234", TypeOfNumber: 3, NumberingPlan: 1}) {
+		t.Fatalf("stored recipient %+v, msisdn %q", m.Recipient, m.MSISDN)
+	}
+}
+
+func TestMOForwardToAServiceNumberBeforeRoutes(t *testing.T) {
+	store := &fakeStore{noRouting: true}
+
+	ans := newTestHandler(store).ServeDiameter(context.Background(), nil,
+		ofrWithSubmit(t, "01"+"00"+"04b1"+"2143"+"00"+"00"+"00"))
+	assertCommon(t, ans)
+
+	if len(store.stored) != 0 {
+		t.Fatalf("stored = %d messages; a network-specific number has no route until the cluster supports routes",
+			len(store.stored))
+	}
+
+	cause, diag := deliveryFailure(t, ans)
+	if cause != sgd.CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tpdu.FailureInvalidSMEAddress)) {
+		t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
+	}
+}
+
+func TestMOForwardWithoutARoute(t *testing.T) {
+	ans := newTestHandler(&fakeStore{err: db.ErrNoRoute}).ServeDiameter(context.Background(), nil,
+		ofrWithSubmit(t, "01"+"00"+"04b1"+"2143"+"00"+"00"+"00"))
+	assertCommon(t, ans)
+
+	cause, diag := deliveryFailure(t, ans)
+	if cause != sgd.CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tpdu.FailureInvalidSMEAddress)) {
 		t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
 	}
 }

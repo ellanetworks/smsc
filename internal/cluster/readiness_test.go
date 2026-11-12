@@ -252,6 +252,11 @@ func TestReadinessOfASingleNode(t *testing.T) {
 
 	waitLeader(t, e.node)
 
+	deadline := time.Now().Add(10 * time.Second)
+	for e.db.Schema() != db.SchemaVersion() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	if users, err := e.db.CountUsers(context.Background()); err != nil || users != 0 {
 		t.Fatalf("users = %d, %v", users, err)
 	}

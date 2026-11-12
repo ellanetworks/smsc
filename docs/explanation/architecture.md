@@ -33,7 +33,7 @@ With SMS over IP, the phone sends and receives its messages as SIP messages thro
 ## Store and forward
 
 1. Ella SMSC stores the message, and acknowledges it to the sender.
-2. It asks the HSS where the recipient is served: an MME, an SMSF or an IP-SM-GW.
+2. It checks whether the destination matches an ESME route. If it does, the message goes to that application. Otherwise, for a subscriber, it asks the HSS where the recipient is served: an MME, an SMSF or an IP-SM-GW.
 3. It sends the message there.
 4. If the phone is unreachable, the HSS records that a message waits, and alerts Ella SMSC when the phone is back. Ella SMSC also retries after the [retry intervals](../reference/api/delivery.md).
 
@@ -52,6 +52,14 @@ Besides phones, applications can send messages to subscribers, for example notif
   ![OTA SIM delivery with SMPP](../images/smsc_apps.svg){ width="800" }
   <figcaption>OTA SIM delivery with SMPP</figcaption>
 </figure>
+
+## Messages to applications
+
+Applications receive messages over SMPP through an ESME account with routes for short codes or international numbers. Routes apply to messages from phones, the API and other ESMEs.
+
+Dialled-number routes match before international-number routes. Routes use fixed-length ranges, so a short code such as `4000` does not also capture a subscriber number such as `4000123456`. Routes of the same form cannot overlap.
+
+Ella SMSC stores a routed message with status `delegated` until the application acknowledges it or it fails, expires or is replaced. It waits if no receiver is bound and retries unacknowledged messages, so an application may receive duplicates. Route changes affect only new messages. See [Routed messages](../reference/smpp.md#routed-messages).
 
 ## 3GPP roles
 

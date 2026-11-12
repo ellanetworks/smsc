@@ -258,30 +258,46 @@ func missingPassword(ctx context.Context, tx *sql.Tx, id int64) error {
 func (d *DB) DeleteUser(ctx context.Context, id int64) (err error) {
 	defer d.observe(&err)()
 
-	if _, err := submit[struct{}](ctx, d, cmdDeleteUser, id); err != nil {
+	deleted, err := submit[failedDelegations](ctx, d, cmdDeleteUser, id)
+	if err != nil {
 		return fmt.Errorf("delete user: %w", err)
 	}
+
+	d.metrics.count(completions(KindMessage, StatusFailed, deleted.Failed))
 
 	return nil
 }
 
-func applyDeleteUser(a *applyCtx, id int64) (struct{}, error) {
+func applyDeleteUser(a *applyCtx, id int64) (failedDelegations, error) {
 	if err := keepPasswordAdmin(a.ctx, a.tx, id); err != nil {
-		return struct{}{}, err
+		return failedDelegations{}, err
 	}
 
 	esmes, err := esmesOfUser(a.ctx, a.tx, id)
 	if err != nil {
-		return struct{}{}, err
+		return failedDelegations{}, err
+	}
+
+	var deleted failedDelegations
+
+	if a.schema >= routingSchema {
+		for _, esmeID := range esmes {
+			failed, err := failDeliveriesOfESME(a, esmeID)
+			if err != nil {
+				return failedDelegations{}, err
+			}
+
+			deleted.Failed += failed
+		}
 	}
 
 	if err := updateUser(a.ctx, a.tx, `DELETE FROM users WHERE id = ?`, id); err != nil {
-		return struct{}{}, err
+		return failedDelegations{}, err
 	}
 
 	a.events.ClosedESMEs = append(a.events.ClosedESMEs, esmes...)
 
-	return struct{}{}, nil
+	return deleted, nil
 }
 
 func keepPasswordAdmin(ctx context.Context, tx *sql.Tx, id int64) error {

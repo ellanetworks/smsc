@@ -34,7 +34,7 @@ func NewMetrics(store PendingCounter, leading func() bool) *Metrics {
 		}, []string{"result"}),
 		sent: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ellasmsc_smpp_notifications_sent_total",
-			Help: "SMPP notifications that reached a final outcome, by type (receipt, sim_answer) and result " +
+			Help: "SMPP notifications that reached a final outcome, by type (receipt, sim_answer, mo) and result " +
 				"(acknowledged, rejected, expired, no_user_data).",
 		}, []string{"type", "result"}),
 		submit: prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -46,7 +46,8 @@ func NewMetrics(store PendingCounter, leading func() bool) *Metrics {
 			store:   store,
 			leading: leading,
 			desc: prometheus.NewDesc("ellasmsc_smpp_notifications_pending",
-				"SMPP notifications not yet sent and not expired, by type (receipt, sim_answer).", []string{"type"}, nil),
+				"SMPP notifications not yet sent and not expired, by type (receipt, sim_answer, mo).", []string{"type"},
+				nil),
 		},
 	}
 
@@ -63,6 +64,12 @@ func NewMetrics(store PendingCounter, leading func() bool) *Metrics {
 		} {
 			m.sent.WithLabelValues(string(t), string(r))
 		}
+	}
+
+	for _, r := range []db.NotificationResult{
+		db.NotificationAcknowledged, db.NotificationRejected, db.NotificationExpired, db.NotificationNoUserData,
+	} {
+		m.sent.WithLabelValues(string(db.NotificationMO), string(r))
 	}
 
 	return m

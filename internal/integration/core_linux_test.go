@@ -126,6 +126,20 @@ func (c *core) waitOpen(smsc *node) {
 func (c *core) submit(via *node, from, to int) (int64, error) {
 	id := c.next.Add(1)
 
+	rc, err := c.forward(via, from, smsSubmit(msisdnOf(to), id))
+	if err != nil {
+		return 0, err
+	}
+
+	if rc != diameter.ResultSuccess {
+		return 0, fmt.Errorf("result code %d", rc)
+	}
+
+	return id, nil
+}
+
+// TS 29.338 clause 6.2.1
+func (c *core) forward(via *node, from int, tpdu []byte) (uint32, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -134,17 +148,13 @@ func (c *core) submit(via *node, from, to int) (int64, error) {
 		diameter.Grouped(tgpp.AVPUserIdentifier, diameter.AVPFlagMandatory, tgpp.VendorID,
 			diameter.UTF8String(diameter.AVPUserName, diameter.AVPFlagMandatory, 0, imsiOf(from)),
 			diameter.OctetString(tgpp.AVPMSISDN, diameter.AVPFlagMandatory, tgpp.VendorID, mustTBCD(msisdnOf(from)))),
-		diameter.OctetString(sgd.AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, smsSubmit(msisdnOf(to), id)),
+		diameter.OctetString(sgd.AVPSMRPUI, diameter.AVPFlagMandatory, tgpp.VendorID, tpdu),
 	))
 	if err != nil {
 		return 0, err
 	}
 
-	if rc := resultOf(ans); rc != diameter.ResultSuccess {
-		return 0, fmt.Errorf("result code %d", rc)
-	}
-
-	return id, nil
+	return resultOf(ans), nil
 }
 
 func (c *core) serve(_ context.Context, _ *diameter.Conn, req *diameter.Message) *diameter.Message {
@@ -323,9 +333,13 @@ func mustTBCD(digits string) []byte {
 
 // TS 23.040 clause 9.2.2.2
 func smsSubmit(to string, id int64) []byte {
-	text := "integration #" + strconv.FormatInt(id, 10)
+	return smsSubmitTo(to, 0x91, "integration #"+strconv.FormatInt(id, 10))
+}
 
-	out := []byte{0x01, 0x00, byte(len(to)), 0x91}
+// TS 23.040 clause 9.2.2.2
+// TS 23.040 clause 9.1.2.5
+func smsSubmitTo(to string, typeOfAddress byte, text string) []byte {
+	out := []byte{0x01, 0x00, byte(len(to)), typeOfAddress}
 	out = append(out, mustTBCD(to)...)
 	out = append(out, 0x00, 0x04, byte(len(text)))
 

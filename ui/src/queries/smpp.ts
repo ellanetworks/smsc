@@ -12,6 +12,7 @@ export interface ESME {
   system_id: string;
   user: string;
   allowed_networks: string[];
+  routes: string[];
   created_at: string;
   sessions: SMPPSession[];
 }
@@ -19,6 +20,7 @@ export interface ESME {
 export interface ESMEUpdate {
   password?: string;
   allowed_networks: string[];
+  routes: string[];
 }
 
 export interface ESMECreate extends ESMEUpdate {

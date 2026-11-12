@@ -17,3 +17,4 @@ These how-to guides cover key operations and common tasks in Ella SMSC.
 - [Send Messages from an Application](send_messages_from_an_application.md)
 - [Send (U)SIM Data Download Messages over the API](send_sim_data_download_messages_over_the_api.md)
 - [Send (U)SIM Data Download Messages over SMPP](send_sim_data_download_messages_over_smpp.md)
+- [Route a Short Code to an Application](route_a_short_code_to_an_application.md)

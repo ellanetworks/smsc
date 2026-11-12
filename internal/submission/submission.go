@@ -89,6 +89,14 @@ func (s *Submitter) Submit(ctx context.Context, r Request) ([]int64, error) {
 		Digits:        r.MSISDN,
 	}
 
+	if !db.ServedByHSS(r.Recipient.TypeOfNumber) {
+		destination = tpdu.Address{
+			TypeOfNumber:  r.Recipient.TypeOfNumber,
+			NumberingPlan: r.Recipient.NumberingPlan,
+			Digits:        r.Recipient.Digits,
+		}
+	}
+
 	var submits []tpdu.Submit
 
 	switch {
@@ -163,6 +171,10 @@ func (s *Submitter) Submit(ctx context.Context, r Request) ([]int64, error) {
 	origin := receivedOrigin(r.Origin)
 
 	ids, err := s.Store.CreateMessages(ctx, messages)
+	if errors.Is(err, db.ErrNoRoute) {
+		return nil, err
+	}
+
 	if err != nil {
 		s.Received.Add(origin, intake.Error, len(messages))
 		return nil, fmt.Errorf("%w: %w", ErrStore, err)

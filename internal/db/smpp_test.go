@@ -603,7 +603,7 @@ func TestExpireAndCountNotifications(t *testing.T) {
 	otherESME := createTestESME(t, d, testESME("other", f.user))
 
 	if counts, err := d.CountPendingNotifications(ctx, f.origin); err != nil ||
-		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 0, NotificationSIMAnswer: 0}) {
+		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 0, NotificationSIMAnswer: 0, NotificationMO: 0}) {
 		t.Fatalf("CountPendingNotifications of none = %v, %v", counts, err)
 	}
 
@@ -629,7 +629,7 @@ func TestExpireAndCountNotifications(t *testing.T) {
 	third := complete(otherESME, ReceiptFinal, false, t0)
 
 	if counts, err := d.CountPendingNotifications(ctx, t0); err != nil ||
-		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 3, NotificationSIMAnswer: 1}) {
+		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 3, NotificationSIMAnswer: 1, NotificationMO: 0}) {
 		t.Fatalf("CountPendingNotifications = %v, %v", counts, err)
 	}
 
@@ -656,14 +656,14 @@ func TestExpireAndCountNotifications(t *testing.T) {
 	}
 
 	if counts, err := d.CountPendingNotifications(ctx, t0); err != nil ||
-		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 3, NotificationSIMAnswer: 0}) {
+		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 3, NotificationSIMAnswer: 0, NotificationMO: 0}) {
 		t.Fatalf("CountPendingNotifications after a close = %v, %v", counts, err)
 	}
 
 	expiry := t0.Add(defaultValidity)
 
 	if counts, err := d.CountPendingNotifications(ctx, expiry); err != nil ||
-		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 1, NotificationSIMAnswer: 0}) {
+		!reflect.DeepEqual(counts, map[NotificationType]int{NotificationReceipt: 1, NotificationSIMAnswer: 0, NotificationMO: 0}) {
 		t.Fatalf("CountPendingNotifications at expiry = %v, %v", counts, err)
 	}
 

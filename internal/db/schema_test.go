@@ -24,19 +24,23 @@ func TestSchemaAdvancesThroughTheLog(t *testing.T) {
 
 	withMigration(t, `CREATE TABLE upgraded (id INTEGER PRIMARY KEY)`)
 
+	last := len(migrations)
+
 	if d.Schema() != baselineSchema {
 		t.Fatalf("a new binary migrated an existing database at open: schema %d", d.Schema())
 	}
 
-	if err := d.Migrate(ctx, 3); !errors.Is(err, ErrInvalid) {
+	if err := d.Migrate(ctx, last+1); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a skipped schema = %v, want %v", err, ErrInvalid)
 	}
 
-	if err := d.Migrate(ctx, 2); err != nil {
-		t.Fatal(err)
+	for target := 2; target <= last; target++ {
+		if err := d.Migrate(ctx, target); err != nil {
+			t.Fatalf("migrate to schema %d: %v", target, err)
+		}
 	}
 
-	if err := d.Migrate(ctx, 2); err != nil || d.Schema() != 2 {
+	if err := d.Migrate(ctx, last); err != nil || d.Schema() != last {
 		t.Fatalf("a replayed migration = %v, schema %d", err, d.Schema())
 	}
 
@@ -48,7 +52,9 @@ func TestSchemaAdvancesThroughTheLog(t *testing.T) {
 func TestMigrationBeyondTheBinaryHalts(t *testing.T) {
 	d := openTestDB(t)
 
-	raw, err := json.Marshal(migrate{Target: baselineSchema + 1})
+	migrateAll(t, d)
+
+	raw, err := json.Marshal(migrate{Target: len(migrations) + 1})
 	if err != nil {
 		t.Fatal(err)
 	}

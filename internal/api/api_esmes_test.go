@@ -72,8 +72,10 @@ func (a *testAPI) storedESME(t *testing.T, systemID string) db.ESME {
 	return e
 }
 
-func (a *testAPI) userID(t *testing.T, email string) int64 {
+func (a *testAPI) userID(t *testing.T) int64 {
 	t.Helper()
+
+	email := "ota@example.com"
 
 	u, err := a.store.GetUser(context.Background(), email)
 	if err != nil {
@@ -101,6 +103,7 @@ func TestESMELifecycle(t *testing.T) {
 		SystemID:        "ota",
 		User:            "ota@example.com",
 		AllowedNetworks: []string{"10.1.0.0/24", "2001:db8::/32"},
+		Routes:          []string{},
 		CreatedAt:       "2026-09-29T10:00:00.000Z",
 		Sessions:        []api.ESMESession{},
 	}
@@ -146,7 +149,7 @@ func TestESMELifecycle(t *testing.T) {
 
 	smpp.sessions = nil
 
-	code, result, msg = a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["192.0.2.7/32"]}`)
+	code, result, msg = a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["192.0.2.7/32"], "routes": []}`)
 	if code != http.StatusOK {
 		t.Fatalf("PUT = %d %q", code, msg)
 	}
@@ -155,6 +158,7 @@ func TestESMELifecycle(t *testing.T) {
 		SystemID:        "ota",
 		User:            "ota@example.com",
 		AllowedNetworks: []string{"192.0.2.7/32"},
+		Routes:          []string{},
 		CreatedAt:       "2026-09-29T10:00:00.000Z",
 		Sessions:        []api.ESMESession{},
 	}
@@ -172,7 +176,7 @@ func TestESMELifecycle(t *testing.T) {
 		t.Fatalf("GET after PUT = %d %+v", code, got)
 	}
 
-	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": []}`); code != http.StatusOK {
+	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": [], "routes": []}`); code != http.StatusOK {
 		t.Fatalf("PUT with a password = %d %q", code, msg)
 	}
 
@@ -186,7 +190,7 @@ func TestESMELifecycle(t *testing.T) {
 	}
 
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		if code, _, _ := a.do(t, method, "/api/v1/esmes/ota", `{"allowed_networks": []}`); code != http.StatusNotFound {
+		if code, _, _ := a.do(t, method, "/api/v1/esmes/ota", `{"allowed_networks": [], "routes": []}`); code != http.StatusNotFound {
 			t.Errorf("%s of a deleted ESME = %d, want 404", method, code)
 		}
 	}
@@ -235,7 +239,7 @@ func TestESMEGeneratedPassword(t *testing.T) {
 		}
 
 		if _, result, _ := a.do(t, http.MethodPut, "/api/v1/esmes/"+systemID,
-			`{"allowed_networks": []}`); strings.Contains(string(result),
+			`{"allowed_networks": [], "routes": []}`); strings.Contains(string(result),
 			`"password"`) {
 			t.Fatalf("PUT returns a password: %s", result)
 		}
@@ -252,7 +256,7 @@ func TestESMESystemIDInThePath(t *testing.T) {
 		method, body string
 	}{
 		{http.MethodGet, ""},
-		{http.MethodPut, `{"allowed_networks": []}`},
+		{http.MethodPut, `{"allowed_networks": [], "routes": []}`},
 		{http.MethodDelete, ""},
 	} {
 		if code, _, msg := a.do(t, tc.method, "/api/v1/esmes/my%20esme%2F1", tc.body); code != http.StatusOK {
@@ -293,7 +297,7 @@ func TestESMEValidation(t *testing.T) {
 	}
 
 	update := func(fields string) string {
-		body := `{"allowed_networks": ["10.0.0.0/8"]`
+		body := `{"allowed_networks": ["10.0.0.0/8"], "routes": []`
 		if fields != "" {
 			body += ", " + fields
 		}
@@ -462,7 +466,7 @@ func TestESMEChangesNeedALogin(t *testing.T) {
 			http.StatusForbidden,
 		},
 		{
-			http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": []}`,
+			http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "routes": []}`,
 			http.StatusForbidden,
 		},
 		{http.MethodDelete, "/api/v1/esmes/ota", "", http.StatusForbidden},
@@ -495,11 +499,11 @@ func TestESMEChangesCloseSessions(t *testing.T) {
 		t.Fatalf("creating ESMEs closed sessions: %v", smpp.closedESMEs)
 	}
 
-	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["10.0.0.1"]}`); code != http.StatusBadRequest {
+	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": ["10.0.0.1"], "routes": []}`); code != http.StatusBadRequest {
 		t.Fatalf("invalid PUT = %d", code)
 	}
 
-	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": []}`); code != http.StatusOK {
+	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "routes": []}`); code != http.StatusOK {
 		t.Fatalf("PUT = %d", code)
 	}
 
@@ -550,7 +554,7 @@ func TestESMEChangesAreAudited(t *testing.T) {
 
 	a.createESME(t, otaESMEBody)
 
-	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": []}`); code != http.StatusOK {
+	if code, _, _ := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"password": "newpass", "allowed_networks": [], "routes": []}`); code != http.StatusOK {
 		t.Fatalf("PUT = %d", code)
 	}
 
@@ -598,7 +602,7 @@ func TestMessagesFromAnESME(t *testing.T) {
 
 	id, err := a.store.CreateMessage(ctx, db.NewMessage{
 		Originator: db.Address{Digits: "15550001111", TypeOfNumber: 1, NumberingPlan: 1}, Recipient: to,
-		MSISDN: to.Digits, Origin: db.OriginSMPP, SubmittedBy: a.userID(t, "ota@example.com"), TPDU: submit,
+		MSISDN: to.Digits, Origin: db.OriginSMPP, SubmittedBy: a.userID(t), TPDU: submit,
 		SubmittedAt: testNow, ExpiresAt: testNow.Add(time.Hour),
 		SMPP: &db.NewSMPPMessage{ESMEID: a.storedESME(t, "ota").ID, Receipt: db.ReceiptFinal, DataCoding: 0x04},
 	})
@@ -656,5 +660,301 @@ func TestMessagesFromAnESME(t *testing.T) {
 	if got := decode[api.Message](t, result); code != http.StatusOK || got.SystemID != "" ||
 		got.SubmittedBy != "ota@example.com" {
 		t.Fatalf("GET after deleting the ESME = %d %+v", code, got)
+	}
+}
+
+func TestESMERoutes(t *testing.T) {
+	a := newSMPPTestAPI(t, &fakeSMPP{})
+	a.createUser(t, "ota@example.com", db.RoleSubmitter)
+
+	created := a.createESME(t, `{"system_id": "ota", "user": "ota@example.com", "password": "secret",
+		"allowed_networks": [], "routes": ["40000-40099", "1555", "4000-4000", "40000-40099"]}`)
+	if !reflect.DeepEqual(created.Routes, []string{"1555", "4000", "40000-40099"}) {
+		t.Fatalf("POST routes = %v; want them canonical, without duplicates, sorted", created.Routes)
+	}
+
+	if got := a.storedESME(t, "ota"); !slices.Equal(got.Routes, created.Routes) {
+		t.Fatalf("stored routes = %v, want %v", got.Routes, created.Routes)
+	}
+
+	for i, tc := range []struct {
+		route string
+		want  int
+	}{
+		{"40050", http.StatusConflict},
+		{"40090-40109", http.StatusConflict},
+		{"4000", http.StatusConflict},
+		{"40a0", http.StatusBadRequest},
+		{"40000-4009", http.StatusBadRequest},
+		{"40099-40000", http.StatusBadRequest},
+		{"155512300123456789012", http.StatusBadRequest},
+		{"40100-40199", http.StatusCreated},
+	} {
+		code, _, msg := a.do(t, http.MethodPost, "/api/v1/esmes",
+			fmt.Sprintf(`{"system_id": "other%d", "user": "ota@example.com", "routes": [%q]}`, i, tc.route))
+		if code != tc.want {
+			t.Errorf("POST with route %s = %d %q, want %d", tc.route, code, msg, tc.want)
+		}
+	}
+
+	code, _, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota",
+		`{"allowed_networks": [], "routes": ["40000-40099", "40050"]}`)
+	if code != http.StatusBadRequest || !strings.Contains(msg, "40000-40099 and 40050 overlap") {
+		t.Fatalf("PUT with overlapping routes = %d %q", code, msg)
+	}
+
+	code, _, msg = a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "routes": ["40100"]}`)
+	if code != http.StatusConflict {
+		t.Fatalf("PUT with a route of another ESME = %d %q", code, msg)
+	}
+
+	code, result, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "routes": ["4001"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT = %d %q", code, msg)
+	}
+
+	if updated := decode[api.ESME](t, result); !slices.Equal(updated.Routes, []string{"4001"}) {
+		t.Fatalf("PUT routes = %v", updated.Routes)
+	}
+
+	for name, body := range map[string]string{
+		"without routes":     `{"allowed_networks": ["10.0.0.0/8"]}`,
+		"with null routes":   `{"allowed_networks": ["10.0.0.0/8"], "routes": null}`,
+		"with only password": `{"allowed_networks": [], "password": "newpass"}`,
+	} {
+		code, result, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota", body)
+		if code != http.StatusOK {
+			t.Fatalf("PUT %s = %d %q", name, code, msg)
+		}
+
+		if updated := decode[api.ESME](t, result); !slices.Equal(updated.Routes, []string{"4001"}) {
+			t.Fatalf("PUT %s routes = %v; the routes must stay", name, updated.Routes)
+		}
+
+		if got := a.storedESME(t, "ota"); !slices.Equal(got.Routes, []string{"4001"}) {
+			t.Fatalf("stored routes after a PUT %s = %v; the routes must stay", name, got.Routes)
+		}
+	}
+
+	code, result, msg = a.do(t, http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "routes": []}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT with no routes = %d %q", code, msg)
+	}
+
+	if updated := decode[api.ESME](t, result); len(updated.Routes) != 0 {
+		t.Fatalf("PUT with [] routes = %v; [] removes them all", updated.Routes)
+	}
+
+	for action, want := range map[string][]string{
+		"create_esme": {
+			testAdmin + `: ESME "ota" created for ota@example.com with routes [1555 4000 40000-40099]`,
+			testAdmin + `: ESME "other7" created for ota@example.com with routes [40100-40199]`,
+		},
+	} {
+		if got := a.auditEvents(t, action); !slices.Equal(got, want) {
+			t.Errorf("%s events = %q, want %q", action, got, want)
+		}
+	}
+}
+
+func TestRoutedRecipientsInTheAPI(t *testing.T) {
+	ctx := context.Background()
+	a := newTestAPI(t, fakeDiameter{})
+	a.createUser(t, "ota@example.com", db.RoleSubmitter)
+
+	esmeID, err := a.store.CreateESME(ctx, db.ESME{
+		SystemID: "ota", UserID: a.userID(t), PasswordHash: "hash",
+		Routes: []string{"40000-40009", "+15551230000-+15551239999"}, CreatedAt: testNow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		recipient db.Address
+		msisdn    string
+		want      string
+	}{
+		{"dialled-number route", db.Address{Digits: "40001", TypeOfNumber: 0, NumberingPlan: 1}, "140001", "40001"},
+		{"abbreviated number", db.Address{Digits: "40002", TypeOfNumber: 6, NumberingPlan: 1}, "40002", "40002"},
+		{
+			"international route",
+			db.Address{Digits: "15551230009", TypeOfNumber: 1, NumberingPlan: 1},
+			"15551230009",
+			"+15551230009",
+		},
+		{"no route", db.Address{Digits: "5559990002", TypeOfNumber: 0, NumberingPlan: 1}, "15559990002", "+15559990002"},
+	} {
+		id, err := a.store.CreateMessage(ctx, db.NewMessage{
+			Originator:  db.Address{Digits: "15550001111", TypeOfNumber: 1, NumberingPlan: 1},
+			Recipient:   tc.recipient,
+			MSISDN:      tc.msisdn,
+			Origin:      db.OriginMobile,
+			TPDU:        []byte{0x01},
+			SubmittedAt: testNow,
+			ExpiresAt:   testNow.Add(time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("%s: CreateMessage: %v", tc.name, err)
+		}
+
+		code, result, errMsg := a.do(t, http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), "")
+		if code != http.StatusOK {
+			t.Fatalf("%s: GET = %d %q", tc.name, code, errMsg)
+		}
+
+		if got := decode[api.Message](t, result); got.To != tc.want {
+			t.Errorf("%s: to = %q, want %q", tc.name, got.To, tc.want)
+		}
+	}
+
+	if err := a.store.DeleteESME(ctx, esmeID); err != nil {
+		t.Fatalf("DeleteESME: %v", err)
+	}
+
+	code, result, errMsg := a.do(t, http.MethodGet, "/api/v1/messages?to=40001", "")
+	if code != http.StatusOK {
+		t.Fatalf("list = %d %q", code, errMsg)
+	}
+
+	if got := decode[api.ListMessagesResponse](t, result); got.TotalCount != 1 || got.Items[0].To != "40001" {
+		t.Fatalf("messages to 40001 after deleting the ESME = %+v; the dialled number must stay", got)
+	}
+}
+
+func TestDelegatedMessagesInTheAPI(t *testing.T) {
+	a := newTestAPI(t, fakeDiameter{})
+	a.createUser(t, "ota@example.com", db.RoleSubmitter)
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.store.CreateESME(context.Background(), db.ESME{
+		SystemID: "ota", UserID: a.userID(t), PasswordHash: string(hash),
+		Routes: []string{"+15551230004"}, CreatedAt: testNow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	created := a.create(t, "+15550001111", "+15551230004", "to the application")
+	if len(created) != 1 || created[0].Status != "delegated" {
+		t.Fatalf("create = %+v; want one delegated message", created)
+	}
+
+	code, result, errMsg := a.do(t, http.MethodGet, "/api/v1/messages?status=delegated", "")
+	if code != http.StatusOK {
+		t.Fatalf("list = %d %q", code, errMsg)
+	}
+
+	if got := decode[api.ListMessagesResponse](t, result); got.TotalCount != 1 ||
+		got.Items[0].ID != created[0].ID {
+		t.Fatalf("delegated messages = %+v", got)
+	}
+
+	code, result, errMsg = a.do(t, http.MethodGet, "/api/v1/messages?status=pending", "")
+	if code != http.StatusOK {
+		t.Fatalf("list pending = %d %q", code, errMsg)
+	}
+
+	if got := decode[api.ListMessagesResponse](t, result); got.TotalCount != 0 {
+		t.Fatalf("the delegated message must not be pending: %+v", got)
+	}
+
+	if code, _, errMsg := a.do(t, http.MethodGet, "/api/v1/messages?status=lost", ""); code != http.StatusBadRequest {
+		t.Fatalf("an unknown status = %d %q", code, errMsg)
+	}
+
+	code, result, errMsg = a.do(t, http.MethodGet, "/api/v1/messages/counts", "")
+	if code != http.StatusOK {
+		t.Fatalf("counts = %d %q", code, errMsg)
+	}
+
+	if got := decode[api.MessageCounts](t, result); got.Delegated != 1 {
+		t.Fatalf("counts = %+v; want one delegated", got)
+	}
+}
+
+type failingESMEs struct {
+	*db.DB
+	err error
+}
+
+func (f failingESMEs) CreateESME(context.Context, db.ESME) (int64, error) { return 0, f.err }
+
+func (f failingESMEs) UpdateESME(context.Context, db.ESME) error { return f.err }
+
+func TestESMEWritesWhileBusy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"upgrade pending", fmt.Errorf("update ESME: %w", db.ErrUpgradePending), "The cluster is still upgrading, retry shortly"},
+		{"busy", fmt.Errorf("update ESME: %w", db.ErrBusy), "Too busy, retry later"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := openStore(t)
+			a := &testAPI{store: store, now: testNow}
+
+			cfg := testConfig(t, store)
+			cfg.SMPP = &fakeSMPP{}
+			cfg.ESMEs = failingESMEs{DB: store, err: tc.err}
+
+			a.handler = api.NewHandler(cfg)
+			a.token = initialize(t, a.handler)
+			a.createUser(t, "ota@example.com", db.RoleSubmitter)
+
+			if _, err := store.CreateESME(context.Background(), db.ESME{
+				SystemID: "ota", UserID: a.userID(t), PasswordHash: "hash", CreatedAt: testNow,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, req := range []struct{ method, path, body string }{
+				{http.MethodPost, "/api/v1/esmes", `{"system_id": "other", "user": "ota@example.com", "routes": ["4000"]}`},
+				{http.MethodPut, "/api/v1/esmes/ota", `{"allowed_networks": [], "routes": ["4000"]}`},
+			} {
+				if code, _, msg := a.do(t, req.method, req.path, req.body); code != http.StatusServiceUnavailable ||
+					msg != tc.want {
+					t.Errorf("%s %s = %d %q, want 503 %q", req.method, req.path, code, msg, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestESMERouteChangesKeepSessions(t *testing.T) {
+	smpp := &fakeSMPP{}
+	a := newSMPPTestAPI(t, smpp)
+	a.createUser(t, "ota@example.com", db.RoleSubmitter)
+	a.createESME(t, otaESMEBody)
+
+	ota := a.storedESME(t, "ota").ID
+
+	for _, tc := range []struct {
+		name, body string
+		closes     bool
+	}{
+		{"new routes", `{"allowed_networks": ["10.1.0.0/24", "2001:db8::/32"], "routes": ["4000"]}`, false},
+		{"other routes, networks reordered", `{"allowed_networks": ["2001:db8::/32", "10.1.0.0/24"], "routes": ["4001", "40000-40099"]}`, false},
+		{"routes omitted", `{"allowed_networks": ["10.1.0.0/24", "2001:db8::/32"]}`, false},
+		{"routes removed", `{"allowed_networks": ["10.1.0.0/24", "2001:db8::/32"], "routes": []}`, false},
+		{"a network added", `{"allowed_networks": ["10.1.0.0/24", "2001:db8::/32", "192.0.2.0/24"], "routes": ["4000"]}`, true},
+		{"a network removed", `{"allowed_networks": ["10.1.0.0/24"]}`, true},
+		{"a password", `{"allowed_networks": ["10.1.0.0/24"], "password": "newpass"}`, true},
+	} {
+		before := len(smpp.closedESMEs)
+
+		if code, _, msg := a.do(t, http.MethodPut, "/api/v1/esmes/ota", tc.body); code != http.StatusOK {
+			t.Fatalf("PUT with %s = %d %q", tc.name, code, msg)
+		}
+
+		closed := smpp.closedESMEs[before:]
+		if want := map[bool][]int64{true: {ota}, false: {}}[tc.closes]; !slices.Equal(closed, want) {
+			t.Errorf("PUT with %s closed sessions of %v, want %v", tc.name, closed, want)
+		}
 	}
 }

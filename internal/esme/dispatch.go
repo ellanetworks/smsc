@@ -88,6 +88,21 @@ func (s *Service) Expire(ctx context.Context) {
 	for t, n := range expired {
 		s.Metrics.notified(t, db.NotificationExpired, n)
 	}
+
+	mo, err := s.Store.ExpireMODeliveries(ctx, s.Now())
+	if errors.Is(err, db.ErrUpgradePending) {
+		return
+	}
+
+	if err != nil {
+		if ctx.Err() == nil {
+			s.Logger.ErrorContext(ctx, "failed to expire MO deliveries", slog.Any("error", err))
+		}
+
+		return
+	}
+
+	s.Metrics.notified(db.NotificationMO, db.NotificationExpired, mo)
 }
 
 func (s *Service) dispatch(ctx context.Context) time.Duration {
@@ -111,7 +126,7 @@ func (s *Service) dispatch(ctx context.Context) time.Duration {
 			}
 
 			for _, n := range due {
-				sess := s.reserve(sessions, n.ID)
+				sess := s.reserve(sessions)
 				if sess == nil {
 					s.giveBack(context.WithoutCancel(ctx), n)
 					continue
@@ -119,7 +134,7 @@ func (s *Service) dispatch(ctx context.Context) time.Duration {
 
 				s.sends.Go(func() {
 					s.send(context.WithoutCancel(ctx), sess, n)
-					s.release(sess, n.ID)
+					s.release(sess)
 					s.wakeDispatcher()
 				})
 			}
@@ -159,7 +174,7 @@ func (s *Service) receivers() map[int64][]receiverSlot {
 	return out
 }
 
-func (s *Service) reserve(slots []receiverSlot, id int64) *Session {
+func (s *Service) reserve(slots []receiverSlot) *Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -178,19 +193,16 @@ func (s *Service) reserve(slots []receiverSlot, id int64) *Session {
 
 	if best != nil {
 		best.inflight++
-		s.sending[id] = true
 	}
 
 	return best
 }
 
-func (s *Service) release(sess *Session, id int64) {
+func (s *Service) release(sess *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	sess.inflight--
-
-	delete(s.sending, id)
 }
 
 // SMPP 3.4 section 4.6.2
@@ -202,6 +214,13 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 	d, err := deliverSM(n)
 	if errors.Is(err, errNoUserData) {
 		s.close(ctx, log, n, db.NotificationNoUserData)
+		return
+	}
+
+	if errors.Is(err, errUndecodable) {
+		log.ErrorContext(ctx, "failed to make a deliver_sm of a routed message; it fails", slog.Any("error", err))
+		s.close(ctx, log, n, db.NotificationNoUserData)
+
 		return
 	}
 
@@ -247,7 +266,14 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 }
 
 func (s *Service) close(ctx context.Context, log *slog.Logger, n db.Notification, result db.NotificationResult) {
-	err := s.Store.CloseNotification(ctx, n.ID, result)
+	var err error
+
+	if n.Type == db.NotificationMO {
+		err = s.Store.CloseMODelivery(ctx, n.ID, result, s.Now())
+	} else {
+		err = s.Store.CloseNotification(ctx, n.ID, result)
+	}
+
 	if errors.Is(err, db.ErrNotFound) {
 		return
 	}
@@ -261,7 +287,15 @@ func (s *Service) close(ctx context.Context, log *slog.Logger, n db.Notification
 }
 
 func (s *Service) retry(ctx context.Context, log *slog.Logger, n db.Notification) {
-	if err := s.Store.RetryNotification(ctx, n.ID, s.Now().Add(retryDelay(n.Attempts)), s.Node); err != nil {
+	var err error
+
+	if n.Type == db.NotificationMO {
+		err = s.Store.RetryMODelivery(ctx, n.ID, s.Now().Add(retryDelay(n.Attempts)), s.Node)
+	} else {
+		err = s.Store.RetryNotification(ctx, n.ID, s.Now().Add(retryDelay(n.Attempts)), s.Node)
+	}
+
+	if err != nil {
 		log.ErrorContext(ctx, "failed to schedule an SMPP notification again", slog.Any("error", err))
 	}
 }
@@ -294,7 +328,15 @@ func statusErrorType(status smpp.CommandStatus) string {
 }
 
 func (s *Service) giveBack(ctx context.Context, n db.Notification) {
-	if err := s.Store.ReleaseNotification(ctx, n.ID, s.Node, s.Now()); err != nil {
+	var err error
+
+	if n.Type == db.NotificationMO {
+		err = s.Store.ReleaseMODelivery(ctx, n.ID, s.Node, s.Now())
+	} else {
+		err = s.Store.ReleaseNotification(ctx, n.ID, s.Node, s.Now())
+	}
+
+	if err != nil {
 		s.Logger.DebugContext(ctx, "failed to give back an SMPP notification; it is retried when its claim ends",
 			slog.Int64("message_id", n.Message.ID), slog.Any("error", err))
 	}

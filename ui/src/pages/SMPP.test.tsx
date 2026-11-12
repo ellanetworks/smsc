@@ -9,6 +9,7 @@ const ota = {
   system_id: "ota1",
   user: "ota@example.com",
   allowed_networks: ["10.1.0.0/24", "2001:db8::/32"],
+  routes: ["4000", "4001"],
   created_at: "2026-09-30T12:00:00.000Z",
   sessions: [
     {
@@ -28,6 +29,7 @@ const idle = {
   system_id: "bulk sender",
   user: "bulk@example.com",
   allowed_networks: [],
+  routes: [],
   created_at: "2026-09-30T12:00:00.000Z",
   sessions: [],
 };
@@ -132,11 +134,19 @@ describe("SMPP", () => {
       within(grid())
         .getAllByRole("columnheader")
         .map((h) => h.textContent),
-    ).toEqual(["System ID", "User", "Allowed Networks", "Sessions", "Actions"]);
+    ).toEqual([
+      "System ID",
+      "User",
+      "Allowed Networks",
+      "Routes",
+      "Sessions",
+      "Actions",
+    ]);
     expect(rowCells("ota1")).toEqual([
       "ota1",
       "ota@example.com",
       "10.1.0.0/242001:db8::/32",
+      "40004001",
       "2 of 4 boundTransceiver from 10.1.0.5:40000Receiver from 10.1.0.6:40001",
       "",
     ]);
@@ -144,6 +154,7 @@ describe("SMPP", () => {
       "bulk sender",
       "bulk@example.com",
       "None: may not bind",
+      "—",
       "None",
       "",
     ]);
@@ -171,6 +182,7 @@ describe("SMPP", () => {
     await pickUser(dialog, "ota@example.com");
     fill(dialog, /Password/, "secret1");
     fill(dialog, /Allowed networks/, "10.1.0.0/24, 2001:db8::/32");
+    fill(dialog, /Routes/, "4000");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
 
     await waitFor(() =>
@@ -183,6 +195,7 @@ describe("SMPP", () => {
             user: "ota@example.com",
             password: "secret1",
             allowed_networks: ["10.1.0.0/24", "2001:db8::/32"],
+            routes: ["4000"],
           },
         },
       ]),
@@ -221,6 +234,7 @@ describe("SMPP", () => {
           system_id: "ota2",
           user: "ota@example.com",
           allowed_networks: [],
+          routes: [],
         },
       },
     ]);
@@ -283,6 +297,22 @@ describe("SMPP", () => {
     fill(dialog, /Allowed networks/, "2001:db8:::/32");
     expect(add).toBeDisabled();
     fill(dialog, /Allowed networks/, "::/0, 0.0.0.0/0, ::ffff:10.0.0.0/104");
+    expect(add).toBeEnabled();
+
+    fill(dialog, /Routes/, "4000, 40000-4009");
+    expect(
+      within(dialog).getByText(
+        "40000-4009 must have two numbers of the same length.",
+      ),
+    ).toBeVisible();
+    expect(add).toBeDisabled();
+    fill(dialog, /Routes/, "40099-40000");
+    expect(add).toBeDisabled();
+    fill(dialog, /Routes/, "+15551230000-15551239999");
+    expect(add).toBeDisabled();
+    fill(dialog, /Routes/, "4000-");
+    expect(add).toBeDisabled();
+    fill(dialog, /Routes/, "4000, 40000-40099, +15551230000-+15551230999");
     expect(add).toBeEnabled();
   });
 
@@ -353,6 +383,7 @@ describe("SMPP", () => {
           path: "/api/v1/esmes/ota1",
           body: {
             allowed_networks: ["10.1.0.0/24"],
+            routes: ["4000", "4001"],
           },
         },
       ]),
@@ -380,6 +411,7 @@ describe("SMPP", () => {
           body: {
             password: "newpass",
             allowed_networks: [],
+            routes: [],
           },
         },
       ]),

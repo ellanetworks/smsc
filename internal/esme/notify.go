@@ -23,6 +23,8 @@ const receiptTime = "0601021504"
 // TS 23.040 clause 9.2.3.27
 var errNoUserData = errors.New("the SMS-DELIVER-REPORT has no user data")
 
+var errUndecodable = errors.New("the stored SMS-SUBMIT cannot be decoded")
+
 // SMPP 3.4 appendix B table B-2
 // SMPP 3.4 section 5.2.28
 var stat = map[smpp.MessageState]string{
@@ -35,6 +37,10 @@ var stat = map[smpp.MessageState]string{
 // SMPP 3.4 section 2.11
 // SMPP 3.4 table 4-18
 func deliverSM(n db.Notification) (*smpp.DeliverSM, error) {
+	if n.Type == db.NotificationMO {
+		return moDeliver(n)
+	}
+
 	m := n.Message
 	id := strconv.FormatInt(m.ID, 10)
 
@@ -50,6 +56,66 @@ func deliverSM(n db.Notification) (*smpp.DeliverSM, error) {
 	}
 
 	return d, simAnswer(d, n)
+}
+
+// SMPP 3.4 section 2.11
+// TS 23.040 clause 9.2.2.2
+func moDeliver(n db.Notification) (*smpp.DeliverSM, error) {
+	m := n.Message
+
+	submit, err := tpdu.DecodeSubmit(m.TPDU)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errUndecodable, err)
+	}
+
+	header, _, err := tpdu.SplitUserData(submit.UserDataHeader, submit.UserData)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errUndecodable, err)
+	}
+
+	d := &smpp.DeliverSM{Message: smpp.Message{
+		Source:      smpp.Address{TON: m.Originator.TypeOfNumber, NPI: m.Originator.NumberingPlan, Addr: m.Originator.Digits},
+		Destination: smpp.Address{TON: m.Recipient.TypeOfNumber, NPI: m.Recipient.NumberingPlan, Addr: m.Recipient.Digits},
+		ProtocolID:  submit.ProtocolIdentifier,
+		DataCoding:  moDataCoding(submit.DataCodingScheme),
+	}}
+
+	if m.Origin == db.OriginMobile {
+		reference := uint16(m.MessageReference)
+		d.Options.UserMessageReference = &reference
+	}
+
+	if submit.UserDataHeader {
+		d.ESMClass |= esmUDHI
+	}
+
+	if tpdu.IsSeptetCoded(submit.DataCodingScheme) {
+		septets := tpdu.UnpackSeptets(submit.UserData, len(header), int(submit.UserDataLength))
+		d.ShortMessage = append(append([]byte{}, header...), septets...)
+	} else {
+		d.ShortMessage = submit.UserData
+	}
+
+	return d, nil
+}
+
+// SMPP 3.4 section 5.2.19
+// TS 23.038 clause 4
+func moDataCoding(dcs byte) byte {
+	class, ok := tpdu.MessageClass(dcs)
+
+	switch {
+	case tpdu.IsSeptetCoded(dcs) && ok:
+		return 0xf0 | class
+	case tpdu.IsSeptetCoded(dcs):
+		return dcDefault
+	case tpdu.IsUCS2(dcs):
+		return dcUCS2
+	case ok:
+		return 0xf4 | class
+	default:
+		return dcOctetA
+	}
 }
 
 // SMPP 3.4 section 2.11

@@ -14,6 +14,7 @@ type NotificationType string
 const (
 	NotificationReceipt   NotificationType = "receipt"
 	NotificationSIMAnswer NotificationType = "sim_answer"
+	NotificationMO        NotificationType = "mo"
 )
 
 type NotificationResult string
@@ -23,6 +24,7 @@ const (
 	NotificationRejected     NotificationResult = "rejected"
 	NotificationExpired      NotificationResult = "expired"
 	NotificationNoUserData   NotificationResult = "no_user_data"
+	NotificationReplaced     NotificationResult = "replaced"
 )
 
 // SMPP 3.4 section 5.2.28 table 5-6
@@ -320,15 +322,25 @@ func applyExpireNotifications(a *applyCtx, p expireNotifications) (map[Notificat
 func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ map[NotificationType]int, err error) {
 	defer d.observe(&err)()
 
-	rows, err := d.reader().QueryContext(ctx, `SELECT type, COUNT(*) FROM smpp_notifications
-		WHERE result IS NULL AND expires_at > ? GROUP BY type`, now.UTC().UnixNano())
+	query := `SELECT type, COUNT(*) FROM smpp_notifications
+		WHERE result IS NULL AND expires_at > ? GROUP BY type`
+
+	args := []any{now.UTC().UnixNano()}
+
+	if d.schema.Load() >= routingSchema {
+		query += ` UNION ALL SELECT 'mo', COUNT(*) FROM esme_deliveries WHERE result IS NULL AND expires_at > ?`
+
+		args = append(args, now.UTC().UnixNano())
+	}
+
+	rows, err := d.reader().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("count pending notifications: %w", err)
 	}
 
 	defer func() { _ = rows.Close() }()
 
-	out := map[NotificationType]int{NotificationReceipt: 0, NotificationSIMAnswer: 0}
+	out := map[NotificationType]int{NotificationReceipt: 0, NotificationSIMAnswer: 0, NotificationMO: 0}
 
 	for rows.Next() {
 		var (
@@ -353,12 +365,23 @@ func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ ma
 func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (_ time.Time, _ bool, err error) {
 	defer d.observe(&err)()
 
+	query := `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at, n.expires_at) ELSE n.expires_at END) AS x
+		FROM smpp_notifications n CROSS JOIN smpp_messages s ON s.message_id = n.message_id
+		WHERE s.esme_id = ? AND n.result IS NULL`
+
+	args := []any{now.UTC().UnixNano(), esmeID}
+
+	if d.schema.Load() >= routingSchema {
+		query = `SELECT MIN(x) FROM (` + query + `
+			UNION ALL SELECT CASE WHEN d.next_attempt_at > ? THEN MIN(d.next_attempt_at, d.expires_at) ELSE d.expires_at END
+			FROM esme_deliveries d WHERE d.esme_id = ? AND d.result IS NULL)`
+
+		args = append(args, now.UTC().UnixNano(), esmeID)
+	}
+
 	var at sql.Null[int64]
 
-	if err := d.reader().QueryRowContext(ctx, `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at,
-		n.expires_at) ELSE n.expires_at END) FROM smpp_notifications n CROSS JOIN smpp_messages s ON s.message_id = n.message_id
-		WHERE s.esme_id = ? AND n.result IS NULL`,
-		now.UTC().UnixNano(), esmeID).Scan(&at); err != nil {
+	if err := d.reader().QueryRowContext(ctx, query, args...).Scan(&at); err != nil {
 		return time.Time{}, false, fmt.Errorf("next notification: %w", err)
 	}
 

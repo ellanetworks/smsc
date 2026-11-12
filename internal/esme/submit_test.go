@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/db/dbtest"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/submission"
@@ -49,6 +50,8 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 	}
 
 	t.Cleanup(func() { _ = store.Close() })
+
+	dbtest.Migrate(t, store)
 
 	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
 	if err != nil {
@@ -168,6 +171,20 @@ func with(m smpp.Message, edit func(*smpp.Message)) smpp.Message {
 }
 
 // SMPP 3.4 section 5.1.3 table 5-2
+func TestServiceNumberDestinationsBeforeRoutes(t *testing.T) {
+	for _, ton := range []uint8{tonNetworkSpecific, tonSubscriber, tonAbbreviated} {
+		_, _, rej := mapping{routing: false}.destination(smpp.Address{TON: ton, NPI: 1, Addr: "4000"})
+		if rej == nil || rej.status != smpp.StatusInvDstTON {
+			t.Errorf("dest_addr_ton %d before the cluster supports routes = %+v, want %v", ton, rej, smpp.StatusInvDstTON)
+		}
+
+		if _, msisdn, rej := (mapping{routing: true}).destination(smpp.Address{TON: ton, NPI: 1, Addr: "4000"}); rej != nil ||
+			msisdn != "4000" {
+			t.Errorf("dest_addr_ton %d with routes = %q, %+v", ton, msisdn, rej)
+		}
+	}
+}
+
 func TestSubmitMapping(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -410,7 +427,13 @@ func TestSubmitMapping(t *testing.T) {
 			sm:   with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.Destination = smpp.Address{Addr: "15551230002"} }),
 			want: "0100" + destination + "0004 01 aa",
 		},
-		{name: "network specific destination", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.Destination.TON = 3 }), status: smpp.StatusInvDstTON},
+		{name: "network specific destination without a route", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.Destination.TON = 3 }), status: smpp.StatusInvDstAdr},
+		{
+			name: "abbreviated destination with a route",
+			esme: func(e *db.ESME) { e.Routes = []string{"40001"} },
+			sm:   with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.Destination = smpp.Address{TON: 6, NPI: 1, Addr: "40001"} }),
+			want: "0100" + "05e10400f1" + "0004 01 aa",
+		},
 		{name: "alphanumeric destination", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.Destination.TON = 5 }), status: smpp.StatusInvDstTON},
 		{name: "private numbering plan destination", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.Destination.NPI = 9 }), status: smpp.StatusInvDstNPI},
 		{name: "destination not digits", sm: with(baseSubmit(0x04, "aa"), func(m *smpp.Message) { m.Destination.Addr = "+1555" }), status: smpp.StatusInvDstAdr},
@@ -514,6 +537,7 @@ func TestSubmitFailuresAreCounted(t *testing.T) {
 		{fmt.Errorf("%w: x", submission.ErrEncodeText), smpp.StatusSysErr, intake.Error},
 		{fmt.Errorf("%w: x", submission.ErrStore), smpp.StatusSysErr, ""},
 		{submission.ErrUserDataTooLong, smpp.StatusInvMsgLen, intake.Rejected},
+		{fmt.Errorf("%w: type of number 6", db.ErrNoRoute), smpp.StatusInvDstAdr, intake.Rejected},
 	}
 
 	for _, tc := range tests {

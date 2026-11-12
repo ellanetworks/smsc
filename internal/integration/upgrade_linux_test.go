@@ -8,6 +8,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ellanetworks/core/diameter"
+	"github.com/ellanetworks/smsc/internal/db"
 )
 
 const upgradeSettle = 13 * time.Second
@@ -222,13 +225,42 @@ func (c *cluster) upgrade(n *node) {
 
 	n.stop()
 
-	n.bin = upgraded
+	n.bin = binary
 	n.start()
 	n.logIn()
 }
 
+func (c *cluster) consistent() error {
+	for _, n := range c.nodes {
+		if !n.running() {
+			continue
+		}
+
+		_, r, err := n.readyz("")
+		if err != nil {
+			return err
+		}
+
+		if check, ok := r.check("consistent"); ok && !check.OK {
+			return fmt.Errorf("%s: %s", n.name, check.Detail)
+		}
+	}
+
+	return nil
+}
+
+func (c *cluster) holdsConsistent(d time.Duration) {
+	c.t.Helper()
+
+	for deadline := time.Now().Add(d); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		if err := c.consistent(); err != nil {
+			c.t.Fatal(err)
+		}
+	}
+}
+
 func TestRollingUpgradeUnderLoad(t *testing.T) {
-	cl := newCluster(t)
+	cl := newClusterOf(t, previous)
 	c := newCore(t, cl.nodes)
 
 	st, err := cl.leader().status()
@@ -236,7 +268,7 @@ func TestRollingUpgradeUnderLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	from := st.Schema
+	from, to := st.Schema, db.SchemaVersion()
 
 	tr := startTraffic(c, cl.nodes)
 
@@ -253,7 +285,7 @@ func TestRollingUpgradeUnderLoad(t *testing.T) {
 			n.stop()
 			cl.holdsSchema(from, upgradeSettle)
 
-			n.bin = upgraded
+			n.bin = binary
 			n.start()
 			n.logIn()
 		} else {
@@ -267,10 +299,11 @@ func TestRollingUpgradeUnderLoad(t *testing.T) {
 
 		if i < len(order)-1 {
 			cl.holdsSchema(from, 2*time.Second)
+			cl.holdsConsistent(2 * time.Second)
 		}
 	}
 
-	eventually(t, "the cluster on the next schema", func() error { return cl.expectSchema(from + 1) })
+	eventually(t, "the cluster on the schema of this binary", func() error { return cl.expectSchema(to) })
 
 	time.Sleep(2 * time.Second)
 
@@ -299,9 +332,15 @@ func TestRollingUpgradeUnderLoad(t *testing.T) {
 		})
 	}
 
+	cl.holdsConsistent(2 * time.Second)
+
+	if from == to {
+		return
+	}
+
 	old := cl.nodes[0]
 	old.stop()
-	old.bin = binary
+	old.bin = previous
 	old.launch()
 
 	select {
@@ -310,21 +349,25 @@ func TestRollingUpgradeUnderLoad(t *testing.T) {
 		t.Fatal("the previous binary started on a database of the next schema")
 	}
 
-	old.bin = upgraded
+	old.bin = binary
 	old.start()
 	old.logIn()
 	cl.waitStable()
 }
 
 func TestSchemaWaitsForADownMemberUntilRemoved(t *testing.T) {
-	cl := newCluster(t)
+	cl := newClusterOf(t, previous)
 
 	st, err := cl.leader().status()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	from := st.Schema
+	from, to := st.Schema, db.SchemaVersion()
+	if from == to {
+		t.Skipf("the previous binary already runs schema %d: there is no migration to wait for", to)
+	}
+
 	leader := cl.leader()
 	followers := cl.followers(leader)
 	behind := followers[1]
@@ -342,8 +385,115 @@ func TestSchemaWaitsForADownMemberUntilRemoved(t *testing.T) {
 
 	cl.leader().must(http.MethodDelete, "/api/v1/cluster/members/"+behind.id+"?force=true", nil, nil)
 
-	eventually(t, "the cluster on the next schema", func() error { return cl.expectSchema(from + 1) })
+	eventually(t, "the cluster on the schema of this binary", func() error { return cl.expectSchema(to) })
 
 	cl.leader().must(http.MethodPost, "/api/v1/users",
 		map[string]any{"email": "after@example.com", "password": "correct horse", "role_id": 4}, nil)
+}
+
+func TestUpgradeEnablesRoutes(t *testing.T) {
+	const routingSchema = 2
+
+	cl := newClusterOf(t, previous)
+	c := newCore(t, cl.nodes)
+
+	st, err := cl.leader().status()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if st.Schema >= routingSchema {
+		t.Skipf("the previous binary already runs schema %d, which has routes", st.Schema)
+	}
+
+	networks := []string{"127.0.0.0/8"}
+	leader := cl.leader()
+
+	leader.must(http.MethodPost, "/api/v1/users",
+		map[string]any{"email": "app@example.com", "password": "correct horse", "role_id": 4}, nil)
+
+	for _, systemID := range []string{"app", "doomed"} {
+		leader.must(http.MethodPost, "/api/v1/esmes",
+			map[string]any{"system_id": systemID, "user": "app@example.com", "allowed_networks": networks}, nil)
+	}
+
+	followers := cl.followers(leader)
+	upgraded := followers[0]
+
+	cl.upgrade(upgraded)
+	cl.waitStable()
+	c.waitOpen(upgraded)
+
+	if code, err := upgraded.request(http.MethodPost, "/api/v1/esmes", map[string]any{
+		"system_id": "early", "user": "app@example.com", "allowed_networks": networks, "routes": []string{"4000"},
+	}, nil); code != http.StatusServiceUnavailable {
+		t.Fatalf("an ESME with routes before the migration = %d, %v; want %d", code, err, http.StatusServiceUnavailable)
+	}
+
+	if code, err := upgraded.request(http.MethodPut, "/api/v1/esmes/app",
+		map[string]any{"allowed_networks": networks, "routes": []string{"4000"}}, nil); code != http.StatusServiceUnavailable {
+		t.Fatalf("routes on an ESME before the migration = %d, %v; want %d", code, err, http.StatusServiceUnavailable)
+	}
+
+	upgraded.must(http.MethodPut, "/api/v1/esmes/app",
+		map[string]any{"allowed_networks": []string{"127.0.0.0/8", "10.0.0.0/8"}}, nil)
+	upgraded.must(http.MethodDelete, "/api/v1/esmes/doomed", nil, nil)
+
+	for _, n := range cl.nodes {
+		rc, err := c.forward(n, 1, smsSubmitTo("4000", 0xb1, "before the migration"))
+		if err != nil || rc == diameter.ResultSuccess {
+			t.Fatalf("%s took a message to a network-specific number before the migration: %d, %v", n.name, rc, err)
+		}
+	}
+
+	cl.holdsConsistent(3 * time.Second)
+
+	cl.upgrade(followers[1])
+	cl.waitStable()
+	c.waitOpen(followers[1])
+
+	cl.drain(leader)
+	cl.upgrade(leader)
+	cl.resume(leader)
+	cl.waitStable()
+	c.waitOpen(leader)
+
+	eventually(t, "the cluster on the schema of this binary", func() error { return cl.expectSchema(db.SchemaVersion()) })
+
+	via := cl.leader()
+
+	eventually(t, "routes on the ESME", func() error {
+		_, err := via.request(http.MethodPut, "/api/v1/esmes/app",
+			map[string]any{"allowed_networks": networks, "routes": []string{"4000"}}, nil)
+
+		return err
+	})
+
+	if rc, err := c.forward(via, 1, smsSubmitTo("4000", 0xe1, "after the migration")); err != nil ||
+		rc != diameter.ResultSuccess {
+		t.Fatalf("a message to the routed short code = %d, %v", rc, err)
+	}
+
+	for _, n := range cl.nodes {
+		eventually(t, n.name+" to see the routed message", func() error {
+			var list struct {
+				Items []struct {
+					To     string `json:"to"`
+					Status string `json:"status"`
+				} `json:"items"`
+			}
+
+			if _, err := n.request(http.MethodGet, "/api/v1/messages?status=delegated", nil, &list); err != nil {
+				return err
+			}
+
+			if len(list.Items) != 1 || list.Items[0].To != "4000" {
+				return fmt.Errorf("delegated messages = %+v", list.Items)
+			}
+
+			return nil
+		})
+	}
+
+	cl.holdsConsistent(2 * time.Second)
 }

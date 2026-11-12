@@ -366,6 +366,31 @@ var migrations = []string{
 		fingerprint TEXT,
 		CHECK ((node_id IS NULL) = (fingerprint IS NULL))
 	);`,
+	`CREATE TABLE esme_routes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		low TEXT NOT NULL UNIQUE,
+		high TEXT NOT NULL,
+		esme_id INTEGER NOT NULL REFERENCES esmes (id) ON DELETE CASCADE,
+		CHECK (length(low) = length(high) AND low <= high),
+		CHECK (length(low) BETWEEN 1 AND 20 AND low NOT GLOB '*[^0-9]*' AND high NOT GLOB '*[^0-9]*'
+			OR length(low) BETWEEN 2 AND 16 AND low GLOB '+*' AND high GLOB '+*'
+			AND substr(low, 2) NOT GLOB '*[^0-9]*' AND substr(high, 2) NOT GLOB '*[^0-9]*')
+	);
+	CREATE INDEX esme_routes_esme_id ON esme_routes (esme_id);
+	CREATE INDEX esme_routes_range ON esme_routes (length(low), low);
+	CREATE TABLE esme_deliveries (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		message_id INTEGER NOT NULL UNIQUE REFERENCES messages (id) ON DELETE CASCADE,
+		esme_id INTEGER REFERENCES esmes (id) ON DELETE SET NULL,
+		route TEXT NOT NULL,
+		expires_at INTEGER NOT NULL,
+		next_attempt_at INTEGER NOT NULL,
+		attempts INTEGER NOT NULL,
+		claimed_by TEXT,
+		result TEXT CHECK (result IN ('acknowledged', 'rejected', 'expired', 'no_user_data', 'replaced'))
+	);
+	CREATE INDEX esme_deliveries_due ON esme_deliveries (next_attempt_at) WHERE result IS NULL;
+	CREATE INDEX esme_deliveries_esme_id ON esme_deliveries (esme_id);`,
 }
 
 type Option func(*DB)
@@ -511,7 +536,7 @@ func (d *DB) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
 
-		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
+		if err := runMigration(ctx, tx, i+1); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}

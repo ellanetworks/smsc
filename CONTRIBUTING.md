@@ -48,3 +48,11 @@ The UI end-to-end tests build the UI and the SMSC, and run it in the `ella-smsc:
 npx --prefix ui playwright install chromium
 npm run test:e2e --prefix ui
 ```
+
+The cluster integration tests run 3-node clusters of the SMSC binary. The upgrade tests start the cluster on a previous version, built from the commit `previousRef` in `internal/integration/harness_linux_test.go`, and upgrade it to the working tree one node at a time. They need the full Git history:
+
+```sh
+go test -tags integration -count=1 -timeout 15m ./internal/integration
+```
+
+To upgrade from another version, set `SMSC_PREVIOUS_REF` to a commit or tag, or `SMSC_PREVIOUS_BINARY` to an SMSC binary. After each release, set `previousRef` to its tag, so that the changes that follow are tested against the upgrade users will run.

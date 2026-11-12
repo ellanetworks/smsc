@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/ellanetworks/smsc/internal/tpdu"
 )
 
 type ESME struct {
@@ -16,8 +19,11 @@ type ESME struct {
 	UserID          int64
 	PasswordHash    string
 	AllowedNetworks []netip.Prefix
+	Routes          []string
 	CreatedAt       time.Time
 }
+
+const maxESMERoutes = 64
 
 const esmeColumns = `id, system_id, user_id, password_hash, created_at`
 
@@ -49,6 +55,10 @@ func (d *DB) CountESMEs(ctx context.Context) (_ int, err error) {
 
 func (d *DB) CreateESME(ctx context.Context, e ESME) (_ int64, err error) {
 	defer d.observe(&err)()
+
+	if len(e.Routes) > 0 && !d.Routing() {
+		return 0, fmt.Errorf("create ESME: %w", ErrUpgradePending)
+	}
 
 	id, err := submit[int64](ctx, d, cmdCreateESME, e)
 	if err != nil {
@@ -82,11 +92,21 @@ func applyCreateESME(a *applyCtx, e ESME) (int64, error) {
 		return 0, err
 	}
 
+	if a.schema >= routingSchema {
+		if err := insertRoutes(a.ctx, a.tx, id, e.Routes); err != nil {
+			return 0, err
+		}
+	}
+
 	return id, nil
 }
 
 func (d *DB) UpdateESME(ctx context.Context, e ESME) (err error) {
 	defer d.observe(&err)()
+
+	if len(e.Routes) > 0 && !d.Routing() {
+		return fmt.Errorf("update ESME: %w", ErrUpgradePending)
+	}
 
 	if _, err := submit[struct{}](ctx, d, cmdUpdateESME, e); err != nil {
 		return fmt.Errorf("update ESME: %w", err)
@@ -110,6 +130,11 @@ func applyUpdateESME(a *applyCtx, e ESME) (struct{}, error) {
 		return struct{}{}, ErrNotFound
 	}
 
+	before, err := networksOf(ctx, tx, e.ID)
+	if err != nil {
+		return struct{}{}, err
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM esme_networks WHERE esme_id = ?`, e.ID); err != nil {
 		return struct{}{}, err
 	}
@@ -122,9 +147,54 @@ func applyUpdateESME(a *applyCtx, e ESME) (struct{}, error) {
 		return struct{}{}, err
 	}
 
-	a.events.ClosedESMEs = append(a.events.ClosedESMEs, e.ID)
+	if a.schema >= routingSchema {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM esme_routes WHERE esme_id = ?`, e.ID); err != nil {
+			return struct{}{}, err
+		}
+
+		if err := insertRoutes(ctx, tx, e.ID, e.Routes); err != nil {
+			return struct{}{}, err
+		}
+	}
+
+	if e.PasswordHash != "" || !sameNetworks(before, e.AllowedNetworks) {
+		a.events.ClosedESMEs = append(a.events.ClosedESMEs, e.ID)
+	}
 
 	return struct{}{}, nil
+}
+
+func networksOf(ctx context.Context, tx *sql.Tx, id int64) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT prefix FROM esme_networks WHERE esme_id = ? ORDER BY prefix`, id)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+
+		out = append(out, p)
+	}
+
+	return out, rows.Err()
+}
+
+func sameNetworks(stored []string, networks []netip.Prefix) bool {
+	next := make([]string, len(networks))
+	for i, p := range networks {
+		next[i] = p.String()
+	}
+
+	slices.Sort(next)
+
+	return slices.Equal(stored, next)
 }
 
 func insertNetworks(ctx context.Context, tx *sql.Tx, id int64, networks []netip.Prefix) error {
@@ -138,31 +208,102 @@ func insertNetworks(ctx context.Context, tx *sql.Tx, id int64, networks []netip.
 	return nil
 }
 
+type failedDelegations struct {
+	Failed int `json:"failed,omitempty"`
+}
+
 func (d *DB) DeleteESME(ctx context.Context, id int64) (err error) {
 	defer d.observe(&err)()
 
-	if _, err := submit[struct{}](ctx, d, cmdDeleteESME, id); err != nil {
+	deleted, err := submit[failedDelegations](ctx, d, cmdDeleteESME, id)
+	if err != nil {
 		return fmt.Errorf("delete ESME: %w", err)
 	}
+
+	d.metrics.count(completions(KindMessage, StatusFailed, deleted.Failed))
 
 	return nil
 }
 
-func applyDeleteESME(a *applyCtx, id int64) (struct{}, error) {
+func applyDeleteESME(a *applyCtx, id int64) (failedDelegations, error) {
+	var deleted failedDelegations
+
+	if a.schema >= routingSchema {
+		failed, err := failDeliveriesOfESME(a, id)
+		if err != nil {
+			return failedDelegations{}, err
+		}
+
+		deleted.Failed = failed
+	}
+
 	res, err := a.tx.ExecContext(a.ctx, `DELETE FROM esmes WHERE id = ?`, id)
 	if err != nil {
-		return struct{}{}, err
+		return failedDelegations{}, err
 	}
 
 	if n, err := res.RowsAffected(); err != nil {
-		return struct{}{}, err
+		return failedDelegations{}, err
 	} else if n == 0 {
-		return struct{}{}, ErrNotFound
+		return failedDelegations{}, ErrNotFound
 	}
 
 	a.events.ClosedESMEs = append(a.events.ClosedESMEs, id)
 
-	return struct{}{}, nil
+	return deleted, nil
+}
+
+func failDeliveriesOfESME(a *applyCtx, esmeID int64) (int, error) {
+	ctx, tx := a.ctx, a.tx
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, message_id FROM esme_deliveries WHERE esme_id = ? AND result IS NULL`,
+		esmeID)
+	if err != nil {
+		return 0, err
+	}
+
+	var ids []int64
+
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			id        int64
+			messageID int64
+		)
+
+		if err := rows.Scan(&id, &messageID); err != nil {
+			return 0, err
+		}
+
+		ids = append(ids, id, messageID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	at := time.Unix(0, a.leaderTime)
+	failed := 0
+
+	for i := 0; i < len(ids); i += 2 {
+		if _, err := tx.ExecContext(ctx, `UPDATE esme_deliveries SET result = ?, claimed_by = NULL
+			WHERE id = ? AND result IS NULL`, NotificationRejected, ids[i]); err != nil {
+			return 0, err
+		}
+
+		done, err := completeDelegated(a, ids[i+1], esmeID, StatusFailed, tpdu.StatusNotObtainable, "esme_deleted",
+			at, "")
+		if err != nil {
+			return 0, err
+		}
+
+		if done.Status != "" {
+			failed++
+		}
+	}
+
+	return failed, nil
 }
 
 func esmesOfUser(ctx context.Context, q querier, userID int64) ([]int64, error) {
@@ -200,6 +341,10 @@ func (d *DB) GetESMEBySystemID(ctx context.Context, systemID string) (_ ESME, er
 	}
 
 	if err := d.esmeNetworks(ctx, []*ESME{&e}); err != nil {
+		return ESME{}, err
+	}
+
+	if err := d.esmeRoutes(ctx, []*ESME{&e}); err != nil {
 		return ESME{}, err
 	}
 
@@ -250,6 +395,10 @@ func (d *DB) listESMEs(ctx context.Context, where string, args ...any) ([]ESME, 
 		return nil, err
 	}
 
+	if err := d.esmeRoutes(ctx, ptrs); err != nil {
+		return nil, err
+	}
+
 	return esmes, nil
 }
 
@@ -294,6 +443,46 @@ func (d *DB) esmeNetworks(ctx context.Context, esmes []*ESME) error {
 
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("get ESME networks: %w", err)
+	}
+
+	return nil
+}
+
+func (d *DB) esmeRoutes(ctx context.Context, esmes []*ESME) error {
+	if len(esmes) == 0 || d.schema.Load() < routingSchema {
+		return nil
+	}
+
+	index := make(map[int64]*ESME, len(esmes))
+	args := make([]any, len(esmes))
+
+	for i, e := range esmes {
+		index[e.ID], args[i] = e, e.ID
+	}
+
+	rows, err := d.reader().QueryContext(ctx, `SELECT esme_id, low, high FROM esme_routes WHERE esme_id IN (?`+
+		strings.Repeat(`, ?`, len(esmes)-1)+`) ORDER BY esme_id, low`, args...)
+	if err != nil {
+		return fmt.Errorf("get ESME routes: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			id int64
+			r  Route
+		)
+
+		if err := rows.Scan(&id, &r.Low, &r.High); err != nil {
+			return fmt.Errorf("get ESME routes: %w", err)
+		}
+
+		index[id].Routes = append(index[id].Routes, r.String())
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("get ESME routes: %w", err)
 	}
 
 	return nil

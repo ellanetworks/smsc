@@ -242,7 +242,28 @@ func applyClaimNotifications(a *applyCtx, p claimNotifications) ([]Notification,
 		}
 	}
 
-	return due, nil
+	if a.schema < routingSchema {
+		return due, nil
+	}
+
+	remaining := p.Limit - len(due)
+	if remaining <= 0 {
+		return due, nil
+	}
+
+	mo, err := dueMODeliveries(a.ctx, a.tx, p.ESMEID, p.Now, remaining)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, n := range mo {
+		if _, err := a.tx.ExecContext(a.ctx, `UPDATE esme_deliveries SET next_attempt_at = MIN(?, expires_at),
+			claimed_by = ? WHERE id = ?`, until, p.NodeID, n.ID); err != nil {
+			return nil, err
+		}
+	}
+
+	return append(due, mo...), nil
 }
 
 type releaseNotification struct {

@@ -35,8 +35,9 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c, SGd and Gdd Diame
 - **Store and forward.** Messages to a phone are delivered in order, one at a time, and announce the next with TP-More-Messages-to-Send.
 - **Validity period.** Relative, absolute and enhanced formats, including single-shot messages.
 - **Status reports.** On the delivery, failure, expiry or replacement of a message whose sender set TP-Status-Report-Request.
+- **Relaying to an SME.** A message whose recipient number matches a route of an ESME is relayed to that ESME over SMPP, whatever submitted it (TS 23.040 §2.1.1: the SC relays between an SME and an MS). Routes are ranges of numbers of one length, matched against the number as dialled, or its E.164 form (§9.1.2.5), and accept network-specific, subscriber and abbreviated numbers. See [Routed messages](smpp.md#routed-messages).
 - **Reject duplicates.** TP-Reject-Duplicates.
-- **Replace short message.** Replace types 1 to 7 of TP-Protocol-Identifier, from phones, the API and SMPP. A message replaces only one from the same submitter: a phone's, one from the same phone (TS 23.040 §2.1.1); the API's or an ESME's, one of the same user or ESME.
+- **Replace short message.** Replace types 1 to 7 of TP-Protocol-Identifier, from phones, the API and SMPP. A message replaces only one from the same submitter, including one waiting on an ESME, whatever its recipient: a phone's, one from the same phone (TS 23.040 §2.1.1); the API's or an ESME's, one of the same user or ESME.
 - **Binary messages from the API and SMPP.** TP-Protocol-Identifier, TP-Data-Coding-Scheme, TP-User-Data-Header and TP-User-Data delivered unchanged, including (U)SIM data download.
 - **SMS-DELIVER-REPORT.** Kept from each delivery: in the SM-RP-UI of a successful MT-Forward-Short-Message answer, and in the SM-Diagnostic-Info of an SM Delivery Failure.
 - **(U)SIM data download error.** A message whose SMS-DELIVER-REPORT has the TP-Failure-Cause `usim_data_download_error` fails without another attempt.

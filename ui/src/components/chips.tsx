@@ -6,15 +6,20 @@ import { capitalized } from "@/utils/labels";
 export const messageStatusColors: Record<MessageStatus, ChipProps["color"]> = {
   pending: "info",
   delivered: "success",
+  delegated: "secondary",
   failed: "error",
   expired: "warning",
   replaced: "default",
 };
 
+const messageStatusLabels: Partial<Record<MessageStatus, string>> = {
+  delegated: "At application",
+};
+
 export function MessageStatusChip({ status }: { status: MessageStatus }) {
   return (
     <Chip
-      label={capitalized(status)}
+      label={messageStatusLabels[status] ?? capitalized(status)}
       color={messageStatusColors[status]}
       size="small"
     />
@@ -31,6 +36,9 @@ const outcomeColor = (outcome: string): ChipProps["color"] => {
     case "absent_user":
     case "user_busy_for_mt_sms":
       return "warning";
+    case "delegated_to_esme":
+    case "esme_acknowledged":
+      return "info";
     default:
       return "error";
   }
@@ -42,6 +50,12 @@ const outcomeLabels: Record<string, string> = {
   user_busy_for_mt_sms: "User busy for MT SMS",
   sm_delivery_failure: "SM delivery failure",
   mwd_list_full: "MWD list full",
+  delegated_to_esme: "Queued for the ESME",
+  esme_acknowledged: "Accepted by the ESME",
+  esme_rejected: "Rejected by the ESME",
+  esme_expired: "Validity period expired",
+  esme_deleted: "ESME deleted",
+  esme_undecodable: "Not convertible to SMPP",
 };
 
 export function OutcomeChip({ outcome }: { outcome: string }) {

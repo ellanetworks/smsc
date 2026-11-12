@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -32,7 +33,9 @@ const (
 	fenceTimeout  = 90 * time.Second
 )
 
-var binary, upgraded, sharedSecret string
+const previousRef = "ee0f8145e42c5bab1004904b6230fefaf0d7778b"
+
+var binary, previous, sharedSecret string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "smsc-integration-*")
@@ -41,7 +44,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	binary, upgraded = filepath.Join(dir, "smsc"), filepath.Join(dir, "smsc-next")
+	binary, previous = filepath.Join(dir, "smsc"), os.Getenv("SMSC_PREVIOUS_BINARY")
 	sharedSecret = filepath.Join(dir, "cluster-secret")
 
 	if err := writeSecret(sharedSecret); err != nil {
@@ -49,25 +52,26 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	builds := []*exec.Cmd{
-		exec.CommandContext(context.Background(), "go", "build", "-o", binary, "../../cmd/smsc"),
-		exec.CommandContext(context.Background(), "go", "build", "-tags", "upgradetest", "-o", upgraded, "../../cmd/smsc"),
+	build := exec.CommandContext(context.Background(), "go", "build", "-o", binary, "../../cmd/smsc")
+	build.Stdout, build.Stderr = os.Stdout, os.Stderr
+
+	if err := build.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 
-	for _, build := range builds {
-		build.Stdout, build.Stderr = os.Stdout, os.Stderr
+	if previous == "" {
+		previous = filepath.Join(dir, "smsc-previous")
 
-		if err := build.Start(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		if err := buildPrevious(dir, cmp.Or(os.Getenv("SMSC_PREVIOUS_REF"), previousRef), previous); err != nil {
+			fmt.Fprintln(os.Stderr, "build the previous binary:", err)
 			os.Exit(1)
 		}
 	}
 
-	for _, build := range builds {
-		if err := build.Wait(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	if err := build.Wait(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 
 	code := m.Run()
@@ -75,6 +79,35 @@ func TestMain(m *testing.M) {
 	_ = os.RemoveAll(dir)
 
 	os.Exit(code)
+}
+
+func buildPrevious(dir, ref, out string) error {
+	root, err := exec.CommandContext(context.Background(), "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return fmt.Errorf("find the repository: %w", err)
+	}
+
+	src, archive := filepath.Join(dir, "previous-src"), filepath.Join(dir, "previous.tar")
+
+	if err := os.Mkdir(src, 0o700); err != nil {
+		return err
+	}
+
+	for _, cmd := range []*exec.Cmd{
+		exec.CommandContext(context.Background(), "git", "-C", strings.TrimSpace(string(root)), "archive",
+			"--format=tar", "-o", archive, ref),
+		exec.CommandContext(context.Background(), "tar", "-xf", archive, "-C", src),
+		exec.CommandContext(context.Background(), "go", "build", "-o", out, "./cmd/smsc"),
+	} {
+		cmd.Dir = src
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(cmd.Args, " "), err)
+		}
+	}
+
+	return nil
 }
 
 var (
@@ -498,12 +531,23 @@ type cluster struct {
 func newCluster(t *testing.T) *cluster {
 	t.Helper()
 
+	return newClusterOf(t, binary)
+}
+
+func newClusterOf(t *testing.T, bin string) *cluster {
+	t.Helper()
+
 	const size = 3
 
 	c := &cluster{t: t}
 
 	for i := range size {
-		c.nodes = append(c.nodes, newNode(t, "node"+strconv.Itoa(i)))
+		n := newIdleNode(t, "node"+strconv.Itoa(i))
+		n.bin = bin
+		n.configure()
+		n.start()
+
+		c.nodes = append(c.nodes, n)
 	}
 
 	c.nodes[0].initialize()

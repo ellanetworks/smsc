@@ -103,7 +103,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | ---------- | ----- | ---- | ------- | ------- | ----------- |
 | `to`       | query | str  |         | 1 to 15 digits, after an optional `+` | Recipient: the numbers that contain these digits. `+1555123` and `1555123` match `+15551230002`, and so does `0002`. |
 | `from`     | query | str  |         | 1 to 15 digits, after an optional `+`, or a name as in [Create a Message](#create-a-message) | Sender: the numbers that contain these digits, or the name, in any case. |
-| `status`   | query | str  |         | `pending`, `delivered`, `failed`, `expired`, `replaced` | Status. |
+| `status`   | query | str  |         | `pending`, `delivered`, `delegated`, `failed`, `expired`, `replaced` | Status. |
 | `start`    | query | str  |         | RFC 3339 time | Created at or after. |
 | `end`      | query | str  |         | RFC 3339 time, not before `start` | Created before. |
 | `page`     | query | int  | `1`     | `>= 1`  | 1-based page index. |
@@ -115,7 +115,7 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | ------------------------------- | ------- | ----------- |
 | `id`                            | int     | Message identifier. |
 | `from`                          | string  | Sender: the MSISDN of the phone, an E.164 number with `+`, the `from` of the API request, or the `source_addr` of the `submit_sm`, with `+` when international. |
-| `to`                            | string  | Recipient, an E.164 number with `+`. |
+| `to`                            | string  | Recipient: an E.164 number with `+`, or the digits the sender dialled for a message [routed to an ESME](../smpp.md#routed-messages) by a dialled-number route, and for a network-specific, subscriber or abbreviated number. |
 | `encoding`                      | string  | `gsm7`, `ucs2` or `binary`. |
 | `concatenation`                 | object  | Present for a part of a longer message. |
 | `concatenation.reference`       | int     | Reference shared by the parts of the message. |
@@ -145,10 +145,12 @@ This path returns the list of messages, most recent first. For a Submitter, only
 | Status | When |
 | ------ | ---- |
 | `pending` | Not yet delivered, within its validity period. |
-| `delivered` | A serving node took it. |
+| `delegated` | Waiting for the ESME with a matching route to take it, as `deliver_sm`. |
+| `delivered` | A serving node took it, or the ESME acknowledged it. |
 | `failed` | The recipient is unknown, is not allowed SMS, or has no serving node that supports SGd. |
 | `failed` | The network rejected the recipient's subscription or phone as illegal. |
 | `failed` | The SIM refused a (U)SIM data download message. |
+| `failed` | The ESME rejected the message, its ESME was deleted, or it cannot be converted to a `deliver_sm`. |
 | `failed` | An attempt failed, and the message is single-shot or retries are off. |
 | `expired` | Its validity period ended before its delivery. |
 | `replaced` | A later message of the same replace type, from the same sender and submitter, before its delivery: the same phone, user or ESME. |
@@ -208,6 +210,7 @@ This path returns the number of messages in each status. For a Submitter, only t
 | ----------- | ---- | ----------- |
 | `pending`   | int  | Messages `pending`. See [Statuses](#statuses). |
 | `delivered` | int  | Messages `delivered`. |
+| `delegated` | int  | Messages `delegated`. |
 | `failed`    | int  | Messages `failed`. |
 | `expired`   | int  | Messages `expired`. |
 | `replaced`  | int  | Messages `replaced`. |
@@ -219,6 +222,7 @@ This path returns the number of messages in each status. For a Submitter, only t
     "result": {
         "pending": 11,
         "delivered": 105,
+        "delegated": 2,
         "failed": 6,
         "expired": 4,
         "replaced": 0

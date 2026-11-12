@@ -75,6 +75,31 @@ const splitNetworks = (s: string): string[] =>
     .map((a) => a.trim())
     .filter(Boolean);
 
+const ROUTE_NUMBER = /^(\+[0-9]{1,15}|[0-9]{1,20})$/;
+
+export const routeError = (route: string): string | undefined => {
+  const [low, high = low, ...rest] = route.split("-");
+  if (rest.length > 0 || !ROUTE_NUMBER.test(low) || !ROUTE_NUMBER.test(high)) {
+    return `${route} must be a number or a range such as 40000-40099, of 1 to 20 digits, or + and 1 to 15 digits.`;
+  }
+  if (low.startsWith("+") !== high.startsWith("+")) {
+    return `${route} must have two dialled numbers, or two international numbers.`;
+  }
+  if (low.length !== high.length) {
+    return `${route} must have two numbers of the same length.`;
+  }
+  if (low > high) {
+    return `${route} must start with its lower number.`;
+  }
+  return undefined;
+};
+
+const splitRoutes = (s: string): string[] =>
+  s
+    .split(/[\s,]+/)
+    .map((a) => a.trim())
+    .filter(Boolean);
+
 export default function ESMEDialog({
   esme,
   onCreated,
@@ -97,10 +122,12 @@ export default function ESMEDialog({
   const [networks, setNetworks] = useState(
     (esme?.allowed_networks ?? []).join(", "),
   );
+  const [routes, setRoutes] = useState((esme?.routes ?? []).join(", "));
 
   const params = (): ESMEUpdate => ({
     ...(password !== "" ? { password } : {}),
     allowed_networks: splitNetworks(networks),
+    routes: splitRoutes(routes),
   });
 
   const mutation = useMutation({
@@ -129,11 +156,15 @@ export default function ESMEDialog({
       ? `${badNetwork} is not a network prefix, such as 10.1.0.0/24.`
       : undefined;
 
+  const routeList = splitRoutes(routes);
+  const routesError = routeList.map(routeError).find((e) => e !== undefined);
+
   const valid =
     (esme !== undefined ||
       (systemIDError(systemID) === undefined && user !== "")) &&
     passwordProblem === undefined &&
-    networksError === undefined;
+    networksError === undefined &&
+    routesError === undefined;
 
   return (
     <EditDialog
@@ -215,6 +246,17 @@ export default function ESMEDialog({
           "The networks the ESME may bind from, comma-separated. None: it may not bind."
         }
         placeholder="10.1.0.0/24, 2001:db8::/32"
+      />
+      <TextField
+        label="Routes"
+        value={routes}
+        onChange={(e) => setRoutes(e.target.value)}
+        error={routesError !== undefined}
+        helperText={
+          routesError ??
+          "The numbers this ESME receives, comma-separated: a number, such as the short code 4000, or a range of numbers of the same length, such as 40000-40099. Start international numbers with +, such as +15551230000-+15551230999. Messages to them arrive as deliver_sm on its bound receiver or transceiver sessions."
+        }
+        placeholder="4000, 40000-40099, +15551230000-+15551230999"
       />
     </EditDialog>
   );

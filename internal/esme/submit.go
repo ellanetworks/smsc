@@ -16,11 +16,13 @@ import (
 // SMPP 3.4 section 5.2.5 table 5-3
 // TS 23.040 clause 9.1.2.5
 const (
-	tonUnknown       = 0
-	tonInternational = 1
-	tonNational      = 2
-	tonAlphanumeric  = 5
-	tonAbbreviated   = 6
+	tonUnknown         = 0
+	tonInternational   = 1
+	tonNational        = 2
+	tonNetworkSpecific = 3
+	tonSubscriber      = 4
+	tonAlphanumeric    = 5
+	tonAbbreviated     = 6
 )
 
 // SMPP 3.4 section 5.2.6 table 5-4
@@ -95,10 +97,11 @@ func reject(status smpp.CommandStatus, reason string) *rejection {
 }
 
 type mapping struct {
-	esme   db.ESME
-	userID int64
-	plan   numbering.Plan
-	now    time.Time
+	esme    db.ESME
+	userID  int64
+	plan    numbering.Plan
+	routing bool
+	now     time.Time
 }
 
 // SMPP 3.4 section 4.4.1 table 4-10
@@ -161,8 +164,12 @@ func (m mapping) request(sm *smpp.Message) (submission.Request, *rejection) {
 func (m mapping) destination(a smpp.Address) (db.Address, string, *rejection) {
 	switch a.TON {
 	case tonUnknown, tonInternational, tonNational:
+	case tonNetworkSpecific, tonSubscriber, tonAbbreviated:
+		if !m.routing {
+			return db.Address{}, "", reject(smpp.StatusInvDstTON, "dest_addr_ton "+strconv.Itoa(int(a.TON))+" cannot be routed through the HSS")
+		}
 	default:
-		return db.Address{}, "", reject(smpp.StatusInvDstTON, "dest_addr_ton "+strconv.Itoa(int(a.TON))+" cannot be routed through the HSS")
+		return db.Address{}, "", reject(smpp.StatusInvDstTON, "dest_addr_ton "+strconv.Itoa(int(a.TON))+" is not supported")
 	}
 
 	if a.NPI != npiUnknown && a.NPI != npiISDN {
@@ -171,6 +178,10 @@ func (m mapping) destination(a smpp.Address) (db.Address, string, *rejection) {
 
 	if !isDigits(a.Addr, maxAddressDigits) {
 		return db.Address{}, "", reject(smpp.StatusInvDstAdr, "destination_addr is not digits")
+	}
+
+	if !db.ServedByHSS(a.TON) {
+		return db.Address{Digits: a.Addr, TypeOfNumber: a.TON, NumberingPlan: a.NPI}, a.Addr, nil
 	}
 
 	msisdn, err := m.plan.International(a.TON, a.Addr)
@@ -207,7 +218,7 @@ func source(a smpp.Address) (db.Address, *rejection) {
 		}
 
 		return db.Address{Digits: a.Addr, TypeOfNumber: tonAlphanumeric}, nil
-	case tonUnknown, tonNational, 3, 4, tonAbbreviated:
+	case tonUnknown, tonNational, tonNetworkSpecific, tonSubscriber, tonAbbreviated:
 		if !sameNumberingPlan(a.NPI) {
 			return db.Address{}, reject(smpp.StatusInvSrcNPI, "source_addr_npi "+strconv.Itoa(int(a.NPI))+" has no TS 23.040 equivalent")
 		}
@@ -498,6 +509,8 @@ func submissionStatus(err error) smpp.CommandStatus {
 	switch {
 	case errors.Is(err, submission.ErrUserDataTooLong):
 		return smpp.StatusInvMsgLen
+	case errors.Is(err, db.ErrNoRoute):
+		return smpp.StatusInvDstAdr
 	case errors.Is(err, db.ErrBusy):
 		return smpp.StatusThrottled
 	case errors.Is(err, submission.ErrStore), errors.Is(err, submission.ErrEncode), errors.Is(err, submission.ErrEncodeText):

@@ -18,6 +18,7 @@ import (
 
 type MessageStore interface {
 	CreateMessage(ctx context.Context, m db.NewMessage) (int64, error)
+	Routing() bool
 }
 
 type Handler struct {
@@ -88,13 +89,21 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 		return h.submitRejected(ctx, req, submitFailureCause(smRPUI.Data, err), receivedAt)
 	}
 
-	if submit.Destination.Digits == "" {
+	if submit.Destination.Digits == "" || submit.Destination.TypeOfNumber == tpdu.TypeOfNumberAlphanumeric {
 		return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
 
-	recipient, err := current.Operator.Numbering.International(submit.Destination.TypeOfNumber, submit.Destination.Digits)
-	if err != nil {
+	if !db.ServedByHSS(submit.Destination.TypeOfNumber) && !h.Store.Routing() {
 		return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
+	}
+
+	recipient := submit.Destination.Digits
+
+	if db.ServedByHSS(submit.Destination.TypeOfNumber) {
+		if recipient, err = current.Operator.Numbering.International(submit.Destination.TypeOfNumber,
+			submit.Destination.Digits); err != nil {
+			return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
+		}
 	}
 
 	if tpdu.RequestsTelematicInterworking(submit.ProtocolIdentifier) {
@@ -139,6 +148,10 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 	})
 	if errors.Is(err, db.ErrDuplicate) {
 		return h.submitRejected(ctx, req, tpdu.FailureRejectedDuplicate, receivedAt)
+	}
+
+	if errors.Is(err, db.ErrNoRoute) {
+		return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
 
 	if err != nil {

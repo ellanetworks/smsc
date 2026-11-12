@@ -506,8 +506,9 @@ paths:
       operationId: updateESME
       summary: Update ESME
       description: >-
-        Closes the ESME's sessions, which bind again under the new settings. Without a password, the password stays.
-        Needs a login, not an API token.
+        A new password or a change of the allowed networks closes the ESME's sessions, which bind again under the new
+        settings. A change of the routes alone keeps them. Without a password, the password stays. Without routes, the
+        routes stay. Needs a login, not an API token.
       parameters:
         - $ref: "#/components/parameters/SystemID"
       requestBody:
@@ -1961,7 +1962,7 @@ components:
 
     ESME:
       type: object
-      required: [system_id, user, allowed_networks, created_at, sessions]
+      required: [system_id, user, allowed_networks, routes, created_at, sessions]
       properties:
         system_id:
           type: string
@@ -1977,6 +1978,22 @@ components:
           items:
             type: string
             example: 10.1.0.0/24
+        routes:
+          type: array
+          description: >-
+            The destination numbers this ESME receives, as a deliver_sm on a bound receiver or transceiver
+            session: a number, such as 4000, or a range of two numbers of the same length, such as
+            40000-40099. A route matches only a number of the same length, from its first to its last
+            number. A route of digits matches the number as dialled, when its type of number is unknown,
+            national, network specific, subscriber or abbreviated, up to a subaddress. A route of + and
+            digits, such as +15551230000-+15551230999, matches the international number, when its type of
+            number is unknown, international or national. Dialled-number routes come before international
+            ones. Routes of the same form do not overlap, on one ESME or across ESMEs. Sorted by their first
+            number.
+          items:
+            type: string
+            pattern: '^(\+[0-9]{1,15}(-\+[0-9]{1,15})?|[0-9]{1,20}(-[0-9]{1,20})?)$'
+            examples: ["4000", "40000-40099", "+15551230000-+15551230999"]
         created_at:
           type: string
           format: date-time
@@ -2021,11 +2038,19 @@ components:
           maxItems: 50
           items:
             type: string
+        routes:
+          type: array
+          maxItems: 64
+          description: The destination numbers this ESME receives, as in ESME.routes.
+          items:
+            type: string
+            pattern: '^(\+[0-9]{1,15}(-\+[0-9]{1,15})?|[0-9]{1,20}(-[0-9]{1,20})?)$'
 
     UpdateESMEParams:
       type: object
       additionalProperties: false
       required: [allowed_networks]
+      description: "The routes are replaced as a set: [] removes them all, and without routes they stay."
       properties:
         password:
           type: string
@@ -2037,6 +2062,13 @@ components:
           maxItems: 50
           items:
             type: string
+        routes:
+          type: array
+          maxItems: 64
+          description: The destination numbers this ESME receives, as in ESME.routes.
+          items:
+            type: string
+            pattern: '^(\+[0-9]{1,15}(-\+[0-9]{1,15})?|[0-9]{1,20}(-[0-9]{1,20})?)$'
 
     Peer:
       type: object
@@ -2539,8 +2571,9 @@ components:
       type: string
       description: >-
         replaced: a later message from the same phone, with the same replace type (TS 23.040 clause 9.2.3.9),
-        replaced it before its delivery.
-      enum: [pending, delivered, failed, expired, replaced]
+        replaced it before its delivery. delegated: the message goes to an ESME application over SMPP, and
+        waits for it to acknowledge it.
+      enum: [pending, delivered, delegated, failed, expired, replaced]
 
     StatusReports:
       type: object
@@ -2660,11 +2693,13 @@ components:
 
     MessageCounts:
       type: object
-      required: [pending, delivered, failed, expired, replaced]
+      required: [pending, delivered, delegated, failed, expired, replaced]
       properties:
         pending:
           type: integer
         delivered:
+          type: integer
+        delegated:
           type: integer
         failed:
           type: integer
@@ -2730,7 +2765,11 @@ components:
         from:
           type: string
         to:
-          $ref: "#/components/schemas/E164"
+          type: string
+          description: >-
+            The recipient: an E.164 number with +, or, for a message routed to an ESME by a dialled-number route
+            or to a network-specific, subscriber or abbreviated number, the digits the sender dialled.
+          examples: ["+15551230001", "40001"]
         encoding:
           type: string
           enum: [gsm7, ucs2, binary]
