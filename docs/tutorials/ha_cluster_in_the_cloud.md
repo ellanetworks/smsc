@@ -6,18 +6,19 @@ description: A hands-on tutorial to run Ella SMSC as a high-availability cluster
 
 In this tutorial, you run Ella SMSC as a three-node cluster on managed Kubernetes, and watch it survive the loss of a node and a rolling restart.
 
+!!! note
+    This tutorial uses managed Kubernetes. Ella SMSC can also run as a cluster on cloud virtual machines, installed as a snap, as in [Deploy a High Availability Cluster](../how_to/deploy_ha_cluster.md).
+
 ## Pre-requisites
 
 === "Google Cloud"
 
-    - A Google Cloud project with billing and the Kubernetes Engine API enabled.
-    - The `gcloud` CLI with the `gke-gcloud-auth-plugin` component, logged in to that project.
+    - A Google Cloud project and the `gcloud` CLI with the `gke-gcloud-auth-plugin` component
     - `kubectl` and `git`.
 
 === "AWS"
 
-    - An AWS account.
-    - The `aws` CLI, logged in to that account.
+    - An AWS account and the `aws` CLI
     - `eksctl`, `kubectl` and `git`.
 
 ## 1. Create a Kubernetes cluster
