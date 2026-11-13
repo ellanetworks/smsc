@@ -242,10 +242,6 @@ func applyClaimNotifications(a *applyCtx, p claimNotifications) ([]Notification,
 		}
 	}
 
-	if a.schema < routingSchema {
-		return due, nil
-	}
-
 	remaining := p.Limit - len(due)
 	if remaining <= 0 {
 		return due, nil

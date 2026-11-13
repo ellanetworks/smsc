@@ -18,7 +18,6 @@ import (
 
 type MessageStore interface {
 	CreateMessage(ctx context.Context, m db.NewMessage) (int64, error)
-	Routing() bool
 }
 
 type Handler struct {
@@ -90,10 +89,6 @@ func (h *Handler) moForwardShortMessage(ctx context.Context, req *diameter.Messa
 	}
 
 	if submit.Destination.Digits == "" || submit.Destination.TypeOfNumber == tpdu.TypeOfNumberAlphanumeric {
-		return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
-	}
-
-	if !db.ServedByHSS(submit.Destination.TypeOfNumber) && !h.Store.Routing() {
 		return h.submitRejected(ctx, req, tpdu.FailureInvalidSMEAddress, receivedAt)
 	}
 

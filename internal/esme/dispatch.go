@@ -90,10 +90,6 @@ func (s *Service) Expire(ctx context.Context) {
 	}
 
 	mo, err := s.Store.ExpireMODeliveries(ctx, s.Now())
-	if errors.Is(err, db.ErrUpgradePending) {
-		return
-	}
-
 	if err != nil {
 		if ctx.Err() == nil {
 			s.Logger.ErrorContext(ctx, "failed to expire MO deliveries", slog.Any("error", err))

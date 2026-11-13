@@ -41,25 +41,19 @@ Messages to a phone are delivered one at a time, in order.
 
 A message ends delivered, failed, expired at the end of its validity period, or replaced by a later message. See [Statuses](../reference/api/messages.md#statuses).
 
-## Messages from applications
+## Messages to and from applications
 
 Besides phones, applications can send messages to subscribers, for example notifications, one-time codes or updates to SIM cards. Ella SMSC offers them two interfaces:
 
 - The [Messages API](../reference/api/messages.md): Ella SMSC's HTTP API, for applications you write or script.
 - [SMPP](../reference/smpp.md): the standard SMSC protocol, for software that already speaks it, such as OTA platforms.
 
+Applications using SMPP can also receive messages for numbers explicitly routed to them.
+
 <figure markdown="span">
   ![OTA SIM delivery with SMPP](../images/smsc_apps.svg){ width="800" }
   <figcaption>OTA SIM delivery with SMPP</figcaption>
 </figure>
-
-## Messages to applications
-
-Applications receive messages over SMPP through an ESME account with routes for short codes or international numbers. Routes apply to messages from phones, the API and other ESMEs.
-
-Dialled-number routes match before international-number routes. Routes use fixed-length ranges, so a short code such as `4000` does not also capture a subscriber number such as `4000123456`. Routes of the same form cannot overlap.
-
-Ella SMSC stores a routed message with status `delegated` until the application acknowledges it or it fails, expires or is replaced. It waits if no receiver is bound and retries unacknowledged messages, so an application may receive duplicates. Route changes affect only new messages. See [Routed messages](../reference/smpp.md#routed-messages).
 
 ## 3GPP roles
 

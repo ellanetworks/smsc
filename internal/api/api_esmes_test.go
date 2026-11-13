@@ -892,7 +892,6 @@ func TestESMEWritesWhileBusy(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"upgrade pending", fmt.Errorf("update ESME: %w", db.ErrUpgradePending), "The cluster is still upgrading, retry shortly"},
 		{"busy", fmt.Errorf("update ESME: %w", db.ErrBusy), "Too busy, retry later"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

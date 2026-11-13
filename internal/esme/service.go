@@ -109,7 +109,6 @@ type Store interface {
 	RetryMODelivery(ctx context.Context, id int64, next time.Time, nodeID string) error
 	ReleaseMODelivery(ctx context.Context, id int64, nodeID string, now time.Time) error
 	ExpireMODeliveries(ctx context.Context, now time.Time) (int, error)
-	Routing() bool
 }
 
 type Service struct {
@@ -660,11 +659,10 @@ func (s *Service) SubmitSM(ctx context.Context, sess *Session, sm *smpp.SubmitSM
 
 	current := s.Settings()
 	m := mapping{
-		esme:    sess.ESME,
-		userID:  sess.UserID,
-		plan:    current.Operator.Numbering,
-		routing: s.Store.Routing(),
-		now:     s.Now(),
+		esme:   sess.ESME,
+		userID: sess.UserID,
+		plan:   current.Operator.Numbering,
+		now:    s.Now(),
 	}
 
 	req, rej := m.request(&sm.Message)

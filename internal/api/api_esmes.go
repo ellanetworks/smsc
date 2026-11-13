@@ -185,11 +185,6 @@ func CreateESME(a *auth) http.Handler {
 			return
 		}
 
-		if errors.Is(err, db.ErrUpgradePending) {
-			writeError(w, r, http.StatusServiceUnavailable, "The cluster is still upgrading, retry shortly", err, cfg.Logger)
-			return
-		}
-
 		if err != nil {
 			writeError(w, r, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
 			return
@@ -255,11 +250,6 @@ func UpdateESME(a *auth) http.Handler {
 
 		if errors.Is(err, db.ErrRouteOverlap) {
 			writeError(w, r, http.StatusConflict, "A route overlaps a route of another ESME", nil, cfg.Logger)
-			return
-		}
-
-		if errors.Is(err, db.ErrUpgradePending) {
-			writeError(w, r, http.StatusServiceUnavailable, "The cluster is still upgrading, retry shortly", err, cfg.Logger)
 			return
 		}
 

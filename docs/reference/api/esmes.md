@@ -152,7 +152,6 @@ This path replaces the allowed networks of an ESME, and its routes and its passw
 | `400` | Invalid field, or two of the `routes` overlap. |
 | `404` | No ESME has this `system_id`. |
 | `409` | One of the `routes` overlaps a route of another ESME. |
-| `503` | The cluster is still upgrading to support routes, retry shortly. |
 
 ## Delete an ESME
 

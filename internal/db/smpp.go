@@ -322,18 +322,10 @@ func applyExpireNotifications(a *applyCtx, p expireNotifications) (map[Notificat
 func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ map[NotificationType]int, err error) {
 	defer d.observe(&err)()
 
-	query := `SELECT type, COUNT(*) FROM smpp_notifications
-		WHERE result IS NULL AND expires_at > ? GROUP BY type`
-
-	args := []any{now.UTC().UnixNano()}
-
-	if d.schema.Load() >= routingSchema {
-		query += ` UNION ALL SELECT 'mo', COUNT(*) FROM esme_deliveries WHERE result IS NULL AND expires_at > ?`
-
-		args = append(args, now.UTC().UnixNano())
-	}
-
-	rows, err := d.reader().QueryContext(ctx, query, args...)
+	rows, err := d.reader().QueryContext(ctx, `SELECT type, COUNT(*) FROM smpp_notifications
+		WHERE result IS NULL AND expires_at > ?1 GROUP BY type
+		UNION ALL SELECT 'mo', COUNT(*) FROM esme_deliveries WHERE result IS NULL AND expires_at > ?1`,
+		now.UTC().UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("count pending notifications: %w", err)
 	}
@@ -365,23 +357,15 @@ func (d *DB) CountPendingNotifications(ctx context.Context, now time.Time) (_ ma
 func (d *DB) NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (_ time.Time, _ bool, err error) {
 	defer d.observe(&err)()
 
-	query := `SELECT MIN(CASE WHEN n.next_attempt_at > ? THEN MIN(n.next_attempt_at, n.expires_at) ELSE n.expires_at END) AS x
-		FROM smpp_notifications n CROSS JOIN smpp_messages s ON s.message_id = n.message_id
-		WHERE s.esme_id = ? AND n.result IS NULL`
-
-	args := []any{now.UTC().UnixNano(), esmeID}
-
-	if d.schema.Load() >= routingSchema {
-		query = `SELECT MIN(x) FROM (` + query + `
-			UNION ALL SELECT CASE WHEN d.next_attempt_at > ? THEN MIN(d.next_attempt_at, d.expires_at) ELSE d.expires_at END
-			FROM esme_deliveries d WHERE d.esme_id = ? AND d.result IS NULL)`
-
-		args = append(args, now.UTC().UnixNano(), esmeID)
-	}
-
 	var at sql.Null[int64]
 
-	if err := d.reader().QueryRowContext(ctx, query, args...).Scan(&at); err != nil {
+	if err := d.reader().QueryRowContext(ctx, `SELECT MIN(x) FROM (
+		SELECT MIN(CASE WHEN n.next_attempt_at > ?1 THEN MIN(n.next_attempt_at, n.expires_at) ELSE n.expires_at END) AS x
+		FROM smpp_notifications n CROSS JOIN smpp_messages s ON s.message_id = n.message_id
+		WHERE s.esme_id = ?2 AND n.result IS NULL
+		UNION ALL SELECT CASE WHEN d.next_attempt_at > ?1 THEN MIN(d.next_attempt_at, d.expires_at) ELSE d.expires_at END
+		FROM esme_deliveries d WHERE d.esme_id = ?2 AND d.result IS NULL)`,
+		now.UTC().UnixNano(), esmeID).Scan(&at); err != nil {
 		return time.Time{}, false, fmt.Errorf("next notification: %w", err)
 	}
 

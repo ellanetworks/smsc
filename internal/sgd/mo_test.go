@@ -20,13 +20,8 @@ import (
 )
 
 type fakeStore struct {
-	stored    []db.NewMessage
-	err       error
-	noRouting bool
-}
-
-func (s *fakeStore) Routing() bool {
-	return !s.noRouting
+	stored []db.NewMessage
+	err    error
 }
 
 func (s *fakeStore) CreateMessage(_ context.Context, m db.NewMessage) (int64, error) {
@@ -351,24 +346,6 @@ func TestMOForwardToAServiceNumber(t *testing.T) {
 
 	if m := store.stored[0]; m.MSISDN != "1234" || m.Recipient != (db.Address{Digits: "1234", TypeOfNumber: 3, NumberingPlan: 1}) {
 		t.Fatalf("stored recipient %+v, msisdn %q", m.Recipient, m.MSISDN)
-	}
-}
-
-func TestMOForwardToAServiceNumberBeforeRoutes(t *testing.T) {
-	store := &fakeStore{noRouting: true}
-
-	ans := newTestHandler(store).ServeDiameter(context.Background(), nil,
-		ofrWithSubmit(t, "01"+"00"+"04b1"+"2143"+"00"+"00"+"00"))
-	assertCommon(t, ans)
-
-	if len(store.stored) != 0 {
-		t.Fatalf("stored = %d messages; a network-specific number has no route until the cluster supports routes",
-			len(store.stored))
-	}
-
-	cause, diag := deliveryFailure(t, ans)
-	if cause != sgd.CauseInvalidSMEAddress || !bytes.Equal(diag, submitReport(t, tpdu.FailureInvalidSMEAddress)) {
-		t.Fatalf("cause = %d, diagnostic = %x", cause, diag)
 	}
 }
 

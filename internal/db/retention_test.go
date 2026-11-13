@@ -164,8 +164,6 @@ func TestPurgeMessagesInBatches(t *testing.T) {
 func TestPurgeMessagesUsesItsIndex(t *testing.T) {
 	d := openTestDB(t)
 
-	migrateAll(t, d)
-
 	rows, err := d.writer.QueryContext(context.Background(), `EXPLAIN QUERY PLAN `+purgeableMessages, 0, 1000)
 	if err != nil {
 		t.Fatal(err)

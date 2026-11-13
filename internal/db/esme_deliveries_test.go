@@ -1,13 +1,10 @@
 package db
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,15 +13,6 @@ import (
 )
 
 const testRange = "40000-40009"
-
-func openMigratedDB(t *testing.T) *DB {
-	t.Helper()
-
-	d := openTestDB(t)
-	migrateAll(t, d)
-
-	return d
-}
 
 type moFixture struct {
 	d    *DB
@@ -36,7 +24,7 @@ type moFixture struct {
 func newMOFixture(t *testing.T, routes ...string) moFixture {
 	t.Helper()
 
-	d := openMigratedDB(t)
+	d := openTestDB(t)
 	user := createTestUser(t, d, "app@example.com", RoleSubmitter)
 
 	app := testESME("app", user)
@@ -611,81 +599,6 @@ func TestPurgeKeepsDelegatedAndOpenDeliveries(t *testing.T) {
 	}
 }
 
-func TestRoutingMigrationPreservesDataAndTriggers(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-
-	delivered, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, now))
-	if err != nil {
-		t.Fatalf("CreateMessage: %v", err)
-	}
-
-	pending := testMessage(2, false, []byte{0x02}, now)
-	pending.ExpiresAt = now.Add(24 * time.Hour)
-
-	pendingID, err := d.CreateMessage(ctx, pending)
-	if err != nil {
-		t.Fatalf("CreateMessage: %v", err)
-	}
-
-	if err := d.CompleteMessage(ctx, delivered, StatusDelivered, now.Add(time.Minute),
-		testReport(now.Add(time.Minute)), 0, Fence{}); err != nil {
-		t.Fatalf("CompleteMessage: %v", err)
-	}
-
-	if _, total, err := d.ListMessages(ctx, MessageFilter{}, 1, 10); err != nil || total != 2 {
-		t.Fatalf("messages before the migration = %d, %v", total, err)
-	}
-
-	if err := d.Migrate(ctx, routingSchema); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	messages, total, err := d.ListMessages(ctx, MessageFilter{}, 1, 10)
-	if err != nil || total != 2 {
-		t.Fatalf("messages after the migration = %d of %d, %v", len(messages), total, err)
-	}
-
-	reports, err := d.StatusReportsFor(ctx, []int64{delivered})
-	if err != nil || len(reports[delivered]) != 1 || reports[delivered][0].Status != StatusPending {
-		t.Fatalf("reports after the migration = %+v, %v", reports, err)
-	}
-
-	due, _, err := d.DueRecipients(ctx, now.Add(2*time.Hour), 10, nil)
-	if err != nil || !slices.Contains(due, pending.MSISDN) || !slices.Contains(due, testOriginator.Digits) {
-		t.Fatalf("due after the migration = %v, %v; the pending message and the pending status report must stay due",
-			due, err)
-	}
-
-	if m, err := d.GetMessage(ctx, pendingID); err != nil || m.Status != StatusPending {
-		t.Fatalf("the pending message = %+v, %v", m, err)
-	}
-
-	user := createTestUser(t, d, "app@example.com", RoleSubmitter)
-
-	app := testESME("app", user)
-	app.Routes = []string{testRange}
-	appID := createTestESME(t, d, app)
-
-	m := delegatedMessage(moFixture{d: d, app: appID, now: now.Add(time.Hour)}, "40001", false,
-		now.Add(2*time.Hour))
-
-	id, err := d.CreateMessage(ctx, m)
-	if err != nil {
-		t.Fatalf("CreateMessage: %v", err)
-	}
-
-	if got, err := d.GetMessage(ctx, id); err != nil || got.Status != StatusDelegated {
-		t.Fatalf("message after the migration = %+v, %v; want %v", got, err, StatusDelegated)
-	}
-
-	if delegated, total, err := d.ListMessages(ctx, MessageFilter{Status: StatusDelegated}, 1, 10); err != nil ||
-		total != 1 || delegated[0].ID != id {
-		t.Fatalf("delegated messages read after the migration = %+v, %d, %v", delegated, total, err)
-	}
-}
-
 func TestDeletingAnESMECountsTheMessagesItFails(t *testing.T) {
 	ctx := context.Background()
 	f := newMOFixture(t, testRange)
@@ -725,22 +638,6 @@ func TestDeletingAnESMECountsTheMessagesItFails(t *testing.T) {
 	}
 }
 
-func TestDeleteResultsBeforeRoutesMatchTheBinaryBeforeRoutes(t *testing.T) {
-	before, err := json.Marshal(struct{}{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	after, err := json.Marshal(failedDelegations{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !bytes.Equal(before, after) {
-		t.Fatalf("a delete with no failed delegations encodes as %s, the binary before routes as %s", after, before)
-	}
-}
-
 func TestDeleteUserFailsTheDelegatedMessagesOfItsESMEs(t *testing.T) {
 	ctx := context.Background()
 	f := newMOFixture(t, testRange)
@@ -770,248 +667,6 @@ func TestDeleteUserFailsTheDelegatedMessagesOfItsESMEs(t *testing.T) {
 
 	if rows := moDeliveryRows(t, f.d, id); len(rows) != 1 || rows[0].ESMEID != 0 || rows[0].Route != testRange {
 		t.Fatalf("deliveries = %+v; the row must stay, with its route and no ESME", rows)
-	}
-}
-
-func TestRoutingMigrationKeepsTheMessageSequence(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-
-	var last int64
-
-	for i := range 3 {
-		id, err := d.CreateMessage(ctx, testMessage(uint8(i), false, []byte{byte(i)}, now))
-		if err != nil {
-			t.Fatalf("CreateMessage: %v", err)
-		}
-
-		last = id
-	}
-
-	if _, err := d.writer.ExecContext(ctx, `DELETE FROM messages WHERE id = ?`, last); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := d.Migrate(ctx, routingSchema); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	id, err := d.CreateMessage(ctx, testMessage(9, false, []byte{0x09}, now))
-	if err != nil {
-		t.Fatalf("CreateMessage: %v", err)
-	}
-
-	if id <= last {
-		t.Fatalf("a message after the migration got id %d; ids up to %d were already used", id, last)
-	}
-}
-
-func TestRoutingMigrationOfAnEmptyMessagesTable(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-
-	if err := d.Migrate(ctx, routingSchema); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, time.Now()))
-	if err != nil || id != 1 {
-		t.Fatalf("first message after the migration = %d, %v", id, err)
-	}
-}
-
-func messagesTable(t *testing.T, d *DB) (string, int64) {
-	t.Helper()
-
-	var (
-		definition string
-		rootpage   int64
-	)
-
-	if err := d.writer.QueryRowContext(context.Background(), `SELECT sql, rootpage FROM sqlite_schema
-		WHERE type = 'table' AND name = 'messages'`).Scan(&definition, &rootpage); err != nil {
-		t.Fatal(err)
-	}
-
-	return definition, rootpage
-}
-
-func writableSchema(t *testing.T, d *DB) int {
-	t.Helper()
-
-	var on int
-
-	if err := d.writer.QueryRowContext(context.Background(), `PRAGMA writable_schema`).Scan(&on); err != nil {
-		t.Fatal(err)
-	}
-
-	return on
-}
-
-func TestRoutingMigrationEditsTheMessagesTableInPlace(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-
-	if _, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, time.Now())); err != nil {
-		t.Fatalf("CreateMessage: %v", err)
-	}
-
-	before, rootpage := messagesTable(t, d)
-
-	if err := d.Migrate(ctx, routingSchema); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	after, rootpageAfter := messagesTable(t, d)
-
-	if rootpageAfter != rootpage {
-		t.Fatalf("messages rootpage = %d, was %d; the migration must not rebuild the table", rootpageAfter, rootpage)
-	}
-
-	if want := strings.Replace(before, statusCheck, delegatedStatusCheck, 1); after != want || after == before {
-		t.Fatalf("messages after the migration:\n%s\nwant:\n%s", after, want)
-	}
-
-	if on := writableSchema(t, d); on != 0 {
-		t.Fatalf("writable_schema = %d after the migration", on)
-	}
-
-	var check string
-
-	if err := d.writer.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&check); err != nil || check != "ok" {
-		t.Fatalf("integrity_check = %q, %v", check, err)
-	}
-}
-
-func TestDelegatedStatusInTheMigrationTransaction(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-
-	id, err := d.CreateMessage(ctx, testMessage(1, false, []byte{0x01}, time.Now()))
-	if err != nil {
-		t.Fatalf("CreateMessage: %v", err)
-	}
-
-	tx, err := d.writer.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `UPDATE messages SET status = 'delegated' WHERE id = ?`, id); !isConstraint(err) {
-		t.Fatalf("a delegated status before the migration = %v, want a constraint error", err)
-	}
-
-	if err := allowDelegatedStatus(ctx, tx); err != nil {
-		t.Fatalf("allowDelegatedStatus: %v", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, `UPDATE messages SET status = 'delegated' WHERE id = ?`, id); err != nil {
-		t.Fatalf("a delegated status in the migration transaction = %v", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, `UPDATE messages SET status = 'lost' WHERE id = ?`, id); !isConstraint(err) {
-		t.Fatalf("an unknown status after the migration = %v, want a constraint error", err)
-	}
-}
-
-func TestAllowDelegatedStatusRefusesAnUnexpectedTable(t *testing.T) {
-	ctx := context.Background()
-	d := openMigratedDB(t)
-	before, _ := messagesTable(t, d)
-
-	tx, err := d.writer.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = allowDelegatedStatus(ctx, tx)
-	_ = tx.Rollback()
-
-	if err == nil {
-		t.Fatal("widening an already widened messages table succeeded")
-	}
-
-	if on := writableSchema(t, d); on != 0 {
-		t.Fatalf("writable_schema = %d after a refused migration", on)
-	}
-
-	if after, _ := messagesTable(t, d); after != before {
-		t.Fatalf("a refused migration changed the messages table:\n%s", after)
-	}
-}
-
-func TestRoutesBeforeTheUpgradeAreBusyNotFatal(t *testing.T) {
-	d := openTestDB(t)
-	user := createTestUser(t, d, "app@example.com", RoleSubmitter)
-
-	app := testESME("app", user)
-	app.Routes = []string{"4000"}
-
-	_, err := d.CreateESME(context.Background(), app)
-	if !errors.Is(err, ErrUpgradePending) || !errors.Is(err, ErrBusy) {
-		t.Fatalf("CreateESME with routes at schema %d = %v, want %v", d.Schema(), err, ErrUpgradePending)
-	}
-
-	if code := CodeOf(ErrBusy); code != "" {
-		t.Fatalf("CodeOf(ErrBusy) = %q; a transient busy error must stay uncoded so callers retry it", code)
-	}
-
-	app.Routes = nil
-	app.ID = createTestESME(t, d, app)
-	app.Routes = []string{"4000"}
-
-	if err := d.UpdateESME(context.Background(), app); !errors.Is(err, ErrUpgradePending) {
-		t.Fatalf("UpdateESME with routes at schema %d = %v, want %v", d.Schema(), err, ErrUpgradePending)
-	}
-
-	app.Routes = nil
-
-	if err := d.UpdateESME(context.Background(), app); err != nil {
-		t.Fatalf("UpdateESME without routes at schema %d = %v", d.Schema(), err)
-	}
-}
-
-func TestSchemaOneAppliesLikeTheBinaryBeforeRoutes(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-	user := createTestUser(t, d, "app@example.com", RoleSubmitter)
-
-	app := testESME("app", user)
-	app.Routes = []string{"4000"}
-
-	id, err := submit[int64](ctx, d, cmdCreateESME, app)
-	if err != nil {
-		t.Fatalf("an ESME with routes applied at schema %d = %v; it must be created as before routes", d.Schema(), err)
-	}
-
-	app.ID = id
-
-	if _, err := submit[struct{}](ctx, d, cmdUpdateESME, app); err != nil {
-		t.Fatalf("an ESME update with routes applied at schema %d = %v", d.Schema(), err)
-	}
-
-	m := NewMessage{
-		Originator:  testOriginator,
-		Recipient:   Address{Digits: "1234", TypeOfNumber: tonNetworkSpecific, NumberingPlan: 1},
-		MSISDN:      "1234",
-		Origin:      OriginMobile,
-		TPDU:        submitTPDU("1234", false),
-		SubmittedAt: time.Now(),
-		ExpiresAt:   time.Now().Add(time.Hour),
-	}
-
-	messageID, err := d.CreateMessage(ctx, m)
-	if err != nil {
-		t.Fatalf("a network-specific recipient applied at schema %d = %v; it must be stored as before routes",
-			d.Schema(), err)
-	}
-
-	got, err := d.GetMessage(ctx, messageID)
-	if err != nil || got.Status != StatusPending {
-		t.Fatalf("message = %+v, %v; want pending", got, err)
 	}
 }
 

@@ -13,8 +13,6 @@ const (
 	maxE164Route    = 15
 )
 
-const routingSchema = 2
-
 const (
 	tonUnknown         = 0x0
 	tonInternational   = 0x1
@@ -99,10 +97,6 @@ type esmeRoute struct {
 	route    string
 }
 
-func (d *DB) Routing() bool {
-	return d.Schema() >= routingSchema
-}
-
 func DialledRoute(route string) bool {
 	return route != "" && !strings.HasPrefix(route, "+")
 }
@@ -111,7 +105,7 @@ func (d *DB) RoutesFor(ctx context.Context, messageIDs []int64) (_ map[int64]str
 	defer d.observe(&err)()
 
 	out := map[int64]string{}
-	if len(messageIDs) == 0 || !d.Routing() {
+	if len(messageIDs) == 0 {
 		return out, nil
 	}
 
@@ -215,10 +209,6 @@ func e164Number(m NewMessage) string {
 }
 
 func routeOf(a *applyCtx, m NewMessage) (*esmeRoute, error) {
-	if a.schema < routingSchema {
-		return nil, nil
-	}
-
 	var (
 		r         esmeRoute
 		low, high string

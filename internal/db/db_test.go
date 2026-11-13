@@ -49,16 +49,6 @@ func openTestDB(t *testing.T) *DB {
 	return d
 }
 
-func migrateAll(t *testing.T, d *DB) {
-	t.Helper()
-
-	for target := d.Schema() + 1; target <= len(migrations); target++ {
-		if err := d.Migrate(context.Background(), target); err != nil {
-			t.Fatalf("migrate to schema %d: %v", target, err)
-		}
-	}
-}
-
 func TestOpenIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "smsc.db")
 

@@ -97,11 +97,10 @@ func reject(status smpp.CommandStatus, reason string) *rejection {
 }
 
 type mapping struct {
-	esme    db.ESME
-	userID  int64
-	plan    numbering.Plan
-	routing bool
-	now     time.Time
+	esme   db.ESME
+	userID int64
+	plan   numbering.Plan
+	now    time.Time
 }
 
 // SMPP 3.4 section 4.4.1 table 4-10
@@ -163,11 +162,7 @@ func (m mapping) request(sm *smpp.Message) (submission.Request, *rejection) {
 // TS 23.040 clause 9.1.2.5
 func (m mapping) destination(a smpp.Address) (db.Address, string, *rejection) {
 	switch a.TON {
-	case tonUnknown, tonInternational, tonNational:
-	case tonNetworkSpecific, tonSubscriber, tonAbbreviated:
-		if !m.routing {
-			return db.Address{}, "", reject(smpp.StatusInvDstTON, "dest_addr_ton "+strconv.Itoa(int(a.TON))+" cannot be routed through the HSS")
-		}
+	case tonUnknown, tonInternational, tonNational, tonNetworkSpecific, tonSubscriber, tonAbbreviated:
 	default:
 		return db.Address{}, "", reject(smpp.StatusInvDstTON, "dest_addr_ton "+strconv.Itoa(int(a.TON))+" is not supported")
 	}

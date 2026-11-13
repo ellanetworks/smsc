@@ -22,7 +22,6 @@ import (
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
-	"github.com/ellanetworks/smsc/internal/db/dbtest"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -96,8 +95,6 @@ func openStore(t *testing.T) *db.DB {
 	}
 
 	t.Cleanup(func() { _ = store.Close() })
-
-	dbtest.Migrate(t, store)
 
 	return store
 }

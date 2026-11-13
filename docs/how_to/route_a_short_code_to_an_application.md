@@ -26,15 +26,6 @@ To give the application a block of short codes, enter a range of numbers of the 
 
 Click **Update**. The ESME's sessions stay bound.
 
-To add routes with the API instead:
-
-```shell
-curl -X PUT http://<host-ip>:5010/api/v1/esmes/ota \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"allowed_networks": ["10.1.0.0/24"], "routes": ["4000"]}'
-```
-
 ## 2. Bind as receiver or transceiver
 
 Configure the application to bind as a receiver or a transceiver, with:
@@ -64,10 +55,6 @@ The application receives a `deliver_sm`:
 | `destination_addr` | The number the phone dialled, such as `4000`. |
 | `short_message` | The message text, its user data header included. |
 | `user_message_reference` | The phone's TP-MR. |
-
-Answer `ESME_ROK` within 30 seconds. To refuse the message for good, answer `ESME_RX_P_APPN` or `ESME_RX_R_APPN` instead.
-
-A `deliver_sm` can arrive twice. Treat one with the same `source_addr`, `destination_addr` and `user_message_reference` as one already received.
 
 ## Next steps
 

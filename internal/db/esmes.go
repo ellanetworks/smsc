@@ -56,10 +56,6 @@ func (d *DB) CountESMEs(ctx context.Context) (_ int, err error) {
 func (d *DB) CreateESME(ctx context.Context, e ESME) (_ int64, err error) {
 	defer d.observe(&err)()
 
-	if len(e.Routes) > 0 && !d.Routing() {
-		return 0, fmt.Errorf("create ESME: %w", ErrUpgradePending)
-	}
-
 	id, err := submit[int64](ctx, d, cmdCreateESME, e)
 	if err != nil {
 		return 0, fmt.Errorf("create ESME: %w", err)
@@ -92,10 +88,8 @@ func applyCreateESME(a *applyCtx, e ESME) (int64, error) {
 		return 0, err
 	}
 
-	if a.schema >= routingSchema {
-		if err := insertRoutes(a.ctx, a.tx, id, e.Routes); err != nil {
-			return 0, err
-		}
+	if err := insertRoutes(a.ctx, a.tx, id, e.Routes); err != nil {
+		return 0, err
 	}
 
 	return id, nil
@@ -103,10 +97,6 @@ func applyCreateESME(a *applyCtx, e ESME) (int64, error) {
 
 func (d *DB) UpdateESME(ctx context.Context, e ESME) (err error) {
 	defer d.observe(&err)()
-
-	if len(e.Routes) > 0 && !d.Routing() {
-		return fmt.Errorf("update ESME: %w", ErrUpgradePending)
-	}
 
 	if _, err := submit[struct{}](ctx, d, cmdUpdateESME, e); err != nil {
 		return fmt.Errorf("update ESME: %w", err)
@@ -147,14 +137,12 @@ func applyUpdateESME(a *applyCtx, e ESME) (struct{}, error) {
 		return struct{}{}, err
 	}
 
-	if a.schema >= routingSchema {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM esme_routes WHERE esme_id = ?`, e.ID); err != nil {
-			return struct{}{}, err
-		}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM esme_routes WHERE esme_id = ?`, e.ID); err != nil {
+		return struct{}{}, err
+	}
 
-		if err := insertRoutes(ctx, tx, e.ID, e.Routes); err != nil {
-			return struct{}{}, err
-		}
+	if err := insertRoutes(ctx, tx, e.ID, e.Routes); err != nil {
+		return struct{}{}, err
 	}
 
 	if e.PasswordHash != "" || !sameNetworks(before, e.AllowedNetworks) {
@@ -226,15 +214,9 @@ func (d *DB) DeleteESME(ctx context.Context, id int64) (err error) {
 }
 
 func applyDeleteESME(a *applyCtx, id int64) (failedDelegations, error) {
-	var deleted failedDelegations
-
-	if a.schema >= routingSchema {
-		failed, err := failDeliveriesOfESME(a, id)
-		if err != nil {
-			return failedDelegations{}, err
-		}
-
-		deleted.Failed = failed
+	failed, err := failDeliveriesOfESME(a, id)
+	if err != nil {
+		return failedDelegations{}, err
 	}
 
 	res, err := a.tx.ExecContext(a.ctx, `DELETE FROM esmes WHERE id = ?`, id)
@@ -250,7 +232,7 @@ func applyDeleteESME(a *applyCtx, id int64) (failedDelegations, error) {
 
 	a.events.ClosedESMEs = append(a.events.ClosedESMEs, id)
 
-	return deleted, nil
+	return failedDelegations{Failed: failed}, nil
 }
 
 func failDeliveriesOfESME(a *applyCtx, esmeID int64) (int, error) {
@@ -449,7 +431,7 @@ func (d *DB) esmeNetworks(ctx context.Context, esmes []*ESME) error {
 }
 
 func (d *DB) esmeRoutes(ctx context.Context, esmes []*ESME) error {
-	if len(esmes) == 0 || d.schema.Load() < routingSchema {
+	if len(esmes) == 0 {
 		return nil
 	}
 

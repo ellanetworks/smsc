@@ -280,15 +280,13 @@ func applyDeleteUser(a *applyCtx, id int64) (failedDelegations, error) {
 
 	var deleted failedDelegations
 
-	if a.schema >= routingSchema {
-		for _, esmeID := range esmes {
-			failed, err := failDeliveriesOfESME(a, esmeID)
-			if err != nil {
-				return failedDelegations{}, err
-			}
-
-			deleted.Failed += failed
+	for _, esmeID := range esmes {
+		failed, err := failDeliveriesOfESME(a, esmeID)
+		if err != nil {
+			return failedDelegations{}, err
 		}
+
+		deleted.Failed += failed
 	}
 
 	if err := updateUser(a.ctx, a.tx, `DELETE FROM users WHERE id = ?`, id); err != nil {

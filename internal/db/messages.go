@@ -195,7 +195,7 @@ func createMessage(a *applyCtx, m NewMessage) (int64, bool, error) {
 		return 0, false, err
 	}
 
-	if route == nil && a.schema >= routingSchema && !ServedByHSS(m.Recipient.TypeOfNumber) {
+	if route == nil && !ServedByHSS(m.Recipient.TypeOfNumber) {
 		return 0, false, fmt.Errorf("%w: type of number %d", ErrNoRoute, m.Recipient.TypeOfNumber)
 	}
 
@@ -1124,12 +1124,6 @@ const purgeableMessages = `SELECT m.id FROM messages m
 	AND NOT EXISTS (SELECT 1 FROM esme_deliveries d WHERE d.message_id = m.id AND d.result IS NULL AND d.expires_at >= ?1)
 	ORDER BY m.updated_at, m.id LIMIT ?2`
 
-const purgeableMessagesSchema1 = `SELECT m.id FROM messages m
-	WHERE m.kind = 'message' AND m.status != 'pending' AND m.updated_at < ?1
-	AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.report_for = m.id AND (r.status = 'pending' OR r.updated_at >= ?1))
-	AND NOT EXISTS (SELECT 1 FROM smpp_notifications n WHERE n.message_id = m.id AND n.result IS NULL AND n.expires_at >= ?1)
-	ORDER BY m.updated_at, m.id LIMIT ?2`
-
 type purgeMessages struct {
 	Cutoff time.Time
 	Limit  int
@@ -1149,12 +1143,7 @@ func (d *DB) PurgeMessages(ctx context.Context, cutoff time.Time, limit int) (_ 
 }
 
 func applyPurgeMessages(a *applyCtx, p purgeMessages) (int, error) {
-	purgeable := purgeableMessages
-	if a.schema < routingSchema {
-		purgeable = purgeableMessagesSchema1
-	}
-
-	res, err := a.tx.ExecContext(a.ctx, `DELETE FROM messages WHERE id IN (`+purgeable+`)`,
+	res, err := a.tx.ExecContext(a.ctx, `DELETE FROM messages WHERE id IN (`+purgeableMessages+`)`,
 		p.Cutoff.UTC().UnixNano(), p.Limit)
 	if err != nil {
 		return 0, err
