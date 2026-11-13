@@ -417,7 +417,11 @@ export default function Dashboard() {
 
   const byStatus = counts.data;
   const statuses: MessageStatus[] = byStatus
-    ? [...ALWAYS_SHOWN, ...(byStatus.replaced > 0 ? ["replaced" as const] : [])]
+    ? [
+        ...ALWAYS_SHOWN,
+        ...(byStatus.delegated > 0 ? ["delegated" as const] : []),
+        ...(byStatus.replaced > 0 ? ["replaced" as const] : []),
+      ]
     : [];
   const total = byStatus
     ? Object.values(byStatus).reduce((sum, n) => sum + n, 0)

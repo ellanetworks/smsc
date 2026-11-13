@@ -70,6 +70,15 @@ func (m metrics) count(completed []completion) {
 	}
 }
 
+func completions(kind MessageKind, status MessageStatus, n int) []completion {
+	out := make([]completion, n)
+	for i := range out {
+		out[i] = completion{kind, status}
+	}
+
+	return out
+}
+
 func (d *DB) observe(err *error) func() {
 	start := time.Now()
 
@@ -84,7 +93,7 @@ func (d *DB) observe(err *error) func() {
 
 func failed(err error) bool {
 	return err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrDuplicate) &&
-		!errors.Is(err, ErrAlreadyExists)
+		!errors.Is(err, ErrAlreadyExists) && !errors.Is(err, ErrNoRoute) && !errors.Is(err, ErrRouteOverlap)
 }
 
 func (d *DB) Collectors() []prometheus.Collector {

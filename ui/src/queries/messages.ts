@@ -6,9 +6,12 @@ import {
 } from "@/queries/utils";
 
 export type MessageStatus =
-  "pending" | "delivered" | "failed" | "expired" | "replaced";
+  "pending" | "delivered" | "delegated" | "failed" | "expired" | "replaced";
 
-export type StatusReportDelivery = Exclude<MessageStatus, "replaced">;
+export type StatusReportDelivery = Exclude<
+  MessageStatus,
+  "replaced" | "delegated"
+>;
 
 export interface StatusReport {
   id: number;

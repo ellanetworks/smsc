@@ -66,6 +66,10 @@ const (
 	cmdClaimNotifications
 	cmdReleaseNotification
 	cmdMigrate
+	cmdCloseMODelivery
+	cmdRetryMODelivery
+	cmdReleaseMODelivery
+	cmdExpireMODeliveries
 )
 
 const entryBatch uint16 = 1
@@ -137,6 +141,8 @@ var resultCodes = []struct {
 	{"too_many_users", ErrTooManyUsers},
 	{"no_password", ErrNoPassword},
 	{"duplicate", ErrDuplicate},
+	{"no_route", ErrNoRoute},
+	{"route_overlap", ErrRouteOverlap},
 	{"not_pending", ErrNotPending},
 	{"oidc_disabled", ErrOIDCDisabled},
 	{"oidc_changed", ErrOIDCChanged},
@@ -153,6 +159,7 @@ var resultCodes = []struct {
 	{"invalid", ErrInvalid},
 	{"constraint", ErrConstraint},
 	{"already_applied", ErrAlreadyApplied},
+	{"upgrade_pending", ErrUpgradePending},
 }
 
 var ErrInvalid = errors.New("invalid command")

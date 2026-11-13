@@ -4,7 +4,7 @@ description: Reference of the SMPP 3.4 interface of Ella SMSC for ESMEs, such as
 
 # SMPP
 
-Ella SMSC is an SMPP 3.4 SMSC for External Short Message Entities (ESMEs), such as OTA platforms. An ESME submits short messages to phones with `submit_sm`, and receives delivery receipts and SIM answers as `deliver_sm`.
+Ella SMSC is an SMPP 3.4 SMSC for External Short Message Entities (ESMEs), such as OTA platforms. An ESME submits short messages to phones with `submit_sm`, and receives delivery receipts and SIM answers as `deliver_sm`. An ESME with routes also receives the short messages sent to the numbers of its routes, such as the messages a phone sends to a short code, as `deliver_sm`.
 
 The listener runs when the [configuration file](config_file.md) has an `smpp` block. ESME accounts are managed with the [ESMEs API](api/esmes.md) or the **SMPP** page of the UI.
 
@@ -30,7 +30,7 @@ The listener runs when the [configuration file](config_file.md) has an `smpp` bl
 | --- | --------- | ------------- | -------- |
 | `bind_transmitter`, `bind_receiver`, `bind_transceiver` | ESME → SMSC | OPEN | See [Binds](#binds). |
 | `submit_sm` | ESME → SMSC | BOUND_TX, BOUND_TRX | One short message. See [`submit_sm`](#submit_sm). |
-| `deliver_sm` | SMSC → ESME | BOUND_RX, BOUND_TRX | Delivery receipts and SIM answers. See [Notifications](#notifications). |
+| `deliver_sm` | SMSC → ESME | BOUND_RX, BOUND_TRX | Delivery receipts, SIM answers, and routed messages. See [Notifications](#notifications) and [Routed messages](#routed-messages). |
 | `enquire_link` | Both | Bound | Answered at once (§4.11). |
 | `unbind` | Both | Bound | See [Session end](#session-end). |
 | `generic_nack` | Both | Any | Sent for a PDU that cannot be handled (§4.3). Received in answer to a `deliver_sm`: a temporary failure. |
@@ -95,7 +95,7 @@ The log gives the reason of a refused bind, with the `system_id` and the client 
 
 ### Account changes
 
-Updating or deleting an ESME, or changing the role of or deleting its user, closes its sessions.
+Giving an ESME a new password, changing its allowed networks, deleting it, or changing the role of or deleting its user, closes its sessions. Changing only its routes keeps them.
 
 ## Sessions
 
@@ -134,18 +134,20 @@ One `submit_sm` stores exactly one SMS-SUBMIT: one message of the [Messages API]
 
 ### Addressing
 
-The destination is a phone, routed through the HSS (§5.2.5, §5.2.6, §5.2.9; TS 23.040 §9.1.2.5):
+The destination is a phone, routed through the HSS, or an ESME with a matching route (§5.2.5, §5.2.6, §5.2.9; TS 23.040 §9.1.2.5). See [Routed messages](#routed-messages).
 
 | `dest_addr_ton` | `dest_addr_npi` | `destination_addr` |
 | --------------- | --------------- | ------------------ |
 | `1`, international | `0` or `1` | The international number. |
 | `0`, unknown, or `2`, national | `0` or `1` | Converted to international with the operator's [numbering plan](api/operator.md). |
+| `3`, network specific, `4`, subscriber number, or `6`, abbreviated | `0` or `1` | Kept as submitted. Only an ESME route can take it. |
 
 | Error | `command_status` |
 | ----- | ---------------- |
 | Another `dest_addr_ton` | `ESME_RINVDSTTON` |
 | Another `dest_addr_npi` | `ESME_RINVDSTNPI` |
 | Not 1 to 20 digits, or not 1 to 15 digits without a leading `0` once international | `ESME_RINVDSTADR` |
+| `dest_addr_ton` `3`, `4` or `6` with no matching route | `ESME_RINVDSTADR` |
 
 The source is shown to the recipient as the sender (§5.2.8):
 
@@ -347,6 +349,47 @@ No SIM answer is sent for a replaced message, or when the SMS-DELIVER-REPORT has
 
 A SIM that rejects a (U)SIM data download message answers with an RP-ERROR whose TP-Failure-Cause is `0xD5`, (U)SIM data download error. The message fails at once with TP-Status `0x42`: the ESME gets the SIM answer, then the receipt `stat:UNDELIV err:066`.
 
+## Routed messages
+
+An ESME account has routes. A short message to a number that matches a route, whatever submitted it (a phone, the API, or an ESME), is stored with the message status `delegated` and delivered to that ESME as `deliver_sm` on one of its receiver or transceiver sessions. A message to a number with no route goes to the phone through the HSS. Routes are managed with the [ESMEs API](api/esmes.md) or the **SMPP** page of the UI.
+
+A route is a number, or a range of two numbers of the same length joined by `-`, lowest first. It matches a recipient of the same number of digits, from its first number to its last, inclusively.
+
+| Route | Form | Matches | Type of number of the recipient (TS 23.040 §9.1.2.5) |
+| ----- | ---- | ------- | ---------------------------------------------------- |
+| Dialled number, such as `4000` or `40000-40099` | 1 to 20 digits | The recipient as dialled, up to its first `#` (§6.2.1). | Unknown, national, network specific, subscriber number, abbreviated |
+| International number, such as `+15551230000-+15551230999` | `+` and 1 to 15 digits | The recipient in international format, after the conversion of the [operator numbering plan](api/operator.md). | Unknown, international, national |
+
+| Recipient | Route `4000` | Route `40000-40099` |
+| --------- | ------------ | ------------------- |
+| `4000` | Matches | No |
+| `40050` | No | Matches |
+| `40100` | No | No |
+| `4000123456` | No | No |
+
+A dialled-number route takes precedence over an international one. Routes of the same form do not overlap, on one ESME or across ESMEs: a number matches at most one route of each form.
+
+A recipient whose type of number is network specific, subscriber number or abbreviated has no route through the HSS: a message to it with no matching route is rejected, with TP-FCS `0xC3`, invalid SME address, to a phone, and `ESME_RINVDSTADR` to an ESME. The API submits to international numbers only, so it reaches international-number routes only.
+
+Routed messages are delivered at least once: an ESME may see the same `deliver_sm` twice around a failover or a restart. The SMSC does not detect these duplicates. A phone that sends the same SMS-SUBMIT again with TP-Reject-Duplicates is rejected while the first is still `delegated` (TS 23.040 §9.2.3.25). A resent `deliver_sm` is identical to the first: from a phone, the ESME can recognise it by `source_addr`, `destination_addr` and `user_message_reference`, which TP-RD also uses. TP-MR is one octet, so a phone reuses it after 256 messages.
+
+### Routed `deliver_sm` fields
+
+The `deliver_sm` carries the SMS-SUBMIT (TS 23.040 §9.2.2.2) the sender submitted:
+
+| Field | Value |
+| ----- | ----- |
+| `source_addr_ton`, `source_addr_npi`, `source_addr` | The sender, as the message was stored: a phone's number, the API's `from`, or the ESME's `source_addr`. |
+| `dest_addr_ton`, `dest_addr_npi`, `destination_addr` | The recipient as the sender addressed it, such as `40001`, not the route it matched. |
+| `esm_class` | `0x00`, or `0x40` when the user data starts with a user data header (§5.2.12). |
+| `protocol_id` | TP-PID. |
+| `data_coding` | From the TP-DCS (TS 23.038 §4): GSM 7-bit is `0x00`, or `0xF0` to `0xF3` with a message class; 8-bit data is `0x04`, or `0xF4` to `0xF7` with a message class; UCS2 is `0x08`, without its message class. Compressed data, of any alphabet, is `0x04`, or `0xF4` to `0xF7` with a message class. A message waiting indication is dropped. |
+| `short_message` | The user data, its user data header included. |
+| `user_message_reference` (`0x0204`) | From a phone: its TP-MR. Otherwise absent. **Convention**. |
+| `receipted_message_id`, `message_state` | Absent. |
+
+A routed message an ESME submitted itself also gets its [receipt](#delivery-receipts) as asked for in its `registered_delivery`, when it reaches its final status.
+
 ## `command_status` values
 
 Values the SMSC sends (§5.1.3):
@@ -361,7 +404,7 @@ Values the SMSC sends (§5.1.3):
 | `ESME_RALYBND` | `0x00000005` | Bind response | A bind in a bound state. |
 | `ESME_RSYSERR` | `0x00000008` | `submit_sm_resp` | The message could not be stored or encoded. |
 | `ESME_RINVSRCADR` | `0x0000000A` | `submit_sm_resp` | `source_addr`. |
-| `ESME_RINVDSTADR` | `0x0000000B` | `submit_sm_resp` | `destination_addr`. |
+| `ESME_RINVDSTADR` | `0x0000000B` | `submit_sm_resp` | `destination_addr`, or no route to a network-specific, subscriber or abbreviated number. |
 | `ESME_RBINDFAIL` | `0x0000000D` | Bind response | Any refused bind. |
 | `ESME_RINVSUBREP` | `0x00000042` | `submit_sm_resp` | `replace_if_present_flag` `1`. |
 | `ESME_RINVESMCLASS` | `0x00000043` | `submit_sm_resp` | `esm_class`. |
@@ -398,6 +441,7 @@ Behaviours that SMPP 3.4 does not define:
 | A two-digit year is within 49 years before and 50 years after the current year. | [Validity and scheduling](#validity-and-scheduling) |
 | A missing `source_port` or `destination_port` is port 0. | [User data and optional parameters](#user-data-and-optional-parameters) |
 | Notifications go to a receiving session of the ESME that submitted the message. | [Notifications](#notifications) |
+| A routed `deliver_sm` from a phone carries its TP-MR in `user_message_reference`. | [Routed `deliver_sm` fields](#routed-deliver_sm-fields) |
 | Receipts use `data_coding` `0x01`. | [Delivery receipts](#delivery-receipts) |
 | A replaced message's receipt is `DELETED`, with `done date` the replacement time. | [Delivery receipts](#delivery-receipts) |
 | Receipt `err` is the TP-Status in decimal. | [Delivery receipts](#delivery-receipts) |
@@ -407,7 +451,6 @@ Behaviours that SMPP 3.4 does not define:
 
 - SMPP 3.3 and earlier, and SMPP 5.0.
 - `query_sm`, `replace_sm`, `cancel_sm`, `submit_multi`, `data_sm`, `alert_notification` and `outbind`.
-- Messages from phones to ESMEs, such as a Response Packet that the SIM sends in an SMS-SUBMIT (TS 31.115 §4.2).
 - Splitting user data longer than one TPDU.
 - Scheduled delivery, the datagram and transaction modes, SME delivery acknowledgements and intermediate notifications.
 - The PROXY protocol.

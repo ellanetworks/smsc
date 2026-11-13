@@ -73,6 +73,22 @@ const columns = (
       ),
   },
   {
+    field: "routes",
+    headerName: "Routes",
+    flex: 0.7,
+    minWidth: 120,
+    renderCell: ({ row }) =>
+      row.routes.length === 0 ? (
+        "—"
+      ) : (
+        <Stack>
+          {row.routes.map((r) => (
+            <span key={r}>{r}</span>
+          ))}
+        </Stack>
+      ),
+  },
+  {
     field: "sessions",
     headerName: "Sessions",
     flex: 1.2,
@@ -170,7 +186,7 @@ export default function SMPP() {
         id="smpp-title"
         title="SMPP"
         count={esmes.data?.length}
-        description="The ESMEs that bind to this SMSC over SMPP 3.4 to submit messages, and their sessions."
+        description="The ESMEs that bind to this SMSC over SMPP 3.4 to submit messages, and their sessions. An ESME with routes receives the messages sent to those numbers."
         action={
           editable && (
             <Button

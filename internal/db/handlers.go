@@ -52,4 +52,8 @@ func init() {
 	register(cmdClaimNotifications, handle(applyClaimNotifications))
 	register(cmdReleaseNotification, handle(applyReleaseNotification))
 	register(cmdMigrate, handle(applyMigrate))
+	register(cmdCloseMODelivery, handle(applyCloseMODelivery))
+	register(cmdRetryMODelivery, handle(applyRetryMODelivery))
+	register(cmdReleaseMODelivery, handle(applyReleaseMODelivery))
+	register(cmdExpireMODeliveries, handle(applyExpireMODeliveries))
 }

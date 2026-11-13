@@ -77,6 +77,7 @@ nav:
     - Send Messages from an Application: how_to/send_messages_from_an_application.md
     - Send (U)SIM Data Download Messages over the API: how_to/send_sim_data_download_messages_over_the_api.md
     - Send (U)SIM Data Download Messages over SMPP: how_to/send_sim_data_download_messages_over_smpp.md
+    - Route a Short Code to an Application: how_to/route_a_short_code_to_an_application.md
   - Reference:
     - reference/index.md
     - API:

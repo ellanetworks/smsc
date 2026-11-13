@@ -33,7 +33,7 @@ With SMS over IP, the phone sends and receives its messages as SIP messages thro
 ## Store and forward
 
 1. Ella SMSC stores the message, and acknowledges it to the sender.
-2. It asks the HSS where the recipient is served: an MME, an SMSF or an IP-SM-GW.
+2. It checks whether the destination matches an ESME route. If it does, the message goes to that application. Otherwise, for a subscriber, it asks the HSS where the recipient is served: an MME, an SMSF or an IP-SM-GW.
 3. It sends the message there.
 4. If the phone is unreachable, the HSS records that a message waits, and alerts Ella SMSC when the phone is back. Ella SMSC also retries after the [retry intervals](../reference/api/delivery.md).
 
@@ -41,12 +41,14 @@ Messages to a phone are delivered one at a time, in order.
 
 A message ends delivered, failed, expired at the end of its validity period, or replaced by a later message. See [Statuses](../reference/api/messages.md#statuses).
 
-## Messages from applications
+## Messages to and from applications
 
 Besides phones, applications can send messages to subscribers, for example notifications, one-time codes or updates to SIM cards. Ella SMSC offers them two interfaces:
 
 - The [Messages API](../reference/api/messages.md): Ella SMSC's HTTP API, for applications you write or script.
 - [SMPP](../reference/smpp.md): the standard SMSC protocol, for software that already speaks it, such as OTA platforms.
+
+Applications using SMPP can also receive messages for numbers explicitly routed to them.
 
 <figure markdown="span">
   ![OTA SIM delivery with SMPP](../images/smsc_apps.svg){ width="800" }

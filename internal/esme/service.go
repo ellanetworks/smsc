@@ -105,6 +105,10 @@ type Store interface {
 	ReleaseNotification(ctx context.Context, id int64, nodeID string, now time.Time) error
 	ExpireNotifications(ctx context.Context, now time.Time) (map[db.NotificationType]int, error)
 	NextNotificationAt(ctx context.Context, esmeID int64, now time.Time) (time.Time, bool, error)
+	CloseMODelivery(ctx context.Context, id int64, result db.NotificationResult, at time.Time) error
+	RetryMODelivery(ctx context.Context, id int64, next time.Time, nodeID string) error
+	ReleaseMODelivery(ctx context.Context, id int64, nodeID string, now time.Time) error
+	ExpireMODeliveries(ctx context.Context, now time.Time) (int, error)
 }
 
 type Service struct {
@@ -133,7 +137,6 @@ type Service struct {
 	sends    sync.WaitGroup
 	mu       sync.Mutex
 	sessions map[uint64]*Session
-	sending  map[int64]bool
 	opened   map[uint64]bool
 	synced   bool
 	draining bool
@@ -158,7 +161,6 @@ func (s *Service) init() {
 		s.bcrypt = make(chan struct{}, runtime.GOMAXPROCS(0))
 		s.wake = make(chan struct{}, 1)
 		s.sessions = map[uint64]*Session{}
-		s.sending = map[int64]bool{}
 		s.opened = map[uint64]bool{}
 	})
 }

@@ -20,6 +20,8 @@ const (
 	StatusFailed    MessageStatus = "failed"
 	StatusExpired   MessageStatus = "expired"
 	StatusReplaced  MessageStatus = "replaced"
+
+	StatusDelegated MessageStatus = "delegated"
 )
 
 type MessageKind string
@@ -40,6 +42,7 @@ const (
 var (
 	ErrDuplicate  = errors.New("duplicate message")
 	ErrNotPending = errors.New("message is no longer pending")
+	ErrNoRoute    = errors.New("no route to the recipient")
 )
 
 type Address struct {
@@ -187,6 +190,15 @@ func applyStoreMessages(a *applyCtx, p storeMessages) (storedMessages, error) {
 func createMessage(a *applyCtx, m NewMessage) (int64, bool, error) {
 	ctx, tx := a.ctx, a.tx
 
+	route, err := routeOf(a, m)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if route == nil && !ServedByHSS(m.Recipient.TypeOfNumber) {
+		return 0, false, fmt.Errorf("%w: type of number %d", ErrNoRoute, m.Recipient.TypeOfNumber)
+	}
+
 	if m.RejectDuplicates {
 		duplicate, err := isDuplicate(ctx, tx, m)
 		if err != nil {
@@ -207,7 +219,7 @@ func createMessage(a *applyCtx, m NewMessage) (int64, bool, error) {
 		}
 	}
 
-	id, err := insertMessage(ctx, tx, m)
+	id, err := insertMessage(ctx, tx, m, route != nil)
 	if err != nil {
 		return 0, false, err
 	}
@@ -225,7 +237,32 @@ func createMessage(a *applyCtx, m NewMessage) (int64, bool, error) {
 		}
 	}
 
+	if route != nil {
+		if err := delegateMessage(a, id, m, *route); err != nil {
+			return 0, false, err
+		}
+	}
+
 	return id, replaced, nil
+}
+
+func delegateMessage(a *applyCtx, id int64, m NewMessage, r esmeRoute) error {
+	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO esme_deliveries (message_id, esme_id, route, expires_at,
+		next_attempt_at, attempts) VALUES (?, ?, ?, ?, ?, 0)`, id, r.esmeID, r.route, m.ExpiresAt.UTC().UnixNano(),
+		m.SubmittedAt.UTC().UnixNano()); err != nil {
+		return err
+	}
+
+	if err := insertAttempts(a, []DeliveryAttempt{{
+		MessageID: id, StartedAt: m.SubmittedAt, CompletedAt: m.SubmittedAt,
+		Step: StepRouting, Node: r.systemID, Outcome: "delegated_to_esme",
+	}}); err != nil {
+		return err
+	}
+
+	a.events.Notifications = true
+
+	return nil
 }
 
 func due(ctx context.Context, tx *sql.Tx, msisdn string, at, expiresAt int64) (int64, error) {
@@ -271,12 +308,19 @@ func stamp(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (int64, err
 	return s, nil
 }
 
-func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error) {
+func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage, delegated bool) (int64, error) {
 	at, expiresAt := m.SubmittedAt.UTC().UnixNano(), m.ExpiresAt.UTC().UnixNano()
 
-	next, err := due(ctx, tx, m.MSISDN, at, expiresAt)
-	if err != nil {
-		return 0, err
+	status, next := StatusDelegated, expiresAt
+
+	if !delegated {
+		var err error
+
+		status = StatusPending
+
+		if next, err = due(ctx, tx, m.MSISDN, at, expiresAt); err != nil {
+			return 0, err
+		}
 	}
 
 	timeStamp, err := stamp(ctx, tx, m.MSISDN, at)
@@ -291,7 +335,7 @@ func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage) (int64, error)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.Origin,
-		sql.Null[int64]{V: m.SubmittedBy, Valid: m.SubmittedBy != 0}, m.MessageReference, m.ProtocolIdentifier, m.TPDU, StatusPending, m.SingleShot, at, timeStamp,
+		sql.Null[int64]{V: m.SubmittedBy, Valid: m.SubmittedBy != 0}, m.MessageReference, m.ProtocolIdentifier, m.TPDU, status, m.SingleShot, at, timeStamp,
 		expiresAt, next, at, nullableString(m.TraceParent))
 	if err != nil {
 		return 0, err
@@ -344,11 +388,11 @@ func replacePending(a *applyCtx, m NewMessage) (bool, error) {
 	ctx, tx := a.ctx, a.tx
 
 	query := `SELECT ` + messageColumns + ` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
-		AND originator_npi = ? AND protocol_identifier = ? AND status = ? AND origin = ?`
+		AND originator_npi = ? AND protocol_identifier = ? AND status IN (?, ?) AND origin = ?`
 
 	args := []any{
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
-		m.ProtocolIdentifier, StatusPending, m.Origin,
+		m.ProtocolIdentifier, StatusPending, StatusDelegated, m.Origin,
 	}
 
 	switch m.Origin {
@@ -385,6 +429,13 @@ func replacePending(a *applyCtx, m NewMessage) (bool, error) {
 	if _, err := tx.ExecContext(ctx, `UPDATE messages SET status = ?, updated_at = ? WHERE id = ?`,
 		StatusReplaced, at, replaced.ID); err != nil {
 		return false, err
+	}
+
+	if replaced.Status == StatusDelegated {
+		if _, err := tx.ExecContext(ctx, `UPDATE esme_deliveries SET result = ?, claimed_by = NULL
+			WHERE message_id = ? AND result IS NULL`, NotificationReplaced, replaced.ID); err != nil {
+			return false, err
+		}
 	}
 
 	replaced.Status = StatusReplaced
@@ -436,9 +487,10 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 
 	err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ? AND originator_npi = ?
-		AND origin = ? AND message_reference = ? AND recipient = ? AND recipient_ton = ? AND recipient_npi = ? AND status = ?`,
+		AND origin = ? AND message_reference = ? AND recipient = ? AND recipient_ton = ? AND recipient_npi = ?
+		AND status IN (?, ?)`,
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan, OriginMobile, m.MessageReference,
-		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, StatusPending).
+		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, StatusPending, StatusDelegated).
 		Scan(&held)
 	if err != nil {
 		return false, err
@@ -1066,9 +1118,10 @@ func applyCompleteMessage(a *applyCtx, p completeMessage) (MessageKind, error) {
 }
 
 const purgeableMessages = `SELECT m.id FROM messages m
-	WHERE m.kind = 'message' AND m.status != 'pending' AND m.updated_at < ?1
+	WHERE m.kind = 'message' AND m.status != 'pending' AND m.status != 'delegated' AND m.updated_at < ?1
 	AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.report_for = m.id AND (r.status = 'pending' OR r.updated_at >= ?1))
 	AND NOT EXISTS (SELECT 1 FROM smpp_notifications n WHERE n.message_id = m.id AND n.result IS NULL AND n.expires_at >= ?1)
+	AND NOT EXISTS (SELECT 1 FROM esme_deliveries d WHERE d.message_id = m.id AND d.result IS NULL AND d.expires_at >= ?1)
 	ORDER BY m.updated_at, m.id LIMIT ?2`
 
 type purgeMessages struct {

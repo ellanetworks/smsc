@@ -35,6 +35,7 @@ Ella SMSC implements the 3GPP SMSC of TS 23.040, with the S6c, SGd and Gdd Diame
 - **Store and forward.** Messages to a phone are delivered in order, one at a time, and announce the next with TP-More-Messages-to-Send.
 - **Validity period.** Relative, absolute and enhanced formats, including single-shot messages.
 - **Status reports.** On the delivery, failure, expiry or replacement of a message whose sender set TP-Status-Report-Request.
+- **Relaying to an SME.** A message whose recipient number matches a route of an ESME is relayed to that ESME over SMPP.
 - **Reject duplicates.** TP-Reject-Duplicates.
 - **Replace short message.** Replace types 1 to 7 of TP-Protocol-Identifier, from phones, the API and SMPP. A message replaces only one from the same submitter: a phone's, one from the same phone (TS 23.040 §2.1.1); the API's or an ESME's, one of the same user or ESME.
 - **Binary messages from the API and SMPP.** TP-Protocol-Identifier, TP-Data-Coding-Scheme, TP-User-Data-Header and TP-User-Data delivered unchanged, including (U)SIM data download.

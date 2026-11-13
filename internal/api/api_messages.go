@@ -549,11 +549,12 @@ func ListMessages(cfg Config) http.Handler {
 
 		if status := db.MessageStatus(q.Get("status")); status != "" {
 			switch status {
-			case db.StatusPending, db.StatusDelivered, db.StatusFailed, db.StatusExpired, db.StatusReplaced:
+			case db.StatusPending, db.StatusDelivered, db.StatusDelegated, db.StatusFailed, db.StatusExpired,
+				db.StatusReplaced:
 				filter.Status = status
 			default:
-				writeError(w, r, http.StatusBadRequest, "status must be one of pending, delivered, failed, expired, replaced", nil,
-					cfg.Logger)
+				writeError(w, r, http.StatusBadRequest,
+					"status must be one of pending, delivered, delegated, failed, expired, replaced", nil, cfg.Logger)
 
 				return
 			}
@@ -583,6 +584,7 @@ func ListMessages(cfg Config) http.Handler {
 type MessageCounts struct {
 	Pending   int `json:"pending"`
 	Delivered int `json:"delivered"`
+	Delegated int `json:"delegated"`
 	Failed    int `json:"failed"`
 	Expired   int `json:"expired"`
 	Replaced  int `json:"replaced"`
@@ -606,6 +608,7 @@ func CountMessages(cfg Config) http.Handler {
 		writeResponse(w, r, MessageCounts{
 			Pending:   counts[db.StatusPending],
 			Delivered: counts[db.StatusDelivered],
+			Delegated: counts[db.StatusDelegated],
 			Failed:    counts[db.StatusFailed],
 			Expired:   counts[db.StatusExpired],
 			Replaced:  counts[db.StatusReplaced],
@@ -629,11 +632,16 @@ func messagesOf(ctx context.Context, cfg Config, messages []db.Message) ([]Messa
 		return nil, err
 	}
 
+	routes, err := cfg.Store.RoutesFor(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
 	emails := map[int64]string{}
 
 	out := make([]Message, 0, len(messages))
 	for _, m := range messages {
-		msg := messageOf(m, reports[m.ID])
+		msg := messageOf(m, reports[m.ID], routes[m.ID])
 		msg.SystemID = systemIDs[m.ID]
 
 		if id := m.SubmittedBy; id != 0 {
@@ -656,11 +664,11 @@ func messagesOf(ctx context.Context, cfg Config, messages []db.Message) ([]Messa
 	return out, nil
 }
 
-func messageOf(m db.Message, reports []db.Message) Message {
+func messageOf(m db.Message, reports []db.Message, route string) Message {
 	out := Message{
 		ID:        m.ID,
 		From:      formatAddress(m.Originator),
-		To:        "+" + m.MSISDN,
+		To:        recipientOf(m, route),
 		Encoding:  string(tpdu.EncodingBinary),
 		Status:    string(m.Status),
 		CreatedAt: formatTime(m.SubmittedAt),
@@ -717,6 +725,14 @@ func statusReportOf(r db.Message) StatusReport {
 	}
 
 	return out
+}
+
+func recipientOf(m db.Message, route string) string {
+	if !db.ServedByHSS(m.Recipient.TypeOfNumber) || db.DialledRoute(route) {
+		return m.Recipient.Digits
+	}
+
+	return "+" + m.MSISDN
 }
 
 func formatAddress(a db.Address) string {

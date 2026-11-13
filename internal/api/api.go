@@ -32,6 +32,7 @@ type Store interface {
 	ListDeliverReports(ctx context.Context, messageID int64) ([]db.DeliveryAttempt, error)
 	StatusReportsFor(ctx context.Context, messageIDs []int64) (map[int64][]db.Message, error)
 	SystemIDsFor(ctx context.Context, messageIDs []int64) (map[int64]string, error)
+	RoutesFor(ctx context.Context, messageIDs []int64) (map[int64]string, error)
 }
 
 type ESMEStore interface {

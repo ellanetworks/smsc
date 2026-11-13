@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"slices"
+	"strings"
 
 	"github.com/ellanetworks/smsc/internal/db"
 )
@@ -16,12 +18,14 @@ const (
 	maxSMPPPassword         = 8
 	generatedPasswordLength = 8
 	maxAllowedNetworks      = 50
+	maxRoutes               = 64
 )
 
 type ESME struct {
 	SystemID        string        `json:"system_id"`
 	User            string        `json:"user"`
 	AllowedNetworks []string      `json:"allowed_networks"`
+	Routes          []string      `json:"routes"`
 	CreatedAt       string        `json:"created_at"`
 	Sessions        []ESMESession `json:"sessions"`
 	Password        string        `json:"password,omitempty"`
@@ -38,11 +42,13 @@ type CreateESMEParams struct {
 	User            string   `json:"user"`
 	Password        *string  `json:"password"`
 	AllowedNetworks []string `json:"allowed_networks"`
+	Routes          []string `json:"routes"`
 }
 
 type UpdateESMEParams struct {
 	Password        *string  `json:"password"`
 	AllowedNetworks []string `json:"allowed_networks"`
+	Routes          []string `json:"routes"`
 }
 
 type ListESMEsResponse struct {
@@ -131,7 +137,7 @@ func CreateESME(a *auth) http.Handler {
 
 		e := db.ESME{SystemID: params.SystemID, UserID: u.ID, CreatedAt: cfg.Now()}
 
-		if !validESME(w, r, &e, params.AllowedNetworks, cfg) {
+		if !validESME(w, r, &e, params.AllowedNetworks, params.Routes, cfg) {
 			return
 		}
 
@@ -174,13 +180,18 @@ func CreateESME(a *auth) http.Handler {
 			return
 		}
 
+		if errors.Is(err, db.ErrRouteOverlap) {
+			writeError(w, r, http.StatusConflict, "A route overlaps a route of another ESME", nil, cfg.Logger)
+			return
+		}
+
 		if err != nil {
 			writeError(w, r, http.StatusInternalServerError, "Failed to create ESME", err, cfg.Logger)
 			return
 		}
 
 		p, _ := PrincipalFrom(r.Context())
-		a.audit(r, "create_esme", p.Email, fmt.Sprintf("ESME %q created for %s", e.SystemID, u.Email))
+		a.audit(r, "create_esme", p.Email, esmeAudit("created", e, u.Email))
 
 		resp := esmeResponse(cfg, e, u.Email)
 		resp.Password = generated
@@ -203,7 +214,12 @@ func UpdateESME(a *auth) http.Handler {
 			return
 		}
 
-		if !validESME(w, r, &e, params.AllowedNetworks, cfg) {
+		routes := params.Routes
+		if routes == nil {
+			routes = e.Routes
+		}
+
+		if !validESME(w, r, &e, params.AllowedNetworks, routes, cfg) {
 			return
 		}
 
@@ -232,13 +248,18 @@ func UpdateESME(a *auth) http.Handler {
 			return
 		}
 
+		if errors.Is(err, db.ErrRouteOverlap) {
+			writeError(w, r, http.StatusConflict, "A route overlaps a route of another ESME", nil, cfg.Logger)
+			return
+		}
+
 		if err != nil {
 			writeError(w, r, http.StatusInternalServerError, "Failed to update ESME", err, cfg.Logger)
 			return
 		}
 
 		p, _ := PrincipalFrom(r.Context())
-		a.audit(r, "update_esme", p.Email, fmt.Sprintf("ESME %q updated", e.SystemID))
+		a.audit(r, "update_esme", p.Email, esmeAudit("updated", e, ""))
 
 		u, err := cfg.Auth.GetUserByID(r.Context(), e.UserID)
 		if err != nil {
@@ -291,7 +312,7 @@ func lookupESME(w http.ResponseWriter, r *http.Request, cfg Config) (db.ESME, bo
 	return e, true
 }
 
-func validESME(w http.ResponseWriter, r *http.Request, e *db.ESME, networks []string, cfg Config) bool {
+func validESME(w http.ResponseWriter, r *http.Request, e *db.ESME, networks []string, routes []string, cfg Config) bool {
 	if len(networks) > maxAllowedNetworks {
 		writeError(w, r, http.StatusBadRequest, fmt.Sprintf("allowed_networks must have at most %d networks", maxAllowedNetworks),
 			nil, cfg.Logger)
@@ -316,6 +337,44 @@ func validESME(w http.ResponseWriter, r *http.Request, e *db.ESME, networks []st
 			seen[p] = true
 			e.AllowedNetworks = append(e.AllowedNetworks, p)
 		}
+	}
+
+	if len(routes) > maxRoutes {
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf("routes must have at most %d entries", maxRoutes), nil, cfg.Logger)
+
+		return false
+	}
+
+	parsed := make([]db.Route, 0, len(routes))
+
+	for _, s := range routes {
+		route, err := db.ParseRoute(s)
+		if err != nil {
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf("route %q must be a number or a range of two numbers "+
+				"of the same length, such as 40000-40099, of 1 to 20 digits, or + and 1 to 15 digits", s), nil, cfg.Logger)
+
+			return false
+		}
+
+		if !slices.Contains(parsed, route) {
+			parsed = append(parsed, route)
+		}
+	}
+
+	slices.SortFunc(parsed, func(a, b db.Route) int { return strings.Compare(a.Low, b.Low) })
+
+	for i, a := range parsed {
+		for _, b := range parsed[i+1:] {
+			if a.Overlaps(b) {
+				writeError(w, r, http.StatusBadRequest, fmt.Sprintf("routes %s and %s overlap", a, b), nil, cfg.Logger)
+				return false
+			}
+		}
+	}
+
+	e.Routes = make([]string, 0, len(parsed))
+	for _, route := range parsed {
+		e.Routes = append(e.Routes, route.String())
 	}
 
 	return true
@@ -350,11 +409,26 @@ func newSMPPPassword() string {
 	return string(b)
 }
 
+func esmeAudit(verb string, e db.ESME, user string) string {
+	out := fmt.Sprintf("ESME %q %s", e.SystemID, verb)
+
+	if user != "" {
+		out += " for " + user
+	}
+
+	if len(e.Routes) > 0 {
+		out += fmt.Sprintf(" with routes %v", e.Routes)
+	}
+
+	return out
+}
+
 func esmeResponse(cfg Config, e db.ESME, email string) ESME {
 	resp := ESME{
 		SystemID:        e.SystemID,
 		User:            email,
 		AllowedNetworks: make([]string, 0, len(e.AllowedNetworks)),
+		Routes:          make([]string, 0, len(e.Routes)),
 		CreatedAt:       formatTime(e.CreatedAt),
 		Sessions:        []ESMESession{},
 	}
@@ -362,6 +436,8 @@ func esmeResponse(cfg Config, e db.ESME, email string) ESME {
 	for _, p := range e.AllowedNetworks {
 		resp.AllowedNetworks = append(resp.AllowedNetworks, p.String())
 	}
+
+	resp.Routes = append(resp.Routes, e.Routes...)
 
 	for _, s := range cfg.SMPP.Sessions(e.ID) {
 		resp.Sessions = append(resp.Sessions, ESMESession{
