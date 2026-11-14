@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,7 +57,22 @@ func stopped(c *checkpointer) bool {
 	}
 }
 
-func TestCheckpointerKeepsWALBounded(t *testing.T) {
+func walSequence(t *testing.T, d *DB) uint32 {
+	f, err := os.Open(d.path + "-wal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+
+	header := make([]byte, 16)
+	if _, err := f.ReadAt(header, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	return binary.BigEndian.Uint32(header[12:])
+}
+
+func TestCheckpointerRestartsWALUnderSustainedWrites(t *testing.T) {
 	fastCheckpoints(t)
 
 	ctx := context.Background()
@@ -66,18 +82,27 @@ func TestCheckpointerKeepsWALBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	peak := 0
+	var sequence uint32
+
+	crossed := false
 
 	for range 6 * walCheckpointPages / 10 {
 		if _, err := d.writer.ExecContext(ctx, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10) INSERT INTO filler SELECT randomblob(4000) FROM n"); err != nil {
 			t.Fatal(err)
 		}
 
-		peak = max(peak, walFrames(t, d))
+		if !crossed && walFrames(t, d) >= walCheckpointPages {
+			crossed = true
+			sequence = walSequence(t, d)
+		}
 	}
 
-	if peak > walCheckpointPages*3 {
-		t.Fatalf("WAL reached %d frames, want at most %d", peak, walCheckpointPages*3)
+	if !crossed {
+		t.Fatalf("WAL never reached %d frames", walCheckpointPages)
+	}
+
+	if walSequence(t, d) == sequence {
+		t.Fatalf("WAL grew to %d frames without restarting", walFrames(t, d))
 	}
 }
 

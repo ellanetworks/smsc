@@ -17,6 +17,11 @@ func openLogStore(path string) (*raftboltdb.BoltStore, error) {
 	})
 }
 
+type raftStore interface {
+	raft.LogStore
+	raft.StableStore
+}
+
 var errLogStoreTimeout = errors.New("the log store did not finish writing in time")
 
 type timeoutLogStore struct {
