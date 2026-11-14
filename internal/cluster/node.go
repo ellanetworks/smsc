@@ -62,7 +62,7 @@ type Config struct {
 	Logger          *slog.Logger
 
 	transport       func(raft.Transport) raft.Transport
-	logStore        func(raft.LogStore) raft.LogStore
+	raftStore       func(raftStore) raftStore
 	logStoreTimeout time.Duration
 	removalAfter    time.Duration
 }
@@ -276,9 +276,9 @@ func (n *Node) startRaft(ctx context.Context) error {
 		return err
 	}
 
-	var inner raft.LogStore = store
-	if n.cfg.logStore != nil {
-		inner = n.cfg.logStore(store)
+	var inner raftStore = store
+	if n.cfg.raftStore != nil {
+		inner = n.cfg.raftStore(store)
 	}
 
 	logs, err := raft.NewLogCache(logCacheSize, timeoutLogStore{LogStore: inner, timeout: cmp.Or(n.cfg.logStoreTimeout, logStoreTimeout)})
@@ -287,7 +287,7 @@ func (n *Node) startRaft(ctx context.Context) error {
 		return fmt.Errorf("open the raft log: %w", err)
 	}
 
-	existing, err := raft.HasExistingState(logs, store, raft.NewInmemSnapshotStore())
+	existing, err := raft.HasExistingState(logs, inner, raft.NewInmemSnapshotStore())
 	if err != nil {
 		_ = store.Close()
 		return fmt.Errorf("read the raft state: %w", err)
@@ -357,7 +357,7 @@ func (n *Node) startRaft(ctx context.Context) error {
 		addr, transport = raft.NewInmemTransport(raft.ServerAddress(n.id))
 	}
 
-	r, err := raft.NewRaft(conf, &fsm{db: n.db, dir: filepath.Join(n.cfg.Dir, "snapshots")}, logs, store, snapshots,
+	r, err := raft.NewRaft(conf, &fsm{db: n.db, dir: filepath.Join(n.cfg.Dir, "snapshots")}, logs, inner, snapshots,
 		transport)
 	if err != nil {
 		_ = store.Close()

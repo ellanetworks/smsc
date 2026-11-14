@@ -195,6 +195,7 @@ type hangingLogStore struct {
 	hung    atomic.Bool
 	release chan struct{}
 	once    sync.Once
+	writing sync.Mutex
 }
 
 func newHangingLogStore() *hangingLogStore {
@@ -205,22 +206,58 @@ func (h *hangingLogStore) hang() { h.hung.Store(true) }
 
 func (h *hangingLogStore) unhang() { h.once.Do(func() { close(h.release) }) }
 
-func (h *hangingLogStore) wrap(s raft.LogStore) raft.LogStore { return hangingLogs{LogStore: s, h: h} }
+func (h *hangingLogStore) wrap(s raftStore) raftStore { return hangingStore{raftStore: s, h: h} }
 
-type hangingLogs struct {
-	raft.LogStore
+func (h *hangingLogStore) stalled() bool {
+	if !h.hung.Load() {
+		return false
+	}
+
+	h.writing.Lock()
+	defer h.writing.Unlock()
+
+	select {
+	case <-h.release:
+		return true
+	default:
+		return false
+	}
+}
+
+type hangingStore struct {
+	raftStore
 	h *hangingLogStore
 }
 
-func (l hangingLogs) StoreLog(e *raft.Log) error { return l.StoreLogs([]*raft.Log{e}) }
+func (s hangingStore) StoreLog(e *raft.Log) error { return s.StoreLogs([]*raft.Log{e}) }
 
-func (l hangingLogs) StoreLogs(logs []*raft.Log) error {
-	if l.h.hung.Load() {
-		<-l.h.release
+func (s hangingStore) StoreLogs(logs []*raft.Log) error {
+	if s.h.hung.Load() {
+		s.h.writing.Lock()
+		defer s.h.writing.Unlock()
+
+		<-s.h.release
+
 		return errReleased
 	}
 
-	return l.LogStore.StoreLogs(logs)
+	return s.raftStore.StoreLogs(logs)
+}
+
+func (s hangingStore) Set(k, v []byte) error {
+	if s.h.stalled() {
+		return nil
+	}
+
+	return s.raftStore.Set(k, v)
+}
+
+func (s hangingStore) SetUint64(k []byte, v uint64) error {
+	if s.h.stalled() {
+		return nil
+	}
+
+	return s.raftStore.SetUint64(k, v)
 }
 
 type skewedClock struct {
@@ -554,7 +591,7 @@ func newFaultCluster(t *testing.T, opts faultOptions) *faultCluster {
 
 		n, err := Open(ctx, Config{
 			Dir: filepath.Join(dir, "raft"), Address: address, Version: "test", Now: fn.clock.now,
-			Logger: slog.New(slog.DiscardHandler), transport: fn.part.wrap, logStore: fn.logs.wrap,
+			Logger: slog.New(slog.DiscardHandler), transport: fn.part.wrap, raftStore: fn.logs.wrap,
 			logStoreTimeout: opts.logStoreTimeout,
 		}, d)
 		if err != nil {
