@@ -63,21 +63,21 @@ nav:
   - How-to Guides:
     - how_to/index.md
     - Install: how_to/install.md
-    - Deploy a High Availability Cluster: how_to/deploy_ha_cluster.md
-    - Back Up and Restore: how_to/back_up_and_restore.md
-    - Scale a High Availability Cluster: how_to/scale_ha_cluster.md
-    - Perform a Rolling Upgrade: how_to/rolling_upgrade.md
     - Integrate with Ella Core: how_to/integrate_with_ella_core.md
-    - Integrate with Ella IMS: how_to/integrate_with_ella_ims.md
     - Integrate with a Third-Party Core: how_to/integrate_with_third_party_core.md
+    - Integrate with Ella IMS: how_to/integrate_with_ella_ims.md
     - Connect through Diameter Agents: how_to/connect_through_diameter_agents.md
     - Connect a Core at Another Site: how_to/connect_a_core_at_another_site.md
+    - Deploy a High Availability Cluster: how_to/deploy_ha_cluster.md
     - Configure Single Sign-On: how_to/configure_single_sign_on.md
-    - Manage Single Sign-On Users: how_to/manage_single_sign_on_users.md
     - Send Messages from an Application: how_to/send_messages_from_an_application.md
     - Send (U)SIM Data Download Messages over the API: how_to/send_sim_data_download_messages_over_the_api.md
     - Send (U)SIM Data Download Messages over SMPP: how_to/send_sim_data_download_messages_over_smpp.md
     - Route a Short Code to an Application: how_to/route_a_short_code_to_an_application.md
+    - Back Up and Restore: how_to/back_up_and_restore.md
+    - Upgrade: how_to/upgrade.md
+    - Scale a High Availability Cluster: how_to/scale_ha_cluster.md
+    - Manage Single Sign-On Users: how_to/manage_single_sign_on_users.md
   - Reference:
     - reference/index.md
     - API:

@@ -11,7 +11,12 @@ This guide lets Ella SMSC deliver SMS to phones registered for SMS over IP with 
 - **Ella SMSC**: connected to Ella Core, as in [Integrate with Ella Core](integrate_with_ella_core.md).
 - **Ella IMS**: connected to Ella Core, as in Ella IMS's [Integrate with Ella Core](https://docs.ellanetworks.com/ims/how_to/integrate_with_ella_core/).
 
-The examples use `10.3.0.7` as Ella SMSC's Diameter address and `+15550000000` as its service centre address.
+The examples use these values:
+
+| Value | Role |
+|---|---|
+| `10.3.0.7` | Ella SMSC's Diameter address |
+| `+15550000000` | Ella SMSC's service centre address |
 
 ## 1. Enable SMS over IP in Ella IMS
 

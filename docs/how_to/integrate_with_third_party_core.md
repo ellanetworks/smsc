@@ -12,7 +12,13 @@ This guide connects Ella SMSC to a 4G or 5G core other than Ella Core, through i
 - **HSS**: supports S6c, in the realm `epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org` of the core's PLMN.
 - **MME or SMSF**: supports SGd, and gives the MSISDN of the phone in each short message it forwards. The HSS names it, in its routing answers, by the Diameter identity it connects to Ella SMSC with.
 
-The examples use `10.3.0.7` as Ella SMSC's Diameter address, `001` / `01` as the core's MCC and MNC, and `+15550000000` as Ella SMSC's service centre address.
+The examples use these values:
+
+| Value | Role |
+|---|---|
+| `10.3.0.7` | Ella SMSC's Diameter address |
+| `001` / `01` | The core's MCC and MNC |
+| `+15550000000` | Ella SMSC's service centre address |
 
 ## 1. Set the Diameter address
 
