@@ -9,6 +9,7 @@ This guide connects Ella SMSC to Ella Core, with Ella Core as the HSS (S6c) and 
 ## Prerequisites
 
 - **Ella SMSC**: installed and started, as in [Install](install.md).
+- **Ella Core**: installed and started, as in its [Install](https://docs.ellanetworks.com/core/how_to/install/) guide.
 
 The examples use these values:
 
