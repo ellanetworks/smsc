@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,19 +17,43 @@ import (
 	"github.com/hashicorp/raft"
 )
 
+var (
+	handedOutMu sync.Mutex
+	handedOut   = map[int]bool{}
+)
+
 func freeAddress(t testing.TB) string {
 	t.Helper()
 
 	var lc net.ListenConfig
 
-	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for range 1000 {
+		port := 20000 + rand.IntN(12000)
+
+		handedOutMu.Lock()
+		taken := handedOut[port]
+		handedOut[port] = true
+		handedOutMu.Unlock()
+
+		if taken {
+			continue
+		}
+
+		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+
+		ln, err := lc.Listen(context.Background(), "tcp", address)
+		if err != nil {
+			continue
+		}
+
+		_ = ln.Close()
+
+		return address
 	}
 
-	defer func() { _ = ln.Close() }()
+	t.Fatal("no free port below the ephemeral range")
 
-	return ln.Addr().String()
+	return ""
 }
 
 func openClustered(t testing.TB, dir, address string) *env {
