@@ -55,7 +55,7 @@ curl -s "$ELLA_SMSC_URL/api/v1/openapi.yaml" | grep -E '^  /api'
 | Cluster members, leader | `GET /api/v1/cluster` |
 | Counters and gauges | `GET /api/v1/metrics` (Prometheus text, `ellasmsc_*`) |
 
-Responses are `{"result": ...}` or `{"error": "..."}`. Paginated lists take `page` and `per_page` (default `25`, max `100`) and return `items`, `page`, `per_page`, `total_count`. Messages come newest first, delivery attempts oldest first. Diameter peers and ESMEs return `items` only.
+Responses are `{"result": ...}` or `{"error": "..."}`. Paginated lists take `page` and `per_page` (default `25`, max `100`) and return `items`, `page`, `per_page`, `total_count`. Messages come newest first, delivery attempts oldest first. Diameter peers and ESMEs return `items` only. For a count, request `per_page=1` and read `total_count`, or read the `ellasmsc_*` gauges from `/api/v1/metrics`.
 
 ## Sending and following a message
 
