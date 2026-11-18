@@ -294,11 +294,26 @@ func (s *Server) unavailable() (int, string) {
 }
 
 func (s *Server) serveAPI() {
-	if s.apiTLS != nil {
-		go func() { _ = s.apiServer.ServeTLS(s.apiListener, "", "") }()
-	} else {
-		go func() { _ = s.apiServer.Serve(s.apiListener) }()
+	addr := s.apiListener.Addr().String()
+	go func() {
+		var err error
+		if s.apiTLS != nil {
+			err = s.apiServer.ServeTLS(s.apiListener, "", "")
+		} else {
+			err = s.apiServer.Serve(s.apiListener)
+		}
+
+		s.reportServeExit("API", addr, err, http.ErrServerClosed)
+	}()
+}
+
+func (s *Server) reportServeExit(listener, address string, err, expected error) {
+	if err == nil || errors.Is(err, expected) {
+		return
 	}
+
+	s.Logger.Error("listener stopped unexpectedly", slog.String("listener", listener), slog.String("address", address),
+		slog.Any("error", err))
 }
 
 func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppTLS *tls.Config) error {
@@ -578,7 +593,8 @@ func (s *Server) startSMPP(ctx context.Context, esmes *esme.Service, tlsConfig *
 		return fmt.Errorf("listen for SMPP: %w", err)
 	}
 
-	go func() { _ = srv.Serve(ln) }()
+	addr := ln.Addr().String()
+	go func() { s.reportServeExit("SMPP", addr, srv.Serve(ln), smpp.ErrServerClosed) }()
 
 	s.smppServer, s.smppListener = srv, ln
 

@@ -30,6 +30,8 @@ type BindOutcome struct {
 	Account     string
 	Data        any
 	MaxSessions int
+	Reason      string
+	Err         error
 }
 
 type ServerConfig struct {
@@ -215,7 +217,7 @@ func (s *Server) serveConn(c net.Conn) {
 func (s *Server) bind(ctx context.Context, sess *Session, b *Bind, isTLS bool) bindDecision {
 	out := s.cfg.Authenticate(ctx, BindRequest{Bind: b, Session: sess, RemoteAddr: sess.RemoteAddr(), TLS: isTLS})
 	if out.Status != StatusOK {
-		return bindDecision{status: out.Status}
+		return bindDecision{status: out.Status, reason: out.Reason, err: out.Err}
 	}
 
 	account := out.Account
@@ -227,20 +229,17 @@ func (s *Server) bind(ctx context.Context, sess *Session, b *Bind, isTLS bool) b
 	defer s.mu.Unlock()
 
 	if s.closing {
-		return bindDecision{status: StatusSysErr}
+		return bindDecision{status: StatusSysErr, reason: "server is shutting down"}
 	}
 
 	select {
 	case <-sess.Done():
-		return bindDecision{status: StatusBindFail}
+		return bindDecision{status: StatusBindFail, reason: "session closed during bind"}
 	default:
 	}
 
 	if out.MaxSessions > 0 && len(s.accounts[account]) >= out.MaxSessions {
-		s.log.InfoContext(ctx, "SMPP bind refused: too many sessions", slog.String("account", account),
-			slog.Int("max_sessions", out.MaxSessions))
-
-		return bindDecision{status: StatusBindFail}
+		return bindDecision{status: StatusBindFail, reason: "too many sessions for the account"}
 	}
 
 	if s.accounts[account] == nil {

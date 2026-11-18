@@ -2,10 +2,13 @@ package smpp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -112,6 +115,44 @@ var submitOK = HandlerFunc(func(context.Context, *Session, Request) Response {
 
 func smscHooks() hooks {
 	return hooks{systemID: "EllaSMSC", bind: acceptAll}
+}
+
+func TestBindRefusalLogAndInvalidSequenceHook(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	refused := make(chan CommandStatus, 1)
+	_, p := pipe(t, roleSMSC, SessionConfig{Logger: logger}, submitOK, hooks{
+		systemID: "smsc",
+		bind: func(context.Context, *Session, *Bind) bindDecision {
+			return bindDecision{status: StatusBindFail, reason: "wrong password"}
+		},
+		refused: func(_ *Session, _ Header, status CommandStatus) { refused <- status },
+	})
+
+	bind := &Bind{ID: CmdBindTransceiver, SystemID: "app", Password: "badpass", InterfaceVersion: InterfaceVersion}
+	p.send(bind, StatusOK, 1)
+	p.expect(CmdBindTransceiverResp, StatusBindFail, 1)
+	got := logs.String()
+	if strings.Count(got, "SMPP bind refused") != 1 || !strings.Contains(got, `"reason":"wrong password"`) ||
+		!strings.Contains(got, `"status":"ESME_RBINDFAIL"`) || strings.Contains(got, bind.Password) {
+		t.Fatal("expected one bind refusal with status and reason, and no password")
+	}
+
+	b, err := Encode(bind, StatusOK, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary.BigEndian.PutUint32(b[12:], 0)
+	p.sendRaw(b)
+	p.expect(CmdGenericNack, StatusUnknownErr, 0)
+	select {
+	case status := <-refused:
+		if status != StatusUnknownErr {
+			t.Errorf("refusal hook status = %s, want %s", status, StatusUnknownErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no refusal hook for a bind with an invalid sequence number")
+	}
 }
 
 func boundSMSC(t *testing.T, id CommandID, cfg SessionConfig, h Handler) (*Session, *rawPeer) {

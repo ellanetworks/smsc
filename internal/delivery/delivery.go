@@ -779,7 +779,7 @@ func (d *Deliverer) deliver(stop context.Context, m db.Message, now time.Time, s
 	}
 
 	if len(targets) == 0 {
-		log.DebugContext(ctx, "no serving node reachable over SGd for the recipient")
+		log.DebugContext(ctx, "HSS routing information contains no supported SGd target")
 		return result{outcome: permanent, status: tpdu.StatusNoInterworking}, nil
 	}
 

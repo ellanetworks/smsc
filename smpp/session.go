@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -209,6 +210,8 @@ type bindDecision struct {
 	status  CommandStatus
 	account string
 	data    any
+	reason  string
+	err     error
 }
 
 type hooks struct {
@@ -366,6 +369,7 @@ func (s *Session) closeWith(err error) {
 	s.closed, s.closeErr = true, err
 	pend := s.pending
 	s.pending = nil
+	systemID, bound := s.systemID, !s.boundAt.IsZero()
 	s.mu.Unlock()
 
 	s.state.Store(int32(StateClosed))
@@ -383,11 +387,15 @@ func (s *Session) closeWith(err error) {
 
 	close(s.done)
 
-	switch {
-	case errors.Is(err, ErrClosed), errors.Is(err, ErrUnbound):
-		s.log.Debug("SMPP session closed", slog.String("reason", err.Error()))
-	default:
-		s.log.Info("SMPP session closed", slog.String("reason", err.Error()))
+	log := s.log
+	if bound {
+		log = log.With(slog.String("system_id", systemID))
+	}
+
+	if !bound && (errors.Is(err, ErrClosed) || errors.Is(err, ErrUnbound) || errors.Is(err, io.EOF)) {
+		log.Debug("SMPP session closed", slog.String("reason", err.Error()))
+	} else {
+		log.Info("SMPP session closed", slog.String("reason", err.Error()))
 	}
 
 	if s.hooks.closed != nil {
@@ -571,6 +579,9 @@ func (s *Session) bound(id CommandID, r *BindResp) {
 func (s *Session) handleRequest(h Header, body []byte) {
 	if h.Sequence == 0 || h.Sequence > MaxSequence {
 		s.nack(0, StatusUnknownErr)
+		if s.role == roleSMSC && h.ID.IsBind() && s.hooks.refused != nil {
+			s.hooks.refused(s, h, StatusUnknownErr)
+		}
 
 		return
 	}
@@ -653,7 +664,18 @@ func (s *Session) handleBind(h Header, b *Bind) {
 	}
 
 	if d.status != StatusOK {
-		s.log.Info("SMPP bind refused", slog.String("system_id", b.SystemID), slog.String("status", d.status.String()))
+		log := s.log.With(slog.String("system_id", b.SystemID), slog.String("bind", h.ID.String()),
+			slog.String("status", d.status.String()))
+
+		switch {
+		case d.err != nil:
+			log.ErrorContext(s.ctx, "failed to check an SMPP bind", slog.Any("error", d.err))
+		case d.reason != "":
+			log.InfoContext(s.ctx, "SMPP bind refused", slog.String("reason", d.reason))
+		default:
+			log.InfoContext(s.ctx, "SMPP bind refused")
+		}
+
 		_ = s.respond(h, resp, d.status)
 
 		return

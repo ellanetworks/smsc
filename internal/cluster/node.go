@@ -537,6 +537,7 @@ func (n *Node) becomeLeader() {
 
 		n.term, n.leading, n.since = term, ctx, n.cfg.Now()
 		close(n.ready)
+		n.cfg.Logger.InfoContext(ctx, "delivery leadership acquired", slog.String("node", n.id), slog.Uint64("term", term))
 
 		for _, f := range n.lead {
 			n.run(ctx, term, f)
@@ -638,10 +639,13 @@ func (n *Node) stepDown() {
 	n.mu.Lock()
 	cancel := n.cancel
 	n.cancel = nil
+	term := n.term
+	wasLeader := false
 
 	select {
 	case <-n.ready:
 		n.ready = make(chan struct{})
+		wasLeader = true
 	default:
 	}
 
@@ -650,6 +654,10 @@ func (n *Node) stepDown() {
 
 	if cancel != nil {
 		cancel()
+	}
+
+	if wasLeader {
+		n.cfg.Logger.Info("delivery leadership relinquished", slog.String("node", n.id), slog.Uint64("term", term))
 	}
 
 	n.runs.Wait()

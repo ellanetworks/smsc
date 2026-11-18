@@ -33,6 +33,7 @@ const (
 	MaxSessions        = 4
 	recordTimeout      = 10 * time.Second
 	syncInterval       = 10 * time.Second
+	bindLogWindow      = 30 * time.Second
 )
 
 // SMPP 3.4 section 2.2
@@ -129,20 +130,22 @@ type Service struct {
 	dummyOnce sync.Once
 	dummyHash []byte
 	binds     *ratelimit.Limiter
+	bindLogs  *ratelimit.Limiter
 	failures  *ratelimit.Limiter
 	outsiders *ratelimit.Limiter
 	bcrypt    chan struct{}
 	wake      chan struct{}
 
-	sends    sync.WaitGroup
-	mu       sync.Mutex
-	sessions map[uint64]*Session
-	opened   map[uint64]bool
-	synced   bool
-	draining bool
-	unbound  atomic.Uint64
-	records  sync.WaitGroup
-	stopping bool
+	sends           sync.WaitGroup
+	mu              sync.Mutex
+	sessions        map[uint64]*Session
+	opened          map[uint64]bool
+	synced          bool
+	loggedSyncBlock bool
+	draining        bool
+	unbound         atomic.Uint64
+	records         sync.WaitGroup
+	stopping        bool
 }
 
 func (s *Service) init() {
@@ -156,6 +159,7 @@ func (s *Service) init() {
 		}
 
 		s.binds = ratelimit.New(api.LoginRateLimit, api.LoginRateWindow, s.Now)
+		s.bindLogs = ratelimit.New(1, bindLogWindow, s.Now)
 		s.failures = ratelimit.New(api.AccountFailureLimit, api.AccountFailureWindow, s.Now)
 		s.outsiders = ratelimit.New(api.AccountFailureLimit, api.AccountFailureWindow, s.Now)
 		s.bcrypt = make(chan struct{}, runtime.GOMAXPROCS(0))
@@ -181,15 +185,7 @@ func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.B
 
 	sess, reason, err := s.bind(ctx, s.sessionID(req), remote, req.Bind)
 
-	log := s.Logger.With(slog.String("system_id", req.Bind.SystemID), slog.String("remote", remote.String()),
-		slog.String("bind", req.Bind.ID.String()))
-
-	switch {
-	case err != nil:
-		log.ErrorContext(ctx, "failed to check an SMPP bind", slog.Any("error", err))
-	case reason != "":
-		log.InfoContext(ctx, "SMPP bind refused", slog.String("reason", reason))
-	default:
+	if sess != nil {
 		s.Metrics.bind(true)
 
 		return smpp.BindOutcome{
@@ -202,7 +198,7 @@ func (s *Service) Authenticate(ctx context.Context, req smpp.BindRequest) smpp.B
 
 	s.Metrics.bind(false)
 
-	return smpp.BindOutcome{Status: smpp.StatusBindFail}
+	return smpp.BindOutcome{Status: smpp.StatusBindFail, Reason: reason, Err: err}
 }
 
 func (s *Service) sessionID(req smpp.BindRequest) uint64 {
@@ -320,7 +316,7 @@ func (s *Service) bind(ctx context.Context, id uint64, remote netip.AddrPort, b 
 		return nil, "too many sessions for the account", nil
 	case err != nil:
 		s.forget(id)
-		return nil, "the session could not be recorded: " + err.Error(), nil
+		return nil, "", fmt.Errorf("record the SMPP session: %w", err)
 	}
 
 	return &Session{ID: id, ESME: e, UserID: u.ID, BindType: bindType, Remote: remote}, "", nil
@@ -448,6 +444,7 @@ func (s *Service) syncSessions(ctx context.Context) {
 
 	recorded, err := s.Store.NodeSMPPSessions(ctx, s.Node)
 	if err != nil {
+		s.syncFailed(ctx, "read", err)
 		return
 	}
 
@@ -455,26 +452,70 @@ func (s *Service) syncSessions(ctx context.Context) {
 
 	if stale {
 		if err := s.Store.SyncSMPPSessions(ctx, s.Node, live); err != nil {
-			if ctx.Err() == nil {
-				s.Logger.DebugContext(ctx, "failed to clean up the recorded SMPP sessions", slog.Any("error", err))
-			}
-
+			s.syncFailed(ctx, "clean up", err)
 			return
 		}
 	}
 
 	s.mu.Lock()
 	s.synced = true
+	wasBlocked := s.loggedSyncBlock
+	s.loggedSyncBlock = false
 	s.mu.Unlock()
-}
 
-func (s *Service) OnDecodeError(_ *smpp.Session, h smpp.Header, _ error) {
-	if h.ID == smpp.CmdSubmitSM {
-		s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
+	if wasBlocked {
+		s.Logger.InfoContext(ctx, "SMPP session reconciliation recovered", slog.String("node", s.Node))
 	}
 }
 
-func (s *Service) OnRefused(_ *smpp.Session, h smpp.Header, status smpp.CommandStatus) {
+func (s *Service) syncFailed(ctx context.Context, operation string, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+
+	s.mu.Lock()
+	blocksBinds := !s.synced
+	warn := blocksBinds && !s.loggedSyncBlock
+	if warn {
+		s.loggedSyncBlock = true
+	}
+	s.mu.Unlock()
+
+	attrs := []any{slog.String("node", s.Node), slog.String("operation", operation), slog.Bool("blocks_binds", blocksBinds),
+		slog.Any("error", err)}
+	if warn {
+		s.Logger.WarnContext(ctx, "SMPP session reconciliation failed", attrs...)
+	} else {
+		s.Logger.DebugContext(ctx, "SMPP session reconciliation failed", attrs...)
+	}
+}
+
+func (s *Service) OnDecodeError(sess *smpp.Session, h smpp.Header, err error) {
+	if h.ID == smpp.CmdSubmitSM {
+		s.Received.Add(intake.OriginSMPP, intake.Rejected, 1)
+	}
+
+	if h.ID.IsBind() {
+		status, field := smpp.StatusSysErr, ""
+		var body *smpp.BodyError
+		if errors.As(err, &body) {
+			status, field = body.Status, body.Field
+		}
+
+		s.logBindProtocolRefusal(sess, h, status, "malformed bind", field)
+	}
+}
+
+func (s *Service) OnRefused(sess *smpp.Session, h smpp.Header, status smpp.CommandStatus) {
+	if h.ID.IsBind() {
+		switch status {
+		case smpp.StatusUnknownErr:
+			s.logBindProtocolRefusal(sess, h, status, "invalid sequence number", "")
+		case smpp.StatusAlyBnd:
+			s.logBindProtocolRefusal(sess, h, status, "session already bound", "")
+		}
+	}
+
 	if h.ID != smpp.CmdSubmitSM {
 		return
 	}
@@ -485,6 +526,24 @@ func (s *Service) OnRefused(_ *smpp.Session, h smpp.Header, status smpp.CommandS
 	}
 
 	s.Received.Add(intake.OriginSMPP, result, 1)
+}
+
+func (s *Service) logBindProtocolRefusal(sess *smpp.Session, h smpp.Header, status smpp.CommandStatus, reason, field string) {
+	s.init()
+
+	remote := addrPortOf(sess.RemoteAddr())
+	key := ratelimit.Key(remote.Addr()) + "/" + h.ID.String() + "/" + reason + "/" + status.String() + "/" + field
+	if !s.bindLogs.Allow(key) {
+		return
+	}
+
+	attrs := []any{slog.Uint64("session", sess.ID()), slog.String("remote", remote.String()),
+		slog.String("bind", h.ID.String()), slog.String("status", status.String()), slog.String("reason", reason)}
+	if field != "" {
+		attrs = append(attrs, slog.String("field", field))
+	}
+
+	s.Logger.Info("SMPP bind refused", attrs...)
 }
 
 func (s *Service) ServeSMPP(ctx context.Context, ls *smpp.Session, req smpp.Request) smpp.Response {
