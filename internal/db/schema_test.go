@@ -20,7 +20,7 @@ func withMigration(t *testing.T, sql string) {
 
 func TestSchemaAdvancesThroughTheLog(t *testing.T) {
 	ctx := context.Background()
-	d := openTestDB(t)
+	d := openBaselineDB(t)
 
 	withMigration(t, `CREATE TABLE upgraded (id INTEGER PRIMARY KEY)`)
 
@@ -28,15 +28,17 @@ func TestSchemaAdvancesThroughTheLog(t *testing.T) {
 		t.Fatalf("a new binary migrated an existing database at open: schema %d", d.Schema())
 	}
 
-	if err := d.Migrate(ctx, 3); !errors.Is(err, ErrInvalid) {
+	if err := d.Migrate(ctx, baselineSchema+2); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("a skipped schema = %v, want %v", err, ErrInvalid)
 	}
 
-	if err := d.Migrate(ctx, 2); err != nil {
-		t.Fatal(err)
+	for v := baselineSchema + 1; v <= SchemaVersion(); v++ {
+		if err := d.Migrate(ctx, v); err != nil {
+			t.Fatalf("Migrate %d: %v", v, err)
+		}
 	}
 
-	if err := d.Migrate(ctx, 2); err != nil || d.Schema() != 2 {
+	if err := d.Migrate(ctx, SchemaVersion()); err != nil || d.Schema() != SchemaVersion() {
 		t.Fatalf("a replayed migration = %v, schema %d", err, d.Schema())
 	}
 
@@ -48,7 +50,7 @@ func TestSchemaAdvancesThroughTheLog(t *testing.T) {
 func TestMigrationBeyondTheBinaryHalts(t *testing.T) {
 	d := openTestDB(t)
 
-	raw, err := json.Marshal(migrate{Target: baselineSchema + 1})
+	raw, err := json.Marshal(migrate{Target: SchemaVersion() + 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func TestMigrationBeyondTheBinaryHalts(t *testing.T) {
 }
 
 func TestCommandsWaitForTheirSchema(t *testing.T) {
-	d := openTestDB(t)
+	d := openBaselineDB(t)
 
 	minSchema[cmdDeleteExpiredSessions] = baselineSchema + 1
 

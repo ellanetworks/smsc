@@ -257,6 +257,8 @@ func (a *auth) oidcLink(r *http.Request, c *oidc.Client, l oidc.Login, cl oidc.C
 		return u.Email, refuse(OIDCLinkedElsewhere, "the account at the identity provider, or %s, is already linked", u.Email)
 	case errors.Is(err, db.ErrNotFound):
 		return u.Email, refuse(OIDCFailed, "the user that started the link no longer exists")
+	case errors.Is(err, db.ErrUpgradePending):
+		return u.Email, refuse(OIDCUnavailable, "%v", err)
 	case err != nil:
 		return u.Email, err
 	}

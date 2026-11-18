@@ -27,6 +27,7 @@ type User struct {
 type NewUser struct {
 	Email        string
 	Role         Role
+	RolePinned   bool
 	PasswordHash string
 }
 
@@ -58,7 +59,14 @@ func (d *DB) CreateUser(ctx context.Context, u NewUser, maxUsers int) (id int64,
 }
 
 func applyCreateUser(a *applyCtx, p createUserCmd) (int64, error) {
-	return createUser(a.ctx, a.tx, p.User, p.MaxUsers)
+	id, err := createUser(a.ctx, a.tx, p.User, p.MaxUsers)
+	if err != nil || a.schema >= ssoLinkSchema || !p.User.RolePinned {
+		return id, err
+	}
+
+	_, err = a.tx.ExecContext(a.ctx, `UPDATE users SET role_pinned = 1 WHERE id = ?`, id)
+
+	return id, err
 }
 
 func createUser(ctx context.Context, tx *sql.Tx, u NewUser, maxUsers int) (int64, error) {
@@ -131,8 +139,9 @@ func (d *DB) ListUsers(ctx context.Context, page, perPage int) (_ []User, _ int,
 }
 
 type updateUserRole struct {
-	ID   int64
-	Role Role
+	ID     int64
+	Role   Role
+	Pinned bool
 }
 
 func (d *DB) UpdateUserRole(ctx context.Context, id int64, role Role) (err error) {
@@ -167,6 +176,12 @@ func applyUpdateUserRole(a *applyCtx, p updateUserRole) (struct{}, error) {
 
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET role_id = ? WHERE id = ?`, p.Role, p.ID); err != nil {
 		return struct{}{}, err
+	}
+
+	if a.schema < ssoLinkSchema {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET role_pinned = ? WHERE id = ?`, p.Pinned, p.ID); err != nil {
+			return struct{}{}, err
+		}
 	}
 
 	if p.Role == current {

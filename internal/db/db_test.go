@@ -39,6 +39,25 @@ func testMessage(reference uint8, rejectDuplicates bool, tpdu []byte, at time.Ti
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
 
+	d := openBaselineDB(t)
+	migrateAll(t, d)
+
+	return d
+}
+
+func migrateAll(t *testing.T, d *DB) {
+	t.Helper()
+
+	for v := d.Schema() + 1; v <= SchemaVersion(); v++ {
+		if err := d.Migrate(context.Background(), v); err != nil {
+			t.Fatalf("Migrate %d: %v", v, err)
+		}
+	}
+}
+
+func openBaselineDB(t *testing.T) *DB {
+	t.Helper()
+
 	d, err := Open(context.Background(), filepath.Join(t.TempDir(), "smsc.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)

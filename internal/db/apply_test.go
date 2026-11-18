@@ -209,13 +209,14 @@ func dump(t *testing.T, d *DB) string {
 }
 
 func TestApplyIsDeterministic(t *testing.T) {
-	leader := openTestDB(t)
+	leader := openBaselineDB(t)
 	r := &recorder{d: leader}
 	leader.SetProposer(r)
+	migrateAll(t, leader)
 
 	runWorkload(t, leader)
 
-	replica := openTestDB(t)
+	replica := openBaselineDB(t)
 
 	for i, entry := range r.entries {
 		if _, err := replica.Apply(uint64(i+1), 1, entry); err != nil {
@@ -234,13 +235,14 @@ func TestApplyIsDeterministic(t *testing.T) {
 }
 
 func TestGroupedEntriesMatchSingleEntries(t *testing.T) {
-	leader := openTestDB(t)
+	leader := openBaselineDB(t)
 	r := &recorder{d: leader}
 	leader.SetProposer(r)
+	migrateAll(t, leader)
 
 	runWorkload(t, leader)
 
-	replica := openTestDB(t)
+	replica := openBaselineDB(t)
 
 	for i := 0; i < len(r.entries); i += 3 {
 		var group []Entry
@@ -281,7 +283,7 @@ func TestExpiredRequestIDIsAppliedAgainInAnyGrouping(t *testing.T) {
 		entries = append(entries, entry)
 	}
 
-	single, grouped := openTestDB(t), openTestDB(t)
+	single, grouped := openBaselineDB(t), openBaselineDB(t)
 
 	for i, e := range entries {
 		if _, err := single.Apply(uint64(i+1), 1, e); err != nil {
@@ -399,7 +401,7 @@ func TestRequestIDKeepsAnErrorResult(t *testing.T) {
 
 func TestApplySkipsAppliedEntries(t *testing.T) {
 	ctx := context.Background()
-	d := openTestDB(t)
+	d := openBaselineDB(t)
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	entry, err := EncodeBatch(Batch{LeaderTime: 1, Commands: []Command{
@@ -422,7 +424,7 @@ func TestApplySkipsAppliedEntries(t *testing.T) {
 
 func TestUnknownCommandIsFatal(t *testing.T) {
 	ctx := context.Background()
-	d := openTestDB(t)
+	d := openBaselineDB(t)
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	entry, err := EncodeBatch(Batch{LeaderTime: 1, Commands: []Command{

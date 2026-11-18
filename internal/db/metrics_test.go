@@ -18,7 +18,7 @@ import (
 )
 
 func TestMetricsCountFailuresOnly(t *testing.T) {
-	d := openTestDB(t)
+	d := openBaselineDB(t)
 	ctx := context.Background()
 	now := time.Now()
 
