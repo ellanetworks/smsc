@@ -95,3 +95,21 @@ Audit events are logs at level `info` with `msg` set to `audit event`.
 | `actor` | Email of the user who did it. Empty when unknown. |
 | `ip` | Address the request came from. |
 | `details` | What was done, in words. |
+
+## Dashboards
+
+Ella SMSC ships with a [Grafana](https://grafana.com/) dashboard. Import its JSON file from the repository.
+
+### Overview
+
+This dashboard uses Prometheus metrics to show the health of Ella SMSC on one screen: service status, message traffic, and performance.
+
+<figure markdown="span">
+  ![Overview Dashboard](../images/dashboard_overview.png){ width="800" }
+  <figcaption>Grafana dashboard for Overview.</figcaption>
+</figure>
+
+- Data Sources: Prometheus
+- Dashboard JSON: [observability/grafana/dashboards/overview.json](https://github.com/ellanetworks/smsc/blob/main/observability/grafana/dashboards/overview.json)
+
+To import it, open **Dashboards > New > Import** in Grafana and upload the JSON file.

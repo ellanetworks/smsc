@@ -1,14 +1,4 @@
 {
-  "__inputs": [
-    {
-      "name": "DS_MIMIR",
-      "label": "Mimir",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "prometheus",
-      "pluginName": "Prometheus"
-    }
-  ],
   "__elements": {},
   "__requires": [
     {
@@ -53,7 +43,7 @@
     ]
   },
   "description": "Monitor your Ella SMSC deployment: message traffic, delivery, SMPP, HSS and system load.",
-  "editable": true,
+  "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
@@ -75,7 +65,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Short messages accepted per second, from phones, the API and SMPP, one per part.",
       "fieldConfig": {
@@ -126,7 +116,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "sum(rate(ellasmsc_messages_received_total{job=~\"$job\",instance=~\"$instance\",result=\"accepted\"}[$__rate_interval]))",
@@ -143,7 +133,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Short messages delivered as a share of those that reached a final status (delivered, failed, expired) over the selected time range. Replaced messages are left out.",
       "fieldConfig": {
@@ -213,7 +203,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "(\n  100 * (\n    sum(increase(ellasmsc_messages_completed_total{job=~\"$job\",instance=~\"$instance\",type=\"message\",status=\"delivered\"}[$__range]))\n    /\n    sum(increase(ellasmsc_messages_completed_total{job=~\"$job\",instance=~\"$instance\",type=\"message\",status=~\"delivered|failed|expired\"}[$__range]))\n  )\n  and\n  sum(increase(ellasmsc_messages_completed_total{job=~\"$job\",instance=~\"$instance\",type=\"message\",status=~\"delivered|failed|expired\"}[$__range])) > 0\n)\nor vector(-1)",
@@ -230,7 +220,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Short messages waiting for delivery: due now or waiting for a retry or for the phone to be reachable. Exported by the leader.",
       "fieldConfig": {
@@ -282,7 +272,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "sum(ellasmsc_messages_pending{job=~\"$job\",instance=~\"$instance\",type=\"message\"})",
@@ -299,7 +289,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Short messages accepted as a share of those received from phones, the API and SMPP over the selected time range. Rejected, errored and throttled submissions count against it.",
       "fieldConfig": {
@@ -369,7 +359,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "(\n  100 * (\n    sum(increase(ellasmsc_messages_received_total{job=~\"$job\",instance=~\"$instance\",result=\"accepted\"}[$__range]))\n    /\n    sum(increase(ellasmsc_messages_received_total{job=~\"$job\",instance=~\"$instance\"}[$__range]))\n  )\n  and\n  sum(increase(ellasmsc_messages_received_total{job=~\"$job\",instance=~\"$instance\"}[$__range])) > 0\n)\nor vector(-1)",
@@ -386,7 +376,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "SMPP sessions bound now, all bind types.",
       "fieldConfig": {
@@ -438,7 +428,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "sum(ellasmsc_smpp_sessions{job=~\"$job\",instance=~\"$instance\"})",
@@ -455,7 +445,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Whether an open Diameter peer serves S6c in the operator's realm (an HSS, or an agent in front of it). With none open, messages to phones wait.",
       "fieldConfig": {
@@ -526,7 +516,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "count(max(ellasmsc_hss_peers{job=~\"$job\",instance=~\"$instance\"}) == 0) or vector(0)",
@@ -556,7 +546,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Short messages received per second, by origin: mobile (from phones over SGd or the IP-SM-GW), api, smpp (from ESMEs).",
       "fieldConfig": {
@@ -683,7 +673,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "sum by (origin) (rate(ellasmsc_messages_received_total{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]))",
@@ -700,7 +690,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Short messages that reached a final status per second: delivered, failed, expired, replaced.",
       "fieldConfig": {
@@ -842,7 +832,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "sum by (status) (rate(ellasmsc_messages_completed_total{job=~\"$job\",instance=~\"$instance\",type=\"message\"}[$__rate_interval]))",
@@ -859,7 +849,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Short messages and status reports waiting for delivery, by state: due (to be delivered now) and waiting (for a retry or for the phone to be reachable).",
       "fieldConfig": {
@@ -941,7 +931,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "sum by (type, state) (ellasmsc_messages_pending{job=~\"$job\",instance=~\"$instance\"})",
@@ -971,7 +961,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "Time from submission to delivery of the short messages delivered, the time the phone was unreachable included. Logarithmic scale.",
       "fieldConfig": {
@@ -1098,7 +1088,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "histogram_quantile(0.5, sum by (le) (rate(ellasmsc_message_delivery_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])))",
@@ -1110,7 +1100,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "histogram_quantile(0.95, sum by (le) (rate(ellasmsc_message_delivery_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])))",
@@ -1122,7 +1112,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "histogram_quantile(0.99, sum by (le) (rate(ellasmsc_message_delivery_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])))",
@@ -1139,7 +1129,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "95th percentile of requests to the HSS (s6c: routing information) and to the MMEs, SMSFs and IP-SM-GWs (sgd: delivery to the phone). Interfaces without requests are not shown.",
       "fieldConfig": {
@@ -1220,7 +1210,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
           "expr": "(histogram_quantile(0.95, sum by (le, interface) (rate(ellasmsc_peer_request_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])))) and on (interface) (sum by (interface) (rate(ellasmsc_peer_request_duration_seconds_count{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])) > 0)",
@@ -1237,7 +1227,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_MIMIR}"
+        "uid": "$datasource"
       },
       "description": "CPU used by the process as a share of GOMAXPROCS (left axis), and resident memory (right axis), highest of the selected nodes.",
       "fieldConfig": {
@@ -1357,10 +1347,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "max(100 * rate(process_cpu_seconds_total{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]) / on (job, instance) go_sched_gomaxprocs_threads{job=~\"$job\",instance=~\"$instance\"})",
+          "expr": "max((100 * rate(process_cpu_seconds_total{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]) / on (job, instance) go_sched_gomaxprocs_threads{job=~\"$job\",instance=~\"$instance\"}) and on (job, instance) ellasmsc_build_info{job=~\"$job\",instance=~\"$instance\"})",
           "legendFormat": "CPU",
           "range": true,
           "instant": false,
@@ -1369,10 +1359,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_MIMIR}"
+            "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "max(process_resident_memory_bytes{job=~\"$job\",instance=~\"$instance\"})",
+          "expr": "max((process_resident_memory_bytes{job=~\"$job\",instance=~\"$instance\"}) and on (job, instance) ellasmsc_build_info{job=~\"$job\",instance=~\"$instance\"})",
           "legendFormat": "Memory",
           "range": true,
           "instant": false,
@@ -1396,42 +1386,15 @@
   "templating": {
     "list": [
       {
-        "current": {
-          "selected": true,
-          "text": "Mimir",
-          "value": "mimir"
-        },
+        "current": {},
         "includeAll": false,
-        "label": "Mimir",
-        "name": "DS_MIMIR",
+        "label": "Data source",
+        "name": "datasource",
         "options": [],
         "query": "prometheus",
         "refresh": 1,
         "regex": "",
         "type": "datasource"
-      },
-      {
-        "current": {},
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${DS_MIMIR}"
-        },
-        "definition": "label_values(ellasmsc_build_info, job)",
-        "description": "Select the Ella SMSC job.",
-        "includeAll": false,
-        "label": "Job",
-        "multi": false,
-        "name": "job",
-        "options": [],
-        "query": {
-          "query": "label_values(ellasmsc_build_info, job)",
-          "refId": "StandardVariableQuery"
-        },
-        "refresh": 2,
-        "regex": "",
-        "sort": 1,
-        "type": "query",
-        "hide": 0
       },
       {
         "current": {
@@ -1445,7 +1408,39 @@
         },
         "datasource": {
           "type": "prometheus",
-          "uid": "${DS_MIMIR}"
+          "uid": "$datasource"
+        },
+        "definition": "label_values(ellasmsc_build_info, job)",
+        "description": "Select one or more Ella SMSC jobs. All shows every job.",
+        "includeAll": true,
+        "label": "Job",
+        "multi": true,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(ellasmsc_build_info, job)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query",
+        "hide": 0,
+        "allValue": ".+"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
         },
         "definition": "label_values(ellasmsc_build_info{job=~\"$job\"}, instance)",
         "description": "Select one or more Ella SMSC nodes (host:port). All shows the whole cluster.",
