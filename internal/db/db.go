@@ -50,7 +50,6 @@ var migrations = []string{
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		email TEXT NOT NULL UNIQUE COLLATE NOCASE,
 		role_id INTEGER NOT NULL CHECK (role_id IN (1, 2, 3, 4)),
-		role_pinned INTEGER NOT NULL DEFAULT 0 CHECK (role_pinned IN (0, 1)),
 		password_hash TEXT CHECK (password_hash != '')
 	);
 	CREATE TABLE user_identities (

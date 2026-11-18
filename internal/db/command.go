@@ -70,6 +70,7 @@ const (
 	cmdRetryMODelivery
 	cmdReleaseMODelivery
 	cmdExpireMODeliveries
+	cmdLinkOIDCIdentity
 )
 
 const entryBatch uint16 = 1
@@ -150,6 +151,7 @@ var resultCodes = []struct {
 	{"no_user", ErrNoUser},
 	{"no_role", ErrNoRole},
 	{"linked_elsewhere", ErrLinkedElsewhere},
+	{"link_required", ErrLinkRequired},
 	{"state_used", ErrStateUsed},
 	{"conflict", settings.ErrConflict},
 	{"token_used", ErrTokenUsed},

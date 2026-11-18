@@ -153,9 +153,8 @@ func routes(cfg Config, a *auth) []route {
 		{"PUT /api/v1/operator", PermUpdateOperator, UpdateOperator(cfg)},
 		{"GET /api/v1/delivery", PermReadDelivery, GetDelivery(cfg)},
 		{"PUT /api/v1/delivery", PermUpdateDelivery, UpdateDelivery(cfg)},
-		{"GET /api/v1/oidc", PermReadOIDC, a.needsLogin(GetOIDC(cfg))},
+		{"GET /api/v1/oidc", PermReadOIDC, GetOIDC(cfg)},
 		{"PUT /api/v1/oidc", PermUpdateOIDC, a.needsLogin(UpdateOIDC(a))},
-		{"POST /api/v1/oidc/discovery", PermUpdateOIDC, a.needsLogin(DiscoverOIDC(cfg))},
 
 		{"GET /api/v1/cluster", PermReadCluster, GetCluster(cfg)},
 		{"POST /api/v1/cluster/tokens", PermManageCluster, a.needsLogin(CreateJoinToken(a))},

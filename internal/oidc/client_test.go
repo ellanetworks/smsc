@@ -2,8 +2,11 @@ package oidc
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
+
+	"github.com/ellanetworks/smsc/internal/db"
 )
 
 func fields(t *testing.T, s string) map[string]json.RawMessage {
@@ -141,5 +144,49 @@ func TestMergeUserInfo(t *testing.T) {
 			got.GroupsOverage != tc.want.GroupsOverage {
 			t.Errorf("%s: %+v, %v, want %+v", name, got, err, tc.want)
 		}
+	}
+}
+
+func TestRoleFor(t *testing.T) {
+	c := &Client{settings: db.OIDC{GroupRoles: []db.GroupRole{
+		{Group: "viewers", Role: db.RoleReadOnly},
+		{Group: "senders", Role: db.RoleSubmitter},
+		{Group: "noc", Role: db.RoleNetworkManager},
+		{Group: "admins", Role: db.RoleAdmin},
+	}}}
+
+	for _, tc := range []struct {
+		groups []string
+		role   db.Role
+		err    error
+	}{
+		{nil, 0, ErrNoGroup},
+		{[]string{"other"}, 0, ErrNoGroup},
+		{[]string{"viewers"}, db.RoleReadOnly, nil},
+		{[]string{"senders"}, db.RoleSubmitter, nil},
+		{[]string{"viewers", "noc"}, db.RoleNetworkManager, nil},
+		{[]string{"admins", "noc", "viewers"}, db.RoleAdmin, nil},
+		{[]string{"senders", "viewers", "noc"}, db.RoleNetworkManager, nil},
+		{[]string{"senders", "viewers"}, 0, ErrConflict},
+		{[]string{"viewers", "senders", "other"}, 0, ErrConflict},
+	} {
+		if role, err := c.RoleFor(tc.groups); role != tc.role || !errors.Is(err, tc.err) {
+			t.Errorf("RoleFor(%v) = %d, %v, want %d, %v", tc.groups, role, err, tc.role, tc.err)
+		}
+	}
+}
+
+func TestLogoutURL(t *testing.T) {
+	c := &Client{settings: db.OIDC{ExternalURL: "https://smsc.example.com", ClientID: "smsc"}}
+
+	if got := c.LogoutURL(); got != "" {
+		t.Fatalf("LogoutURL without an end session endpoint = %q", got)
+	}
+
+	c.discovery.EndSessionEndpoint = "https://idp.example.com/logout?realm=smsc"
+
+	want := "https://idp.example.com/logout?client_id=smsc&post_logout_redirect_uri=https%3A%2F%2Fsmsc.example.com%2Flogin&realm=smsc"
+	if got := c.LogoutURL(); got != want {
+		t.Fatalf("LogoutURL = %q, want %q", got, want)
 	}
 }

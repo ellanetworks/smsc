@@ -28,7 +28,7 @@ These paths take no token: `GET /api/v1/livez`, `GET /api/v1/readyz`, `GET /api/
 | Network Manager | `3`       | Read Only, plus reading message content, sending messages, updating operator, delivery and retention settings, and managing Diameter peers. |
 | Submitter       | `4`       | Sending messages, and reading the messages it sent, their content included. |
 
-An API token has the role of its user, but cannot create API tokens, change a password, or manage users, [single sign-on](oidc.md) or [ESMEs](esmes.md).
+An API token has the role of its user, but cannot create API tokens, change a password, manage users or [ESMEs](esmes.md), or update the [single sign-on](oidc.md#update-the-oidc-settings) settings.
 
 Only an Admin manages ESMEs. An [ESME](esmes.md) binds over SMPP with the role of its user.
 
@@ -75,5 +75,5 @@ GET /api/v1/openapi.yaml
 - 409 - Conflict.
 - 429 - Too many requests. `Retry-After` is the seconds to wait.
 - 500 - Internal server error.
-- 502 - The identity provider cannot be reached or used. See [Test an identity provider](oidc.md#test-an-identity-provider).
+- 502 - The identity provider cannot be reached or used. See [Update the OIDC settings](oidc.md#update-the-oidc-settings).
 - 503 - Not ready. See [Check readiness](status.md#check-readiness).

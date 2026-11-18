@@ -4,7 +4,10 @@
   "sslRequired": "all",
   "loginWithEmailAllowed": true,
   "registrationAllowed": false,
-  "groups": [{ "name": "smsc-operators", "path": "/smsc-operators" }],
+  "groups": [
+    { "name": "smsc-operators", "path": "/smsc-operators" },
+    { "name": "smsc-viewers", "path": "/smsc-viewers" }
+  ],
   "users": [
     {
       "username": "alice",
@@ -35,7 +38,7 @@
       "firstName": "Carol",
       "lastName": "Operator",
       "enabled": true,
-      "groups": ["/smsc-operators"],
+      "groups": ["/smsc-operators", "/smsc-viewers"],
       "credentials": [
         { "type": "password", "value": "carol-password", "temporary": false }
       ]
@@ -56,7 +59,10 @@
       "serviceAccountsEnabled": false,
       "redirectUris": ["https://localhost:*"],
       "webOrigins": [],
-      "attributes": { "pkce.code.challenge.method": "S256" },
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
       "defaultClientScopes": ["profile", "email"],
       "protocolMappers": [
         {

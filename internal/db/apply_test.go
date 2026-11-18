@@ -75,7 +75,7 @@ func runWorkload(t *testing.T, d *DB) {
 
 	for _, err := range []error{
 		d.TouchAPIToken(ctx, token, now.Add(time.Minute)),
-		d.UpdateUserRole(ctx, ota, RoleReadOnly, true),
+		d.UpdateUserRole(ctx, ota, RoleReadOnly),
 		d.UpdateUserPassword(ctx, ota, "h2", nil),
 		d.DeleteSessionByTokenHash(ctx, []byte("token")),
 		d.UpdateDelivery(ctx, settings.Delivery{DefaultValidity: time.Hour, RetryIntervals: []time.Duration{time.Minute}}),

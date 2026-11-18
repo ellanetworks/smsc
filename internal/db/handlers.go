@@ -56,4 +56,5 @@ func init() {
 	register(cmdRetryMODelivery, handle(applyRetryMODelivery))
 	register(cmdReleaseMODelivery, handle(applyReleaseMODelivery))
 	register(cmdExpireMODeliveries, handle(applyExpireMODeliveries))
+	register(cmdLinkOIDCIdentity, handle(applyLinkOIDCIdentity))
 }

@@ -20,7 +20,6 @@ type User struct {
 	ID           int64
 	Email        string
 	Role         Role
-	RolePinned   bool
 	PasswordHash string
 	HasIdentity  bool
 }
@@ -28,7 +27,6 @@ type User struct {
 type NewUser struct {
 	Email        string
 	Role         Role
-	RolePinned   bool
 	PasswordHash string
 }
 
@@ -73,8 +71,8 @@ func createUser(ctx context.Context, tx *sql.Tx, u NewUser, maxUsers int) (int64
 		return 0, ErrTooManyUsers
 	}
 
-	res, err := tx.ExecContext(ctx, `INSERT INTO users (email, role_id, role_pinned, password_hash) VALUES (?, ?, ?, ?)`,
-		u.Email, u.Role, u.RolePinned, nullString(u.PasswordHash))
+	res, err := tx.ExecContext(ctx, `INSERT INTO users (email, role_id, password_hash) VALUES (?, ?, ?)`, u.Email,
+		u.Role, nullString(u.PasswordHash))
 	if isUnique(err) {
 		return 0, ErrAlreadyExists
 	}
@@ -133,15 +131,14 @@ func (d *DB) ListUsers(ctx context.Context, page, perPage int) (_ []User, _ int,
 }
 
 type updateUserRole struct {
-	ID     int64
-	Role   Role
-	Pinned bool
+	ID   int64
+	Role Role
 }
 
-func (d *DB) UpdateUserRole(ctx context.Context, id int64, role Role, pinned bool) (err error) {
+func (d *DB) UpdateUserRole(ctx context.Context, id int64, role Role) (err error) {
 	defer d.observe(&err)()
 
-	if _, err := submit[struct{}](ctx, d, cmdUpdateUserRole, updateUserRole{ID: id, Role: role, Pinned: pinned}); err != nil {
+	if _, err := submit[struct{}](ctx, d, cmdUpdateUserRole, updateUserRole{ID: id, Role: role}); err != nil {
 		return fmt.Errorf("update user role: %w", err)
 	}
 
@@ -168,8 +165,7 @@ func applyUpdateUserRole(a *applyCtx, p updateUserRole) (struct{}, error) {
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET role_id = ?, role_pinned = ? WHERE id = ?`, p.Role, p.Pinned,
-		p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET role_id = ? WHERE id = ?`, p.Role, p.ID); err != nil {
 		return struct{}{}, err
 	}
 
@@ -314,7 +310,7 @@ func keepPasswordAdmin(ctx context.Context, tx *sql.Tx, id int64) error {
 	return nil
 }
 
-const userColumns = `id, email, role_id, role_pinned, password_hash,
+const userColumns = `id, email, role_id, password_hash,
 	EXISTS (SELECT 1 FROM user_identities JOIN oidc ON oidc.issuer = user_identities.issuer
 		WHERE user_identities.user_id = users.id)`
 
@@ -337,7 +333,7 @@ func scanUser(row rowScanner) (User, error) {
 		hash sql.NullString
 	)
 
-	err := row.Scan(&u.ID, &u.Email, &u.Role, &u.RolePinned, &hash, &u.HasIdentity)
+	err := row.Scan(&u.ID, &u.Email, &u.Role, &hash, &u.HasIdentity)
 	u.PasswordHash = hash.String
 
 	return u, err
