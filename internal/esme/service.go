@@ -475,14 +475,17 @@ func (s *Service) syncFailed(ctx context.Context, operation string, err error) {
 
 	s.mu.Lock()
 	blocksBinds := !s.synced
+
 	warn := blocksBinds && !s.loggedSyncBlock
 	if warn {
 		s.loggedSyncBlock = true
 	}
 	s.mu.Unlock()
 
-	attrs := []any{slog.String("node", s.Node), slog.String("operation", operation), slog.Bool("blocks_binds", blocksBinds),
-		slog.Any("error", err)}
+	attrs := []any{
+		slog.String("node", s.Node), slog.String("operation", operation), slog.Bool("blocks_binds", blocksBinds),
+		slog.Any("error", err),
+	}
 	if warn {
 		s.Logger.WarnContext(ctx, "SMPP session reconciliation failed", attrs...)
 	} else {
@@ -497,6 +500,7 @@ func (s *Service) OnDecodeError(sess *smpp.Session, h smpp.Header, err error) {
 
 	if h.ID.IsBind() {
 		status, field := smpp.StatusSysErr, ""
+
 		var body *smpp.BodyError
 		if errors.As(err, &body) {
 			status, field = body.Status, body.Field
@@ -532,13 +536,16 @@ func (s *Service) logBindProtocolRefusal(sess *smpp.Session, h smpp.Header, stat
 	s.init()
 
 	remote := addrPortOf(sess.RemoteAddr())
+
 	key := ratelimit.Key(remote.Addr()) + "/" + h.ID.String() + "/" + reason + "/" + status.String() + "/" + field
 	if !s.bindLogs.Allow(key) {
 		return
 	}
 
-	attrs := []any{slog.Uint64("session", sess.ID()), slog.String("remote", remote.String()),
-		slog.String("bind", h.ID.String()), slog.String("status", status.String()), slog.String("reason", reason)}
+	attrs := []any{
+		slog.Uint64("session", sess.ID()), slog.String("remote", remote.String()),
+		slog.String("bind", h.ID.String()), slog.String("status", status.String()), slog.String("reason", reason),
+	}
 	if field != "" {
 		attrs = append(attrs, slog.String("field", field))
 	}

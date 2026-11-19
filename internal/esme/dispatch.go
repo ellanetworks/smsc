@@ -264,8 +264,10 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 }
 
 func deliverOutcome(status smpp.CommandStatus, err error) deliverResult {
-	var stateErr *smpp.StateError
-	var statusErr *smpp.StatusError
+	var (
+		stateErr  *smpp.StateError
+		statusErr *smpp.StatusError
+	)
 
 	switch {
 	case errors.Is(err, smpp.ErrClosed) || errors.As(err, &stateErr):

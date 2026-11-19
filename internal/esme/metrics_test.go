@@ -74,9 +74,11 @@ func TestDeliverMetricsRegistered(t *testing.T) {
 	m := NewMetrics(nil, func() bool { return false })
 	reg := prometheus.NewPedanticRegistry()
 	reg.MustRegister(m.Collectors()...)
+
 	if n, err := testutil.GatherAndCount(reg, "ellasmsc_smpp_deliver_attempts_total"); err != nil || n != 24 {
 		t.Errorf("deliver attempt series = %d, %v; want 24 series", n, err)
 	}
+
 	if n, err := testutil.GatherAndCount(reg, "ellasmsc_smpp_deliver_duration_seconds"); err != nil || n != 3 {
 		t.Errorf("deliver duration series = %d, %v; want 3 series", n, err)
 	}
@@ -97,6 +99,7 @@ func TestDeliverMetricsRetriesAndFinalOutcome(t *testing.T) {
 	checkDeliverDuration(t, m, db.NotificationReceipt, 0, 0)
 
 	calls := 0
+
 	env.bindAnswering(1, Receiver, env.esme, func(*smpp.DeliverSM) (smpp.CommandStatus, error) {
 		calls++
 		if calls < 3 {
@@ -105,12 +108,14 @@ func TestDeliverMetricsRetriesAndFinalOutcome(t *testing.T) {
 		}
 
 		c.advance(500 * time.Millisecond)
+
 		return smpp.StatusOK, nil
 	})
 
 	for i := range 3 {
 		s.dispatch(ctx)
 		s.sends.Wait()
+
 		if calls != i+1 {
 			t.Fatalf("deliver calls = %d, want %d", calls, i+1)
 		}
@@ -119,6 +124,7 @@ func TestDeliverMetricsRetriesAndFinalOutcome(t *testing.T) {
 			if got := testutil.ToFloat64(m.sent.WithLabelValues("receipt", "acknowledged")); got != 0 {
 				t.Fatalf("final acknowledgments after timeout = %v, want 0", got)
 			}
+
 			c.advance(retryDelay(i))
 		}
 	}
@@ -126,6 +132,7 @@ func TestDeliverMetricsRetriesAndFinalOutcome(t *testing.T) {
 	checkDeliverAttempts(t, m, db.NotificationReceipt, deliverTimeout, 2)
 	checkDeliverAttempts(t, m, db.NotificationReceipt, deliverAcknowledged, 1)
 	checkDeliverDuration(t, m, db.NotificationReceipt, 3, 60.5)
+
 	if got := testutil.ToFloat64(m.sent.WithLabelValues("receipt", "acknowledged")); got != 1 {
 		t.Errorf("final acknowledgments = %v, want 1", got)
 	}
@@ -147,18 +154,22 @@ func TestDeliverMetricsSeparateFromNotificationPersistence(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler),
 	}
 	s.init()
+
 	conn := newFakeConn()
 	sess := &Session{conn: conn}
 
 	s.send(t.Context(), sess, db.Notification{Type: db.NotificationSIMAnswer})
+
 	if n := len(conn.got); n != 0 {
 		t.Fatalf("unbuildable notification produced %d deliver_sm calls", n)
 	}
+
 	checkDeliverAttempts(t, m, db.NotificationSIMAnswer, deliverAcknowledged, 0)
 	checkDeliverDuration(t, m, db.NotificationSIMAnswer, 0, 0)
 
 	s.send(t.Context(), sess, db.Notification{Type: db.NotificationReceipt})
 	checkDeliverAttempts(t, m, db.NotificationReceipt, deliverAcknowledged, 1)
+
 	if got := testutil.ToFloat64(m.sent.WithLabelValues("receipt", "acknowledged")); got != 0 {
 		t.Errorf("final acknowledgments after failed persistence = %v, want 0", got)
 	}
@@ -176,10 +187,12 @@ func checkDeliverDuration(t *testing.T, m *Metrics, typ db.NotificationType, cou
 	t.Helper()
 
 	var sample dto.Metric
+
 	observer := m.deliverDuration.WithLabelValues(string(typ))
 	if err := observer.(prometheus.Metric).Write(&sample); err != nil {
 		t.Fatal(err)
 	}
+
 	if h := sample.GetHistogram(); h.GetSampleCount() != count || h.GetSampleSum() != seconds {
 		t.Errorf("deliver duration (%s) has count %d and sum %v, want %d and %v", typ, h.GetSampleCount(), h.GetSampleSum(), count, seconds)
 	}

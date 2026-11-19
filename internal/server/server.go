@@ -295,6 +295,7 @@ func (s *Server) unavailable() (int, string) {
 
 func (s *Server) serveAPI() {
 	addr := s.apiListener.Addr().String()
+
 	go func() {
 		var err error
 		if s.apiTLS != nil {
