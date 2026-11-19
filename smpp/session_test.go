@@ -119,6 +119,7 @@ func smscHooks() hooks {
 
 func TestBindRefusalLogAndInvalidSequenceHook(t *testing.T) {
 	var logs bytes.Buffer
+
 	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	refused := make(chan CommandStatus, 1)
 	_, p := pipe(t, roleSMSC, SessionConfig{Logger: logger}, submitOK, hooks{
@@ -132,6 +133,7 @@ func TestBindRefusalLogAndInvalidSequenceHook(t *testing.T) {
 	bind := &Bind{ID: CmdBindTransceiver, SystemID: "app", Password: "badpass", InterfaceVersion: InterfaceVersion}
 	p.send(bind, StatusOK, 1)
 	p.expect(CmdBindTransceiverResp, StatusBindFail, 1)
+
 	got := logs.String()
 	if strings.Count(got, "SMPP bind refused") != 1 || !strings.Contains(got, `"reason":"wrong password"`) ||
 		!strings.Contains(got, `"status":"ESME_RBINDFAIL"`) || strings.Contains(got, bind.Password) {
@@ -142,9 +144,11 @@ func TestBindRefusalLogAndInvalidSequenceHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	binary.BigEndian.PutUint32(b[12:], 0)
 	p.sendRaw(b)
 	p.expect(CmdGenericNack, StatusUnknownErr, 0)
+
 	select {
 	case status := <-refused:
 		if status != StatusUnknownErr {

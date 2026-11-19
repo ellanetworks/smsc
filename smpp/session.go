@@ -579,6 +579,7 @@ func (s *Session) bound(id CommandID, r *BindResp) {
 func (s *Session) handleRequest(h Header, body []byte) {
 	if h.Sequence == 0 || h.Sequence > MaxSequence {
 		s.nack(0, StatusUnknownErr)
+
 		if s.role == roleSMSC && h.ID.IsBind() && s.hooks.refused != nil {
 			s.hooks.refused(s, h, StatusUnknownErr)
 		}
