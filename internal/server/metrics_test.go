@@ -51,6 +51,8 @@ func TestMetrics(t *testing.T) {
 		"ellasmsc_peer_requests_total",
 		"ellasmsc_peer_request_duration_seconds",
 		"ellasmsc_hss_peers",
+		"ellasmsc_smpp_deliver_attempts_total",
+		"ellasmsc_smpp_deliver_duration_seconds",
 	} {
 		if _, ok := families[name]; !ok {
 			t.Errorf("%s is missing", name)

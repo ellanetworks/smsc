@@ -14,12 +14,27 @@ type PendingCounter interface {
 
 const pendingTimeout = 2 * time.Second
 
+type deliverResult string
+
+const (
+	deliverAcknowledged deliverResult = "acknowledged"
+	deliverRejected     deliverResult = "permanent_rejection"
+	deliverRefused      deliverResult = "temporary_refusal"
+	deliverTimeout      deliverResult = "timeout"
+	deliverNack         deliverResult = "generic_nack"
+	deliverClosed       deliverResult = "session_closed"
+	deliverCanceled     deliverResult = "canceled"
+	deliverError        deliverResult = "error"
+)
+
 type Metrics struct {
-	sessions *prometheus.GaugeVec
-	binds    *prometheus.CounterVec
-	sent     *prometheus.CounterVec
-	submit   prometheus.Histogram
-	pending  *pendingCollector
+	sessions        *prometheus.GaugeVec
+	binds           *prometheus.CounterVec
+	sent            *prometheus.CounterVec
+	submit          prometheus.Histogram
+	deliverAttempts *prometheus.CounterVec
+	deliverDuration *prometheus.HistogramVec
+	pending         *pendingCollector
 }
 
 func NewMetrics(store PendingCounter, leading func() bool) *Metrics {
@@ -42,6 +57,15 @@ func NewMetrics(store PendingCounter, leading func() bool) *Metrics {
 			Help:    "Time from a submit_sm read to its submit_sm_resp written.",
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
 		}),
+		deliverAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "ellasmsc_smpp_deliver_attempts_total",
+			Help: "Completed deliver_sm attempts, including retries, by notification type and result.",
+		}, []string{"type", "result"}),
+		deliverDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "ellasmsc_smpp_deliver_duration_seconds",
+			Help:    "Duration of a deliver_sm attempt until a response or error, by notification type.",
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 17),
+		}, []string{"type"}),
 		pending: &pendingCollector{
 			store:   store,
 			leading: leading,
@@ -58,25 +82,27 @@ func NewMetrics(store PendingCounter, leading func() bool) *Metrics {
 	m.binds.WithLabelValues("accepted")
 	m.binds.WithLabelValues("rejected")
 
-	for _, t := range []db.NotificationType{db.NotificationReceipt, db.NotificationSIMAnswer} {
+	for _, t := range []db.NotificationType{db.NotificationReceipt, db.NotificationSIMAnswer, db.NotificationMO} {
 		for _, r := range []db.NotificationResult{
 			db.NotificationAcknowledged, db.NotificationRejected, db.NotificationExpired, db.NotificationNoUserData,
 		} {
 			m.sent.WithLabelValues(string(t), string(r))
 		}
-	}
 
-	for _, r := range []db.NotificationResult{
-		db.NotificationAcknowledged, db.NotificationRejected, db.NotificationExpired, db.NotificationNoUserData,
-	} {
-		m.sent.WithLabelValues(string(db.NotificationMO), string(r))
+		for _, r := range []deliverResult{
+			deliverAcknowledged, deliverRejected, deliverRefused, deliverTimeout, deliverNack, deliverClosed, deliverCanceled, deliverError,
+		} {
+			m.deliverAttempts.WithLabelValues(string(t), string(r))
+		}
+
+		m.deliverDuration.WithLabelValues(string(t))
 	}
 
 	return m
 }
 
 func (m *Metrics) Collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.sessions, m.binds, m.sent, m.submit, m.pending}
+	return []prometheus.Collector{m.sessions, m.binds, m.sent, m.submit, m.deliverAttempts, m.deliverDuration, m.pending}
 }
 
 func (m *Metrics) session(t BindType, delta float64) {
@@ -107,6 +133,13 @@ func (m *Metrics) notified(t db.NotificationType, r db.NotificationResult, n int
 func (m *Metrics) submitted(d time.Duration) {
 	if m != nil {
 		m.submit.Observe(d.Seconds())
+	}
+}
+
+func (m *Metrics) deliverAttempt(t db.NotificationType, result deliverResult, elapsed time.Duration) {
+	if m != nil {
+		m.deliverAttempts.WithLabelValues(string(t), string(result)).Inc()
+		m.deliverDuration.WithLabelValues(string(t)).Observe(elapsed.Seconds())
 	}
 }
 

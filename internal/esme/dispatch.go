@@ -232,14 +232,16 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 	s.mu.Unlock()
 
 	ctx, span := s.startSpan(ctx, trace.SpanKindClient, smpp.CmdDeliverSM, sess, tracing.Links(n.Message.TraceParent)...)
+	started := s.Now()
 	status, err := conn.Deliver(ctx, d)
+	elapsed := s.Now().Sub(started)
+	result := deliverOutcome(status, err)
+	s.Metrics.deliverAttempt(n.Type, result, elapsed)
 
 	endDeliverSpan(span, status, err)
 
-	var stateErr *smpp.StateError
-
-	switch {
-	case errors.Is(err, smpp.ErrClosed) || errors.As(err, &stateErr):
+	switch result {
+	case deliverClosed:
 		log.DebugContext(ctx, "deliver_sm on a session that ended", slog.Any("error", err))
 
 		s.mu.Lock()
@@ -247,17 +249,41 @@ func (s *Service) send(ctx context.Context, sess *Session, n db.Notification) {
 		s.mu.Unlock()
 
 		s.giveBack(ctx, n)
-	case err != nil:
+	case deliverTimeout, deliverCanceled, deliverNack, deliverError:
 		log.DebugContext(ctx, "deliver_sm failed", slog.Any("error", err))
 		s.retry(ctx, log, n)
-	case status == smpp.StatusOK:
+	case deliverAcknowledged:
 		s.close(ctx, log, n, db.NotificationAcknowledged)
-	case status == smpp.StatusXPAppn || status == smpp.StatusXRAppn:
+	case deliverRejected:
 		log.InfoContext(ctx, "deliver_sm rejected", slog.String("status", status.String()))
 		s.close(ctx, log, n, db.NotificationRejected)
 	default:
 		log.DebugContext(ctx, "deliver_sm refused for now", slog.String("status", status.String()))
 		s.retry(ctx, log, n)
+	}
+}
+
+func deliverOutcome(status smpp.CommandStatus, err error) deliverResult {
+	var stateErr *smpp.StateError
+	var statusErr *smpp.StatusError
+
+	switch {
+	case errors.Is(err, smpp.ErrClosed) || errors.As(err, &stateErr):
+		return deliverClosed
+	case errors.Is(err, smpp.ErrResponseTimeout) || errors.Is(err, context.DeadlineExceeded):
+		return deliverTimeout
+	case errors.Is(err, context.Canceled):
+		return deliverCanceled
+	case errors.As(err, &statusErr) && statusErr.Command == smpp.CmdGenericNack:
+		return deliverNack
+	case err != nil:
+		return deliverError
+	case status == smpp.StatusOK:
+		return deliverAcknowledged
+	case status == smpp.StatusXPAppn || status == smpp.StatusXRAppn:
+		return deliverRejected
+	default:
+		return deliverRefused
 	}
 }
 
