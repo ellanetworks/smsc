@@ -42,6 +42,7 @@ jobs:
       - name: Render standalone, high availability and Multus
         run: |
           helm template ella-smsc charts/ella-smsc --namespace ella > /dev/null
+          helm template ella-smsc charts/ella-smsc --namespace ella --set ingress.enabled=true --set ingress.host=ella.example.com > /dev/null
           helm template ella-smsc charts/ella-smsc --namespace ella --set replicas=3 > /dev/null
           helm template ella-smsc charts/ella-smsc --namespace ella \
             --set diameter.networkAttachment.enabled=true \

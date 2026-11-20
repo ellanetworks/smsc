@@ -69,6 +69,11 @@ See [Install](https://docs.ellanetworks.com/smsc/how_to/install/) and [Deploy a 
 | `service.type` | `ClusterIP` | Type of the `<release>` Service, for the API on port `5010` and SMPP. |
 | `service.externalTrafficPolicy` | | External traffic policy, when `service.type` is `NodePort` or `LoadBalancer`. |
 | `service.annotations` | `{}` | Annotations of the `<release>` Service. |
+| `ingress.enabled` | `false` | Create an Ingress that exposes the API and UI. |
+| `ingress.className` | | IngressClass name. Empty uses the cluster default. |
+| `ingress.host` | | Host name of the API and UI. Required when the Ingress is enabled. |
+| `ingress.annotations` | `{}` | Ingress annotations, e.g. for cert-manager. |
+| `ingress.tls` | `[]` | Ingress TLS entries, each with `secretName` and `hosts`. |
 | `networkPolicy.enabled` | `true` | Create a NetworkPolicy that admits the API, Diameter and SMPP from anywhere, and the cluster port from the other pods only. |
 | `serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor for `/api/v1/metrics` on the `<release>` Service. |
 | `serviceMonitor.interval` | `30s` | Scrape interval. |
