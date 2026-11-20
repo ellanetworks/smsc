@@ -1,0 +1,82 @@
+image:
+  repository: ghcr.io/ellanetworks/ella-smsc
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+clusterDomain: cluster.local
+
+replicas: 1
+
+cluster:
+  secretName: ""
+
+config:
+  logging:
+    level: info
+
+diameter:
+  service:
+    enabled: true
+    type: ClusterIP
+    annotations: {}
+  networkAttachment:
+    enabled: false
+    create: true
+    name: ""
+    interface: diameter
+    master: eth1
+    mode: bridge
+    ipam: {}
+
+smpp:
+  enabled: false
+  tls:
+    secretName: ""
+
+service:
+  type: ClusterIP
+  externalTrafficPolicy: ""
+  annotations: {}
+
+networkPolicy:
+  enabled: true
+
+persistence:
+  size: 10Gi
+  storageClassName: ""
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 256Mi
+  limits:
+    cpu: "4"
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+tests:
+  image:
+    repository: registry.access.redhat.com/ubi10/ubi-minimal
+    tag: "10.2"

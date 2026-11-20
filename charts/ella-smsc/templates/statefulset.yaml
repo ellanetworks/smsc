@@ -1,0 +1,184 @@
+{{- include "ella-smsc.validate" . }}
+{{- $ha := include "ella-smsc.ha" . }}
+{{- $nad := .Values.diameter.networkAttachment }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ella-smsc.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ella-smsc.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  serviceName: {{ include "ella-smsc.headlessServiceName" . }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "ella-smsc.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ella-smsc.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include "ella-smsc.config" . | sha256sum }}
+        {{- if $nad.enabled }}
+        k8s.v1.cni.cncf.io/networks: {{ list (dict "name" (include "ella-smsc.networkAttachmentName" .) "interface" $nad.interface) | toJson | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ella-smsc.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 50
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or $ha .Values.affinity }}
+      affinity:
+        {{- if .Values.affinity }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "ella-smsc.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+        {{- end }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: smsc
+          image: {{ include "ella-smsc.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["smsc"]
+          args: ["--config", "/config/smsc.yaml"]
+          terminationMessagePolicy: FallbackToLogsOnError
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SMSC_DIAMETER_HOST_LABEL
+              value: $(POD_NAME)
+            {{- if $ha }}
+            - name: SMSC_CLUSTER_ADVERTISE
+              value: {{ printf "$(POD_NAME).%s.%s.svc.%s:7000" (include "ella-smsc.headlessServiceName" .) .Release.Namespace .Values.clusterDomain }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 5010
+            - name: sctp-diameter
+              containerPort: 3868
+              protocol: SCTP
+            {{- if .Values.smpp.enabled }}
+            - name: tcp-smpp
+              containerPort: 2775
+            {{- end }}
+            {{- if $ha }}
+            - name: tcp-cluster
+              containerPort: 7000
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /api/v1/livez
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 150
+          readinessProbe:
+            httpGet:
+              path: /api/v1/readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/livez
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            {{- if $ha }}
+            - name: cluster-secret
+              mountPath: /secrets/cluster
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.smpp.enabled .Values.smpp.tls.secretName }}
+            - name: smpp-tls
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ella-smsc.fullname" . }}
+        - name: tmp
+          emptyDir: {}
+        {{- if $ha }}
+        - name: cluster-secret
+          secret:
+            secretName: {{ include "ella-smsc.clusterSecretName" . }}
+            defaultMode: 0440
+        {{- end }}
+        {{- if and .Values.smpp.enabled .Values.smpp.tls.secretName }}
+        - name: smpp-tls
+          secret:
+            secretName: {{ .Values.smpp.tls.secretName }}
+            defaultMode: 0440
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ella-smsc.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ella-smsc.labels" . | nindent 4 }}
+    ellanetworks.com/service: api
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if and .Values.service.externalTrafficPolicy (ne .Values.service.type "ClusterIP") }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    {{- include "ella-smsc.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: 5010
+      targetPort: http
+    {{- if .Values.smpp.enabled }}
+    - name: tcp-smpp
+      protocol: TCP
+      port: 2775
+      targetPort: tcp-smpp
+    {{- end }}

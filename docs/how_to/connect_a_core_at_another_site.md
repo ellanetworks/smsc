@@ -69,11 +69,11 @@ kubectl -n kube-system get service kube-dns-site
 
 At the core's site, forward `cluster.local` to `10.2.0.53`.
 
-Check that the core's site resolves `ella-smsc-0.ella-smsc-internal.ella.svc.cluster.local`.
+Check that the core's site resolves `ella-smsc-0.ella-smsc-headless.ella.svc.cluster.local`.
 
 ## 5. Add Ella SMSC to the core and the IMS
 
-Follow [Integrate with Ella Core](integrate_with_ella_core.md), step 3. For the address of each node, enter its host name, e.g. `ella-smsc-0.ella-smsc-internal.ella.svc.cluster.local`, and enter its **Diameter Host** from the **Cluster** page.
+Follow [Integrate with Ella Core](integrate_with_ella_core.md), step 3. For the address of each node, enter its host name, e.g. `ella-smsc-0.ella-smsc-headless.ella.svc.cluster.local`, and enter its **Diameter Host** from the **Cluster** page.
 
 For SMS over IP, follow [Integrate with Ella IMS](integrate_with_ella_ims.md), and add each node as an SGd peer of the IP-SM-GW the same way.
 

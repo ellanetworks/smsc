@@ -1,0 +1,12 @@
+{{- $nad := .Values.diameter.networkAttachment }}
+{{- if and $nad.enabled $nad.create }}
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: {{ include "ella-smsc.networkAttachmentName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ella-smsc.labels" . | nindent 4 }}
+spec:
+  config: {{ dict "cniVersion" "0.3.1" "name" (include "ella-smsc.networkAttachmentName" .) "type" "macvlan" "master" $nad.master "mode" $nad.mode "ipam" $nad.ipam | toJson | quote }}
+{{- end }}

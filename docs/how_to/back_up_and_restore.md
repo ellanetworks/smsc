@@ -108,17 +108,17 @@ Use this procedure when a cluster lost a majority of its nodes, or a standalone 
 
 === "Kubernetes"
 
-    1. Delete the cluster and its volumes:
+    1. Delete the release and its volumes:
 
         ```shell
-        kubectl delete -k smsc/k8s/ha
+        helm uninstall ella-smsc -n ella
         kubectl delete pvc -n ella -l app.kubernetes.io/name=ella-smsc
         ```
 
-    2. Deploy it again:
+    2. Deploy it again, with the same values:
 
         ```shell
-        kubectl apply -k smsc/k8s/ha
+        helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --set replicas=3
         ```
 
     3. Initialize it with a temporary user, as in [Deploy a High Availability Cluster](deploy_ha_cluster.md), step 2.

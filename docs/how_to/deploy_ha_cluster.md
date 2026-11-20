@@ -41,15 +41,15 @@ Ella SMSC can be deployed as a high-availability cluster to provide redundancy a
 
     ## Prerequisites
 
-    - A Kubernetes cluster with three nodes meeting the standard [system requirements](../reference/system_reqs.md).
+    - A Kubernetes cluster with three nodes meeting the [Kubernetes requirements](../reference/system_reqs.md#kubernetes).
 
     ## 1. Deploy
 
     ```shell
-    git clone --depth 1 https://github.com/ellanetworks/smsc.git
     kubectl create namespace ella
+    kubectl label namespace ella pod-security.kubernetes.io/enforce=restricted
     kubectl create secret generic ella-smsc-cluster -n ella --from-literal=secret="$(openssl rand -base64 32)"
-    kubectl apply -k smsc/k8s/ha
+    helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --set replicas=3
     ```
 
     ## 2. Initialize
@@ -62,7 +62,7 @@ Ella SMSC can be deployed as a high-availability cluster to provide redundancy a
 
     ## 3. Connect the Diameter peers
 
-    Connect every Diameter peer to every pod, at `ella-smsc-<n>.ella-smsc-internal.ella.svc.cluster.local:3868`, with the pod's Diameter host. The **Cluster** page lists each node's **Diameter Host**.
+    Connect every Diameter peer to every pod, at `ella-smsc-<n>.ella-smsc-headless.ella.svc.cluster.local:3868`, with the pod's Diameter host. The **Cluster** page lists each node's **Diameter Host**.
 
     ## 4. Verify
 

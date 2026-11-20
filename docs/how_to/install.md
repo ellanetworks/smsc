@@ -121,28 +121,28 @@ Choose one of the installation methods below.
 
 === "Kubernetes"
 
-    Ensure your Kubernetes cluster nodes meet the [system requirements](../reference/system_reqs.md).
+    Ensure your Kubernetes cluster meets the [Kubernetes requirements](../reference/system_reqs.md#kubernetes).
 
-    Download the Ella SMSC manifests:
+    Create the namespace:
 
     ```shell
-    git clone --depth 1 https://github.com/ellanetworks/smsc.git
+    kubectl create namespace ella
+    kubectl label namespace ella pod-security.kubernetes.io/enforce=restricted
     ```
 
     Deploy Ella SMSC:
 
     ```shell
-    kubectl create namespace ella
-    kubectl apply -k smsc/k8s
+    helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella
     ```
 
     Open the UI and API on your machine:
 
     ```shell
-    kubectl port-forward -n ella svc/ella-smsc 5010:5010
+    kubectl port-forward -n ella service/ella-smsc 5010:5010
     ```
 
-    Diameter is at `ella-smsc-diameter.ella.svc.cluster.local:3868`.
+    Diameter is at `ella-smsc-diameter.ella.svc.cluster.local:3868`. See the [chart reference](https://github.com/ellanetworks/smsc/tree/main/charts/ella-smsc) for all values, such as Diameter on a Multus network and SMPP.
 
 Ella SMSC's UI and API are at `http://<host-ip>:5010`. Open the UI and create the first user.
 

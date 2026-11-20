@@ -32,10 +32,10 @@ description: Upgrade Ella SMSC to the next release, on a standalone node or a hi
 
     === "Kubernetes"
 
-        1. Set the new image:
+        1. Upgrade the release to the new chart version:
 
             ```shell
-            kubectl set image statefulset/ella-smsc -n ella smsc=ghcr.io/ellanetworks/ella-smsc:<version>
+            helm upgrade ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --version <version> --reset-then-reuse-values
             ```
 
         2. Wait for the rollout:
@@ -63,10 +63,10 @@ description: Upgrade Ella SMSC to the next release, on a standalone node or a hi
 
     === "Kubernetes"
 
-        1. Set the new image:
+        1. Upgrade the release to the new chart version:
 
             ```shell
-            kubectl set image statefulset/ella-smsc -n ella smsc=ghcr.io/ellanetworks/ella-smsc:<version>
+            helm upgrade ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --version <version> --reset-then-reuse-values
             ```
 
         2. Wait for the rollout:

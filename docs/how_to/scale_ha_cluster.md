@@ -25,10 +25,10 @@ This guide walks through adding a node to an existing Ella SMSC high-availabilit
 === "Kubernetes"
 
     1. Add a Kubernetes node for the new pod.
-    2. Add a pod:
+    2. Add a pod, with the chart version that is deployed, shown by `helm list -n ella`:
 
         ```shell
-        kubectl scale statefulset ella-smsc -n ella --replicas=4
+        helm upgrade ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --version <version> --reuse-values --set replicas=4
         ```
 
     3. Connect every Diameter peer to the new pod.
@@ -51,7 +51,7 @@ This guide walks through adding a node to an existing Ella SMSC high-availabilit
     4. Remove its pod and volume:
 
         ```shell
-        kubectl scale statefulset ella-smsc -n ella --replicas=3
+        helm upgrade ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --version <version> --reuse-values --set replicas=3
         kubectl delete pvc data-ella-smsc-3 -n ella
         ```
 

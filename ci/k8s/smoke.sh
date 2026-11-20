@@ -12,7 +12,6 @@ NET="${SIGNALLING_NET:-192.168.252}"
 SUBNET="${NET}.0/24"
 IP_RANGE="${NET}.128/25"
 GATEWAY="${NET}.1"
-SHIPPED_IP=192.168.252.7
 SMSC_IP="${NET}.7"
 NS=ella
 
@@ -84,7 +83,7 @@ log_in() {
   jwt="$(api /auth/login -X POST -H 'Content-Type: application/json' -d "${credentials}" | jq -er .result.token)" \
     || fail "cannot log in as ${ADMIN_EMAIL}"
   TOKEN="${jwt}"
-  TOKEN="$(api /users/me/api-tokens -X POST -H 'Content-Type: application/json' -d '{"name": "smoke test"}' \
+  TOKEN="$(api /users/me/api-tokens -X POST -H 'Content-Type: application/json' -d "{\"name\": \"smoke test ${SECONDS}\"}" \
     | jq -er .result.token)" || fail "cannot create an API token"
 }
 
@@ -112,22 +111,44 @@ wait_api() {
   fail "the API does not answer at ${SMSC_ADDR}:${API_PORT}"
 }
 
+create_namespace() {
+  kubectl create namespace "${NS}"
+  kubectl label namespace "${NS}" pod-security.kubernetes.io/enforce=restricted
+}
+
+install() {
+  docker tag "$1" "ella-smsc:$2"
+  kind load docker-image "ella-smsc:$2" --name "${CLUSTER}"
+  local values=(--set image.repository=ella-smsc --set "image.tag=$2")
+  case "${MODE}" in
+  multus)
+    values+=(--set diameter.networkAttachment.enabled=true --set diameter.networkAttachment.master=eth1
+      --set-json "diameter.networkAttachment.ipam={\"type\":\"static\",\"addresses\":[{\"address\":\"${SMSC_IP}/24\"}]}"
+      --set service.type=NodePort --set service.externalTrafficPolicy=Local)
+    ;;
+  pod-network)
+    values+=(--set service.type=NodePort --set service.externalTrafficPolicy=Local --set diameter.service.type=NodePort)
+    ;;
+  ha)
+    values+=(--set replicas=3)
+    ;;
+  esac
+  helm upgrade --install ella-smsc "${ROOT}/charts/ella-smsc" --namespace "${NS}" "${values[@]}"
+}
+
 deploy() {
-  docker tag "$1" ella-smsc:ci
-  kind load docker-image ella-smsc:ci --name "${CLUSTER}"
-  kubectl kustomize "${ROOT}/ci/k8s/${MODE}" | sed "s/${SHIPPED_IP//./\\.}/${SMSC_IP}/g" | kubectl apply -f -
   local old=""
-  if [ "${2:-}" = restart ]; then
+  if [ "${3:-}" = upgrade ]; then
     old="$(k get pod ella-smsc-0 -o jsonpath='{.metadata.uid}')"
-    k rollout restart statefulset/ella-smsc
   fi
+  install "$1" "$2"
   wait_ready "${old}"
 
   if [ "${MODE}" = multus ]; then
     SMSC_ADDR="${SMSC_IP}"
   else
     SMSC_ADDR="$(kubectl get node "${NODE}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
-    DIAMETER_PORT="$(node_port ella-smsc-diameter diameter)"
+    DIAMETER_PORT="$(node_port ella-smsc-diameter sctp-diameter)"
     API_PORT="$(node_port ella-smsc http)"
   fi
   wait_api
@@ -194,18 +215,16 @@ check_members() {
   done
   echo "${cluster}" | jq -c '.result.members[] | {node_id, address, diameter_host, suffrage, healthy}'
   [ "${voters}" = true ] || fail "the cluster does not have the three pods as voters"
-  echo "${cluster}" | jq -e '.result.members | all(.address | test("^ella-smsc-[0-2]\\.ella-smsc-internal\\."))' >/dev/null \
+  echo "${cluster}" | jq -e '.result.members | all(.address | test("^ella-smsc-[0-2]\\.ella-smsc-headless\\."))' >/dev/null \
     || fail "a member does not advertise its per-pod DNS name"
   echo "${cluster}" | jq -r '[.result.members[].node_id] | sort | join(" ")'
 }
 
 ha_smoke() {
   step "Deploy ${IMAGE}"
-  docker tag "${IMAGE}" ella-smsc:ci
-  kind load docker-image ella-smsc:ci --name "${CLUSTER}"
-  kubectl apply -k "${ROOT}/ci/k8s/namespace"
+  create_namespace
   k create secret generic ella-smsc-cluster --from-literal=secret="$(head -c 32 /dev/urandom | base64)"
-  kubectl apply -k "${ROOT}/ci/k8s/ha"
+  install "${IMAGE}" ci
   k get pods -o wide
   endstep
 
@@ -228,6 +247,10 @@ ha_smoke() {
     forward "${pod}"
     [ "$(api /cluster | jq -r .result.cluster_id)" = "${cluster_id}" ] || fail "${pod} is in another cluster"
   done
+  endstep
+
+  step "Run the chart tests"
+  helm test ella-smsc --namespace "${NS}" --logs
   endstep
 
   step "Rolling restart"
@@ -260,12 +283,7 @@ ha_smoke() {
   endstep
 }
 
-step "Lint the manifests"
 version="$(cat "${ROOT}/version/VERSION")"
-for dir in k8s k8s/ha k8s/examples/multus ci/k8s/multus ci/k8s/pod-network ci/k8s/ha; do
-  kubectl kustomize "${ROOT}/${dir}" | kubeconform -strict -summary -skip NetworkAttachmentDefinition
-done
-endstep
 
 step "Create the cluster"
 if [ "${MODE}" = multus ]; then
@@ -319,7 +337,9 @@ fi
 if [ -n "${PREVIOUS_IMAGE}" ]; then
   step "Deploy the previous release, ${PREVIOUS_IMAGE}"
   docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1 || docker pull "${PREVIOUS_IMAGE}"
-  deploy "${PREVIOUS_IMAGE}"
+  create_namespace
+  deploy "${PREVIOUS_IMAGE}" previous
+  log_in
   api /status
   echo
   BEFORE_UPGRADE="$(api /messages -X POST -H 'Content-Type: application/json' \
@@ -327,14 +347,15 @@ if [ -n "${PREVIOUS_IMAGE}" ]; then
   endstep
 
   step "Upgrade to ${IMAGE}"
-  deploy "${IMAGE}" restart
+  deploy "${IMAGE}" ci upgrade
   log_in
   api "/messages/${BEFORE_UPGRADE}/content" | jq -e '.result.text == "stored before the upgrade"' >/dev/null \
     || fail "the message stored before the upgrade is gone"
   endstep
 else
   step "Deploy ${IMAGE}"
-  deploy "${IMAGE}"
+  create_namespace
+  deploy "${IMAGE}" ci
   log_in
   endstep
 fi
@@ -354,6 +375,10 @@ api_port="$(node_port ella-smsc http)"
 running="$(curl -fsS --max-time 10 "http://${node_ip}:${api_port}/api/v1/status" | jq -r .result.version)"
 [ "${running}" = "${version}" ] || fail "the SMSC reports version ${running}, want ${version}"
 echo "version ${running} at ${node_ip}:${api_port}"
+endstep
+
+step "Run the chart tests"
+helm test ella-smsc --namespace "${NS}" --logs
 endstep
 
 step "Check the Diameter address"

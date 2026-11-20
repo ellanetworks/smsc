@@ -17,7 +17,7 @@ Defaults are in parentheses. SMPP listens only when the configuration file has a
 
 Ella SMSC accepts any Diameter peer that supports S6c or SGd. It connects to the configured peers, and reconnects after 1 to 30 seconds. In a cluster, every node connects to the configured peers, and every other peer connects to every node.
 
-On Kubernetes, the Diameter address of node `<n>` is `ella-smsc-<n>.ella-smsc-internal.<namespace>.svc.cluster.local`.
+On Kubernetes, the Diameter address of node `<n>` is `ella-smsc-<n>.ella-smsc-headless.<namespace>.svc.cluster.local`.
 
 ## Diameter identity
 

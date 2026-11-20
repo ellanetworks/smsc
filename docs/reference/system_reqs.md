@@ -15,3 +15,17 @@ Ella SMSC runs on Linux. It supports **amd64** and **arm64** architectures.
 | **Kernel** | SCTP, for Diameter | SCTP, for Diameter |
 
 Each column is sized for 20 short messages per subscriber per day, kept for 30 days, with at least 7 times the busiest hour's rate to spare. The 100,000 subscriber host is the one of the [performance reference](performance.md).
+
+## Kubernetes
+
+Ella SMSC should work on most Kubernetes distributions. It has been validated on **GKE**, **RKE2**, and **kind**.
+
+| Requirement | Value |
+|-------------|-------|
+| **Kubernetes** | 1.30 or later |
+| **Helm** | 3.8 or later |
+| **Nodes** | Meet the host requirements above |
+| **Diameter network** | A CNI plugin that supports SCTP. For `diameter.networkAttachment`, [Multus](https://github.com/k8snetworkplumbingwg/multus-cni) with the `macvlan` [CNI plugin](https://github.com/containernetworking/plugins) and an IPAM plugin |
+| **Pod Security** | `restricted` |
+| **Storage** | A default StorageClass with `ReadWriteOnce` volumes, one per pod |
+| **High availability** | Three nodes |

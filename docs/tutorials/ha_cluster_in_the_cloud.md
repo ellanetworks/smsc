@@ -14,12 +14,12 @@ In this tutorial, you run Ella SMSC as a three-node cluster on managed Kubernete
 === "Google Cloud"
 
     - A Google Cloud project and the `gcloud` CLI with the `gke-gcloud-auth-plugin` component
-    - `kubectl` and `git`.
+    - `kubectl` and `helm`.
 
 === "AWS"
 
     - An AWS account and the `aws` CLI
-    - `eksctl`, `kubectl` and `git`.
+    - `eksctl`, `kubectl` and `helm`.
 
 ## 1. Create a Kubernetes cluster
 
@@ -68,10 +68,10 @@ In this tutorial, you run Ella SMSC as a three-node cluster on managed Kubernete
 ## 2. Deploy Ella SMSC
 
 ```shell
-git clone --depth 1 https://github.com/ellanetworks/smsc.git
 kubectl create namespace ella
+kubectl label namespace ella pod-security.kubernetes.io/enforce=restricted
 kubectl create secret generic ella-smsc-cluster -n ella --from-literal=secret="$(openssl rand -base64 32)"
-kubectl apply -k smsc/k8s/ha
+helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --set replicas=3
 kubectl get pods -n ella --watch
 ```
 
@@ -119,7 +119,7 @@ Open the leader's **Cluster** page as in step 4: all three nodes are **Healthy**
 ## 7. Clean up
 
 ```shell
-kubectl delete -k smsc/k8s/ha
+helm uninstall ella-smsc -n ella
 kubectl delete pvc -n ella --all
 kubectl wait --for=delete pv --all --timeout=5m
 ```

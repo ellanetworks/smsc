@@ -58,18 +58,10 @@ func TestPlatformsWaitForTheShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var statefulSet struct {
-		Spec struct {
-			Template struct {
-				Spec struct {
-					TerminationGracePeriodSeconds int `yaml:"terminationGracePeriodSeconds"`
-				} `yaml:"spec"`
-			} `yaml:"template"`
-		} `yaml:"spec"`
-	}
-
-	if err := yaml.Unmarshal(readRepoFile(t, "k8s/base/smsc-statefulset.yaml"), &statefulSet); err != nil {
-		t.Fatal(err)
+	grace := regexp.MustCompile(`terminationGracePeriodSeconds: (\d+)`).FindSubmatch(
+		readRepoFile(t, "charts/ella-smsc/templates/statefulset.yaml"))
+	if grace == nil {
+		t.Fatal("charts/ella-smsc/templates/statefulset.yaml: no terminationGracePeriodSeconds")
 	}
 
 	compose := regexp.MustCompile(`stop_grace_period: (\S+)`).FindSubmatch(readRepoFile(t, "docs/how_to/install.md"))
@@ -80,9 +72,8 @@ func TestPlatformsWaitForTheShutdown(t *testing.T) {
 	got := map[string]time.Duration{
 		"snap/snapcraft.yaml stop-timeout": parseDuration(t, snap.Apps["smscd"].StopTimeout),
 		"rockcraft.yaml kill-delay":        parseDuration(t, rock.Services["ella-smsc"].KillDelay),
-		"k8s/base/smsc-statefulset.yaml terminationGracePeriodSeconds": time.Duration(
-			statefulSet.Spec.Template.Spec.TerminationGracePeriodSeconds) * time.Second,
-		"docs/how_to/install.md stop_grace_period": parseDuration(t, string(compose[1])),
+		"charts/ella-smsc/templates/statefulset.yaml terminationGracePeriodSeconds": parseDuration(t, string(grace[1])+"s"),
+		"docs/how_to/install.md stop_grace_period":                                  parseDuration(t, string(compose[1])),
 	}
 
 	for name, d := range got {

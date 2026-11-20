@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "image",
+    "replicas",
+    "cluster",
+    "diameter",
+    "smpp",
+    "service",
+    "persistence"
+  ],
+  "properties": {
+    "image": {
+      "type": "object",
+      "description": "Ella SMSC container image.",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Image repository.",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag. Defaults to the chart appVersion."
+        },
+        "digest": {
+          "type": "string",
+          "description": "Image digest. Takes precedence over tag.",
+          "pattern": "^(sha256:[a-f0-9]{64})?$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "description": "Image pull policy.",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      },
+      "required": [
+        "repository"
+      ]
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "description": "Image pull secrets."
+    },
+    "nameOverride": {
+      "type": "string",
+      "description": "Overrides the chart name."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Overrides the resource name prefix."
+    },
+    "clusterDomain": {
+      "type": "string",
+      "description": "Kubernetes cluster domain, used in the cluster addresses of the pods.",
+      "minLength": 1
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "not": {
+        "const": 2
+      },
+      "description": "Number of pods. 1 deploys a standalone node. 3 or more deploy a high-availability cluster, with one pod per Kubernetes node."
+    },
+    "cluster": {
+      "type": "object",
+      "description": "High-availability cluster settings.",
+      "properties": {
+        "secretName": {
+          "type": "string",
+          "description": "Secret that holds the cluster secret in its secret key. Defaults to <release>-cluster."
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "Ella SMSC configuration file content, merged over the settings the chart manages."
+    },
+    "diameter": {
+      "type": "object",
+      "description": "Diameter network of the pods.",
+      "properties": {
+        "service": {
+          "type": "object",
+          "description": "Service that exposes Diameter on a standalone node on the pod network.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Create the Service."
+            },
+            "type": {
+              "type": "string",
+              "description": "Service type.",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ]
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Service annotations."
+            }
+          }
+        },
+        "networkAttachment": {
+          "type": "object",
+          "description": "Multus network for Diameter, instead of the pod network.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Attach the pods to the network and use it for Diameter."
+            },
+            "create": {
+              "type": "boolean",
+              "description": "Create a macvlan NetworkAttachmentDefinition. Set to false to use your own."
+            },
+            "name": {
+              "type": "string",
+              "description": "Name of the NetworkAttachmentDefinition."
+            },
+            "interface": {
+              "type": "string",
+              "description": "Name of the Diameter interface in the pod.",
+              "minLength": 1
+            },
+            "master": {
+              "type": "string",
+              "description": "Host interface that connects to the Diameter peers.",
+              "minLength": 1
+            },
+            "mode": {
+              "type": "string",
+              "description": "macvlan mode.",
+              "enum": [
+                "bridge",
+                "private",
+                "vepa",
+                "passthru"
+              ]
+            },
+            "ipam": {
+              "type": "object",
+              "description": "CNI IPAM configuration of the network."
+            }
+          }
+        }
+      }
+    },
+    "smpp": {
+      "type": "object",
+      "description": "SMPP listener for ESMEs.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Listen for SMPP."
+        },
+        "tls": {
+          "type": "object",
+          "description": "TLS of the SMPP listener.",
+          "properties": {
+            "secretName": {
+              "type": "string",
+              "description": "kubernetes.io/tls Secret with the certificate and key. Empty serves plain TCP."
+            }
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "description": "Service that exposes the API and SMPP.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Service type.",
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "externalTrafficPolicy": {
+          "type": "string",
+          "description": "External traffic policy, when type is NodePort or LoadBalancer.",
+          "enum": [
+            "",
+            "Cluster",
+            "Local"
+          ]
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Service annotations."
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "description": "NetworkPolicy of the pods.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create a NetworkPolicy that admits the API, Diameter and SMPP from anywhere, and the cluster port from the other pods only."
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "description": "Data volume of each pod.",
+      "properties": {
+        "size": {
+          "type": "string",
+          "description": "Size of each pod's data volume.",
+          "minLength": 1
+        },
+        "storageClassName": {
+          "type": "string",
+          "description": "StorageClass of the data volumes. Empty uses the default StorageClass."
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Container resources."
+    },
+    "serviceAccount": {
+      "type": "object",
+      "description": "Service account of the pods.",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create a service account."
+        },
+        "name": {
+          "type": "string",
+          "description": "Service account name."
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Service account annotations."
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "description": "Extra pod annotations."
+    },
+    "podLabels": {
+      "type": "object",
+      "description": "Extra pod labels."
+    },
+    "nodeSelector": {
+      "type": "object",
+      "description": "Node selector."
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Tolerations."
+    },
+    "affinity": {
+      "type": "object",
+      "description": "Affinity. Replaces the default one-pod-per-Kubernetes-node anti-affinity in high availability."
+    },
+    "priorityClassName": {
+      "type": "string",
+      "description": "Priority class."
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "description": "Prometheus Operator ServiceMonitor for /api/v1/metrics.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Create the ServiceMonitor."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Scrape interval."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Extra ServiceMonitor labels."
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "description": "helm test settings.",
+      "properties": {
+        "image": {
+          "type": "object",
+          "description": "Image of the test pod.",
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

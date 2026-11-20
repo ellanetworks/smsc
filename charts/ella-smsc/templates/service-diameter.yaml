@@ -1,0 +1,22 @@
+{{- if and .Values.diameter.service.enabled (not (include "ella-smsc.ha" .)) (not .Values.diameter.networkAttachment.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ella-smsc.fullname" . }}-diameter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ella-smsc.labels" . | nindent 4 }}
+  {{- with .Values.diameter.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.diameter.service.type }}
+  selector:
+    {{- include "ella-smsc.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: sctp-diameter
+      protocol: SCTP
+      port: 3868
+      targetPort: sctp-diameter
+{{- end }}

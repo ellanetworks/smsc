@@ -36,6 +36,8 @@ jobs:
     uses: ./.github/workflows/ui-e2e-oidc.yaml
   docs-build:
     uses: ./.github/workflows/docs-build.yaml
+  chart-lint:
+    uses: ./.github/workflows/chart-lint.yaml
   image-build:
     uses: ./.github/workflows/image-build.yaml
   snap-build:
