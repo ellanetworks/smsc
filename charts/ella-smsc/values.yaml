@@ -44,6 +44,10 @@ service:
   externalTrafficPolicy: ""
   annotations: {}
 
+api:
+  tls:
+    secretName: ""
+
 ingress:
   enabled: false
   className: ""

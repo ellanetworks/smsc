@@ -69,6 +69,7 @@ See [Install](https://docs.ellanetworks.com/smsc/how_to/install/) and [Deploy a 
 | `service.type` | `ClusterIP` | Type of the `<release>` Service, for the API on port `5010` and SMPP. |
 | `service.externalTrafficPolicy` | | External traffic policy, when `service.type` is `NodePort` or `LoadBalancer`. |
 | `service.annotations` | `{}` | Annotations of the `<release>` Service. |
+| `api.tls.secretName` | | `kubernetes.io/tls` Secret for HTTPS served by the pod itself. The probes and `helm test` then use HTTPS. With an Ingress, set the controller's annotation for HTTPS to the backend. |
 | `ingress.enabled` | `false` | Create an Ingress that exposes the API and UI. |
 | `ingress.className` | | IngressClass name. Empty uses the cluster default. |
 | `ingress.host` | | Host name of the API and UI. Required when the Ingress is enabled. |

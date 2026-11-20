@@ -112,6 +112,7 @@ spec:
             {{- end }}
           startupProbe:
             httpGet:
+              scheme: {{ include "ella-smsc.apiScheme" . }}
               path: /api/v1/livez
               port: http
             periodSeconds: 2
@@ -119,6 +120,7 @@ spec:
             failureThreshold: 150
           readinessProbe:
             httpGet:
+              scheme: {{ include "ella-smsc.apiScheme" . }}
               path: /api/v1/readyz
               port: http
             periodSeconds: 5
@@ -126,6 +128,7 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
+              scheme: {{ include "ella-smsc.apiScheme" . }}
               path: /api/v1/livez
               port: http
             periodSeconds: 10
@@ -136,6 +139,11 @@ spec:
               sleep:
                 seconds: 5
           volumeMounts:
+            {{- if .Values.api.tls.secretName }}
+            - name: api-tls
+              mountPath: /tls/api
+              readOnly: true
+            {{- end }}
             - name: config
               mountPath: /config
               readOnly: true
@@ -154,6 +162,11 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        {{- if .Values.api.tls.secretName }}
+        - name: api-tls
+          secret:
+            secretName: {{ .Values.api.tls.secretName }}
+        {{- end }}
         - name: config
           configMap:
             name: {{ include "ella-smsc.fullname" . }}

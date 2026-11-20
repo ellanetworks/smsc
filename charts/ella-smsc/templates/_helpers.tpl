@@ -91,6 +91,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- $join := printf "%s:7000" (include "ella-smsc.headlessServiceName" .) }}
 {{- $_ := set $base "cluster" (dict "address" "0.0.0.0" "port" 7000 "join" (list $join) "bootstrap_expect" 3 "secret_file" "/secrets/cluster/secret") }}
 {{- end }}
+{{- if .Values.api.tls.secretName }}
+{{- $_ := set $base.api "tls" (dict "cert" "/tls/api/tls.crt" "key" "/tls/api/tls.key") }}
+{{- end }}
 {{- toYaml (mustMergeOverwrite $base (deepCopy .Values.config)) }}
 {{- end }}
 
@@ -102,4 +105,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and (include "ella-smsc.ha" .) $nad.enabled $nad.create (eq (toString $nad.ipam.type) "static") }}
 {{- fail "diameter.networkAttachment.ipam: static IPAM gives every pod the same address; use an IPAM that allocates one address per pod when replicas is more than 1" }}
 {{- end }}
+{{- end }}
+
+{{- define "ella-smsc.apiScheme" -}}
+{{- if .Values.api.tls.secretName }}HTTPS{{ else }}HTTP{{ end }}
 {{- end }}
