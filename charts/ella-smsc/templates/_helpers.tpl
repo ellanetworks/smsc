@@ -65,6 +65,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end }}
 
+{{- define "ella-smsc.openshift" -}}
+{{- if .Capabilities.APIVersions.Has "security.openshift.io/v1/SecurityContextConstraints" }}true{{ end }}
+{{- end }}
+
 {{- define "ella-smsc.image" -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag }}
 {{- if .Values.image.digest }}
