@@ -10,4 +10,4 @@ Open the API and UI:
   kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "ella-smsc.fullname" . }} 5010:5010
 {{- end }}
 
-Then browse to http://localhost:5010 and create the first user.
+Then browse to {{ lower (include "ella-smsc.apiScheme" .) }}://localhost:5010 and create the first user.

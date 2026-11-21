@@ -18,7 +18,7 @@ Each column is sized for 20 short messages per subscriber per day, kept for 30 d
 
 ## Kubernetes
 
-Ella SMSC should work on most Kubernetes distributions. It has been validated on **GKE**, **RKE2**, and **kind**.
+Ella SMSC should work on most Kubernetes distributions. It has been validated on **EKS**, **GKE**, **OpenShift**, **RKE2**, and **kind**.
 
 | Requirement | Value |
 |-------------|-------|
