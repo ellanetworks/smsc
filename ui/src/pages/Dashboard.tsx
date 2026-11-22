@@ -250,7 +250,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const QUARTER = { xs: 12, sm: 6, md: 3 };
 
-const SINGLE_NODE_HINT = "High availability is not enabled on this node.";
+const SINGLE_NODE_HINT =
+  "A single node. Add nodes to keep the SMSC working when one fails.";
 
 const HA_HINTS: Record<ClusterHealthState, string> = {
   healthy: "Healthy voters out of the cluster's total.",
@@ -273,11 +274,9 @@ function clusterHealth(health?: ClusterHealth): {
       value: <Chip label="No leader" color="error" />,
     };
   }
-  if (health.state === "healthy" && health.total_voters === 1) {
-    return { hint: SINGLE_NODE_HINT, value: <Chip label="Off" /> };
-  }
+  const single = health.state === "healthy" && health.total_voters === 1;
   return {
-    hint: HA_HINTS[health.state],
+    hint: single ? SINGLE_NODE_HINT : HA_HINTS[health.state],
     value: (
       <Ratio
         value={`${health.healthy_voters ?? 0}/${health.total_voters}`}

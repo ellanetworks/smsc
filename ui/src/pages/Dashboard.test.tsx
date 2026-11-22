@@ -560,7 +560,7 @@ describe("Dashboard", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows high availability off on a standalone node", async () => {
+  it("shows one healthy voter on a standalone node", async () => {
     serve({
       routes: {
         "/api/v1/cluster/health": () =>
@@ -577,7 +577,7 @@ describe("Dashboard", () => {
     render();
 
     expect(
-      await within(card("High Availability")).findByText("Off"),
+      await within(card("High Availability")).findByText("1/1"),
     ).toBeInTheDocument();
   });
 

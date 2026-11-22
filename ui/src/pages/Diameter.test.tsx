@@ -134,9 +134,7 @@ describe("Diameter", () => {
 
     renderWithClient(<Diameter />);
 
-    await waitFor(() =>
-      expect(settingRows()[0]).toBe("Hostsmsc.example.orgGenerated"),
-    );
+    await waitFor(() => expect(settingRows()[0]).toBe("Hostsmsc.example.org"));
   });
 
   it("shows this SMSC, the HSS settings and its connected peers", async () => {

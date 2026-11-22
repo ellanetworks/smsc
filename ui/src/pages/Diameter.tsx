@@ -27,7 +27,6 @@ import {
 } from "@/queries/diameter";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { DiameterStateChip } from "@/components/chips";
-import DiameterHost from "@/components/DiameterHost";
 import DomainName from "@/components/DomainName";
 import PageHeader from "@/components/PageHeader";
 import { HostInRealm, RealmName } from "@/components/RealmRelative";
@@ -319,14 +318,14 @@ export default function Diameter() {
           {
             label: "Host",
             help: "This node's Diameter name: its host label, then node., then the realm. Set the label with diameter.host_label in the node's configuration file.",
-            value: data && (
-              <DiameterHost host={data.host} generated={data.label_generated} />
-            ),
+            value: data && <DomainName name={data.host} />,
+            copy: data && { value: data.host, label: "Diameter Host" },
           },
           {
             label: "Realm",
             help: "Your network's Diameter realm, shared by this SMSC and its peers. Set by the Operator ID (MCC/MNC).",
             value: data && <DomainName name={data.realm} />,
+            copy: data && { value: data.realm, label: "Diameter Realm" },
           },
         ]}
       />
