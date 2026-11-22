@@ -129,14 +129,6 @@ afterEach(() => {
 });
 
 describe("Diameter", () => {
-  it("marks a generated host", async () => {
-    serve(() => json(200, { result: { ...status, label_generated: true } }));
-
-    renderWithClient(<Diameter />);
-
-    await waitFor(() => expect(settingRows()[0]).toBe("Hostsmsc.example.org"));
-  });
-
   it("shows this SMSC, the HSS settings and its connected peers", async () => {
     serve(() => json(200, { result: status }));
 

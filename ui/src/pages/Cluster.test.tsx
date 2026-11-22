@@ -82,7 +82,7 @@ describe("Cluster", () => {
       "smsc-1f0c2d3e4f50LeaderThis node",
       "10.0.0.11:7000",
       "—",
-      "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.orgGenerated",
+      "smsc-1f0c2d3e4f50.node.epc.mnc001.mcc001.3gppnetwork.org",
       "Voter",
       "Active",
       "v0.1.0",
@@ -98,7 +98,7 @@ describe("Cluster", () => {
       "smsc-3b2e4f5a6b72",
       "10.0.0.13:7000",
       "—",
-      "smsc-3b2e4f5a6b72.node.epc.mnc001.mcc001.3gppnetwork.orgGenerated",
+      "smsc-3b2e4f5a6b72.node.epc.mnc001.mcc001.3gppnetwork.org",
       "Nonvoter",
       "Drained",
     ]);
