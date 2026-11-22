@@ -1268,7 +1268,7 @@ paths:
       summary: Get the cluster status
       description: >-
         The node answering, its cluster, the leader, and every member with its suffrage and Diameter label. Health
-        comes from the leader and is absent when no leader answers.
+        comes from the leader: a follower reads it from the leader. It is absent when no leader answers.
       responses:
         "200":
           description: OK
@@ -1284,6 +1284,31 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/v1/cluster/health:
+    get:
+      tags: [Cluster]
+      operationId: getClusterHealth
+      summary: Get the cluster health
+      description: >-
+        The health of the cluster, as the leader sees it. Any member answers: a follower reads it from the leader.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    $ref: "#/components/schemas/ClusterHealth"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /api/v1/cluster/tokens:
     post:
@@ -3321,14 +3346,33 @@ components:
           description: Database schema version of the cluster.
         healthy:
           type: boolean
-          description: Only from the leader.
+          description: Absent when no leader answers.
         failure_tolerance:
           type: integer
-          description: How many voters can fail without stopping writes. Only from the leader.
+          description: How many voters can fail without stopping writes. Absent when no leader answers.
         members:
           type: array
           items:
             $ref: "#/components/schemas/ClusterMember"
+    ClusterHealth:
+      type: object
+      required: [state, total_voters]
+      properties:
+        state:
+          type: string
+          enum: [healthy, degraded, no_leader, unknown]
+          description: >-
+            unknown when the leader cannot be reached or has no health yet.
+        total_voters:
+          type: integer
+          description: Voters in the cluster.
+        healthy_voters:
+          type: integer
+          description: Healthy voters. Absent when the state is no_leader or unknown.
+        failure_tolerance:
+          type: integer
+          description: >-
+            How many voters can fail without stopping writes. Absent when the state is no_leader or unknown.
     ClusterMember:
       type: object
       required: [node_id, address, diameter_label, diameter_host, label_generated, display_name, version, joined_at, drain_state, suffrage, leader]
@@ -3375,10 +3419,10 @@ components:
           type: boolean
         healthy:
           type: boolean
-          description: Only from the leader.
+          description: Absent when no leader answers.
         last_contact:
           type: string
-          description: Time since the leader last heard from the member, as a Go duration. Only from the leader.
+          description: Time since the leader last heard from the member, as a Go duration. Absent when no leader answers.
     CreateJoinTokenParams:
       type: object
       properties:

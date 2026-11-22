@@ -24,9 +24,9 @@ import PageHeader from "@/components/PageHeader";
 import { MessageStatusChip, messageStatusColors } from "@/components/chips";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  answersAsLeader,
-  getCluster,
-  type ClusterStatus,
+  type ClusterHealth,
+  type ClusterHealthState,
+  getClusterHealth,
 } from "@/queries/cluster";
 import {
   type DiameterPeer,
@@ -250,43 +250,40 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const QUARTER = { xs: 12, sm: 6, md: 3 };
 
-const HA_HINTS = {
-  off: "High availability is not enabled on this node.",
+const SINGLE_NODE_HINT = "High availability is not enabled on this node.";
+
+const HA_HINTS: Record<ClusterHealthState, string> = {
   healthy: "Healthy voters out of the cluster's total.",
-  degraded: "At least one node is unhealthy.",
-  noLeader:
+  degraded: "At least one voter is unhealthy.",
+  no_leader:
     "No node holds leadership. The cluster cannot accept writes until enough voters recover.",
-  follower: "Cluster health is shown on the leader.",
-  unknown: "Cluster health could not be read from this node.",
+  unknown: "Cluster health could not be read from the leader.",
 };
 
-function clusterHealth(status?: ClusterStatus): {
+function clusterHealth(health?: ClusterHealth): {
   hint: string;
   value: ReactNode;
 } {
-  if (!status) {
+  if (!health || health.state === "unknown") {
     return { hint: HA_HINTS.unknown, value: <Chip label="Unknown" /> };
   }
-  if (!status.clustered) {
-    return { hint: HA_HINTS.off, value: <Chip label="Off" /> };
-  }
-  if (!status.leader_id) {
+  if (health.state === "no_leader") {
     return {
-      hint: HA_HINTS.noLeader,
+      hint: HA_HINTS.no_leader,
       value: <Chip label="No leader" color="error" />,
     };
   }
-  if (!answersAsLeader(status)) {
-    return { hint: HA_HINTS.follower, value: <Chip label="Follower" /> };
+  if (health.state === "healthy" && health.total_voters === 1) {
+    return { hint: SINGLE_NODE_HINT, value: <Chip label="Off" /> };
   }
-  if (status.healthy === undefined) {
-    return { hint: HA_HINTS.unknown, value: <Chip label="Unknown" /> };
-  }
-  const voters = (status.members ?? []).filter((m) => m.suffrage === "voter");
-  const healthy = voters.filter((m) => m.healthy).length;
   return {
-    hint: status.healthy ? HA_HINTS.healthy : HA_HINTS.degraded,
-    value: `${healthy}/${voters.length}`,
+    hint: HA_HINTS[health.state],
+    value: (
+      <Ratio
+        value={`${health.healthy_voters ?? 0}/${health.total_voters}`}
+        color={health.state === "healthy" ? undefined : "error.main"}
+      />
+    ),
   };
 }
 
@@ -382,8 +379,8 @@ export default function Dashboard() {
     refetchInterval: COUNTS_REFRESH_MS,
   });
   const cluster = useQuery({
-    queryKey: ["cluster"],
-    queryFn: getCluster,
+    queryKey: ["cluster-health"],
+    queryFn: getClusterHealth,
     refetchInterval: DASHBOARD_REFRESH_MS,
     enabled: auth.can("cluster:read"),
   });

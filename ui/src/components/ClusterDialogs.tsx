@@ -9,20 +9,17 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
-  IconButton,
   MenuItem,
   Stack,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
-import { ContentCopy as ContentCopyIcon } from "@mui/icons-material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import CopyButton from "@/components/CopyButton";
 import DialogError from "@/components/DialogError";
 import EditDialog from "@/components/EditDialog";
 import { useSnackbar } from "@/contexts/SnackbarContext";
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import {
   createJoinToken,
   drainMember,
@@ -79,15 +76,7 @@ export function NodeIdentity({ nodeId }: { nodeId: string }) {
   );
 }
 
-function CopyBlock({
-  label,
-  value,
-  onCopy,
-}: {
-  label: string;
-  value: string;
-  onCopy: () => void;
-}) {
+function CopyBlock({ label, value }: { label: string; value: string }) {
   return (
     <Box>
       <Typography variant="caption" color="textSecondary">
@@ -119,23 +108,15 @@ function CopyBlock({
         >
           {value}
         </Typography>
-        <Tooltip title={`Copy ${label.toLowerCase()}`}>
-          <IconButton
-            size="small"
-            aria-label={`Copy ${label.toLowerCase()}`}
-            onClick={onCopy}
-            sx={{ position: "absolute", top: 4, right: 4 }}
-          >
-            <ContentCopyIcon fontSize="inherit" />
-          </IconButton>
-        </Tooltip>
+        <Box sx={{ position: "absolute", top: 4, right: 4 }}>
+          <CopyButton value={value} label={label.toLowerCase()} />
+        </Box>
       </Box>
     </Box>
   );
 }
 
 export function AddNodeDialog({ onClose }: { onClose: () => void }) {
-  const copy = useCopyToClipboard();
   const [ttlSeconds, setTtlSeconds] = useState(DEFAULT_TTL);
   const mint = useMutation({ mutationFn: createJoinToken });
   const token = mint.data;
@@ -182,11 +163,7 @@ export function AddNodeDialog({ onClose }: { onClose: () => void }) {
                 <strong>Join an existing cluster instead</strong> and paste this
                 token.
               </Typography>
-              <CopyBlock
-                label="Join token"
-                value={token.token}
-                onCopy={() => void copy(token.token, "Join token")}
-              />
+              <CopyBlock label="Join token" value={token.token} />
             </>
           )}
         </Stack>

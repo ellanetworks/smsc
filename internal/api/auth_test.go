@@ -192,6 +192,7 @@ func TestRoles(t *testing.T) {
 		"GET /api/v1/oidc":                                     admin,
 		"PUT /api/v1/oidc":                                     admin,
 		"GET /api/v1/cluster":                                  admin | readOnly | networkManager,
+		"GET /api/v1/cluster/health":                           admin | readOnly | networkManager,
 		"POST /api/v1/cluster/tokens":                          admin,
 		"PUT /api/v1/cluster/members/x":                        admin,
 		"DELETE /api/v1/cluster/members/x":                     admin,

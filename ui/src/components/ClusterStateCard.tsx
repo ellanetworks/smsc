@@ -1,52 +1,6 @@
-import {
-  Box,
-  Chip,
-  IconButton,
-  Link,
-  Tooltip,
-  Typography,
-} from "@mui/material";
-import {
-  ContentCopy as ContentCopyIcon,
-  OpenInNew as OpenInNewIcon,
-} from "@mui/icons-material";
+import { Box, Chip, Tooltip, Typography } from "@mui/material";
 import SettingsTable from "@/components/SettingsTable";
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
-import {
-  answersAsLeader,
-  leaderOf,
-  memberLabel,
-  type ClusterStatus,
-} from "@/queries/cluster";
-
-function CopyableValue({ value, label }: { value: string; label: string }) {
-  const copy = useCopyToClipboard();
-
-  return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
-      <Typography
-        variant="body2"
-        sx={{
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          fontFamily: "monospace",
-        }}
-        title={value}
-      >
-        {value}
-      </Typography>
-      <Tooltip title="Copy">
-        <IconButton
-          size="small"
-          onClick={() => void copy(value, label)}
-          aria-label={`Copy ${label}`}
-        >
-          <ContentCopyIcon fontSize="inherit" />
-        </IconButton>
-      </Tooltip>
-    </Box>
-  );
-}
+import { type ClusterStatus } from "@/queries/cluster";
 
 function ToleranceChip({ failureTolerance }: { failureTolerance: number }) {
   if (failureTolerance < 1) {
@@ -72,21 +26,6 @@ function ToleranceChip({ failureTolerance }: { failureTolerance: number }) {
   );
 }
 
-export function LeaderLink({ address }: { address: string }) {
-  return (
-    <Link
-      href={address}
-      target="_blank"
-      rel="noreferrer"
-      underline="hover"
-      sx={{ display: "inline-flex", alignItems: "center" }}
-    >
-      {address}
-      <OpenInNewIcon sx={{ fontSize: 16, ml: 0.5 }} />
-    </Link>
-  );
-}
-
 function HealthValue({ status }: { status: ClusterStatus }) {
   if (!status.leader_id) {
     return (
@@ -96,27 +35,9 @@ function HealthValue({ status }: { status: ClusterStatus }) {
     );
   }
 
-  if (!answersAsLeader(status)) {
-    const leader = leaderOf(status);
-    return (
-      <Typography variant="body2" sx={{ color: "text.secondary" }}>
-        Shown on the leader
-        {leader ? ` (node ${memberLabel(leader)})` : ""}
-        {leader?.api_address ? (
-          <>
-            {": "}
-            <LeaderLink address={leader.api_address} />
-          </>
-        ) : (
-          "."
-        )}
-      </Typography>
-    );
-  }
-
   if (status.healthy === undefined) {
     return (
-      <Tooltip title="The leader has not reported yet. This is normal for a moment after a leadership change.">
+      <Tooltip title="The leader has not reported yet, or could not be reached. This is normal for a moment after a leadership change.">
         <Chip label="Unknown" size="small" variant="outlined" />
       </Tooltip>
     );
@@ -152,14 +73,27 @@ export default function ClusterStateCard({
           label: "Cluster ID",
           help: "The identity shared by every member of this cluster.",
           value: status?.cluster_id ? (
-            <CopyableValue value={status.cluster_id} label="Cluster ID" />
+            <Typography
+              variant="body2"
+              sx={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                fontFamily: "monospace",
+              }}
+              title={status.cluster_id}
+            >
+              {status.cluster_id}
+            </Typography>
           ) : (
             "—"
           ),
+          copy: status?.cluster_id
+            ? { value: status.cluster_id, label: "Cluster ID" }
+            : undefined,
         },
         {
           label: "Health",
-          help: "Reported by the leader only: whether every voter is healthy, and how many voters can fail without stopping writes.",
+          help: "As the leader sees it: whether every voter is healthy, and how many voters can fail without stopping writes.",
           value: status && <HealthValue status={status} />,
         },
         {

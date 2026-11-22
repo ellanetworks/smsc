@@ -6,18 +6,15 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  IconButton,
   MenuItem,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
-import { ContentCopy as ContentCopyIcon } from "@mui/icons-material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import CopyButton from "@/components/CopyButton";
 import EditDialog from "@/components/EditDialog";
 import PasswordField from "@/components/PasswordField";
 import { useSnackbar } from "@/contexts/SnackbarContext";
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import {
   createESME,
   type CreatedESME,
@@ -269,8 +266,6 @@ export function ESMEPasswordDialog({
   esme: CreatedESME & { password: string };
   onClose: () => void;
 }) {
-  const copy = useCopyToClipboard();
-
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="xs">
       <DialogTitle>ESME Password</DialogTitle>
@@ -279,17 +274,7 @@ export function ESMEPasswordDialog({
           severity="success"
           variant="outlined"
           sx={{ alignItems: "center" }}
-          action={
-            <Tooltip title="Copy" arrow>
-              <IconButton
-                aria-label="Copy password"
-                size="small"
-                onClick={() => void copy(esme.password, "Password")}
-              >
-                <ContentCopyIcon fontSize="inherit" />
-              </IconButton>
-            </Tooltip>
-          }
+          action={<CopyButton value={esme.password} label="password" />}
         >
           <Typography variant="body2" sx={{ mb: 0.5 }}>
             The password of {esme.system_id}. Copy it now: it is not shown
