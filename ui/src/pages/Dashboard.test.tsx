@@ -7,7 +7,7 @@ import { RoleID } from "@/queries/users";
 import { formatDateTime } from "@/utils/dates";
 import { json, renderWithClient, stubApi } from "@/test/render";
 
-const ALERT_COLOR = "var(--mui-palette-error-main)";
+const ALERT_COLOR = "rgb(198, 40, 40)";
 
 const peer = (host: string, state: string, address: string) => ({
   host,
