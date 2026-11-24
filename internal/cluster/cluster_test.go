@@ -73,8 +73,6 @@ func openClustered(t testing.TB, dir, address string) *env {
 		t.Fatal(err)
 	}
 
-	d.SetProposer(n)
-
 	return &env{dir: dir, db: d, node: n}
 }
 

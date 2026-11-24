@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -582,5 +583,33 @@ func TestRoleFromGroupsCannotBeChanged(t *testing.T) {
 
 	if code, _, msg := a.do(t, http.MethodPut, "/api/v1/users/nm@example.com", `{"role_id": 2}`); code != http.StatusConflict {
 		t.Fatalf("change the role of a user with groups = %d %q, want %d", code, msg, http.StatusConflict)
+	}
+}
+
+func TestOIDCSettingsWhileTheKeysAreLocked(t *testing.T) {
+	store := openStore(t)
+	cfg := testConfig(t, store)
+	cfg.OIDC = oidc.NewLive(store, db.OIDC{
+		Enabled: true, ExternalURL: "https://smsc.example.com", Issuer: "https://idp.example.com/realms/smsc",
+		ClientID: "smsc", ClientSecretLocked: true, DisplayName: "Keycloak", Scopes: []string{"openid"},
+		SessionLifetime: time.Hour,
+	})
+	h := api.NewHandler(cfg)
+	token := initialize(t, h)
+
+	rec := serve(h, request(http.MethodGet, "/api/v1/oidc", "", token))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"client_secret_set":true`) {
+		t.Fatalf("GET = %d %s", rec.Code, rec.Body.String())
+	}
+
+	put := validOIDC()
+	delete(put, "client_secret")
+
+	if rec := serve(h, request(http.MethodPut, "/api/v1/oidc", body(t, put), token)); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("PUT without a client secret while locked = %d %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := cfg.OIDC.Client(context.Background(), time.Now); !errors.Is(err, oidc.ErrSecretLocked) {
+		t.Fatalf("OIDC client while locked = %v", err)
 	}
 }

@@ -76,4 +76,4 @@ GET /api/v1/openapi.yaml
 - 429 - Too many requests. `Retry-After` is the seconds to wait.
 - 500 - Internal server error.
 - 502 - The identity provider cannot be reached or used. See [Update the OIDC settings](oidc.md#update-the-oidc-settings).
-- 503 - Not ready. See [Check readiness](status.md#check-readiness).
+- 503 - Not ready, or the node's [encryption keys](../../explanation/encryption_at_rest.md#locked-nodes) are locked. See [Check readiness](status.md#check-readiness).

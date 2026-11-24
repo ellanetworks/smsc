@@ -64,7 +64,7 @@ func (n *Node) serveRPC() {
 		WriteTimeout:      rpcWriteTimeout,
 		ErrorLog:          errorLog,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			return context.WithValue(ctx, fencedKey{}, listener.Fenced(c))
+			return context.WithValue(context.WithValue(ctx, fencedKey{}, listener.Fenced(c)), connKey{}, c)
 		},
 	}
 

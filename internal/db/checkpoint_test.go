@@ -31,7 +31,7 @@ func openBench(t *testing.T) *applyBench {
 		t.Fatal(err)
 	}
 
-	return &applyBench{d: d, index: d.AppliedIndex(), now: now}
+	return &applyBench{d: d, sealer: d, index: d.AppliedIndex(), now: now}
 }
 
 func walFrames(t *testing.T, d *DB) int {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/db/dbtest"
 	"github.com/ellanetworks/smsc/internal/intake"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/submission"
@@ -49,6 +50,7 @@ func newTestEnv(t *testing.T, edit func(*db.ESME)) *testEnv {
 	}
 
 	t.Cleanup(func() { _ = store.Close() })
+	dbtest.CreateCluster(t, store)
 
 	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
 	if err != nil {

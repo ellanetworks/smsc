@@ -13,6 +13,7 @@ import (
 
 type applyBench struct {
 	d       *DB
+	sealer  *DB
 	index   uint64
 	stored  int64
 	request uint64
@@ -55,7 +56,12 @@ func (a *applyBench) entry() []byte {
 			TraceParent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
 		}
 
-		cmds = append(cmds, a.command(cmdStoreMessages, storeMessages{Messages: []NewMessage{m}}))
+		r := recordOf(m)
+		if err := a.sealer.sealMessage(&r); err != nil {
+			panic(err)
+		}
+
+		cmds = append(cmds, a.command(cmdStoreMessages, storeMessages{Messages: []messageRecord{r}}))
 	}
 
 	for i := range settles {
@@ -118,6 +124,7 @@ func benchmarkApply(b *testing.B, group int) {
 	}
 
 	b.Cleanup(func() { _ = d.Close() })
+	newTestCluster(b, d)
 
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
@@ -130,7 +137,7 @@ func benchmarkApply(b *testing.B, group int) {
 		b.Fatal(err)
 	}
 
-	a := &applyBench{d: d, index: d.AppliedIndex(), now: now}
+	a := &applyBench{d: d, sealer: d, index: d.AppliedIndex(), now: now}
 
 	for range 500 {
 		a.apply(b, a.entry())

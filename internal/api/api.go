@@ -100,6 +100,7 @@ type Config struct {
 	SMPP           SMPP
 	Backups        Backups
 	Cluster        Cluster
+	Encryption     Encryption
 	JWTSecret      func() []byte
 	OIDCCookieKey  func() []byte
 	SecureCookie   bool
@@ -164,6 +165,8 @@ func routes(cfg Config, a *auth) []route {
 		{"DELETE /api/v1/cluster/members/{node_id}", PermManageCluster, a.needsLogin(RemoveMember(a))},
 		{"POST /api/v1/cluster/members/{node_id}/drain", PermManageCluster, a.needsLogin(DrainMember(a, db.DrainDraining))},
 		{"POST /api/v1/cluster/members/{node_id}/resume", PermManageCluster, a.needsLogin(DrainMember(a, db.DrainActive))},
+
+		{"POST /api/v1/encryption/rotate", PermManageEncryption, a.needsLogin(RotateEncryptionKeys(a))},
 
 		{"GET /api/v1/backup", PermBackup, Backup(a)},
 		{"POST /api/v1/restore", PermBackup, a.needsLogin(Restore(a))},

@@ -153,12 +153,12 @@ func (n *Node) selfHello(ctx context.Context) hello {
 	case FormationRemoved:
 		h.State = helloRemoved
 
-		if secrets, err := n.db.ReadSecrets(ctx); err == nil {
-			h.ClusterID = secrets.ClusterID
+		if id, err := n.db.ClusterID(ctx); err == nil {
+			h.ClusterID = id
 		}
 	case FormationMember:
-		if secrets, err := n.db.ReadSecrets(ctx); err == nil {
-			h.State, h.ClusterID = helloMember, secrets.ClusterID
+		if id, err := n.db.ClusterID(ctx); err == nil {
+			h.State, h.ClusterID = helloMember, id
 		}
 	default:
 		h.State, h.Candidate = helloForming, f.Candidate
@@ -549,7 +549,7 @@ func (n *Node) formBootstrap(ctx context.Context) {
 }
 
 func (n *Node) countForeign(ctx context.Context) {
-	secrets, err := n.db.ReadSecrets(ctx)
+	clusterID, err := n.db.ClusterID(ctx)
 	if err != nil {
 		return
 	}
@@ -559,7 +559,7 @@ func (n *Node) countForeign(ctx context.Context) {
 	var foreign []string
 
 	for _, p := range rd.peers {
-		if p.State == helloMember && p.ClusterID != secrets.ClusterID {
+		if p.State == helloMember && p.ClusterID != clusterID {
 			foreign = append(foreign, p.NodeID+" ("+p.ClusterID+")")
 		}
 	}
@@ -603,7 +603,7 @@ func (n *Node) probeRemoval(ctx context.Context) {
 		}
 	}
 
-	secrets, err := n.db.ReadSecrets(ctx)
+	clusterID, err := n.db.ClusterID(ctx)
 	if err != nil || !n.auth.enabled() {
 		return
 	}
@@ -617,7 +617,7 @@ func (n *Node) probeRemoval(ctx context.Context) {
 	targets = slices.Compact(targets)
 
 	for _, p := range n.helloRound(ctx, targets).peers {
-		if p.Leader && p.ClusterID == secrets.ClusterID && p.Member != nil && !*p.Member {
+		if p.Leader && p.ClusterID == clusterID && p.Member != nil && !*p.Member {
 			n.fence(ctx, p.NodeID)
 			return
 		}
@@ -655,9 +655,14 @@ func (n *Node) joinSecret(ctx context.Context, clusterID string, addrs []string)
 		return err
 	}
 
+	key, err := n.keyManager.joiningKey(ctx)
+	if err != nil {
+		return err
+	}
+
 	req := joinRequest{
 		NodeID: n.id, Address: n.cfg.Advertise, Certificate: string(certPEM), Schema: db.SchemaVersion(),
-		Protocol: db.ProtocolVersion, Version: n.cfg.Version, Label: n.label, Generated: n.generated,
+		Protocol: db.ProtocolVersion, Version: n.cfg.Version, Label: n.label, Generated: n.generated, Key: key,
 	}
 
 	last := fmt.Errorf("%w: no member to join", errRetry)
@@ -689,8 +694,16 @@ func (n *Node) joinSecret(ctx context.Context, clusterID string, addrs []string)
 		}
 
 		if joined.Pins[reply.Fingerprint] != reply.NodeID {
+			clear(joined.KeyFile)
+
 			last = fmt.Errorf("%w: node %s at %s is not among the members it returned", ErrInvalidJoin, reply.NodeID, addr)
+
 			continue
+		}
+
+		if err := n.keyManager.takeClusterKey(ctx, key, joined); err != nil {
+			n.cfg.Logger.ErrorContext(ctx, "joined, but could not take the cluster's encryption key file: the node stays "+
+				"locked until it can", slog.Any("error", err))
 		}
 
 		if err := n.reset(context.WithoutCancel(ctx), cert, joined.Pins); err != nil {

@@ -127,23 +127,6 @@ func TestDecodeStatusReport(t *testing.T) {
 	}
 }
 
-func TestSubmitStatusReport(t *testing.T) {
-	s := Submit{StatusReportRequest: true, MessageReference: 0x07, Destination: reportRecipient}
-
-	got := s.StatusReport(reportTimeStamp, reportDischarge, StatusValidityPeriodExpired)
-	want := StatusReport{
-		MessageReference:       0x07,
-		Recipient:              reportRecipient,
-		ServiceCentreTimeStamp: reportTimeStamp,
-		DischargeTime:          reportDischarge,
-		Status:                 StatusValidityPeriodExpired,
-	}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("report = %+v, want %+v", got, want)
-	}
-}
-
 func TestTemporaryErrorGaveUp(t *testing.T) {
 	if TemporaryNoResponse.GaveUp() != 0x62 || TemporaryErrorInSME.GaveUp() != 0x65 {
 		t.Fatalf("gave up = %#x, %#x", byte(TemporaryNoResponse.GaveUp()), byte(TemporaryErrorInSME.GaveUp()))

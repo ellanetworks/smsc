@@ -10,6 +10,8 @@ jobs:
   go-unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      SOFTHSM_COMMIT: 7380895665c3094a6f57640085bee97dcfeb1496
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -19,7 +21,27 @@ jobs:
       - name: Load SCTP
         run: sudo modprobe sctp
 
+      - name: Cache SoftHSM2
+        id: softhsm
+        uses: actions/cache@v6
+        with:
+          path: ~/softhsm/build/src/lib/libsofthsm2.so
+          key: softhsm2-${{ env.SOFTHSM_COMMIT }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Build SoftHSM2
+        if: steps.softhsm.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake libssl-dev
+          git init -q ~/softhsm
+          cd ~/softhsm
+          git fetch -q --depth 1 https://github.com/softhsm/SoftHSMv2 "${SOFTHSM_COMMIT}"
+          git checkout -q FETCH_HEAD
+          cmake -S . -B build -DBUILD_TESTS=OFF -DENABLE_P11_KIT=OFF
+          cmake --build build -j"$(nproc)" --target softhsm2
+
       - name: Unit tests
+        env:
+          SOFTHSM2_LIB: /home/runner/softhsm/build/src/lib/libsofthsm2.so
         run: go test -cover ./...
 
       - name: Sub-module unit tests

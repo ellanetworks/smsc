@@ -305,6 +305,12 @@ func (c *fakeCore) connectAll(nodes ...*smsc) {
 
 	for i, s := range nodes {
 		addr, ok := s.server.Addr().(*sctp.SCTPAddr)
+		for deadline := time.Now().Add(waitTimeout); !ok && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+
+			addr, ok = s.server.Addr().(*sctp.SCTPAddr)
+		}
+
 		if !ok {
 			c.t.Fatalf("unexpected SMSC address %v", s.server.Addr())
 		}

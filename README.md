@@ -19,6 +19,7 @@
 - **Delivery visibility**: every routing lookup and delivery attempt is recorded, with why it failed.
 - **Single sign-on**: users log in with your identity provider, such as Google, Microsoft or Okta, over OpenID Connect.
 - **Secure**: users with roles, API tokens, HTTPS, and audited reads of message content.
+- **Encrypted messages**: message content and secrets are encrypted at rest, in the database and in backups, with the key in a file or on an HSM.
 - **Scalable**: serve SMS to up to 100,000 subscribers.
 - **Highly available**: deploy Ella SMSC as a high-availability cluster to ensure continuous operation with failover capabilities.
 - **Easy to operate**: a single binary with an embedded database and configurable retention, a web UI, an HTTP API, and Prometheus metrics. Install with snap, Docker or Kubernetes.

@@ -1182,7 +1182,7 @@ func buildDeliver(m db.Message) (func(more bool) ([]byte, error), error) {
 	return func(more bool) ([]byte, error) {
 		deliver := tpdu.DeliverFromSubmit(submit, originator, m.TimeStamp)
 		deliver.MoreMessagesToSend = more
-		deliver.StatusReportIndication = m.Origin == db.OriginMobile && submit.StatusReportRequest
+		deliver.StatusReportIndication = m.StatusReportRequest
 
 		return deliver.Encode()
 	}, nil

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/db/dbtest"
 	"github.com/ellanetworks/smsc/internal/server"
 	"github.com/ellanetworks/smsc/internal/settings"
 )
@@ -54,6 +55,9 @@ func TestRetentionDoesNotStallDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	dbtest.CreateCluster(t, store)
+	dbtest.WriteKeyFile(t, filepath.Join(filepath.Dir(path), "encryption.key"))
 
 	messages := make([]db.NewMessage, old)
 	for i := range messages {

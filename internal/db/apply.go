@@ -22,6 +22,7 @@ type Events struct {
 	Settings      bool
 	OIDC          bool
 	Members       bool
+	Encryption    bool
 	ClosedESMEs   []int64
 	Alerted       []string
 	Removed       []string
@@ -35,6 +36,7 @@ func (e *Events) merge(o Events) {
 	e.Settings = e.Settings || o.Settings
 	e.OIDC = e.OIDC || o.OIDC
 	e.Members = e.Members || o.Members
+	e.Encryption = e.Encryption || o.Encryption
 	e.Migrated = max(e.Migrated, o.Migrated)
 	e.Removed = append(e.Removed, o.Removed...)
 	e.ClosedESMEs = append(e.ClosedESMEs, o.ClosedESMEs...)
@@ -42,7 +44,8 @@ func (e *Events) merge(o Events) {
 }
 
 func (e Events) empty() bool {
-	return !e.Replaced && !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && !e.Members && e.Migrated == 0 &&
+	return !e.Replaced && !e.Messages && !e.Notifications && !e.Settings && !e.OIDC && !e.Members && !e.Encryption &&
+		e.Migrated == 0 &&
 		len(e.ClosedESMEs) == 0 && len(e.Alerted) == 0 && len(e.Removed) == 0
 }
 

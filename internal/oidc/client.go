@@ -24,13 +24,14 @@ const (
 )
 
 var (
-	ErrDisabled = errors.New("OIDC is disabled")
-	ErrIssuer   = errors.New("the authorization response comes from another issuer")
-	ErrToken    = errors.New("invalid ID token")
-	ErrUserInfo = errors.New("invalid UserInfo response")
-	ErrOverage  = errors.New("the ID token refers to the groups instead of listing them")
-	ErrNoGroup  = errors.New("no group is mapped to a role")
-	ErrConflict = errors.New("the groups give both the Submitter and the Read Only roles")
+	ErrDisabled     = errors.New("OIDC is disabled")
+	ErrSecretLocked = errors.New("the OIDC client secret is unavailable until this node unlocks its encryption keys")
+	ErrIssuer       = errors.New("the authorization response comes from another issuer")
+	ErrToken        = errors.New("invalid ID token")
+	ErrUserInfo     = errors.New("invalid UserInfo response")
+	ErrOverage      = errors.New("the ID token refers to the groups instead of listing them")
+	ErrNoGroup      = errors.New("no group is mapped to a role")
+	ErrConflict     = errors.New("the groups give both the Submitter and the Read Only roles")
 )
 
 type Verified int
@@ -85,6 +86,10 @@ func (l *Live) Client(ctx context.Context, now func() time.Time) (*Client, error
 	o := l.Get()
 	if !o.Enabled {
 		return nil, ErrDisabled
+	}
+
+	if o.ClientSecretLocked {
+		return nil, ErrSecretLocked
 	}
 
 	p, err := l.provider(ctx, o, now())

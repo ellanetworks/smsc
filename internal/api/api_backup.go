@@ -64,6 +64,9 @@ func Restore(a *auth) http.Handler {
 		case errors.Is(err, cluster.ErrInvalidBackup):
 			writeError(w, r, http.StatusBadRequest, err.Error(), err, cfg.Logger)
 			return
+		case errors.Is(err, cluster.ErrUnrestorableBackup):
+			writeError(w, r, http.StatusConflict, err.Error(), err, cfg.Logger)
+			return
 		case errors.Is(err, cluster.ErrNotLeader):
 			writeError(w, r, http.StatusServiceUnavailable, "Not ready to restore, retry later", err, cfg.Logger)
 			return

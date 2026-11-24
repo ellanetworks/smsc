@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/delivery"
 	"github.com/ellanetworks/smsc/internal/logging"
 	"github.com/ellanetworks/smsc/internal/server"
+	"golang.org/x/sys/unix"
 )
 
 const shutdownTimeout = 5 * time.Second
@@ -21,6 +23,11 @@ func main() {
 	configPath := flag.String("config", "smsc.yaml", "path to the configuration file")
 
 	flag.Parse()
+
+	if err := noCoreDumps(); err != nil {
+		logging.New(os.Stdout, slog.LevelInfo).Error("smsc stopped", "error", err)
+		os.Exit(1)
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -38,6 +45,18 @@ func main() {
 		logger.Error("smsc stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func noCoreDumps() error {
+	if err := unix.Setrlimit(unix.RLIMIT_CORE, &unix.Rlimit{}); err != nil {
+		return fmt.Errorf("disable core dumps: %w", err)
+	}
+
+	if err := unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0); err != nil {
+		return fmt.Errorf("disable core dumps: %w", err)
+	}
+
+	return nil
 }
 
 func run(cfg config.Config, logger *slog.Logger) error {

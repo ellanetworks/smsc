@@ -58,7 +58,7 @@ func (d *DB) LogInWithOIDC(ctx context.Context, l OIDCLogin) (res OIDCLoginResul
 }
 
 func applyLogInWithOIDC(a *applyCtx, l OIDCLogin) (OIDCLoginResult, error) {
-	res, err := logInWithOIDC(a.ctx, a.tx, a.schema, l)
+	res, err := logInWithOIDC(a.ctx, a.tx, l)
 	if err != nil {
 		return OIDCLoginResult{}, err
 	}
@@ -75,12 +75,12 @@ func applyLogInWithOIDC(a *applyCtx, l OIDCLogin) (OIDCLoginResult, error) {
 	return res, nil
 }
 
-func logInWithOIDC(ctx context.Context, tx *sql.Tx, schema int, l OIDCLogin) (OIDCLoginResult, error) {
+func logInWithOIDC(ctx context.Context, tx *sql.Tx, l OIDCLogin) (OIDCLoginResult, error) {
 	if err := checkOIDC(ctx, tx, l.Issuer, l.ClientID); err != nil {
 		return OIDCLoginResult{}, err
 	}
 
-	res, err := findOIDCUser(ctx, tx, schema, l)
+	res, err := findOIDCUser(ctx, tx, l)
 	if err != nil {
 		return OIDCLoginResult{}, err
 	}
@@ -88,7 +88,7 @@ func logInWithOIDC(ctx context.Context, tx *sql.Tx, schema int, l OIDCLogin) (OI
 	res.PreviousRole = res.User.Role
 
 	if !res.Created {
-		if res.User, res.RoleKept, err = syncRole(ctx, tx, schema, res.User, l); err != nil {
+		if res.User, res.RoleKept, err = syncRole(ctx, tx, res.User, l); err != nil {
 			return OIDCLoginResult{}, err
 		}
 	}
@@ -131,7 +131,7 @@ func checkOIDC(ctx context.Context, tx *sql.Tx, issuer, clientID string) error {
 	return nil
 }
 
-func findOIDCUser(ctx context.Context, tx *sql.Tx, schema int, l OIDCLogin) (OIDCLoginResult, error) {
+func findOIDCUser(ctx context.Context, tx *sql.Tx, l OIDCLogin) (OIDCLoginResult, error) {
 	var res OIDCLoginResult
 
 	err := tx.QueryRowContext(ctx, `SELECT id, user_id FROM user_identities WHERE issuer = ? AND subject = ?`, l.Issuer,
@@ -152,7 +152,7 @@ func findOIDCUser(ctx context.Context, tx *sql.Tx, schema int, l OIDCLogin) (OID
 	identity := NewIdentity{Issuer: l.Issuer, Subject: l.Subject, Email: l.Email, At: l.Session.CreatedAt}
 
 	res.User, err = getUser(tx.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, l.LinkEmail))
-	if err == nil && res.User.PasswordHash != "" && schema >= ssoLinkSchema {
+	if err == nil && res.User.PasswordHash != "" {
 		return OIDCLoginResult{}, ErrLinkRequired
 	}
 
@@ -189,17 +189,9 @@ func findOIDCUser(ctx context.Context, tx *sql.Tx, schema int, l OIDCLogin) (OID
 	return res, err
 }
 
-func syncRole(ctx context.Context, tx *sql.Tx, schema int, u User, l OIDCLogin) (User, bool, error) {
-	pinned := false
-
-	if schema < ssoLinkSchema {
-		if err := tx.QueryRowContext(ctx, `SELECT role_pinned FROM users WHERE id = ?`, u.ID).Scan(&pinned); err != nil {
-			return User{}, false, err
-		}
-	}
-
+func syncRole(ctx context.Context, tx *sql.Tx, u User, l OIDCLogin) (User, bool, error) {
 	switch {
-	case !l.MapsGroups || pinned:
+	case !l.MapsGroups:
 		return u, false, nil
 	case l.Role == 0:
 		return User{}, false, ErrNoRole

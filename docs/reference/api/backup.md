@@ -4,7 +4,7 @@ description: RESTful API reference for backing up and restoring Ella SMSC.
 
 # Backup
 
-A backup holds every message, user and setting, message content and the single sign-on client secret included. It leaves out the cluster's secrets: the key that signs access tokens, the single sign-on cookie key, and the key and tokens to join a node.
+A backup holds every message, user and setting, message content and secrets encrypted. It leaves out the encryption key and the cluster's secrets.
 
 Both paths require Admin. Restoring requires an access token: an API token gets `403`.
 
@@ -28,7 +28,7 @@ A gzipped tar archive, with `Content-Type: application/gzip` and its file name i
 
 ## Restore
 
-This path replaces every message, user and setting with those of a backup, on every node of a cluster, and closes the SMPP sessions. The cluster keeps its nodes and its secrets.
+This path replaces every message, user and setting with those of a backup, on every node of a cluster, and closes the SMPP sessions. The cluster keeps its nodes, its secrets and its encryption key.
 
 | Method | Path              |
 | ------ | ----------------- |
@@ -53,5 +53,6 @@ An archive from [Back Up](#back-up), with `Content-Type: application/gzip`.
 | Code  | Description |
 | ----- | ----------- |
 | `400` | Not a backup, a checksum does not match, or the backup's schema is newer than this version's. |
+| `409` | This node does not have the encryption key of the backup. See [Disaster recovery](../../how_to/back_up_and_restore.md#disaster-recovery). |
 | `421` | The node is not the leader. See [Leader-Only Paths](cluster.md#leader-only-paths). |
 | `503` | No leader, or not ready to restore. Retry. |

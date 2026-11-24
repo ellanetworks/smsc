@@ -38,7 +38,7 @@ The allow-list checks the address of the TCP connection. Terminate TLS in Ella S
 
 ## Message content
 
-Messages carry personal content. Reading it is a permission of its own: a Read Only user sees that messages were sent and delivered, but not what they say. Every read of the content is recorded in an [audit event](../reference/observability.md#audit-events), with who read it and from where.
+Messages carry personal content. Reading it is a permission of its own: a Read Only user sees that messages were sent and delivered, but not what they say. Every read of the content is recorded in an [audit event](../reference/observability.md#audit-events), with who read it and from where. Message content is encrypted. See [Encryption at Rest](encryption_at_rest.md).
 
 ## HTTPS
 

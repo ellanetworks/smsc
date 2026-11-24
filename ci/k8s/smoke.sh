@@ -114,6 +114,7 @@ wait_api() {
 create_namespace() {
   kubectl create namespace "${NS}"
   kubectl label namespace "${NS}" pod-security.kubernetes.io/enforce=restricted
+  k create secret generic ella-smsc-encryption --from-literal=key="$(head -c 32 /dev/urandom | base64)"
 }
 
 install() {
@@ -386,8 +387,16 @@ want="${SMSC_IP}"
 if [ "${MODE}" = pod-network ]; then
   want="$(k get pod ella-smsc-0 -o jsonpath='{.status.podIP}')"
 fi
-k logs ella-smsc-0 | grep '"msg":"smsc started"' | jq -e --arg want "${want}:3868" '.diameter == $want' >/dev/null \
-  || fail "the SMSC does not listen for Diameter on ${want}:3868"
+listening=""
+for _ in $(seq 30); do
+  if k logs ella-smsc-0 | grep '"msg":"Diameter listener started"' \
+    | jq -e --arg want "${want}:3868" 'select(.address == $want)' >/dev/null; then
+    listening=yes
+    break
+  fi
+  sleep 1
+done
+[ -n "${listening}" ] || fail "the SMSC does not listen for Diameter on ${want}:3868"
 echo "Diameter on ${want}:3868"
 endstep
 

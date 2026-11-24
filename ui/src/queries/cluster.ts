@@ -19,6 +19,7 @@ export interface ClusterMember {
   leader: boolean;
   healthy?: boolean;
   last_contact?: string;
+  locked: boolean;
 }
 
 export interface ClusterStatus {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/encryption"
 	"github.com/ellanetworks/smsc/internal/submission"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
@@ -306,6 +307,8 @@ func submitError(err error) (int, string) {
 		return http.StatusBadRequest, "text is too long"
 	case errors.Is(err, submission.ErrEncodeText):
 		return http.StatusInternalServerError, "Failed to encode text"
+	case errors.Is(err, encryption.ErrLocked):
+		return http.StatusServiceUnavailable, "The encryption keys are locked"
 	case errors.Is(err, db.ErrBusy):
 		return http.StatusServiceUnavailable, "Too busy, retry later"
 	case errors.Is(err, submission.ErrStore):
@@ -686,12 +689,12 @@ func messageOf(m db.Message, reports []db.Message, route string) Message {
 		out.StatusReport.Reports = append(out.StatusReport.Reports, statusReportOf(r))
 	}
 
+	out.StatusReport.Requested = m.StatusReportRequest
+
 	submit, err := tpdu.DecodeSubmit(m.TPDU)
 	if err != nil {
 		return out
 	}
-
-	out.StatusReport.Requested = m.Origin == db.OriginMobile && submit.StatusReportRequest
 
 	content, err := submit.Content()
 	if err != nil {

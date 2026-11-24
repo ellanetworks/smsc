@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/encryption"
 	"github.com/hashicorp/raft"
 )
 
@@ -29,7 +30,10 @@ const (
 	restoreTimeout   = 10 * time.Minute
 )
 
-var ErrInvalidBackup = errors.New("invalid backup")
+var (
+	ErrInvalidBackup      = errors.New("invalid backup")
+	ErrUnrestorableBackup = errors.New("this cluster cannot restore the backup yet")
+)
 
 type Manifest struct {
 	Format       int              `json:"format"`
@@ -163,6 +167,22 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 		return err
 	}
 
+	n.keyManager.changeMu.Lock()
+	defer n.keyManager.changeMu.Unlock()
+
+	backupKeys, err := n.restorable(ctx, path)
+	if err != nil {
+		return err
+	}
+
+	if backupKeys != nil {
+		defer backupKeys.Zeroize()
+
+		if err := db.ReencryptBackup(ctx, path, backupKeys, &n.keyManager.keys); err != nil {
+			return fmt.Errorf("%w: re-encrypt it under this cluster's keys: %w", ErrUnrestorableBackup, err)
+		}
+	}
+
 	live, err := n.db.Sequences(ctx)
 	if err != nil {
 		return err
@@ -198,6 +218,41 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 			Size: int64(len(header)) + info.Size(),
 		}, io.MultiReader(bytes.NewReader(header), f), restoreTimeout)
 	})
+}
+
+func (n *Node) restorable(ctx context.Context, path string) (*encryption.Keyring, error) {
+	live, err := n.db.EncryptionKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	backup, err := db.BackupEncryptionKeys(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read its encryption state: %w", ErrInvalidBackup, err)
+	}
+
+	switch {
+	case !live.Initialized() && !backup.Initialized():
+		return nil, nil
+	case !backup.Initialized():
+		return nil, fmt.Errorf("%w: it was taken before encryption at rest was initialized", ErrUnrestorableBackup)
+	case !live.Initialized():
+		return nil, fmt.Errorf("%w: this cluster's encryption keys are not created yet", ErrUnrestorableBackup)
+	case !n.keyManager.keys.Unlocked():
+		return nil, fmt.Errorf("%w: this node's encryption keys are locked", ErrEncryptionLocked)
+	}
+
+	keyring, err := n.keyManager.backupKeyring(backup)
+	if err != nil {
+		return nil, err
+	}
+
+	if !bytes.Equal(backup.KeyringID, live.KeyringID) {
+		n.keyManager.audit(ctx, "restore_foreign_backup", "Restoring a backup of another cluster: its content is "+
+			"re-encrypted under this cluster's keys")
+	}
+
+	return keyring, nil
 }
 
 func mkdirAll(dir string) string {

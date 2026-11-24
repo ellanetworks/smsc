@@ -8,11 +8,7 @@ import (
 
 var ErrUpgradePending = fmt.Errorf("%w: the cluster has not been upgraded to support this yet", ErrBusy)
 
-const ssoLinkSchema = 2
-
-var minSchema = map[CommandType]int{
-	cmdLinkOIDCIdentity: ssoLinkSchema,
-}
+var minSchema = map[CommandType]int{}
 
 func commandSchema(t CommandType) int {
 	if s, ok := minSchema[t]; ok {
@@ -30,6 +26,14 @@ func (d *DB) Migrate(ctx context.Context, target int) (err error) {
 	defer d.observe(&err)()
 
 	_, err = submit[struct{}](ctx, d, cmdMigrate, migrate{Target: target})
+
+	return err
+}
+
+func (d *DB) MigrateVia(ctx context.Context, via Proposer, target int) (err error) {
+	defer d.observe(&err)()
+
+	_, _, err = submitVia[struct{}](ctx, via, cmdMigrate, migrate{Target: target})
 
 	return err
 }

@@ -44,6 +44,7 @@ This path returns the node that answered, its cluster, and every member.
 | `members[].leader`            | boolean | The member is the leader. |
 | `members[].healthy`           | boolean | The member is healthy. Absent when no leader answers. |
 | `members[].last_contact`      | string  | Time since the leader last heard from the member. Absent when no leader answers. |
+| `members[].locked`            | boolean | The member cannot unlock its [encryption keys](../../explanation/encryption_at_rest.md#locked-nodes). |
 
 ### Sample Response
 
@@ -74,7 +75,8 @@ This path returns the node that answered, its cluster, and every member.
                 "drain_state": "active",
                 "suffrage": "voter",
                 "leader": true,
-                "healthy": true
+                "healthy": true,
+                "locked": false
             },
             {
                 "node_id": "0199f6a3-0b77-7c21-a4e0-6f1e2d3c4b5a",
@@ -90,7 +92,8 @@ This path returns the node that answered, its cluster, and every member.
                 "suffrage": "voter",
                 "leader": false,
                 "healthy": true,
-                "last_contact": "312ms"
+                "last_contact": "312ms",
+                "locked": false
             }
         ]
     }

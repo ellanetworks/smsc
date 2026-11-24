@@ -136,7 +136,7 @@ func (c *formingCluster) live() []*env {
 }
 
 func clusterIDOf(e *env) string {
-	s, err := e.db.ReadSecrets(context.Background())
+	s, err := e.db.Secrets(context.Background())
 	if err != nil {
 		return ""
 	}

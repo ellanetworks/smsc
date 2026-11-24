@@ -105,6 +105,22 @@ describe("Cluster", () => {
     expect(rowCells("10.0.0.13:7000")[7]).toBe("Unhealthy");
   });
 
+  it("shows a node that cannot unlock its encryption keys as locked", async () => {
+    const locked = clusterMember({
+      node_id: "1c6d7b1f-3333-4d2f-8b66-2a1d3e4f5a61",
+      address: "10.0.0.12:7000",
+      locked: true,
+    });
+    serve(
+      clusterStatus({ members: [clusterMember({ leader: true }), locked] }),
+    );
+    renderWithClient(<Cluster />);
+
+    await screen.findByRole("heading", { level: 2, name: "Nodes (2)" });
+    expect(rowCells("10.0.0.12:7000")[7]).toBe("Locked");
+    expect(rowCells("10.0.0.11:7000")[7]).toBe("Healthy");
+  });
+
   it("shows the leader's health on a follower", async () => {
     const leader = clusterMember({
       node_id: "1c6d7b1f-3333-4d2f-8b66-2a1d3e4f5a61",

@@ -67,6 +67,7 @@ func TestLoad(t *testing.T) {
 			Address: netip.MustParseAddr("192.0.2.10"),
 			Port:    3869,
 		},
+		Encryption: Encryption{Key: EncryptionKey{Type: KeyTypeFile, File: FileKey{Path: "/var/lib/smsc/encryption.key"}}},
 	}
 
 	if !reflect.DeepEqual(cfg, want) {
@@ -447,5 +448,148 @@ func TestLoadAdvertiseFromEnvironment(t *testing.T) {
 	_, err = Load(writeConfig(t, cluster(t, "  address: 0.0.0.0\n")))
 	if err == nil || !strings.Contains(err.Error(), EnvClusterAdvertise) {
 		t.Fatalf("Load = %v, want an error naming %s", err, EnvClusterAdvertise)
+	}
+}
+
+func writeKey(t *testing.T, dir string, mode os.FileMode) string {
+	t.Helper()
+
+	path := filepath.Join(dir, "key-"+strconv.Itoa(int(mode)))
+	if err := os.WriteFile(path, []byte(testSecret), mode); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+func TestLoadEncryption(t *testing.T) {
+	dir := t.TempDir()
+	key, previous := writeKey(t, dir, 0o600), writeKey(t, dir, 0o400)
+
+	cfg, err := Load(writeConfig(t, validConfig+"encryption:\n  key:\n    file:\n      path: "+key+
+		"\n  previous_key:\n    file:\n      path: "+previous+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := Encryption{
+		Key:         EncryptionKey{Type: KeyTypeFile, File: FileKey{Path: key}},
+		PreviousKey: &EncryptionKey{Type: KeyTypeFile, File: FileKey{Path: previous}},
+	}
+
+	if !reflect.DeepEqual(cfg.Encryption, want) {
+		t.Fatalf("encryption = %+v, want %+v", cfg.Encryption, want)
+	}
+
+	missing := filepath.Join(dir, "missing")
+	if _, err := Load(writeConfig(t, validConfig+"encryption:\n  key:\n    file:\n      path: "+missing+"\n")); err != nil {
+		t.Fatalf("a key file still to generate or fetch: %v", err)
+	}
+
+	invalid := filepath.Join(dir, "invalid")
+	if err := os.WriteFile(invalid, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, block := range map[string]string{
+		"unsupported type":     "encryption:\n  key:\n    type: kms\n",
+		"open to others":       "encryption:\n  key:\n    file:\n      path: " + writeKey(t, dir, 0o644) + "\n",
+		"not a key":            "encryption:\n  key:\n    file:\n      path: " + invalid + "\n",
+		"missing previous key": "encryption:\n  previous_key:\n    file:\n      path: " + missing + "\n",
+		"previous key no path": "encryption:\n  previous_key:\n    type: file\n",
+		"previous is current": "encryption:\n  key:\n    file:\n      path: " + key +
+			"\n  previous_key:\n    file:\n      path: " + key + "\n",
+	} {
+		if _, err := Load(writeConfig(t, validConfig+block)); err == nil {
+			t.Fatalf("%s: loaded", name)
+		}
+	}
+}
+
+func TestLoadPKCS11Encryption(t *testing.T) {
+	dir := t.TempDir()
+	library := filepath.Join(dir, "module.so")
+
+	if err := os.WriteFile(library, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pin := filepath.Join(dir, "pin")
+	if err := os.WriteFile(pin, []byte("1234\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	openPIN := filepath.Join(dir, "open-pin")
+	if err := os.WriteFile(openPIN, []byte("1234\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	block := func(fields string) string {
+		return "encryption:\n  key:\n    type: pkcs11\n    pkcs11:\n" + fields
+	}
+
+	good := "      library: " + library + "\n      token_label: ella\n      pin_file: " + pin +
+		"\n      key_label: smsc\n      mechanism: rsa-oaep\n"
+
+	cfg, err := Load(writeConfig(t, validConfig+block(good)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := EncryptionKey{Type: KeyTypePKCS11, PKCS11: &PKCS11Key{
+		Library: library, TokenLabel: "ella", PINFile: pin, KeyLabel: "smsc", Mechanism: "rsa-oaep",
+	}}
+
+	if !reflect.DeepEqual(cfg.Encryption.Key, want) {
+		t.Fatalf("encryption.key = %+v, want %+v", cfg.Encryption.Key, want)
+	}
+
+	slot := "      library: " + library + "\n      slot: 0\n      pin_file: " + pin +
+		"\n      key_label: smsc\n      mechanism: aes-gcm\n"
+
+	if _, err := Load(writeConfig(t, validConfig+block(slot))); err != nil {
+		t.Fatalf("a slot number: %v", err)
+	}
+
+	for name, text := range map[string]string{
+		"no block":           "encryption:\n  key:\n    type: pkcs11\n",
+		"relative library":   block(strings.Replace(good, library, "module.so", 1)),
+		"missing library":    block(strings.Replace(good, library, filepath.Join(dir, "missing.so"), 1)),
+		"no token":           block(strings.Replace(good, "      token_label: ella\n", "", 1)),
+		"token and slot":     block(good + "      slot: 0\n"),
+		"no key label":       block(strings.Replace(good, "      key_label: smsc\n", "", 1)),
+		"unknown mechanism":  block(strings.Replace(good, "rsa-oaep", "aes-cbc", 1)),
+		"no PIN file":        block(strings.Replace(good, "      pin_file: "+pin+"\n", "", 1)),
+		"PIN open to others": block(strings.Replace(good, pin, openPIN, 1)),
+		"also a file key":    block(good) + "    file:\n      path: " + filepath.Join(dir, "key") + "\n",
+	} {
+		if _, err := Load(writeConfig(t, validConfig+text)); err == nil {
+			t.Fatalf("%s: loaded", name)
+		}
+	}
+}
+
+func TestLoadRefusesOpenPrivateFiles(t *testing.T) {
+	dir := t.TempDir()
+	cert := filepath.Join(dir, "cert.pem")
+
+	if err := os.WriteFile(cert, []byte("pem"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	open := writeKey(t, dir, 0o644)
+
+	for name, block := range map[string]string{
+		"api.tls.key":         strings.Replace(validConfig, "api:\n", "api:\n  tls:\n    cert: "+cert+"\n    key: "+open+"\n", 1),
+		"cluster.secret_file": validConfig + "cluster:\n  address: 10.0.0.1\n  secret_file: " + open + "\n",
+	} {
+		_, err := Load(writeConfig(t, block))
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Fatalf("%s readable by others: %v", name, err)
+		}
 	}
 }

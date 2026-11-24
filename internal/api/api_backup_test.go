@@ -30,8 +30,6 @@ func backupNode(t *testing.T, store *db.DB) *cluster.Node {
 
 	t.Cleanup(func() { _ = n.Close() })
 
-	store.SetProposer(n)
-
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if ok, _ := n.Leader(); ok {
 			return n
@@ -45,7 +43,14 @@ func backupNode(t *testing.T, store *db.DB) *cluster.Node {
 
 func TestAPITokenBackupHoldsNoSecrets(t *testing.T) {
 	ctx := context.Background()
-	store := openStore(t)
+
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "smsc.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = store.Close() })
+
 	node := backupNode(t, store)
 
 	secrets, err := store.Secrets(ctx)

@@ -243,7 +243,7 @@ func TestBackupLeavesOutTheSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	after, err := e.db.ReadSecrets(ctx)
+	after, err := e.db.Secrets(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,49 +253,77 @@ func TestBackupLeavesOutTheSecrets(t *testing.T) {
 	}
 }
 
+func backupOf(t *testing.T, e *env) []byte {
+	t.Helper()
+
+	ctx := context.Background()
+
+	c, err := e.db.CopyTo(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var backup bytes.Buffer
+	if err := e.node.archive(ctx, &backup, c); err != nil {
+		t.Fatal(err)
+	}
+
+	return backup.Bytes()
+}
+
 func TestRestoreIgnoresTheSecretsOfABackup(t *testing.T) {
+	ctx := context.Background()
+	e := open(t, t.TempDir())
+
+	defer e.close(t)
+
+	waitLeader(t, e.node)
+	waitUnlocked(t, e)
+
+	backup := backupOf(t, e)
+
+	secrets, err := e.db.Secrets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.node.Restore(ctx, bytes.NewReader(backup)); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := e.db.Secrets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(after, secrets) {
+		t.Fatal("the restore changed the secrets")
+	}
+}
+
+func TestRestoreRefusesAnotherClustersBackup(t *testing.T) {
 	ctx := context.Background()
 	source := open(t, t.TempDir())
 
 	defer source.close(t)
 
 	waitLeader(t, source.node)
+	waitUnlocked(t, source)
 
-	if _, err := source.db.Secrets(timeout(t)); err != nil {
-		t.Fatal(err)
-	}
-
-	c, err := source.db.CopyTo(ctx, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var backup bytes.Buffer
-	if err := source.node.archive(ctx, &backup, c); err != nil {
-		t.Fatal(err)
-	}
+	backup := backupOf(t, source)
 
 	target := open(t, t.TempDir())
 
 	defer target.close(t)
 
 	waitLeader(t, target.node)
+	waitUnlocked(t, target)
 
-	secrets, err := target.db.Secrets(timeout(t))
-	if err != nil {
-		t.Fatal(err)
+	if err := target.node.Restore(ctx, bytes.NewReader(backup)); !errors.Is(err, ErrUnrestorableBackup) {
+		t.Fatalf("restoring another cluster's backup = %v, want %v", err, ErrUnrestorableBackup)
 	}
 
-	if err := target.node.Restore(ctx, bytes.NewReader(backup.Bytes())); err != nil {
-		t.Fatal(err)
-	}
-
-	after, err := target.db.ReadSecrets(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(after, secrets) {
-		t.Fatal("the restore took the backup's secrets")
+	if _, err := target.db.Secrets(ctx); err != nil {
+		t.Fatalf("the secrets after a refused restore: %v", err)
 	}
 }

@@ -35,20 +35,24 @@ var (
 )
 
 type joinRequest struct {
-	Token       string `json:"token"`
-	NodeID      string `json:"node_id"`
-	Address     string `json:"address"`
-	Certificate string `json:"certificate"`
-	Schema      int    `json:"schema"`
-	Protocol    int    `json:"protocol"`
-	Version     string `json:"version"`
-	Label       string `json:"diameter_label,omitempty"`
-	Generated   bool   `json:"label_generated,omitempty"`
-	Method      string `json:"method,omitempty"`
+	Token       string   `json:"token"`
+	NodeID      string   `json:"node_id"`
+	Address     string   `json:"address"`
+	Certificate string   `json:"certificate"`
+	Schema      int      `json:"schema"`
+	Protocol    int      `json:"protocol"`
+	Version     string   `json:"version"`
+	Label       string   `json:"diameter_label,omitempty"`
+	Generated   bool     `json:"label_generated,omitempty"`
+	Method      string   `json:"method,omitempty"`
+	Key         *joinKey `json:"encryption_key,omitempty"`
 }
 
 type joinReply struct {
-	Pins map[string]string `json:"pins"`
+	Pins       map[string]string `json:"pins"`
+	KeyMatches bool              `json:"encryption_key_matches,omitempty"`
+	KeyFile    []byte            `json:"encryption_key_file,omitempty"`
+	Keys       []string          `json:"encryption_keys,omitempty"`
 }
 
 type Token struct {
@@ -106,7 +110,7 @@ func (n *Node) MintToken(ctx context.Context, ttl time.Duration) (Token, error) 
 }
 
 func (n *Node) verifyToken(ctx context.Context, token string) (pki.Claims, error) {
-	secrets, err := n.db.ReadSecrets(ctx)
+	secrets, err := n.db.Secrets(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return pki.Claims{}, fmt.Errorf("%w: this node has not caught up with the cluster", errRetry)
 	}
@@ -131,12 +135,12 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 	var tokenID, clusterID string
 
 	if req.Method == joinMethodSecret {
-		secrets, err := n.db.ReadSecrets(ctx)
+		id, err := n.db.ClusterID(ctx)
 		if err != nil {
 			return joinReply{}, fmt.Errorf("%w: %w", errRetry, err)
 		}
 
-		clusterID = secrets.ClusterID
+		clusterID = id
 	} else {
 		claims, err := n.verifyToken(ctx, req.Token)
 		if err != nil {
@@ -171,6 +175,19 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 		return joinReply{}, err
 	}
 
+	keyMatches, err := n.keyManager.admitKey(ctx, req.Key)
+	if err != nil {
+		return joinReply{}, err
+	}
+
+	var keyFile []byte
+
+	if !keyMatches {
+		if keyFile, err = n.keyManager.keyFileFor(ctx, req.NodeID); err != nil {
+			return joinReply{}, err
+		}
+	}
+
 	m := db.Member{
 		NodeID: req.NodeID, Address: req.Address, Fingerprint: pki.Fingerprint(cert),
 		SchemaVersion: req.Schema, Version: req.Version, DiameterLabel: req.Label, LabelGenerated: req.Generated,
@@ -200,7 +217,12 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 		}
 	}
 
-	return joinReply{Pins: pins}, nil
+	st, err := n.db.EncryptionKeys(ctx)
+	if err != nil {
+		return joinReply{}, err
+	}
+
+	return joinReply{Pins: pins, KeyMatches: keyMatches, KeyFile: keyFile, Keys: fingerprints(st)}, nil
 }
 
 func validAddress(addr string) error {
@@ -277,15 +299,25 @@ func (n *Node) Join(ctx context.Context, token string) error {
 		return err
 	}
 
+	key, err := n.keyManager.joiningKey(ctx)
+	if err != nil {
+		return err
+	}
+
 	req := joinRequest{
 		Token: strings.TrimSpace(token), NodeID: n.id, Address: n.cfg.Advertise, Certificate: string(certPEM),
 		Schema: db.SchemaVersion(), Protocol: db.ProtocolVersion, Version: n.cfg.Version, Label: n.label,
-		Generated: n.generated,
+		Generated: n.generated, Key: key,
 	}
 
 	reply, err := n.redeem(ctx, claims, req)
 	if err != nil {
 		return err
+	}
+
+	if err := n.keyManager.takeClusterKey(ctx, key, reply); err != nil {
+		n.cfg.Logger.ErrorContext(ctx, "joined, but could not take the cluster's encryption key file: the node stays "+
+			"locked until it can", slog.Any("error", err))
 	}
 
 	if err := n.reset(context.WithoutCancel(ctx), cert, reply.Pins); err != nil {
@@ -413,7 +445,7 @@ func (n *Node) finishJoin() error {
 		return err
 	}
 
-	for _, name := range []string{logFile, "snapshots"} {
+	for _, name := range []string{logFile, "snapshots", highWaterFile} {
 		if err := os.RemoveAll(filepath.Join(n.cfg.Dir, name)); err != nil {
 			return err
 		}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/ellanetworks/core/diameter/sgd"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/db/dbtest"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 )
@@ -931,12 +931,7 @@ func TestRunDeliversStoredMessages(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "smsc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() { _ = database.Close() }()
+	database := dbtest.Open(t)
 
 	sender := &fakeSender{answers: map[string]*diameter.Message{"mme.example.org": success()}}
 	d := newDeliverer(database, &fakeRouter{routing: mmeRouting()}, sender)
@@ -1425,12 +1420,7 @@ func TestRunDeliversOtherRecipientsWhileOneIsStuck(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "smsc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() { _ = database.Close() }()
+	database := dbtest.Open(t)
 
 	slow := mmeRouting()
 	fast := mmeRouting()

@@ -17,16 +17,6 @@ type StatusReport struct {
 	Status                 Status
 }
 
-func (s Submit) StatusReport(timeStamp, discharge time.Time, status Status) StatusReport {
-	return StatusReport{
-		MessageReference:       s.MessageReference,
-		Recipient:              s.Destination,
-		ServiceCentreTimeStamp: timeStamp,
-		DischargeTime:          discharge,
-		Status:                 status,
-	}
-}
-
 func (r StatusReport) Encode() ([]byte, error) {
 	ra, err := r.Recipient.Encode()
 	if err != nil {

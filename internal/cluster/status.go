@@ -28,6 +28,7 @@ type MemberStatus struct {
 	Healthy       *bool     `json:"healthy,omitempty"`
 	LastContact   string    `json:"last_contact,omitempty"`
 	APIAddress    string    `json:"api_address,omitempty"`
+	Locked        bool      `json:"locked"`
 }
 
 type Status struct {
@@ -69,9 +70,8 @@ func (n *Node) Status(ctx context.Context) (Status, error) {
 		servers = future.Configuration().Servers
 	}
 
-	secrets, err := n.db.ReadSecrets(ctx)
-	if err == nil {
-		st.ClusterID = secrets.ClusterID
+	if id, err := n.db.ClusterID(ctx); err == nil {
+		st.ClusterID = id
 	}
 
 	members, err := n.db.Members(ctx)
@@ -80,6 +80,11 @@ func (n *Node) Status(ctx context.Context) (Status, error) {
 	}
 
 	s, err := n.db.GetSettings(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+
+	keys, err := n.db.EncryptionKeys(ctx)
 	if err != nil {
 		return Status{}, err
 	}
@@ -103,6 +108,13 @@ func (n *Node) Status(ctx context.Context) (Status, error) {
 			Version: m.Version, APIAddress: m.APIAddress,
 			JoinedAt: m.JoinedAt, DrainState: string(m.DrainState), Suffrage: "none", Leader: m.NodeID == string(leaderID),
 		}
+
+		key := m.EncryptionKey
+		if m.NodeID == n.id {
+			key = n.keyManager.unlockedWith()
+		}
+
+		ms.Locked = keys.Initialized() && key == ""
 
 		if i := slices.IndexFunc(servers, func(s raft.Server) bool { return string(s.ID) == m.NodeID }); i >= 0 {
 			ms.Suffrage = "voter"
@@ -130,6 +142,7 @@ const (
 	CheckDatabase    = "database"
 	CheckLeader      = "leader"
 	CheckCluster     = "cluster"
+	CheckEncryption  = "encryption"
 )
 
 type Check struct {
@@ -158,7 +171,7 @@ func (n *Node) Readiness(ctx context.Context, withCluster bool) []Check {
 
 	checks := []Check{
 		n.checkMember(), n.checkInitialized(ctx), n.checkLabel(ctx), n.checkDrain(ctx), n.checkDatabase(ctx),
-		n.checkLeader(),
+		n.checkLeader(), n.checkEncryption(),
 	}
 
 	if withCluster {

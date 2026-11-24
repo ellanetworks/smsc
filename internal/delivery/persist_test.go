@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/ellanetworks/core/diameter"
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/db/dbtest"
 )
 
 type busyStore struct {
@@ -73,12 +73,7 @@ type busyEnv struct {
 func newBusyEnv(t *testing.T, answer *diameter.Message) *busyEnv {
 	t.Helper()
 
-	database, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "smsc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(func() { _ = database.Close() })
+	database := dbtest.Open(t)
 
 	e := &busyEnv{
 		store:  &busyStore{DB: database},
@@ -88,6 +83,8 @@ func newBusyEnv(t *testing.T, answer *diameter.Message) *busyEnv {
 
 	e.d = newDeliverer(e.store, e.router, e.sender)
 	e.d.Now = time.Now
+
+	var err error
 
 	e.id, err = database.CreateMessage(t.Context(), db.NewMessage{
 		Originator:  db.Address{Digits: "15551230001", TypeOfNumber: 1, NumberingPlan: 1},

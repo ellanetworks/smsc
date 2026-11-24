@@ -32,7 +32,19 @@ func message(t *testing.T, tpduHex string) db.Message {
 		t.Fatal(err)
 	}
 
-	return db.Message{ID: 1, Kind: db.KindMessage, Origin: db.OriginMobile, TPDU: b, SubmittedAt: submitted}
+	m := db.Message{
+		ID: 1, Kind: db.KindMessage, Origin: db.OriginMobile, TPDU: b, SubmittedAt: submitted,
+		StatusReportRequest: tpdu.RequestsStatusReport(b),
+	}
+
+	if s, err := tpdu.DecodeSubmit(b); err == nil {
+		m.MessageReference = s.MessageReference
+		m.Recipient = db.Address{
+			Digits: s.Destination.Digits, TypeOfNumber: s.Destination.TypeOfNumber, NumberingPlan: s.Destination.NumberingPlan,
+		}
+	}
+
+	return m
 }
 
 func TestFor(t *testing.T) {
@@ -62,6 +74,7 @@ func TestFor(t *testing.T) {
 func TestForWantsNone(t *testing.T) {
 	fromAPI := message(t, submitTPDU)
 	fromAPI.Origin = db.OriginAPI
+	fromAPI.StatusReportRequest = false
 
 	report := message(t, submitTPDU)
 	report.Kind = db.KindStatusReport
@@ -88,8 +101,26 @@ func TestForIgnoresSelectiveStatusReport(t *testing.T) {
 	}
 }
 
-func TestForUndecodableMessage(t *testing.T) {
-	if _, err := For(message(t, "00"), tpdu.StatusReceived, discharge, current); err == nil {
+func TestForNeedsNoTPDU(t *testing.T) {
+	m := message(t, submitTPDU)
+	m.TPDU = nil
+
+	report, err := For(m, tpdu.StatusReceived, discharge, current)
+	if err != nil || report == nil {
+		t.Fatalf("For without the TPDU = %+v, %v; want a report", report, err)
+	}
+
+	want, err := For(message(t, submitTPDU), tpdu.StatusReceived, discharge, current)
+	if err != nil || string(report.TPDU) != string(want.TPDU) {
+		t.Fatalf("report %x, want %x (%v)", report.TPDU, want.TPDU, err)
+	}
+}
+
+func TestForUnencodableRecipient(t *testing.T) {
+	m := message(t, submitTPDU)
+	m.Recipient.Digits = "not digits"
+
+	if _, err := For(m, tpdu.StatusReceived, discharge, current); err == nil {
 		t.Fatal("expected an error")
 	}
 }

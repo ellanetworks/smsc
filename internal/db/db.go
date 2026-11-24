@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ellanetworks/smsc/internal/encryption"
 	"github.com/mattn/go-sqlite3"
 )
 
@@ -19,6 +20,8 @@ var (
 	ErrLastPasswordAdmin = errors.New("the last admin with a password")
 	ErrTooManyUsers      = errors.New("too many users")
 	ErrNoPassword        = errors.New("the user has no password")
+	ErrPreRelease        = errors.New("the database was created by a pre-release version of Ella SMSC, which this " +
+		"version cannot upgrade: start it with a new data directory")
 )
 
 func isUnique(err error) bool {
@@ -41,6 +44,7 @@ type DB struct {
 	leaderTime  atomic.Int64
 	schema      atomic.Int64
 	subscribers []func(Events)
+	keys        *encryption.Keys
 }
 
 const baselineSchema = 1
@@ -50,7 +54,6 @@ var migrations = []string{
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		email TEXT NOT NULL UNIQUE COLLATE NOCASE,
 		role_id INTEGER NOT NULL CHECK (role_id IN (1, 2, 3, 4)),
-		role_pinned INTEGER NOT NULL DEFAULT 0 CHECK (role_pinned IN (0, 1)),
 		password_hash TEXT CHECK (password_hash != '')
 	);
 	CREATE TABLE user_identities (
@@ -98,7 +101,7 @@ var migrations = []string{
 		external_url TEXT NOT NULL,
 		issuer TEXT NOT NULL,
 		client_id TEXT NOT NULL,
-		client_secret TEXT NOT NULL,
+		client_secret BLOB CHECK (length(client_secret) > 0),
 		display_name TEXT NOT NULL,
 		scopes TEXT NOT NULL,
 		session_lifetime INTEGER NOT NULL CHECK (session_lifetime > 0),
@@ -108,7 +111,7 @@ var migrations = []string{
 		CHECK (enabled = 0 OR external_url != '' AND issuer != '' AND client_id != '' AND display_name != ''
 			AND scopes != '')
 	);
-	INSERT INTO oidc VALUES (1, 0, '', '', '', '', '', 'openid email profile', 86400000000000, 0, '', '');
+	INSERT INTO oidc VALUES (1, 0, '', '', '', NULL, '', 'openid email profile', 86400000000000, 0, '', '');
 	CREATE TABLE oidc_group_roles (
 		position INTEGER PRIMARY KEY CHECK (position > 0),
 		group_name TEXT NOT NULL UNIQUE CHECK (group_name != ''),
@@ -150,6 +153,10 @@ var migrations = []string{
 		updated_at INTEGER NOT NULL,
 		-- The W3C traceparent of the request that created the message, which its deliveries link to.
 		traceparent TEXT,
+		status_report_request INTEGER NOT NULL DEFAULT 0 CHECK (status_report_request IN (0, 1)),
+		cipher_id BLOB CHECK (cipher_id IS NULL OR length(cipher_id) = 16),
+		CHECK (status_report_request = 0 OR kind = 'message' AND origin = 'mobile'),
+		CHECK ((kind = 'message') = (cipher_id IS NOT NULL)),
 		CHECK (kind = 'message' AND report_for IS NULL AND report_status IS NULL
 			OR kind = 'status_report' AND report_for IS NOT NULL AND report_status IS NOT NULL),
 		CHECK (kind = 'message' OR status != 'replaced'),
@@ -181,7 +188,9 @@ var migrations = []string{
 		absent_user_diagnostic_ip_sm_gw TEXT,
 		absent_user_diagnostic_smsf_3gpp TEXT,
 		absent_user_diagnostic_smsf_non_3gpp TEXT,
-		deliver_report BLOB
+		deliver_report BLOB,
+		cipher_id BLOB CHECK (cipher_id IS NULL OR length(cipher_id) = 16),
+		CHECK ((deliver_report IS NULL) = (cipher_id IS NULL))
 	);
 	CREATE INDEX delivery_attempts_message_id ON delivery_attempts (message_id);
 	CREATE TABLE recipients (
@@ -375,7 +384,8 @@ var migrations = []string{
 		display_name TEXT NOT NULL DEFAULT '',
 		diameter_label TEXT NOT NULL UNIQUE CHECK (length(diameter_label) BETWEEN 1 AND 63),
 		label_generated INTEGER NOT NULL CHECK (label_generated IN (0, 1)),
-		api_address TEXT NOT NULL DEFAULT ''
+		api_address TEXT NOT NULL DEFAULT '',
+		encryption_key TEXT NOT NULL DEFAULT ''
 	);
 	CREATE UNIQUE INDEX cluster_members_address ON cluster_members (address) WHERE address != '';
 	CREATE TABLE cluster_removed_members (
@@ -390,8 +400,24 @@ var migrations = []string{
 		node_id TEXT,
 		fingerprint TEXT,
 		CHECK ((node_id IS NULL) = (fingerprint IS NULL))
+	);
+	CREATE TABLE encryption_root_wraps (
+		fingerprint TEXT PRIMARY KEY CHECK (fingerprint != ''),
+		key_type TEXT NOT NULL CHECK (key_type != ''),
+		mechanism TEXT NOT NULL CHECK (mechanism != ''),
+		wrapped_root BLOB NOT NULL CHECK (length(wrapped_root) > 0)
+	) WITHOUT ROWID;
+	CREATE TABLE encryption_keyring (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		keyring_id BLOB NOT NULL CHECK (length(keyring_id) = 16),
+		active_term INTEGER NOT NULL CHECK (active_term BETWEEN 1 AND 4294967295),
+		sealed BLOB NOT NULL CHECK (length(sealed) > 0)
+	);
+	CREATE TABLE encryption_terms (
+		term INTEGER PRIMARY KEY CHECK (term BETWEEN 1 AND 4294967295),
+		upgrade BLOB CHECK (upgrade IS NULL OR length(upgrade) > 0),
+		created_at INTEGER NOT NULL
 	);`,
-	`ALTER TABLE users DROP COLUMN role_pinned;`,
 }
 
 type Option func(*DB)
@@ -528,6 +554,16 @@ func (d *DB) migrate(ctx context.Context) error {
 	d.schema.Store(int64(version))
 
 	if version > 0 {
+		var current int
+		if err := d.writer.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type = 'table'
+			AND name = 'encryption_keyring'`).Scan(&current); err != nil {
+			return fmt.Errorf("read schema: %w", err)
+		}
+
+		if current == 0 {
+			return ErrPreRelease
+		}
+
 		return nil
 	}
 

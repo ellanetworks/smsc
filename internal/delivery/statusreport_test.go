@@ -20,6 +20,7 @@ func reportingMessage(t *testing.T) db.Message {
 
 	m := pendingMessage(t)
 	m.TPDU = mustHex(t, reportingSubmitTPDU)
+	m.StatusReportRequest = true
 
 	return m
 }
@@ -114,6 +115,7 @@ func TestStatusReportOnFinalOutcomes(t *testing.T) {
 func TestNoStatusReport(t *testing.T) {
 	fromAPI := reportingMessage(t)
 	fromAPI.Origin = db.OriginAPI
+	fromAPI.StatusReportRequest = false
 
 	report := reportingMessage(t)
 	report.Kind = db.KindStatusReport
@@ -150,6 +152,7 @@ func TestNoStatusReport(t *testing.T) {
 func TestDeliverIndicatesStatusReport(t *testing.T) {
 	fromAPI := reportingMessage(t)
 	fromAPI.Origin = db.OriginAPI
+	fromAPI.StatusReportRequest = false
 
 	tests := map[string]struct {
 		message db.Message

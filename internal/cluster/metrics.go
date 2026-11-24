@@ -9,6 +9,8 @@ import (
 type metrics struct {
 	joinRequests *prometheus.CounterVec
 	foreignPeers prometheus.Gauge
+	locked       prometheus.Gauge
+	keyAvailable prometheus.Gauge
 }
 
 func newMetrics() *metrics {
@@ -21,7 +23,33 @@ func newMetrics() *metrics {
 			Name: "ellasmsc_cluster_foreign_peers",
 			Help: "Nodes behind cluster.join that are members of another cluster.",
 		}),
+		locked: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ellasmsc_encryption_node_locked",
+			Help: "1 when this node cannot unlock the encryption keys.",
+		}),
+		keyAvailable: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ellasmsc_encryption_key_available",
+			Help: "1 when this node can use its configured encryption key, checked every minute.",
+		}),
 	}
+}
+
+func (m *metrics) setEncryption(s EncryptionStatus) {
+	locked := 0.0
+	if s.Locked {
+		locked = 1
+	}
+
+	m.locked.Set(locked)
+}
+
+func (m *metrics) setKeyAvailable(available bool) {
+	value := 0.0
+	if available {
+		value = 1
+	}
+
+	m.keyAvailable.Set(value)
 }
 
 func RegisterRaftMetrics(reg prometheus.Registerer) error {
@@ -42,7 +70,7 @@ func RegisterRaftMetrics(reg prometheus.Registerer) error {
 
 func (n *Node) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		n.metrics.joinRequests, n.metrics.foreignPeers,
+		n.metrics.joinRequests, n.metrics.foreignPeers, n.metrics.locked, n.metrics.keyAvailable,
 		toleranceCollector{n},
 	}
 }

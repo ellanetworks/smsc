@@ -10,10 +10,11 @@ import (
 )
 
 type metrics struct {
-	duration  prometheus.Histogram
-	errors    prometheus.Counter
-	completed *prometheus.CounterVec
-	purged    prometheus.Counter
+	duration      prometheus.Histogram
+	errors        prometheus.Counter
+	completed     *prometheus.CounterVec
+	purged        prometheus.Counter
+	undecryptable prometheus.Counter
 }
 
 var finalStatuses = map[MessageKind][]MessageStatus{
@@ -24,6 +25,10 @@ var finalStatuses = map[MessageKind][]MessageStatus{
 func newMetrics() metrics {
 	return metrics{
 		completed: newCompleted(),
+		undecryptable: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "ellasmsc_encryption_undecryptable_reads_total",
+			Help: "Reads of stored message content that failed decryption for good. The content is left out.",
+		}),
 		purged: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "ellasmsc_messages_purged_total",
 			Help: "Short messages deleted once their retention period passed, with their status reports and delivery attempts.",
@@ -102,6 +107,7 @@ func (d *DB) Collectors() []prometheus.Collector {
 		storageCollector{path: d.path},
 		d.metrics.completed,
 		d.metrics.purged,
+		d.metrics.undecryptable,
 	}
 }
 

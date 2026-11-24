@@ -48,6 +48,7 @@ Ella SMSC can be deployed as a high-availability cluster to provide redundancy a
     ```shell
     kubectl create namespace ella
     kubectl label namespace ella pod-security.kubernetes.io/enforce=restricted
+    kubectl create secret generic ella-smsc-encryption -n ella --from-literal=key="$(openssl rand -base64 32)"
     kubectl create secret generic ella-smsc-cluster -n ella --from-literal=secret="$(openssl rand -base64 32)"
     helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --set replicas=3
     ```

@@ -130,6 +130,12 @@ Choose one of the installation methods below.
     kubectl label namespace ella pod-security.kubernetes.io/enforce=restricted
     ```
 
+    Create the encryption key, and keep a copy of it, apart from the backups:
+
+    ```shell
+    kubectl create secret generic ella-smsc-encryption -n ella --from-literal=key="$(openssl rand -base64 32)"
+    ```
+
     Deploy Ella SMSC:
 
     ```shell

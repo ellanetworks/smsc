@@ -99,6 +99,7 @@ const (
 	PermBackup             Permission = "backup:manage"
 	PermReadCluster        Permission = "cluster:read"
 	PermManageCluster      Permission = "cluster:manage"
+	PermManageEncryption   Permission = "encryption:manage"
 )
 
 var permissions = map[db.Role][]Permission{
@@ -106,7 +107,7 @@ var permissions = map[db.Role][]Permission{
 		PermCreateMessage, PermReadMessage, PermReadMessageContent, PermReadDiameter, PermReadOperator, PermUpdateOperator,
 		PermReadDelivery, PermUpdateDelivery, PermReadRetention, PermUpdateRetention, PermSelf, PermManageUsers,
 		PermReadProfiles, PermUpdateDiameter, PermReadESME, PermUpdateESME, PermReadOIDC, PermUpdateOIDC, PermBackup,
-		PermReadCluster, PermManageCluster,
+		PermReadCluster, PermManageCluster, PermManageEncryption,
 	},
 	db.RoleReadOnly: {
 		PermReadMessage, PermReadDiameter, PermReadOperator, PermReadDelivery, PermReadRetention, PermSelf, PermReadESME,
@@ -333,7 +334,27 @@ type claims struct {
 	jwt.RegisteredClaims
 }
 
+var errKeysLocked = errors.New("the JWT secret is unavailable while the encryption keys are locked")
+
+func (a *auth) signing() bool {
+	return len(a.cfg.JWTSecret()) > 0
+}
+
+func (a *auth) jwtKey() ([]byte, error) {
+	key := a.cfg.JWTSecret()
+	if len(key) == 0 {
+		return nil, errKeysLocked
+	}
+
+	return key, nil
+}
+
 func (a *auth) accessToken(u db.User, sessionID int64) (string, error) {
+	key, err := a.jwtKey()
+	if err != nil {
+		return "", err
+	}
+
 	now := a.cfg.Now()
 
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims{
@@ -346,13 +367,13 @@ func (a *auth) accessToken(u db.User, sessionID int64) (string, error) {
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(AccessTokenDuration)),
 		},
-	}).SignedString(a.cfg.JWTSecret())
+	}).SignedString(key)
 }
 
 func (a *auth) checkAccessToken(ctx context.Context, token string) (int64, error) {
 	var c claims
 
-	if _, err := jwt.ParseWithClaims(token, &c, func(*jwt.Token) (any, error) { return a.cfg.JWTSecret(), nil },
+	if _, err := jwt.ParseWithClaims(token, &c, func(*jwt.Token) (any, error) { return a.jwtKey() },
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(), jwt.WithTimeFunc(a.cfg.Now)); err != nil {
 		return 0, err
