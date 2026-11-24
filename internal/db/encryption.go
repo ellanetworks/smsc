@@ -3,17 +3,15 @@ package db
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/ellanetworks/smsc/internal/encryption"
 )
 
-const keyringIDLength = 16
+const keyringIDLength = encryption.KeyringIDSize
 
 var (
 	ErrKeysChanged = errors.New("the encryption keys changed meanwhile")
@@ -25,6 +23,8 @@ type EncryptionKeys struct {
 	KeyringID  []byte
 	Wraps      []encryption.RootWrap
 	Keyring    []byte
+	Terms      []uint32
+	Upgrades   map[uint32][]byte
 }
 
 func (k EncryptionKeys) Initialized() bool {
@@ -42,91 +42,6 @@ func BackupEncryptionKeys(ctx context.Context, path string) (_ EncryptionKeys, e
 	return readEncryptionKeys(ctx, conn)
 }
 
-func (d *DB) AdoptKeys(ctx context.Context, path string, backup EncryptionKeys, wrap encryption.RootWrap,
-	adopted *encryption.Keys,
-) (err error) {
-	defer d.observe(&err)()
-
-	if !d.unlocked() {
-		return ErrKeysLocked
-	}
-
-	if err := validWrap(wrap); err != nil {
-		return err
-	}
-
-	conn, err := sql.Open("sqlite3", "file:"+path+"?_secure_delete=on")
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = conn.Close() }()
-
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	defer func() { _ = tx.Rollback() }()
-
-	for _, k := range secretKeys {
-		if err := reseal(ctx, tx, k.at, d.keys, adopted); err != nil {
-			return fmt.Errorf("re-encrypt the %s: %w", k.at.Table, err)
-		}
-	}
-
-	for _, q := range []struct {
-		sql  string
-		args []any
-	}{
-		{`DELETE FROM encryption_root_wraps`, nil},
-		{
-			`INSERT INTO encryption_root_wraps (fingerprint, key_type, mechanism, wrapped_root) VALUES (?, ?, ?, ?)`,
-			[]any{wrap.Fingerprint, wrap.Type, wrap.Mechanism, wrap.Wrapped},
-		},
-		{`UPDATE encryption_keyring SET sealed = ? WHERE id = 1`, []any{backup.Keyring}},
-		{
-			`UPDATE encryption_state SET active_term = ?, keyring_id = ? WHERE id = 1`,
-			[]any{backup.ActiveTerm, backup.KeyringID},
-		},
-	} {
-		if _, err := tx.ExecContext(ctx, q.sql, q.args...); err != nil {
-			return fmt.Errorf("adopt the backup's keys: %w", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-func reseal(ctx context.Context, tx *sql.Tx, at encryption.Location, from, to *encryption.Keys) error {
-	var value []byte
-
-	err := tx.QueryRowContext(ctx, `SELECT `+at.Column+` FROM `+at.Table+` WHERE id = 1`).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-
-	if err != nil {
-		return err
-	}
-
-	plain, err := from.Decrypt(value, at)
-	if err != nil {
-		return err
-	}
-
-	defer clear(plain)
-
-	sealed, err := to.Encrypt(plain, at)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.ExecContext(ctx, `UPDATE `+at.Table+` SET `+at.Column+` = ? WHERE id = 1`, sealed)
-
-	return err
-}
-
 func (d *DB) EncryptionKeys(ctx context.Context) (_ EncryptionKeys, err error) {
 	defer d.observe(&err)()
 
@@ -136,8 +51,8 @@ func (d *DB) EncryptionKeys(ctx context.Context) (_ EncryptionKeys, err error) {
 func readEncryptionKeys(ctx context.Context, q querier) (EncryptionKeys, error) {
 	var k EncryptionKeys
 
-	err := q.QueryRowContext(ctx, `SELECT active_term, keyring_id FROM encryption_state WHERE id = 1`).
-		Scan(&k.ActiveTerm, &k.KeyringID)
+	err := q.QueryRowContext(ctx, `SELECT active_term, keyring_id, sealed FROM encryption_keyring WHERE id = 1`).
+		Scan(&k.ActiveTerm, &k.KeyringID, &k.Keyring)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EncryptionKeys{}, nil
 	}
@@ -167,11 +82,33 @@ func readEncryptionKeys(ctx context.Context, q querier) (EncryptionKeys, error) 
 		return EncryptionKeys{}, fmt.Errorf("read the root key wraps: %w", err)
 	}
 
-	if err := q.QueryRowContext(ctx, `SELECT sealed FROM encryption_keyring WHERE id = 1`).Scan(&k.Keyring); err != nil {
-		return EncryptionKeys{}, fmt.Errorf("read the keyring: %w", err)
+	terms, err := q.QueryContext(ctx, `SELECT term, upgrade FROM encryption_terms ORDER BY term`)
+	if err != nil {
+		return EncryptionKeys{}, fmt.Errorf("read the data key terms: %w", err)
 	}
 
-	return k, nil
+	defer func() { _ = terms.Close() }()
+
+	k.Upgrades = map[uint32][]byte{}
+
+	for terms.Next() {
+		var (
+			term    uint32
+			upgrade []byte
+		)
+
+		if err := terms.Scan(&term, &upgrade); err != nil {
+			return EncryptionKeys{}, fmt.Errorf("read the data key terms: %w", err)
+		}
+
+		k.Terms = append(k.Terms, term)
+
+		if upgrade != nil {
+			k.Upgrades[term] = upgrade
+		}
+	}
+
+	return k, terms.Err()
 }
 
 type clusterKeys struct {
@@ -182,12 +119,7 @@ type clusterKeys struct {
 }
 
 func newClusterKeys(sealed encryption.Sealed, activeTerm uint32) clusterKeys {
-	k := clusterKeys{
-		Wrap: sealed.Wrap, Keyring: sealed.Keyring, ActiveTerm: activeTerm, KeyringID: make([]byte, keyringIDLength),
-	}
-	_, _ = rand.Read(k.KeyringID)
-
-	return k
+	return clusterKeys{Wrap: sealed.Wrap, Keyring: sealed.Keyring, ActiveTerm: activeTerm, KeyringID: sealed.KeyringID}
 }
 
 func (k clusterKeys) validate() error {
@@ -217,12 +149,13 @@ func insertClusterKeys(a *applyCtx, k clusterKeys) error {
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_keyring (id, sealed) VALUES (1, ?)`, k.Keyring); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_keyring (id, keyring_id, active_term, sealed)
+		VALUES (1, ?, ?, ?)`, k.KeyringID, k.ActiveTerm, k.Keyring); err != nil {
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_state (id, active_term, keyring_id) VALUES (1, ?, ?)`,
-		k.ActiveTerm, k.KeyringID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_terms (term, upgrade) VALUES (?, NULL)`,
+		k.ActiveTerm); err != nil {
 		return err
 	}
 
@@ -246,65 +179,6 @@ func validWrap(w encryption.RootWrap) error {
 	}
 
 	return nil
-}
-
-type rotateKeys struct {
-	FromTerm uint32              `json:"from_term"`
-	Wrap     encryption.RootWrap `json:"wrap"`
-	Keyring  []byte              `json:"keyring"`
-}
-
-func (d *DB) RotateKeys(ctx context.Context, fromTerm uint32, sealed encryption.Sealed) (err error) {
-	defer d.observe(&err)()
-
-	_, err = submit[struct{}](ctx, d, cmdRotateKeys, rotateKeys{
-		FromTerm: fromTerm, Wrap: sealed.Wrap,
-		Keyring: sealed.Keyring,
-	})
-
-	return err
-}
-
-func applyRotateKeys(a *applyCtx, p rotateKeys) (struct{}, error) {
-	if err := validWrap(p.Wrap); err != nil {
-		return struct{}{}, err
-	}
-
-	if len(p.Keyring) == 0 || p.FromTerm == 0 || p.FromTerm == math.MaxUint32 {
-		return struct{}{}, fmt.Errorf("%w: rotation from term %d", ErrInvalid, p.FromTerm)
-	}
-
-	st, err := readEncryptionKeys(a.ctx, a.tx)
-	if err != nil {
-		return struct{}{}, err
-	}
-
-	switch {
-	case st.ActiveTerm != p.FromTerm:
-		return struct{}{}, fmt.Errorf("%w: the active term is %d, not %d", ErrKeysChanged, st.ActiveTerm, p.FromTerm)
-	case len(st.Wraps) != 1:
-		return struct{}{}, ErrKeyChange
-	case !sameWrapKey(st.Wraps[0], p.Wrap):
-		return struct{}{}, fmt.Errorf("%w: the cluster key is %s", ErrKeysChanged, st.Wraps[0].Fingerprint)
-	}
-
-	if _, err := a.tx.ExecContext(a.ctx, `UPDATE encryption_root_wraps SET wrapped_root = ? WHERE fingerprint = ?`,
-		p.Wrap.Wrapped, p.Wrap.Fingerprint); err != nil {
-		return struct{}{}, err
-	}
-
-	if _, err := a.tx.ExecContext(a.ctx, `UPDATE encryption_keyring SET sealed = ? WHERE id = 1`, p.Keyring); err != nil {
-		return struct{}{}, err
-	}
-
-	if _, err := a.tx.ExecContext(a.ctx, `UPDATE encryption_state SET active_term = ? WHERE id = 1`,
-		p.FromTerm+1); err != nil {
-		return struct{}{}, err
-	}
-
-	a.events.Encryption = true
-
-	return struct{}{}, nil
 }
 
 type addRootWrap struct {
@@ -347,50 +221,6 @@ func applyAddRootWrap(a *applyCtx, p addRootWrap) (struct{}, error) {
 
 	if _, err := a.tx.ExecContext(a.ctx, `INSERT INTO encryption_root_wraps (fingerprint, key_type, mechanism,
 		wrapped_root) VALUES (?, ?, ?, ?)`, p.Wrap.Fingerprint, p.Wrap.Type, p.Wrap.Mechanism, p.Wrap.Wrapped); err != nil {
-		return struct{}{}, err
-	}
-
-	a.events.Encryption = true
-
-	return struct{}{}, nil
-}
-
-type removeRootWraps struct {
-	Keep encryption.RootWrap `json:"keep"`
-}
-
-func (d *DB) RemoveRootWrapsBut(ctx context.Context, keep encryption.RootWrap) (err error) {
-	defer d.observe(&err)()
-
-	_, err = submit[struct{}](ctx, d, cmdRemoveRootWraps, removeRootWraps{Keep: keep})
-
-	return err
-}
-
-func applyRemoveRootWraps(a *applyCtx, p removeRootWraps) (struct{}, error) {
-	st, err := readEncryptionKeys(a.ctx, a.tx)
-	if err != nil {
-		return struct{}{}, err
-	}
-
-	found := false
-
-	for _, w := range st.Wraps {
-		if sameWrapKey(w, p.Keep) && bytes.Equal(w.Wrapped, p.Keep.Wrapped) {
-			found = true
-		}
-	}
-
-	if !found {
-		return struct{}{}, ErrKeysChanged
-	}
-
-	if len(st.Wraps) == 1 {
-		return struct{}{}, nil
-	}
-
-	if _, err := a.tx.ExecContext(a.ctx, `DELETE FROM encryption_root_wraps WHERE fingerprint != ?`,
-		p.Keep.Fingerprint); err != nil {
 		return struct{}{}, err
 	}
 

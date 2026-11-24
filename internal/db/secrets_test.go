@@ -64,7 +64,7 @@ func unlockFrom(t testing.TB, d *DB) {
 		t.Fatal(err)
 	}
 
-	keyring, err := encryption.Unlock(testClusterKey(t), st.Wraps, st.Keyring)
+	keyring, err := encryption.Unlock(testClusterKey(t), st.Wraps, st.Keyring, st.KeyringID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestCreateCluster(t *testing.T) {
 	}
 
 	for _, c := range [][3]string{{"jwt_secret", "secret", ""}, {"oidc_cookie_key", "key", ""}, {"cluster", "join_key", ""}} {
-		if v := rawColumn(t, d, c[0], c[1]); requireSealed(v) != nil || bytes.Contains(v, first.JWT) {
+		if v := rawColumn(t, d, c[0], c[1]); requireSealed(ctx, d.reader(), v) != nil || bytes.Contains(v, first.JWT) {
 			t.Fatalf("%s.%s is not encrypted", c[0], c[1])
 		}
 	}
@@ -231,7 +231,7 @@ func TestOIDCClientSecretIsEncrypted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if v := rawColumn(t, d, "oidc", "client_secret"); requireSealed(v) != nil || bytes.Contains(v, []byte(o.ClientSecret)) {
+	if v := rawColumn(t, d, "oidc", "client_secret"); requireSealed(ctx, d.reader(), v) != nil || bytes.Contains(v, []byte(o.ClientSecret)) {
 		t.Fatalf("the client secret is stored as %q", v)
 	}
 

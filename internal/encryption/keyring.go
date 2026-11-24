@@ -2,6 +2,9 @@ package encryption
 
 import (
 	"bytes"
+	"crypto/cipher"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -12,8 +15,12 @@ import (
 )
 
 const (
+	KeyringIDSize = 16
+
 	keyringVersion    byte = 0x01
-	keyringAAD             = "ella-smsc/keyring/v1"
+	upgradeVersion    byte = 0x01
+	keyringAAD             = "ella-smsc/keyring/v1/"
+	upgradeInfo            = "ella-smsc/upgrade/v1"
 	keyringHeaderSize      = 1 + 4 + 4
 	termEntrySize          = 4 + KeySize
 )
@@ -21,20 +28,39 @@ const (
 var (
 	ErrInvalidKeyring = errors.New("invalid keyring")
 	ErrLocked         = errors.New("the encryption keys are locked")
+	ErrNoUpgrade      = errors.New("the keyring cannot be upgraded in place")
 )
 
 type Keyring struct {
 	mu     sync.RWMutex
+	id     []byte
 	active uint32
 	terms  map[uint32][]byte
 }
 
+type Upgrade struct {
+	Term   uint32
+	Sealed []byte
+}
+
 func NewKeyring() *Keyring {
-	return &Keyring{active: 1, terms: map[uint32][]byte{1: randomBytes(KeySize)}}
+	return &Keyring{id: randomBytes(KeyringIDSize), active: 1, terms: map[uint32][]byte{1: randomBytes(KeySize)}}
+}
+
+func (k *Keyring) ID() []byte {
+	return bytes.Clone(k.id)
 }
 
 func (k *Keyring) ActiveTerm() uint32 {
 	return k.active
+}
+
+func (k *Keyring) Encrypt(plaintext []byte, loc Location) ([]byte, error) {
+	return k.encrypt(plaintext, loc)
+}
+
+func (k *Keyring) Decrypt(value []byte, loc Location) ([]byte, error) {
+	return k.decrypt(value, loc)
 }
 
 func (k *Keyring) Terms() []uint32 {
@@ -84,7 +110,33 @@ func (k *Keyring) decrypt(value []byte, loc Location) ([]byte, error) {
 	return open(dek, value, loc)
 }
 
-func (k *Keyring) rotate() (*Keyring, error) {
+func (k *Keyring) rotate() (*Keyring, Upgrade, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
+	if k.terms == nil {
+		return nil, Upgrade{}, ErrLocked
+	}
+
+	if k.active == math.MaxUint32 {
+		return nil, Upgrade{}, fmt.Errorf("%w: no term after %d", ErrInvalidKeyring, k.active)
+	}
+
+	next := k.cloneLocked()
+	next.active = k.active + 1
+	next.terms[next.active] = randomBytes(KeySize)
+
+	sealed, err := sealUpgrade(k.terms[k.active], k.id, next.active, next.terms[next.active])
+	if err != nil {
+		next.Zeroize()
+
+		return nil, Upgrade{}, err
+	}
+
+	return next, Upgrade{Term: next.active, Sealed: sealed}, nil
+}
+
+func (k *Keyring) without(remove []uint32) (*Keyring, error) {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
 
@@ -92,18 +144,128 @@ func (k *Keyring) rotate() (*Keyring, error) {
 		return nil, ErrLocked
 	}
 
-	if k.active == math.MaxUint32 {
-		return nil, fmt.Errorf("%w: no term after %d", ErrInvalidKeyring, k.active)
+	next := k.cloneLocked()
+
+	for _, term := range remove {
+		if term == k.active {
+			next.Zeroize()
+
+			return nil, fmt.Errorf("%w: the active term %d cannot be removed", ErrInvalidKeyring, term)
+		}
+
+		clear(next.terms[term])
+		delete(next.terms, term)
 	}
 
-	next := &Keyring{active: k.active + 1, terms: make(map[uint32][]byte, len(k.terms)+1)}
+	return next, nil
+}
+
+func (k *Keyring) advance(id []byte, active uint32, live []uint32, upgrades map[uint32][]byte) (*Keyring, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
+	switch {
+	case k.terms == nil:
+		return nil, ErrLocked
+	case !bytes.Equal(k.id, id):
+		return nil, fmt.Errorf("%w: another keyring", ErrNoUpgrade)
+	case active < k.active:
+		return nil, fmt.Errorf("%w: the active term %d is below %d", ErrNoUpgrade, active, k.active)
+	}
+
+	next := k.cloneLocked()
+
+	for term := k.active + 1; term <= active; term++ {
+		dek, err := openUpgrade(next.terms[term-1], k.id, term, upgrades[term])
+		if err != nil {
+			next.Zeroize()
+
+			return nil, fmt.Errorf("%w: term %d: %w", ErrNoUpgrade, term, err)
+		}
+
+		next.terms[term] = dek
+		next.active = term
+	}
+
+	keep := make(map[uint32]bool, len(live))
+	for _, term := range live {
+		keep[term] = true
+	}
+
+	for term, dek := range next.terms {
+		if !keep[term] {
+			clear(dek)
+			delete(next.terms, term)
+		}
+	}
+
+	if len(next.terms) != len(keep) || next.terms[next.active] == nil {
+		next.Zeroize()
+
+		return nil, fmt.Errorf("%w: the live terms %v are not all known", ErrNoUpgrade, live)
+	}
+
+	return next, nil
+}
+
+func (k *Keyring) cloneLocked() *Keyring {
+	next := &Keyring{id: bytes.Clone(k.id), active: k.active, terms: make(map[uint32][]byte, len(k.terms)+1)}
 	for term, dek := range k.terms {
 		next.terms[term] = bytes.Clone(dek)
 	}
 
-	next.terms[next.active] = randomBytes(KeySize)
+	return next
+}
 
-	return next, nil
+func upgradeAAD(id []byte, term uint32) []byte {
+	aad := append([]byte(upgradeInfo+"/"), id...)
+	return binary.BigEndian.AppendUint32(aad, term)
+}
+
+func upgradeAEAD(previous []byte) (cipher.AEAD, error) {
+	key, err := hkdf.Key(sha256.New, previous, nil, upgradeInfo, KeySize)
+	if err != nil {
+		return nil, err
+	}
+
+	defer clear(key)
+
+	return newGCM(key)
+}
+
+func sealUpgrade(previous, id []byte, term uint32, dek []byte) ([]byte, error) {
+	aead, err := upgradeAEAD(previous)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]byte, 1+nonceSize, 1+nonceSize+KeySize+tagSize)
+	out[0] = upgradeVersion
+	copy(out[1:], randomBytes(nonceSize))
+
+	return aead.Seal(out, out[1:1+nonceSize], dek, upgradeAAD(id, term)), nil
+}
+
+func openUpgrade(previous, id []byte, term uint32, sealed []byte) ([]byte, error) {
+	if previous == nil {
+		return nil, fmt.Errorf("the term %d is not known", term-1)
+	}
+
+	if len(sealed) != 1+nonceSize+KeySize+tagSize || sealed[0] != upgradeVersion {
+		return nil, fmt.Errorf("%w: upgrade", ErrMalformed)
+	}
+
+	aead, err := upgradeAEAD(previous)
+	if err != nil {
+		return nil, err
+	}
+
+	dek, err := aead.Open(nil, sealed[1:1+nonceSize], sealed[1+nonceSize:], upgradeAAD(id, term))
+	if err != nil {
+		return nil, fmt.Errorf("%w: upgrade", ErrAuthentication)
+	}
+
+	return dek, nil
 }
 
 func (k *Keyring) Zeroize() {
@@ -179,6 +341,10 @@ func unmarshalKeyring(b []byte) (*Keyring, error) {
 }
 
 func sealKeyring(root []byte, k *Keyring) ([]byte, error) {
+	if len(k.id) != KeyringIDSize {
+		return nil, fmt.Errorf("%w: a keyring ID of %d bytes", ErrInvalidKeyring, len(k.id))
+	}
+
 	plaintext, err := k.marshal()
 	if err != nil {
 		return nil, err
@@ -195,10 +361,10 @@ func sealKeyring(root []byte, k *Keyring) ([]byte, error) {
 	out[0] = keyringVersion
 	copy(out[1:], randomBytes(nonceSize))
 
-	return aead.Seal(out, out[1:1+nonceSize], plaintext, []byte(keyringAAD)), nil
+	return aead.Seal(out, out[1:1+nonceSize], plaintext, append([]byte(keyringAAD), k.id...)), nil
 }
 
-func openKeyring(root, sealed []byte) (*Keyring, error) {
+func openKeyring(root, sealed, id []byte) (*Keyring, error) {
 	if len(sealed) < 1+nonceSize+tagSize || sealed[0] != keyringVersion {
 		return nil, fmt.Errorf("%w: bad sealed header", ErrInvalidKeyring)
 	}
@@ -208,12 +374,19 @@ func openKeyring(root, sealed []byte) (*Keyring, error) {
 		return nil, err
 	}
 
-	plaintext, err := aead.Open(nil, sealed[1:1+nonceSize], sealed[1+nonceSize:], []byte(keyringAAD))
+	plaintext, err := aead.Open(nil, sealed[1:1+nonceSize], sealed[1+nonceSize:], append([]byte(keyringAAD), id...))
 	if err != nil {
 		return nil, fmt.Errorf("%w: keyring", ErrAuthentication)
 	}
 
 	defer clear(plaintext)
 
-	return unmarshalKeyring(plaintext)
+	k, err := unmarshalKeyring(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	k.id = bytes.Clone(id)
+
+	return k, nil
 }

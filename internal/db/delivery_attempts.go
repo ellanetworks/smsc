@@ -146,7 +146,7 @@ func insertAttempt(ax *applyCtx, a DeliveryAttempt) (int64, error) {
 		a.CipherID = nil
 	} else if err := requireCipherID(a.CipherID, "a deliver report"); err != nil {
 		return 0, err
-	} else if err := requireSealed(a.DeliverReport); err != nil {
+	} else if err := requireSealed(ax.ctx, ax.tx, a.DeliverReport); err != nil {
 		return 0, err
 	}
 

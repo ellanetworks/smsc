@@ -4,7 +4,7 @@ description: Step-by-step instructions to back up and restore Ella SMSC.
 
 # Back Up and Restore
 
-A backup is encrypted with the encryption key, and does not hold it. Keep a copy of the key, apart from the backups.
+Message content in a backup is encrypted with the encryption key, and the backup does not hold it. Keep a copy of the key, apart from the backups. Phone numbers, users and settings are not encrypted: store and transfer backups encrypted.
 
 ## Back up the encryption key
 

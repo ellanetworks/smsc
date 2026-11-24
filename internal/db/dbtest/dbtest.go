@@ -72,7 +72,7 @@ func Unlock(t testing.TB, d *db.DB, keyPath string, within time.Duration) {
 
 		k, kerr := encryption.LoadFileKey(keyPath)
 		if st.Initialized() && kerr == nil {
-			keyring, err := encryption.Unlock(k, st.Wraps, st.Keyring)
+			keyring, err := encryption.Unlock(k, st.Wraps, st.Keyring, st.KeyringID)
 			k.Zeroize()
 
 			if err != nil {

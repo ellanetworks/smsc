@@ -129,7 +129,7 @@ func applyUpdateOIDC(a *applyCtx, p updateOIDC) (struct{}, error) {
 		return struct{}{}, fmt.Errorf("%w: a plaintext OIDC client secret", ErrInvalid)
 	}
 
-	if err := requireSealed(p.SealedClientSecret); err != nil {
+	if err := requireSealed(ctx, tx, p.SealedClientSecret); err != nil {
 		return struct{}{}, err
 	}
 

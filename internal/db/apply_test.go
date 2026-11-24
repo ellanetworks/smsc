@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -407,6 +408,8 @@ func TestRequestIDKeepsAnErrorResult(t *testing.T) {
 
 func TestApplySkipsAppliedEntries(t *testing.T) {
 	d := openBaselineDB(t)
+	liveTerm(t, d, 1)
+
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	entry, err := EncodeBatch(Batch{LeaderTime: 1, Commands: []Command{
@@ -554,5 +557,20 @@ func TestBoundedQueriesHaveATotalOrder(t *testing.T) {
 
 			return true
 		})
+	}
+}
+
+func liveTerm(t *testing.T, d *DB, term uint32) {
+	t.Helper()
+
+	conn, err := sql.Open("sqlite3", "file:"+d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(context.Background(), `INSERT INTO encryption_terms (term) VALUES (?)`, term); err != nil {
+		t.Fatal(err)
 	}
 }

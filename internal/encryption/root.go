@@ -27,8 +27,9 @@ type RootWrap struct {
 }
 
 type Sealed struct {
-	Wrap    RootWrap
-	Keyring []byte
+	Wrap      RootWrap
+	Keyring   []byte
+	KeyringID []byte
 }
 
 func Initialize(ck ClusterKey) (Sealed, *Keyring, error) {
@@ -44,7 +45,7 @@ func Initialize(ck ClusterKey) (Sealed, *Keyring, error) {
 	return sealed, k, nil
 }
 
-func Unlock(ck ClusterKey, wraps []RootWrap, sealedKeyring []byte) (*Keyring, error) {
+func Unlock(ck ClusterKey, wraps []RootWrap, sealedKeyring, keyringID []byte) (*Keyring, error) {
 	root, err := unwrapRoot(ck, wraps)
 	if err != nil {
 		return nil, err
@@ -52,10 +53,10 @@ func Unlock(ck ClusterKey, wraps []RootWrap, sealedKeyring []byte) (*Keyring, er
 
 	defer clear(root)
 
-	return openKeyring(root, sealedKeyring)
+	return openKeyring(root, sealedKeyring, keyringID)
 }
 
-func Rewrap(to ClusterKey, wraps []RootWrap, sealedKeyring []byte, from ClusterKey) (RootWrap, error) {
+func Rewrap(to ClusterKey, wraps []RootWrap, sealedKeyring, keyringID []byte, from ClusterKey) (RootWrap, error) {
 	root, err := unwrapRoot(from, wraps)
 	if err != nil {
 		return RootWrap{}, err
@@ -63,7 +64,7 @@ func Rewrap(to ClusterKey, wraps []RootWrap, sealedKeyring []byte, from ClusterK
 
 	defer clear(root)
 
-	k, err := openKeyring(root, sealedKeyring)
+	k, err := openKeyring(root, sealedKeyring, keyringID)
 	if err != nil {
 		return RootWrap{}, err
 	}
@@ -87,7 +88,7 @@ func sealUnder(ck ClusterKey, k *Keyring) (Sealed, error) {
 		return Sealed{}, err
 	}
 
-	return Sealed{Wrap: wrap, Keyring: sealedKeyring}, nil
+	return Sealed{Wrap: wrap, Keyring: sealedKeyring, KeyringID: k.ID()}, nil
 }
 
 func wrapRoot(ck ClusterKey, root []byte) (RootWrap, error) {

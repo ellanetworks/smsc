@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/encryption"
 	"github.com/hashicorp/raft"
 )
 
@@ -166,13 +167,20 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 		return err
 	}
 
-	adopted, err := n.restorable(ctx, path)
+	n.keyManager.changeMu.Lock()
+	defer n.keyManager.changeMu.Unlock()
+
+	backupKeys, err := n.restorable(ctx, path)
 	if err != nil {
 		return err
 	}
 
-	if adopted != nil {
-		defer adopted.keys.Lock()
+	if backupKeys != nil {
+		defer backupKeys.Zeroize()
+
+		if err := db.ReencryptBackup(ctx, path, backupKeys, &n.keyManager.keys); err != nil {
+			return fmt.Errorf("%w: re-encrypt it under this cluster's keys: %w", ErrUnrestorableBackup, err)
+		}
 	}
 
 	live, err := n.db.Sequences(ctx)
@@ -186,12 +194,6 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 
 	if err := n.db.KeepClusterState(ctx, path); err != nil {
 		return fmt.Errorf("keep the cluster members and secrets: %w", err)
-	}
-
-	if adopted != nil {
-		if err := n.db.AdoptKeys(ctx, path, adopted.backup, adopted.wrap, adopted.keys); err != nil {
-			return fmt.Errorf("adopt the backup's encryption keys: %w", err)
-		}
 	}
 
 	f, err := os.Open(path)
@@ -218,7 +220,7 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 	})
 }
 
-func (n *Node) restorable(ctx context.Context, path string) (*adoption, error) {
+func (n *Node) restorable(ctx context.Context, path string) (*encryption.Keyring, error) {
 	live, err := n.db.EncryptionKeys(ctx)
 	if err != nil {
 		return nil, err
@@ -236,19 +238,21 @@ func (n *Node) restorable(ctx context.Context, path string) (*adoption, error) {
 		return nil, fmt.Errorf("%w: it was taken before encryption at rest was initialized", ErrUnrestorableBackup)
 	case !live.Initialized():
 		return nil, fmt.Errorf("%w: this cluster's encryption keys are not created yet", ErrUnrestorableBackup)
-	case bytes.Equal(backup.KeyringID, live.KeyringID):
-		return nil, nil
+	case !n.keyManager.keys.Unlocked():
+		return nil, fmt.Errorf("%w: this node's encryption keys are locked", ErrEncryptionLocked)
 	}
 
-	a, err := n.keyManager.adopt(live, backup)
+	keyring, err := n.keyManager.backupKeyring(backup)
 	if err != nil {
 		return nil, err
 	}
 
-	n.keyManager.audit(ctx, "adopt_backup_keys", "Restoring a backup of another cluster: its encryption keys are "+
-		"adopted, rewrapped under "+a.wrap.Fingerprint)
+	if !bytes.Equal(backup.KeyringID, live.KeyringID) {
+		n.keyManager.audit(ctx, "restore_foreign_backup", "Restoring a backup of another cluster: its content is "+
+			"re-encrypted under this cluster's keys")
+	}
 
-	return a, nil
+	return keyring, nil
 }
 
 func mkdirAll(dir string) string {

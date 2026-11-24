@@ -354,8 +354,12 @@ func insertMessage(a *applyCtx, record messageRecord, delegated bool) (int64, er
 		return 0, err
 	}
 
-	if err := requireSealed(m.TPDU); err != nil || m.TPDU == nil {
+	if m.TPDU == nil {
 		return 0, fmt.Errorf("%w: a message is not encrypted", ErrInvalid)
+	}
+
+	if err := requireSealed(ctx, tx, m.TPDU); err != nil {
+		return 0, err
 	}
 
 	res, err := tx.ExecContext(ctx, `INSERT INTO messages (kind, originator, originator_ton, originator_npi, recipient,
@@ -719,7 +723,7 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 	}
 
 	for i := range messages {
-		if err := d.openMessage(&messages[i]); err != nil {
+		if err := d.openMessageOrLeaveOut(&messages[i]); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -820,7 +824,7 @@ func (d *DB) NextDue(ctx context.Context, msisdn string, now time.Time) (_ Messa
 		return Message{}, false, fmt.Errorf("next due message: %w", err)
 	}
 
-	if err := d.openMessage(&m); err != nil {
+	if err := d.openMessageOrLeaveOut(&m); err != nil {
 		return Message{}, false, err
 	}
 
@@ -967,7 +971,7 @@ func (d *DB) NextDueFor(ctx context.Context, msisdn string, excludeID int64, now
 		return Message{}, false, fmt.Errorf("next due message for a recipient: %w", err)
 	}
 
-	if err := d.openMessage(&m); err != nil {
+	if err := d.openMessageOrLeaveOut(&m); err != nil {
 		return Message{}, false, err
 	}
 

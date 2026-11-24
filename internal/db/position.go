@@ -531,7 +531,8 @@ func (d *DB) Wipe(ctx context.Context, scratch string) (err error) {
 var (
 	secretTables  = []string{"jwt_secret", "oidc_cookie_key", "cluster", "cluster_join_tokens"}
 	clusterTables = append([]string{
-		"cluster_members", "cluster_removed_members", "encryption_state", "encryption_root_wraps", "encryption_keyring",
+		"cluster_members", "cluster_removed_members", "encryption_root_wraps", "encryption_keyring",
+		"encryption_terms",
 	}, secretTables...)
 )
 

@@ -87,7 +87,7 @@ func TestPKCS11KeyWrapsTheRootKey(t *testing.T) {
 				t.Fatalf("fingerprint %s, then %s", ck.Fingerprint(), again.Fingerprint())
 			}
 
-			unlocked, err := encryption.Unlock(again, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring)
+			unlocked, err := encryption.Unlock(again, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,7 +115,7 @@ func TestPKCS11KeyRefusesAnotherKeysWrap(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, err := encryption.Unlock(other, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring); !errors.Is(err,
+			if _, err := encryption.Unlock(other, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID); !errors.Is(err,
 				encryption.ErrNoMatchingWrap) {
 				t.Fatalf("unlock with another key: %v", err)
 			}
@@ -123,7 +123,7 @@ func TestPKCS11KeyRefusesAnotherKeysWrap(t *testing.T) {
 			forged := sealed.Wrap
 			forged.Fingerprint = other.Fingerprint()
 
-			if _, err := encryption.Unlock(other, []encryption.RootWrap{forged}, sealed.Keyring); !errors.Is(err,
+			if _, err := encryption.Unlock(other, []encryption.RootWrap{forged}, sealed.Keyring, sealed.KeyringID); !errors.Is(err,
 				encryption.ErrAuthentication) {
 				t.Fatalf("unlock a forged wrap: %v", err)
 			}
@@ -132,7 +132,7 @@ func TestPKCS11KeyRefusesAnotherKeysWrap(t *testing.T) {
 			relabelled.Wrapped = bytes.Clone(relabelled.Wrapped)
 			relabelled.Wrapped[len(relabelled.Wrapped)-1] ^= 1
 
-			if _, err := encryption.Unlock(ck, []encryption.RootWrap{relabelled}, sealed.Keyring); !errors.Is(err,
+			if _, err := encryption.Unlock(ck, []encryption.RootWrap{relabelled}, sealed.Keyring, sealed.KeyringID); !errors.Is(err,
 				encryption.ErrAuthentication) {
 				t.Fatalf("unlock a tampered wrap: %v", err)
 			}
@@ -163,7 +163,7 @@ func TestPKCS11KeyOnAToken(t *testing.T) {
 		t.Fatalf("fingerprint %s, then %s", ck.Fingerprint(), again.Fingerprint())
 	}
 
-	if _, err := encryption.Unlock(again, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring); err != nil {
+	if _, err := encryption.Unlock(again, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -171,7 +171,7 @@ func TestPKCS11KeyOnAToken(t *testing.T) {
 	tampered.Wrapped = bytes.Clone(tampered.Wrapped)
 	tampered.Wrapped[len(tampered.Wrapped)-1] ^= 1
 
-	if _, err := encryption.Unlock(again, []encryption.RootWrap{tampered}, sealed.Keyring); !errors.Is(err,
+	if _, err := encryption.Unlock(again, []encryption.RootWrap{tampered}, sealed.Keyring, sealed.KeyringID); !errors.Is(err,
 		encryption.ErrAuthentication) {
 		t.Fatalf("unlock a tampered wrap: %v", err)
 	}
@@ -214,12 +214,12 @@ func TestRewrapFromAFileKeyToAnHSMKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wrap, err := encryption.Rewrap(hsm, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring, file)
+	wrap, err := encryption.Rewrap(hsm, []encryption.RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID, file)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := encryption.Unlock(hsm, []encryption.RootWrap{sealed.Wrap, wrap}, sealed.Keyring); err != nil {
+	if _, err := encryption.Unlock(hsm, []encryption.RootWrap{sealed.Wrap, wrap}, sealed.Keyring, sealed.KeyringID); err != nil {
 		t.Fatalf("unlock with the HSM key after the rewrap: %v", err)
 	}
 }
@@ -258,5 +258,18 @@ func TestLoadPKCS11KeyRefusesBadKeys(t *testing.T) {
 				t.Fatal("loaded")
 			}
 		})
+	}
+}
+
+func TestAWrongPINIsRejected(t *testing.T) {
+	cfg := hsmKey(t, encryption.MechanismAESGCM, "pin")
+	cfg.PINFile = softhsmtest.Open(t).WrongPINFile(t)
+
+	if k, err := encryption.LoadPKCS11Key(cfg); !errors.Is(err, encryption.ErrPINRejected) {
+		if k != nil {
+			k.Zeroize()
+		}
+
+		t.Fatalf("load with a wrong PIN = %v, want %v", err, encryption.ErrPINRejected)
 	}
 }

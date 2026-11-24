@@ -33,7 +33,7 @@ func TestInitializeAndUnlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	unlocked, err := Unlock(ck, []RootWrap{sealed.Wrap}, sealed.Keyring)
+	unlocked, err := Unlock(ck, []RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestUnlockWithAnotherKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Unlock(testFileKey(t), []RootWrap{sealed.Wrap}, sealed.Keyring); !errors.Is(err, ErrNoMatchingWrap) {
+	if _, err := Unlock(testFileKey(t), []RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID); !errors.Is(err, ErrNoMatchingWrap) {
 		t.Fatalf("unlock with another key: %v", err)
 	}
 }
@@ -67,14 +67,14 @@ func TestUnlockRejectsTampering(t *testing.T) {
 	wrap.Wrapped = append([]byte(nil), wrap.Wrapped...)
 	wrap.Wrapped[len(wrap.Wrapped)-1] ^= 0x01
 
-	if _, err := Unlock(ck, []RootWrap{wrap}, sealed.Keyring); !errors.Is(err, ErrAuthentication) {
+	if _, err := Unlock(ck, []RootWrap{wrap}, sealed.Keyring, sealed.KeyringID); !errors.Is(err, ErrAuthentication) {
 		t.Fatalf("unlock with a tampered wrap: %v", err)
 	}
 
 	mismatched := sealed.Wrap
 	mismatched.Mechanism = "rsa-oaep"
 
-	if _, err := Unlock(ck, []RootWrap{mismatched}, sealed.Keyring); !errors.Is(err, ErrNoMatchingWrap) {
+	if _, err := Unlock(ck, []RootWrap{mismatched}, sealed.Keyring, sealed.KeyringID); !errors.Is(err, ErrNoMatchingWrap) {
 		t.Fatalf("unlock with another mechanism: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestUnlockRejectsTampering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Unlock(ck, []RootWrap{sealed.Wrap}, other.Keyring); !errors.Is(err, ErrAuthentication) {
+	if _, err := Unlock(ck, []RootWrap{sealed.Wrap}, other.Keyring, other.KeyringID); !errors.Is(err, ErrAuthentication) {
 		t.Fatalf("unlock another cluster's keyring: %v", err)
 	}
 }
@@ -106,7 +106,7 @@ func TestRotateRoot(t *testing.T) {
 
 	keys.Install(k)
 
-	second, next, err := keys.Rotate(ck)
+	second, next, _, err := keys.Rotate(ck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestRotateRoot(t *testing.T) {
 		t.Fatalf("active term %d", next.ActiveTerm())
 	}
 
-	unlocked, err := Unlock(ck, []RootWrap{second.Wrap}, second.Keyring)
+	unlocked, err := Unlock(ck, []RootWrap{second.Wrap}, second.Keyring, second.KeyringID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestRotateRoot(t *testing.T) {
 		t.Fatalf("old value after rotation = %q, %v", got, err)
 	}
 
-	if _, err := Unlock(ck, []RootWrap{first.Wrap}, second.Keyring); !errors.Is(err, ErrAuthentication) {
+	if _, err := Unlock(ck, []RootWrap{first.Wrap}, second.Keyring, second.KeyringID); !errors.Is(err, ErrAuthentication) {
 		t.Fatalf("the old root key opens the new keyring: %v", err)
 	}
 }
@@ -137,7 +137,7 @@ func TestRewrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wrap, err := Rewrap(current, []RootWrap{sealed.Wrap}, sealed.Keyring, previous)
+	wrap, err := Rewrap(current, []RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID, previous)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,12 +149,12 @@ func TestRewrap(t *testing.T) {
 	wraps := []RootWrap{sealed.Wrap, wrap}
 
 	for _, ck := range []*FileKey{previous, current} {
-		if _, err := Unlock(ck, wraps, sealed.Keyring); err != nil {
+		if _, err := Unlock(ck, wraps, sealed.Keyring, sealed.KeyringID); err != nil {
 			t.Fatalf("unlock with %s: %v", ck.Fingerprint(), err)
 		}
 	}
 
-	if _, err := Rewrap(current, []RootWrap{sealed.Wrap}, sealed.Keyring, testFileKey(t)); !errors.Is(err, ErrNoMatchingWrap) {
+	if _, err := Rewrap(current, []RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID, testFileKey(t)); !errors.Is(err, ErrNoMatchingWrap) {
 		t.Fatalf("rewrap from an unknown key: %v", err)
 	}
 
@@ -163,7 +163,7 @@ func TestRewrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Rewrap(current, []RootWrap{stale.Wrap}, sealed.Keyring, previous); !errors.Is(err, ErrAuthentication) {
+	if _, err := Rewrap(current, []RootWrap{stale.Wrap}, sealed.Keyring, sealed.KeyringID, previous); !errors.Is(err, ErrAuthentication) {
 		t.Fatalf("rewrap a stale root key: %v", err)
 	}
 }
@@ -181,7 +181,7 @@ func TestUnlockSkipsOtherWraps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Unlock(ck, []RootWrap{other.Wrap, sealed.Wrap}, sealed.Keyring); err != nil {
+	if _, err := Unlock(ck, []RootWrap{other.Wrap, sealed.Wrap}, sealed.Keyring, sealed.KeyringID); err != nil {
 		t.Fatalf("unlock with the matching wrap second: %v", err)
 	}
 }
@@ -200,7 +200,7 @@ func TestUnwrapChecksRootKeySize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Unlock(ck, []RootWrap{sealed.Wrap}, sealed.Keyring); !errors.Is(err, ErrInvalidRootKey) {
+	if _, err := Unlock(ck, []RootWrap{sealed.Wrap}, sealed.Keyring, sealed.KeyringID); !errors.Is(err, ErrInvalidRootKey) {
 		t.Fatalf("unlock with a 16-byte root key: %v", err)
 	}
 }

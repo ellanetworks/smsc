@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -89,18 +90,21 @@ type keyManager struct {
 	keys encryption.Keys
 	wake chan struct{}
 
-	unlockMu   sync.Mutex
-	installed  [sha256.Size]byte
-	configured bool
-	changed    chan struct{}
+	unlockMu  sync.Mutex
+	installed [sha256.Size]byte
+	changed   chan struct{}
+	tidying   chan struct{}
+	changeMu  sync.Mutex
 
-	mu     sync.Mutex
-	status EncryptionStatus
+	mu         sync.Mutex
+	status     EncryptionStatus
+	configured bool
+	rejected   error
 }
 
 func newKeyManager(n *Node, cfg EncryptionConfig) *keyManager {
 	return &keyManager{
-		n: n, cfg: cfg, wake: make(chan struct{}, 1), changed: make(chan struct{}, 1),
+		n: n, cfg: cfg, wake: make(chan struct{}, 1), changed: make(chan struct{}, 1), tidying: make(chan struct{}, 1),
 	}
 }
 
@@ -139,11 +143,15 @@ func (m *keyManager) run() {
 			}
 		}
 
-		if err != nil && ctx.Err() == nil {
+		switch {
+		case m.rejectedErr() != nil:
+		case err != nil && ctx.Err() == nil:
 			backoff = min(max(2*backoff, unlockMinBackoff), unlockMaxBackoff)
 			retry = time.After(backoff)
-		} else {
+		default:
 			backoff = 0
+
+			m.tidy()
 		}
 
 		select {
@@ -164,6 +172,10 @@ func (m *keyManager) unlock(ctx context.Context, nudge bool) error {
 }
 
 func (m *keyManager) unlockLocked(ctx context.Context, nudge bool) error {
+	if err := m.rejectedErr(); err != nil {
+		return err
+	}
+
 	st, err := m.n.db.EncryptionKeys(ctx)
 	if err != nil {
 		m.setDetail(err)
@@ -192,43 +204,70 @@ func (m *keyManager) unlockLocked(ctx context.Context, nudge bool) error {
 		return err
 	}
 
+	advanced := m.advance(st)
+	if advanced {
+		if err := m.raiseHighWater(st); err != nil {
+			return m.fail(st, m.Status().Fingerprint, fmt.Errorf("record the active term: %w", err))
+		}
+
+		m.installed = digest
+		m.set(EncryptionStatus{Initialized: true, Fingerprint: m.Status().Fingerprint, ActiveTerm: st.ActiveTerm}, nil)
+		m.signal()
+
+		if m.isConfigured() {
+			return nil
+		}
+	}
+
+	err = m.unlockWithKey(ctx, st, digest, nudge)
+	if err != nil && advanced {
+		return nil
+	}
+
+	return err
+}
+
+func (m *keyManager) advance(st db.EncryptionKeys) bool {
+	if !m.keys.Unlocked() {
+		return false
+	}
+
+	return m.keys.Advance(st.KeyringID, st.ActiveTerm, st.Terms, st.Upgrades) == nil
+}
+
+func (m *keyManager) unlockWithKey(ctx context.Context, st db.EncryptionKeys, digest [sha256.Size]byte, nudge bool) error {
 	ck, source, err := m.matchingKey(st)
 	if err != nil {
-		m.lock(st, "", err)
-		return err
+		return m.fail(st, "", err)
 	}
 
 	fingerprint := ck.Fingerprint()
 
-	keyring, err := encryption.Unlock(ck, st.Wraps, st.Keyring)
+	keyring, err := encryption.Unlock(ck, st.Wraps, st.Keyring, st.KeyringID)
 	ck.Zeroize()
 
 	if err != nil {
-		m.lock(st, fingerprint, err)
-		return err
+		return m.fail(st, fingerprint, err)
 	}
 
-	if keyring.ActiveTerm() != st.ActiveTerm {
+	if keyring.ActiveTerm() != st.ActiveTerm || !slices.Equal(keyring.Terms(), st.Terms) {
 		keyring.Zeroize()
 
-		err := fmt.Errorf("the keyring's active term %d is not the cluster's %d", keyring.ActiveTerm(), st.ActiveTerm)
-		m.lock(st, fingerprint, err)
-
-		return err
+		return m.fail(st, fingerprint, fmt.Errorf("the keyring's terms %v (active %d) are not the cluster's %v (active %d)",
+			keyring.Terms(), keyring.ActiveTerm(), st.Terms, st.ActiveTerm))
 	}
 
 	if err := m.raiseHighWater(st); err != nil {
 		keyring.Zeroize()
-		m.lock(st, fingerprint, fmt.Errorf("record the active term: %w", err))
 
-		return err
+		return m.fail(st, fingerprint, fmt.Errorf("record the active term: %w", err))
 	}
 
 	wasLocked := !m.keys.Unlocked()
 
 	m.keys.Install(keyring)
 	m.installed = digest
-	m.configured = source == 0
+	m.setConfigured(source == 0)
 	m.set(EncryptionStatus{Initialized: true, Fingerprint: fingerprint, ActiveTerm: st.ActiveTerm}, nil)
 	m.signal()
 
@@ -242,6 +281,32 @@ func (m *keyManager) unlockLocked(ctx context.Context, nudge bool) error {
 	}
 
 	return nil
+}
+
+func (m *keyManager) fail(st db.EncryptionKeys, fingerprint string, err error) error {
+	if errors.Is(err, encryption.ErrPINRejected) {
+		m.mu.Lock()
+		m.rejected = fmt.Errorf("%w: fix the PIN and restart Ella SMSC", err)
+		m.mu.Unlock()
+	}
+
+	id, idErr := m.keys.KeyringID()
+	if idErr == nil && bytes.Equal(id, st.KeyringID) {
+		s := m.Status()
+		if s.Detail != err.Error() {
+			m.n.cfg.Logger.Warn("cannot reload the encryption keys: this node keeps its current keys",
+				slog.Any("error", err))
+		}
+
+		s.Detail = err.Error()
+		m.set(s, nil)
+
+		return err
+	}
+
+	m.lock(st, fingerprint, err)
+
+	return err
 }
 
 func digestOf(st db.EncryptionKeys) [sha256.Size]byte {
@@ -314,6 +379,27 @@ func (m *keyManager) setDetail(err error) {
 	defer m.mu.Unlock()
 
 	m.status.Detail = err.Error()
+}
+
+func (m *keyManager) rejectedErr() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.rejected
+}
+
+func (m *keyManager) isConfigured() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.configured
+}
+
+func (m *keyManager) setConfigured(configured bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.configured = configured
 }
 
 func (m *keyManager) Status() EncryptionStatus {
@@ -651,12 +737,15 @@ func (m *keyManager) takeClusterKey(ctx context.Context, offered *joinKey, reply
 	if key != nil {
 		m.keys.Lock()
 
-		if err := os.Remove(m.cfg.Key.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove this node's own encryption key file before taking the cluster's: %w", err)
+		kept := fmt.Sprintf("%s.replaced-%d", m.cfg.Key.Path, m.n.cfg.Now().Unix())
+
+		if err := os.Rename(m.cfg.Key.Path, kept); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("move this node's own encryption key file aside before taking the cluster's: %w", err)
 		}
 
-		m.n.cfg.Logger.InfoContext(ctx, "removed this node's own encryption key file: its data is replaced by the "+
-			"cluster's", slog.String("path", m.cfg.Key.Path), slog.String("key", key.Fingerprint))
+		m.n.cfg.Logger.InfoContext(ctx, "moved this node's own encryption key file aside: its data is replaced by "+
+			"the cluster's, and its earlier backups need this key", slog.String("path", kept),
+			slog.String("key", key.Fingerprint))
 	}
 
 	if len(reply.KeyFile) == 0 {

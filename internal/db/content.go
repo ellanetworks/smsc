@@ -2,6 +2,7 @@ package db
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -118,7 +119,7 @@ func (d *DB) openAttempt(a *DeliveryAttempt) error {
 }
 
 func (d *DB) openNotification(n *Notification) error {
-	if err := d.openMessage(&n.Message); err != nil {
+	if err := d.openMessageOrLeaveOut(&n.Message); err != nil {
 		return err
 	}
 
@@ -127,6 +128,12 @@ func (d *DB) openNotification(n *Notification) error {
 	}
 
 	report, err := d.openContent(n.DeliverReport, n.ReportCipherID, deliverReportAt(n.ReportCipherID, n.Message.ID))
+	if err != nil && d.leaveOut(err) {
+		n.DeliverReport, n.ReportCipherID = nil, nil
+
+		return nil
+	}
+
 	if err != nil {
 		return fmt.Errorf("decrypt the deliver report of notification %d: %w", n.ID, err)
 	}
@@ -134,6 +141,34 @@ func (d *DB) openNotification(n *Notification) error {
 	n.DeliverReport, n.ReportCipherID = report, nil
 
 	return nil
+}
+
+func undecryptable(err error) bool {
+	return errors.Is(err, encryption.ErrAuthentication) || errors.Is(err, encryption.ErrMalformed) ||
+		errors.Is(err, encryption.ErrNotEncrypted) || errors.Is(err, encryption.ErrUnsupportedVersion)
+}
+
+func (d *DB) leaveOut(err error) bool {
+	if !undecryptable(err) {
+		return false
+	}
+
+	if d.metrics.undecryptable != nil {
+		d.metrics.undecryptable.Inc()
+	}
+
+	return true
+}
+
+func (d *DB) openMessageOrLeaveOut(m *Message) error {
+	err := d.openMessage(m)
+	if err != nil && d.leaveOut(err) {
+		m.TPDU, m.CipherID = nil, nil
+
+		return nil
+	}
+
+	return err
 }
 
 func requireCipherID(cipherID []byte, what string) error {

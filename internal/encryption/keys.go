@@ -69,25 +69,73 @@ func (h *Keys) Decrypt(value []byte, loc Location) ([]byte, error) {
 	return h.ring.decrypt(value, loc)
 }
 
-func (h *Keys) Rotate(ck ClusterKey) (Sealed, *Keyring, error) {
+func (h *Keys) KeyringID() ([]byte, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	if h.ring == nil {
-		return Sealed{}, nil, ErrLocked
+		return nil, ErrLocked
 	}
 
-	next, err := h.ring.rotate()
+	return h.ring.ID(), nil
+}
+
+func (h *Keys) Rotate(ck ClusterKey) (Sealed, *Keyring, Upgrade, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if h.ring == nil {
+		return Sealed{}, nil, Upgrade{}, ErrLocked
+	}
+
+	next, upgrade, err := h.ring.rotate()
 	if err != nil {
-		return Sealed{}, nil, err
+		return Sealed{}, nil, Upgrade{}, err
 	}
 
 	sealed, err := sealUnder(ck, next)
 	if err != nil {
 		next.Zeroize()
 
-		return Sealed{}, nil, err
+		return Sealed{}, nil, Upgrade{}, err
 	}
 
-	return sealed, next, nil
+	return sealed, next, upgrade, nil
+}
+
+func (h *Keys) Prune(ck ClusterKey, remove []uint32) (Sealed, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if h.ring == nil {
+		return Sealed{}, ErrLocked
+	}
+
+	next, err := h.ring.without(remove)
+	if err != nil {
+		return Sealed{}, err
+	}
+
+	defer next.Zeroize()
+
+	return sealUnder(ck, next)
+}
+
+func (h *Keys) Advance(id []byte, active uint32, live []uint32, upgrades map[uint32][]byte) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.ring == nil {
+		return ErrLocked
+	}
+
+	next, err := h.ring.advance(id, active, live, upgrades)
+	if err != nil {
+		return err
+	}
+
+	h.ring.Zeroize()
+	h.ring = next
+
+	return nil
 }

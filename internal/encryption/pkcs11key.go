@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"slices"
 	"sync"
 
 	"github.com/miekg/pkcs11"
@@ -29,6 +31,12 @@ const (
 var (
 	ErrPKCS11         = errors.New("pkcs11")
 	ErrInvalidPINFile = errors.New("invalid PIN file")
+	ErrPINRejected    = errors.New("the token rejected the PIN")
+
+	rejectedPIN = []uint{
+		pkcs11.CKR_PIN_INCORRECT, pkcs11.CKR_PIN_INVALID, pkcs11.CKR_PIN_LEN_RANGE, pkcs11.CKR_PIN_EXPIRED,
+		pkcs11.CKR_PIN_LOCKED,
+	}
 )
 
 type PKCS11Config struct {
@@ -193,6 +201,10 @@ func findSlot(ctx *pkcs11.Ctx, cfg PKCS11Config) (uint, error) {
 func (k *PKCS11Key) find(cfg PKCS11Config, pin string) error {
 	if err := k.ctx.Login(k.session, pkcs11.CKU_USER, pin); err != nil &&
 		!isCode(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if slices.ContainsFunc(rejectedPIN, func(code uint) bool { return isCode(err, code) }) {
+			return fmt.Errorf("%w: %w: log in to the token: %w", ErrPKCS11, ErrPINRejected, err)
+		}
+
 		return fmt.Errorf("%w: log in to the token: %w", ErrPKCS11, err)
 	}
 
@@ -351,7 +363,10 @@ func (k *PKCS11Key) Wrap(root []byte) ([]byte, error) {
 	}
 
 	if k.mechanism == MechanismRSAOAEP {
-		wrapped, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, k.public, root, k.wrapAAD())
+		bound := k.bindAAD(root)
+		defer clear(bound)
+
+		wrapped, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, k.public, bound, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -400,8 +415,7 @@ func (k *PKCS11Key) Unwrap(wrapped []byte) ([]byte, error) {
 	)
 
 	if k.mechanism == MechanismRSAOAEP {
-		params := pkcs11.NewOAEPParams(pkcs11.CKM_SHA256, pkcs11.CKG_MGF1_SHA256, pkcs11.CKZ_DATA_SPECIFIED,
-			k.wrapAAD())
+		params := pkcs11.NewOAEPParams(pkcs11.CKM_SHA256, pkcs11.CKG_MGF1_SHA256, pkcs11.CKZ_DATA_SPECIFIED, nil)
 		mechanism = pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_OAEP, params)
 		ciphertext = wrapped[1:]
 	} else {
@@ -421,7 +435,29 @@ func (k *PKCS11Key) Unwrap(wrapped []byte) ([]byte, error) {
 		return nil, fmt.Errorf("%w: root key wrap: %w", ErrAuthentication, err)
 	}
 
+	if k.mechanism == MechanismRSAOAEP {
+		return k.checkAAD(root)
+	}
+
 	return root, nil
+}
+
+func (k *PKCS11Key) bindAAD(root []byte) []byte {
+	sum := sha256.Sum256(k.wrapAAD())
+
+	return append(bytes.Clone(root), sum[:]...)
+}
+
+func (k *PKCS11Key) checkAAD(bound []byte) ([]byte, error) {
+	defer clear(bound)
+
+	sum := sha256.Sum256(k.wrapAAD())
+
+	if len(bound) != KeySize+len(sum) || subtle.ConstantTimeCompare(bound[KeySize:], sum[:]) != 1 {
+		return nil, fmt.Errorf("%w: root key wrap", ErrAuthentication)
+	}
+
+	return bytes.Clone(bound[:KeySize]), nil
 }
 
 func (k *PKCS11Key) Zeroize() {

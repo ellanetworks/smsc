@@ -10,11 +10,11 @@ import (
 )
 
 func TestSealedKeyringKnownAnswer(t *testing.T) {
-	sealed := mustHex(t, "010d0e0f101112131415161718f199a10b43c4df7e86274ac890b5bb4043d5c09e9cdf2eca59ce45107f0298cd6c5553d2"+
-		"06e92a680ebba3918903f5960503d3d6690c301188fa2d74e7f27180e37c324994f3771034216f9309ca847e96eac774d52e06d30e0bd"+
-		"db8869b2fe3d3")
+	sealed := mustHex(t, "010d0e0f101112131415161718f199a10b43c4df7e86274ac890b5bb4043d5c09e9cdf2eca59ce45107f0298cd6c5553d206"+
+		"e92a680ebba3918903f5960503d3d6690c301188fa2d74e7f27180e37c324994f3771034216f9309ca847e96ef426437e6e2"+
+		"832a182e190ebc7ec91c")
 
-	k, err := openKeyring(seq(200, 32), sealed)
+	k, err := openKeyring(seq(200, 32), sealed, seq(100, 16))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestRotate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	next, err := k.rotate()
+	next, _, err := k.rotate()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,13 +64,13 @@ func TestRotate(t *testing.T) {
 		t.Fatalf("new value under term %d", term)
 	}
 
-	if _, err := (&Keyring{active: math.MaxUint32, terms: map[uint32][]byte{math.MaxUint32: seq(0, 32)}}).rotate(); !errors.Is(err, ErrInvalidKeyring) {
+	if _, _, err := (&Keyring{active: math.MaxUint32, terms: map[uint32][]byte{math.MaxUint32: seq(0, 32)}}).rotate(); !errors.Is(err, ErrInvalidKeyring) {
 		t.Fatalf("rotate past the last term: %v", err)
 	}
 }
 
 func TestSealKeyring(t *testing.T) {
-	k, err := NewKeyring().rotate()
+	k, _, err := NewKeyring().rotate()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestSealKeyring(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opened, err := openKeyring(root, sealed)
+	opened, err := openKeyring(root, sealed, k.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestSealKeyring(t *testing.T) {
 		}
 	}
 
-	if _, err := openKeyring(randomBytes(KeySize), sealed); !errors.Is(err, ErrAuthentication) {
+	if _, err := openKeyring(randomBytes(KeySize), sealed, k.id); !errors.Is(err, ErrAuthentication) {
 		t.Fatalf("open with another root key: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestSealKeyring(t *testing.T) {
 		tampered := bytes.Clone(sealed)
 		tampered[i] ^= 0x01
 
-		if _, err := openKeyring(root, tampered); err == nil {
+		if _, err := openKeyring(root, tampered, k.id); err == nil {
 			t.Fatalf("opened with byte %d flipped", i)
 		}
 	}
@@ -161,7 +161,7 @@ func TestZeroize(t *testing.T) {
 		t.Fatalf("encrypt with a zeroized keyring: %v", err)
 	}
 
-	if _, err := k.rotate(); !errors.Is(err, ErrLocked) {
+	if _, _, err := k.rotate(); !errors.Is(err, ErrLocked) {
 		t.Fatalf("rotate a zeroized keyring: %v", err)
 	}
 

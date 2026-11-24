@@ -92,58 +92,82 @@ func (n *Node) RotateKeys(ctx context.Context) (EncryptionStatus, error) {
 }
 
 func (m *keyManager) rotate(ctx context.Context) (EncryptionStatus, error) {
+	m.changeMu.Lock()
+	defer m.changeMu.Unlock()
+
+	change, err := m.prepareRotation(ctx)
+	if err != nil {
+		return EncryptionStatus{}, err
+	}
+
+	if err := m.n.db.ChangeKeys(ctx, change); err != nil {
+		return EncryptionStatus{}, err
+	}
+
+	_ = m.unlock(ctx, false)
+
+	s := m.Status()
+	s.ActiveTerm = change.Term
+
+	return s, nil
+}
+
+func (m *keyManager) prepareRotation(ctx context.Context) (db.KeyChange, error) {
 	m.unlockMu.Lock()
 	defer m.unlockMu.Unlock()
 
-	if err := m.unlockLocked(ctx, false); err != nil {
-		return EncryptionStatus{}, fmt.Errorf("%w: %w", ErrEncryptionLocked, err)
+	if err := m.unlockLocked(ctx, false); err != nil && !m.keys.Unlocked() {
+		return db.KeyChange{}, fmt.Errorf("%w: %w", ErrEncryptionLocked, err)
 	}
 
 	st, err := m.n.db.EncryptionKeys(ctx)
 	if err != nil {
-		return EncryptionStatus{}, err
+		return db.KeyChange{}, err
 	}
 
 	switch {
 	case !st.Initialized():
-		return EncryptionStatus{}, ErrNotInitialized
+		return db.KeyChange{}, ErrNotInitialized
 	case len(st.Wraps) != 1:
-		return EncryptionStatus{}, db.ErrKeyChange
+		return db.KeyChange{}, db.ErrKeyChange
+	case digestOf(st) != m.installed:
+		return db.KeyChange{}, db.ErrKeysChanged
 	}
 
 	ck, err := m.clusterKey(st)
 	if err != nil {
-		return EncryptionStatus{}, err
+		return db.KeyChange{}, err
 	}
 
 	defer ck.Zeroize()
 
-	sealed, next, err := m.keys.Rotate(ck)
+	return m.prepareChange(ctx, st, ck, false)
+}
+
+func (m *keyManager) prepareChange(ctx context.Context, st db.EncryptionKeys, ck encryption.ClusterKey,
+	retire bool,
+) (db.KeyChange, error) {
+	sealed, next, upgrade, err := m.keys.Rotate(ck)
 	if err != nil {
-		return EncryptionStatus{}, err
+		return db.KeyChange{}, err
 	}
 
-	next.Zeroize()
+	defer next.Zeroize()
 
-	if err := m.n.db.RotateKeys(ctx, st.ActiveTerm, sealed); err != nil {
-		return EncryptionStatus{}, err
-	}
-
-	if err := m.unlockLocked(ctx, false); err != nil {
-		return EncryptionStatus{}, err
-	}
-
-	return m.Status(), nil
+	return m.n.db.PrepareKeyChange(ctx, st, retire, sealed, next, upgrade)
 }
 
 type keyChange struct {
 	add    *encryption.RootWrap
-	retire *encryption.RootWrap
+	retire *db.KeyChange
 	st     db.EncryptionKeys
 	target string
 }
 
 func (m *keyManager) changeKey(ctx context.Context) error {
+	m.changeMu.Lock()
+	defer m.changeMu.Unlock()
+
 	c, err := m.planKeyChange(ctx)
 	if err != nil || c == nil {
 		return err
@@ -157,12 +181,12 @@ func (m *keyManager) changeKey(ctx context.Context) error {
 
 		m.audit(ctx, "add_cluster_key", "Cluster key "+c.target+" added")
 	case c.retire != nil:
-		if err := m.n.db.RemoveRootWrapsBut(ctx, *c.retire); err != nil {
+		if err := m.n.db.ChangeKeys(ctx, *c.retire); err != nil {
 			return fmt.Errorf("retire the previous cluster key: %w", err)
 		}
 
 		m.audit(ctx, "retire_cluster_key", "Every member uses the cluster key "+c.target+
-			": the previous key is no longer used")
+			": the previous key is no longer used, and new data keys replace the old ones")
 	}
 
 	return nil
@@ -181,12 +205,13 @@ func (m *keyManager) planKeyChange(ctx context.Context) (*keyChange, error) {
 		return nil, err
 	}
 
-	if m.configured && len(st.Wraps) == 1 {
+	if m.isConfigured() && len(st.Wraps) == 1 {
 		return nil, nil
 	}
 
 	target, err := m.cfg.Key.load()
 	if err != nil {
+		m.n.cfg.Logger.WarnContext(ctx, "cannot load encryption.key to change the cluster key", slog.Any("error", err))
 		return nil, nil
 	}
 
@@ -196,6 +221,9 @@ func (m *keyManager) planKeyChange(ctx context.Context) (*keyChange, error) {
 
 	if !hasWrap(st, target) {
 		if len(st.Wraps) != 1 {
+			m.n.cfg.Logger.WarnContext(ctx, "a change to another cluster key is in progress: finish it before changing to "+
+				c.target, slog.Any("keys", fingerprints(st)))
+
 			return nil, nil
 		}
 
@@ -206,7 +234,7 @@ func (m *keyManager) planKeyChange(ctx context.Context) (*keyChange, error) {
 
 		defer from.Zeroize()
 
-		w, err := encryption.Rewrap(target, st.Wraps, st.Keyring, from)
+		w, err := encryption.Rewrap(target, st.Wraps, st.Keyring, st.KeyringID, from)
 		if err != nil {
 			return nil, err
 		}
@@ -229,6 +257,8 @@ func (m *keyManager) planKeyChange(ctx context.Context) (*keyChange, error) {
 		return nil, err
 	}
 
+	var waiting []string
+
 	for _, member := range members {
 		key := member.EncryptionKey
 		if member.NodeID == m.n.id {
@@ -236,39 +266,34 @@ func (m *keyManager) planKeyChange(ctx context.Context) (*keyChange, error) {
 		}
 
 		if key != c.target {
-			return nil, nil
+			waiting = append(waiting, member.NodeID)
 		}
 	}
 
-	for _, w := range st.Wraps {
-		if w.Fingerprint == target.Fingerprint() && w.Type == target.Type() && w.Mechanism == target.Mechanism() {
-			c.retire = &w
-		}
+	if len(waiting) > 0 {
+		m.n.cfg.Logger.InfoContext(ctx, "the cluster key change waits for members to use "+c.target,
+			slog.Any("members", waiting))
+
+		return nil, nil
 	}
+
+	if digestOf(st) != m.installed {
+		return nil, nil
+	}
+
+	change, err := m.prepareChange(ctx, st, target, true)
+	if err != nil {
+		return nil, err
+	}
+
+	c.retire = &change
 
 	return c, nil
 }
 
-type adoption struct {
-	backup db.EncryptionKeys
-	wrap   encryption.RootWrap
-	keys   *encryption.Keys
-}
-
-func (m *keyManager) adopt(live, backup db.EncryptionKeys) (*adoption, error) {
+func (m *keyManager) backupKeyring(backup db.EncryptionKeys) (*encryption.Keyring, error) {
 	m.unlockMu.Lock()
 	defer m.unlockMu.Unlock()
-
-	if len(live.Wraps) != 1 {
-		return nil, db.ErrKeyChange
-	}
-
-	current, err := m.clusterKey(live)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrEncryptionLocked, err)
-	}
-
-	defer current.Zeroize()
 
 	var tried []string
 
@@ -285,42 +310,23 @@ func (m *keyManager) adopt(live, backup db.EncryptionKeys) (*adoption, error) {
 			continue
 		}
 
-		a, err := openBackup(k, current, backup)
+		keyring, err := encryption.Unlock(k, backup.Wraps, backup.Keyring, backup.KeyringID)
 		k.Zeroize()
 
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrUnrestorableBackup, err)
 		}
 
-		return a, nil
+		if keyring.ActiveTerm() != backup.ActiveTerm {
+			keyring.Zeroize()
+
+			return nil, fmt.Errorf("%w: its keyring's active term %d is not its state's %d", ErrUnrestorableBackup,
+				keyring.ActiveTerm(), backup.ActiveTerm)
+		}
+
+		return keyring, nil
 	}
 
-	return nil, fmt.Errorf("%w: it is encrypted under another cluster's key %v, and this node has %v: configure that "+
+	return nil, fmt.Errorf("%w: it is encrypted under the cluster key %v, and this node has %v: configure that "+
 		"key as encryption.previous_key", ErrUnrestorableBackup, fingerprints(backup), tried)
-}
-
-func openBackup(k, current encryption.ClusterKey, backup db.EncryptionKeys) (*adoption, error) {
-	keyring, err := encryption.Unlock(k, backup.Wraps, backup.Keyring)
-	if err != nil {
-		return nil, err
-	}
-
-	if keyring.ActiveTerm() != backup.ActiveTerm {
-		keyring.Zeroize()
-
-		return nil, fmt.Errorf("its keyring's active term %d is not its state's %d", keyring.ActiveTerm(),
-			backup.ActiveTerm)
-	}
-
-	wrap, err := encryption.Rewrap(current, backup.Wraps, backup.Keyring, k)
-	if err != nil {
-		keyring.Zeroize()
-
-		return nil, err
-	}
-
-	a := &adoption{backup: backup, wrap: wrap, keys: &encryption.Keys{}}
-	a.keys.Install(keyring)
-
-	return a, nil
 }

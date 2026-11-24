@@ -213,6 +213,8 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 
 	n.background.Go(n.maintain)
 	n.background.Go(n.keyManager.run)
+	n.background.Go(n.keyManager.maintain)
+	n.background.Go(n.keyManager.probe)
 
 	if n.cfg.clustered() {
 		n.background.Go(n.discover)
@@ -250,7 +252,17 @@ func nodeID(dir string) (string, error) {
 func writeFile(path string, data []byte) error {
 	tmp := path + ".tmp"
 
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+
+	if err := errors.Join(f.Sync(), f.Close()); err != nil {
 		return err
 	}
 
@@ -561,6 +573,7 @@ func (n *Node) becomeLeader() {
 
 		n.run(ctx, term, n.runAutopilot)
 		n.run(ctx, term, n.runUpgrades)
+		n.keyManager.tidy()
 	}()
 }
 

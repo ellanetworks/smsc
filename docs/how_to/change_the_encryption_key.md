@@ -8,32 +8,30 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
 
 === "Snap"
 
-    ## 1. Prepare the new key
-
-    For a key file, create it:
+    ## 1. Create the new key
 
     ```shell
     openssl rand -base64 32 > encryption-new.key
     ```
 
-    Copy it to every node, and install it:
-
-    ```shell
-    sudo install -m 0600 encryption-new.key /var/snap/ella-smsc/common/encryption-new.key
-    ```
+    Copy it to every node.
 
     ## 2. Switch each node
 
-    On each node, one at a time, set the new key in `/var/snap/ella-smsc/common/smsc.yaml`, and the current one as the previous key:
+    On each node, one at a time, keep the current key as the previous key, and install the new one:
+
+    ```shell
+    sudo mv /var/snap/ella-smsc/common/encryption.key /var/snap/ella-smsc/common/encryption-previous.key
+    sudo install -m 0600 encryption-new.key /var/snap/ella-smsc/common/encryption.key
+    ```
+
+    Add to `/var/snap/ella-smsc/common/smsc.yaml`:
 
     ```yaml
     encryption:
-      key:
-        file:
-          path: /var/snap/ella-smsc/common/encryption-new.key
       previous_key:
         file:
-          path: /var/snap/ella-smsc/common/encryption.key
+          path: /var/snap/ella-smsc/common/encryption-previous.key
     ```
 
     Restart the node:
@@ -52,11 +50,9 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
 
     ## 4. Remove the previous key
 
-    On each node, remove `previous_key` from `smsc.yaml`, and delete `/var/snap/ella-smsc/common/encryption.key`.
+    On each node, remove the `encryption` block from `smsc.yaml`.
 
-    Keep a copy of the previous key as long as you keep backups taken before the change: restoring them needs it as `previous_key`.
-
-    Keep a copy of the new key, as in [Back Up and Restore](back_up_and_restore.md#back-up-the-encryption-key).
+    Keep a copy of `encryption-previous.key` as long as you keep backups taken before the change: restoring them needs it as `previous_key`. Then delete it from the nodes.
 
 === "Binary, to an HSM"
 
@@ -97,18 +93,22 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
 
 === "Kubernetes"
 
-    ## 1. Create the new key
+    ## 1. Keep the current key as the previous key
 
     ```shell
-    kubectl create secret generic ella-smsc-encryption-new -n ella --from-literal=key="$(openssl rand -base64 32)"
+    kubectl get secret ella-smsc-encryption -n ella -o jsonpath='{.data.key}' | base64 -d > encryption-previous.key
+    kubectl create secret generic ella-smsc-encryption-previous -n ella --from-file=key=encryption-previous.key
+    helm upgrade ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --reuse-values \
+      --set encryption.previousSecretName=ella-smsc-encryption-previous
+    kubectl rollout status statefulset/ella-smsc -n ella
     ```
 
-    ## 2. Switch the pods
+    ## 2. Replace the key
 
     ```shell
-    helm upgrade ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --reuse-values \
-      --set encryption.secretName=ella-smsc-encryption-new \
-      --set encryption.previousSecretName=ella-smsc-encryption
+    kubectl create secret generic ella-smsc-encryption -n ella --from-literal=key="$(openssl rand -base64 32)" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    kubectl rollout restart statefulset/ella-smsc -n ella
     kubectl rollout status statefulset/ella-smsc -n ella
     ```
 
@@ -125,10 +125,8 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
       --set encryption.previousSecretName=
     ```
 
-    Keep a copy of the previous key as long as you keep backups taken before the change, as in [Back Up and Restore](back_up_and_restore.md#back-up-the-encryption-key), then delete it:
+    Keep `encryption-previous.key` as long as you keep backups taken before the change: restoring them needs it as the previous key. Then delete the Secret:
 
     ```shell
-    kubectl delete secret ella-smsc-encryption -n ella
+    kubectl delete secret ella-smsc-encryption-previous -n ella
     ```
-
-    Keep a copy of the new key, as in [Back Up and Restore](back_up_and_restore.md#back-up-the-encryption-key), with `ella-smsc-encryption-new`.

@@ -159,14 +159,14 @@ func applyCreateCluster(a *applyCtx, p createCluster) (string, error) {
 		return "", err
 	}
 
-	for _, k := range secretKeys {
-		if err := requireSealed(*k.field(&p.secretRow)); err != nil {
-			return "", fmt.Errorf("%w: the %s", err, k.at.Table)
-		}
-	}
-
 	if err := insertClusterKeys(a, p.Keys); err != nil {
 		return "", err
+	}
+
+	for _, k := range secretKeys {
+		if err := requireSealed(ctx, tx, *k.field(&p.secretRow)); err != nil {
+			return "", fmt.Errorf("%w: the %s", err, k.at.Table)
+		}
 	}
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO jwt_secret (id, secret) VALUES (1, ?)`, p.JWT); err != nil {
@@ -217,16 +217,4 @@ func (d *DB) openSecret(raw []byte, at encryption.Location) ([]byte, error) {
 	}
 
 	return d.keys.Decrypt(raw, at)
-}
-
-func requireSealed(v []byte) error {
-	if v == nil {
-		return nil
-	}
-
-	if _, err := encryption.Term(v); err != nil {
-		return fmt.Errorf("%w: a value is not encrypted: %w", ErrInvalid, err)
-	}
-
-	return nil
 }

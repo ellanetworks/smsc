@@ -71,9 +71,10 @@ const (
 	cmdReleaseMODelivery
 	cmdExpireMODeliveries
 	cmdLinkOIDCIdentity
-	cmdRotateKeys
+	cmdChangeKeys
 	cmdAddRootWrap
-	cmdRemoveRootWraps
+	cmdReencrypt
+	cmdPruneTerms
 )
 
 const entryBatch uint16 = 1
@@ -165,6 +166,7 @@ var resultCodes = []struct {
 	{"constraint", ErrConstraint},
 	{"already_applied", ErrAlreadyApplied},
 	{"upgrade_pending", ErrUpgradePending},
+	{"stale_data_key", ErrStaleDataKey},
 	{"keys_changed", ErrKeysChanged},
 	{"key_change", ErrKeyChange},
 }

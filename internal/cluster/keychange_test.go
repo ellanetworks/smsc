@@ -5,8 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,6 +63,11 @@ func TestRotationKeepsOlderValuesReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	first, err := e.db.EncryptionKeys(timeout(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	s, err := e.node.RotateKeys(timeout(t))
 	if err != nil || s.ActiveTerm != 2 {
 		t.Fatalf("rotate = %+v, %v", s, err)
@@ -74,14 +82,11 @@ func TestRotationKeepsOlderValuesReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := e.db.EncryptionKeys(timeout(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := e.db.RotateKeys(timeout(t), 1, encryption.Sealed{Wrap: st.Wraps[0], Keyring: st.Keyring}); !errors.Is(err,
-		db.ErrKeysChanged) {
-		t.Fatalf("a rotation from a stale term = %v, want %v", err, db.ErrKeysChanged)
+	if err := e.db.ChangeKeys(timeout(t), db.KeyChange{
+		KeyringSum: db.KeyringSum(first.Keyring), Term: 2, Wrap: first.Wraps[0], Keyring: first.Keyring,
+		Upgrade: []byte{1},
+	}); !errors.Is(err, db.ErrKeysChanged) {
+		t.Fatalf("a rotation from a stale keyring = %v, want %v", err, db.ErrKeysChanged)
 	}
 
 	e = reopen(t, e, "")
@@ -101,6 +106,23 @@ func TestRotationKeepsOlderValuesReadable(t *testing.T) {
 	if after, err := e.db.Secrets(timeout(t)); err != nil || !reflect.DeepEqual(after, secrets) {
 		t.Fatalf("the secrets after the rotations: %v", err)
 	}
+
+	eventually(t, "only the active data key left", func() error {
+		st, err := e.db.EncryptionKeys(timeout(t))
+		if err != nil {
+			return err
+		}
+
+		if !slices.Equal(st.Terms, []uint32{3}) {
+			return fmt.Errorf("terms %v", st.Terms)
+		}
+
+		return nil
+	})
+
+	if got := tpduOf(t, e, older); !bytes.Equal(got, []byte{1}) {
+		t.Fatalf("message from term 1 after re-encryption = %x", got)
+	}
 }
 
 func TestRotationReachesEveryMember(t *testing.T) {
@@ -109,6 +131,17 @@ func TestRotationReachesEveryMember(t *testing.T) {
 
 	for _, e := range c.nodes {
 		waitUnlocked(t, e)
+	}
+
+	for _, e := range c.nodes {
+		if e == leader {
+			continue
+		}
+
+		path := filepath.Join(e.dir, defaultKeyFile)
+		if err := os.Rename(path, path+".away"); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if _, err := leader.node.RotateKeys(timeout(t)); err != nil {
@@ -175,8 +208,7 @@ func TestRolledBackKeysLockTheNode(t *testing.T) {
 		sql  string
 		args []any
 	}{
-		{`UPDATE encryption_state SET active_term = ? WHERE id = 1`, []any{old.ActiveTerm}},
-		{`UPDATE encryption_keyring SET sealed = ? WHERE id = 1`, []any{old.Keyring}},
+		{`UPDATE encryption_keyring SET active_term = ?, sealed = ? WHERE id = 1`, []any{old.ActiveTerm, old.Keyring}},
 		{`UPDATE encryption_root_wraps SET wrapped_root = ?`, []any{old.Wraps[0].Wrapped}},
 	} {
 		if _, err := conn.ExecContext(context.Background(), q.sql, q.args...); err != nil {
@@ -207,7 +239,7 @@ func TestRolledBackKeysLockTheNode(t *testing.T) {
 	}
 }
 
-func TestRestoreAdoptsTheKeysOfAnotherClustersBackup(t *testing.T) {
+func TestRestoreReencryptsAnotherClustersBackup(t *testing.T) {
 	ctx := context.Background()
 	sourceDir := t.TempDir()
 	source := open(t, sourceDir)
@@ -248,7 +280,7 @@ func TestRestoreAdoptsTheKeysOfAnotherClustersBackup(t *testing.T) {
 	}
 
 	waitLeader(t, target.node)
-	waitTerm(t, target, 2)
+	waitTerm(t, target, 1)
 
 	if got := tpduOf(t, target, id); !bytes.Equal(got, []byte{7}) {
 		t.Fatalf("the restored message = %x", got)
@@ -270,7 +302,7 @@ func TestRestoreAdoptsTheKeysOfAnotherClustersBackup(t *testing.T) {
 	defer target.close(t)
 
 	waitLeader(t, target.node)
-	waitTerm(t, target, 2)
+	waitTerm(t, target, 1)
 
 	if got := tpduOf(t, target, id); !bytes.Equal(got, []byte{7}) {
 		t.Fatalf("the restored message without the previous key = %x", got)
@@ -280,6 +312,7 @@ func TestRestoreAdoptsTheKeysOfAnotherClustersBackup(t *testing.T) {
 func TestKeyChangeFromAFileToAnHSM(t *testing.T) {
 	hsm := hsmEncryption(t, "change")
 	nodes := make([]*env, 2)
+	dirs := []string{t.TempDir(), t.TempDir()}
 
 	t.Cleanup(func() {
 		for _, e := range nodes {
@@ -289,7 +322,7 @@ func TestKeyChangeFromAFileToAnHSM(t *testing.T) {
 	})
 
 	for i := range nodes {
-		nodes[i] = openClustered(t, t.TempDir(), freeAddress(t))
+		nodes[i] = openClustered(t, dirs[i], freeAddress(t))
 		waitLeader(t, nodes[i].node)
 		waitUnlocked(t, nodes[i])
 	}
@@ -301,6 +334,11 @@ func TestKeyChangeFromAFileToAnHSM(t *testing.T) {
 	}
 
 	waitUnlocked(t, joiner)
+
+	before, err := leader.db.EncryptionKeys(timeout(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for i, e := range nodes {
 		address := e.node.cfg.Address
@@ -336,6 +374,10 @@ func TestKeyChangeFromAFileToAnHSM(t *testing.T) {
 
 		if len(st.Wraps) != 1 || st.Wraps[0].Type != KeyTypePKCS11 {
 			return errors.New("still changing")
+		}
+
+		if st.ActiveTerm <= before.ActiveTerm {
+			return fmt.Errorf("the active term is still %d after the change", st.ActiveTerm)
 		}
 
 		want = st.Wraps[0].Fingerprint

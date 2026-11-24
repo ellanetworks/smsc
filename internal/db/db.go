@@ -401,20 +401,21 @@ var migrations = []string{
 		fingerprint TEXT,
 		CHECK ((node_id IS NULL) = (fingerprint IS NULL))
 	);
-	CREATE TABLE encryption_state (
-		id INTEGER PRIMARY KEY CHECK (id = 1),
-		active_term INTEGER NOT NULL CHECK (active_term BETWEEN 1 AND 4294967295),
-		keyring_id BLOB NOT NULL CHECK (length(keyring_id) = 16)
-	);
 	CREATE TABLE encryption_root_wraps (
 		fingerprint TEXT PRIMARY KEY CHECK (fingerprint != ''),
-		key_type TEXT NOT NULL CHECK (key_type IN ('file', 'pkcs11')),
+		key_type TEXT NOT NULL CHECK (key_type != ''),
 		mechanism TEXT NOT NULL CHECK (mechanism != ''),
 		wrapped_root BLOB NOT NULL CHECK (length(wrapped_root) > 0)
 	) WITHOUT ROWID;
 	CREATE TABLE encryption_keyring (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
+		keyring_id BLOB NOT NULL CHECK (length(keyring_id) = 16),
+		active_term INTEGER NOT NULL CHECK (active_term BETWEEN 1 AND 4294967295),
 		sealed BLOB NOT NULL CHECK (length(sealed) > 0)
+	);
+	CREATE TABLE encryption_terms (
+		term INTEGER PRIMARY KEY CHECK (term BETWEEN 1 AND 4294967295),
+		upgrade BLOB CHECK (upgrade IS NULL OR length(upgrade) > 0)
 	);`,
 }
 
@@ -554,7 +555,7 @@ func (d *DB) migrate(ctx context.Context) error {
 	if version > 0 {
 		var current int
 		if err := d.writer.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type = 'table'
-			AND name = 'encryption_state'`).Scan(&current); err != nil {
+			AND name = 'encryption_keyring'`).Scan(&current); err != nil {
 			return fmt.Errorf("read schema: %w", err)
 		}
 

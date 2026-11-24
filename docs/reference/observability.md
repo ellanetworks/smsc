@@ -38,6 +38,8 @@ Ella SMSC exposes Prometheus metrics at [`GET /api/v1/metrics`](api/metrics.md).
 | `ellasmsc_cluster_join_requests_total` | Counter | Join and hello requests from other nodes, by result. |
 | `ellasmsc_ready_check` | Gauge | 1 when the readiness check passes, 0 when it fails, by check (`shutdown`, `member`, `initialized`, `diameter_label`, `drain`, `database`, `leader`, `encryption`). |
 | `ellasmsc_encryption_node_locked` | Gauge | 1 when this node cannot unlock its [encryption keys](../explanation/encryption_at_rest.md#locked-nodes). |
+| `ellasmsc_encryption_key_available` | Gauge | 1 when this node can use its configured encryption key. Checked every minute. |
+| `ellasmsc_encryption_undecryptable_reads_total` | Counter | Reads of message content that cannot be decrypted. The content is left out. |
 | `go_*` | Gauge, Counter, Summary | Go runtime: goroutines, heap, garbage-collection pauses. |
 | `process_*` | Gauge, Counter | Process: memory, CPU, open file descriptors, start time. |
 | `raft_*` | Gauge, Counter, Summary | [hashicorp/raft](https://github.com/hashicorp/raft) metrics. In a cluster only. |
