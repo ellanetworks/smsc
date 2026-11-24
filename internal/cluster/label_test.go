@@ -29,8 +29,6 @@ func openLabeled(t testing.TB, dir, address, label string) (*env, error) {
 		return nil, err
 	}
 
-	d.SetProposer(n)
-
 	return &env{dir: dir, db: d, node: n}, nil
 }
 

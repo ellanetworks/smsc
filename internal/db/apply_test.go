@@ -570,7 +570,7 @@ func liveTerm(t *testing.T, d *DB, term uint32) {
 
 	defer func() { _ = conn.Close() }()
 
-	if _, err := conn.ExecContext(context.Background(), `INSERT INTO encryption_terms (term) VALUES (?)`, term); err != nil {
+	if _, err := conn.ExecContext(context.Background(), `INSERT INTO encryption_terms (term, created_at) VALUES (?, 0)`, term); err != nil {
 		t.Fatal(err)
 	}
 }

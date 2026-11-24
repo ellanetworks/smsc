@@ -52,8 +52,9 @@ func (d *DB) GetOIDC(ctx context.Context) (_ OIDC, err error) {
 		plaintext, err := d.openSecret(secret, clientSecretAt)
 
 		switch {
-		case errors.Is(err, encryption.ErrLocked):
+		case errors.Is(err, encryption.ErrLocked), errors.Is(err, encryption.ErrUnknownTerm):
 			o.ClientSecretLocked = true
+		case err != nil && d.leaveOut(err):
 		case err != nil:
 			return OIDC{}, fmt.Errorf("get OIDC: the client secret: %w", err)
 		default:

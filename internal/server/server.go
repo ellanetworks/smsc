@@ -178,8 +178,6 @@ func (s *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	database.SetProposer(node)
-
 	closeStore := func() {
 		if err := errors.Join(node.Close(), database.Close()); err != nil {
 			s.Logger.ErrorContext(ctx, "failed to close the database", slog.Any("error", err))

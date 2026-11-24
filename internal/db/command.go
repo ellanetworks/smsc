@@ -75,6 +75,7 @@ const (
 	cmdAddRootWrap
 	cmdReencrypt
 	cmdPruneTerms
+	cmdForgetUpgrades
 )
 
 const entryBatch uint16 = 1

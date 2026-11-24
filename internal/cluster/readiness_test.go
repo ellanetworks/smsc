@@ -133,8 +133,6 @@ func openWith(t testing.TB, dir, address string, edit func(*Config)) *env {
 		t.Fatal(err)
 	}
 
-	d.SetProposer(n)
-
 	return &env{dir: dir, db: d, node: n}
 }
 

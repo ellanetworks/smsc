@@ -48,6 +48,8 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
     sudo snap logs -n all ella-smsc.smscd | grep retire_cluster_key
     ```
 
+    If it never appears, remove any member that is down from the **Cluster** page.
+
     ## 4. Remove the previous key
 
     On each node, remove the `encryption` block from `smsc.yaml`.
@@ -83,7 +85,7 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
 
     ## 3. Verify
 
-    Once every node runs with the HSM key, the leader logs `retire_cluster_key`.
+    Once every node runs with the HSM key, the leader logs `retire_cluster_key`. If it never appears, remove any member that is down from the **Cluster** page.
 
     ## 4. Remove the previous key
 
@@ -117,6 +119,8 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
     ```shell
     kubectl logs -n ella -l app.kubernetes.io/name=ella-smsc --tail=-1 | grep retire_cluster_key
     ```
+
+    If it never appears, remove any member that is down from the **Cluster** page.
 
     ## 4. Remove the previous key
 

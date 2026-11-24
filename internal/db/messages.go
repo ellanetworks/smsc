@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ellanetworks/smsc/internal/encryption"
 	"github.com/ellanetworks/smsc/internal/tpdu"
 	"github.com/ellanetworks/smsc/internal/tracing"
 )
@@ -723,7 +724,12 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 	}
 
 	for i := range messages {
-		if err := d.openMessageOrLeaveOut(&messages[i]); err != nil {
+		err := d.openMessageOrLeaveOut(&messages[i])
+
+		switch {
+		case errors.Is(err, encryption.ErrLocked), errors.Is(err, encryption.ErrUnknownTerm):
+			messages[i].TPDU, messages[i].CipherID = nil, nil
+		case err != nil:
 			return nil, 0, err
 		}
 	}

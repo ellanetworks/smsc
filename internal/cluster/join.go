@@ -52,6 +52,7 @@ type joinReply struct {
 	Pins       map[string]string `json:"pins"`
 	KeyMatches bool              `json:"encryption_key_matches,omitempty"`
 	KeyFile    []byte            `json:"encryption_key_file,omitempty"`
+	Keys       []string          `json:"encryption_keys,omitempty"`
 }
 
 type Token struct {
@@ -216,7 +217,12 @@ func (n *Node) admit(ctx context.Context, req joinRequest) (joinReply, error) {
 		}
 	}
 
-	return joinReply{Pins: pins, KeyMatches: keyMatches, KeyFile: keyFile}, nil
+	st, err := n.db.EncryptionKeys(ctx)
+	if err != nil {
+		return joinReply{}, err
+	}
+
+	return joinReply{Pins: pins, KeyMatches: keyMatches, KeyFile: keyFile, Keys: fingerprints(st)}, nil
 }
 
 func validAddress(addr string) error {

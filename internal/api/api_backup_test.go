@@ -30,8 +30,6 @@ func backupNode(t *testing.T, store *db.DB) *cluster.Node {
 
 	t.Cleanup(func() { _ = n.Close() })
 
-	store.SetProposer(n)
-
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if ok, _ := n.Leader(); ok {
 			return n

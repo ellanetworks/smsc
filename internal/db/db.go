@@ -415,7 +415,8 @@ var migrations = []string{
 	);
 	CREATE TABLE encryption_terms (
 		term INTEGER PRIMARY KEY CHECK (term BETWEEN 1 AND 4294967295),
-		upgrade BLOB CHECK (upgrade IS NULL OR length(upgrade) > 0)
+		upgrade BLOB CHECK (upgrade IS NULL OR length(upgrade) > 0),
+		created_at INTEGER NOT NULL
 	);`,
 }
 

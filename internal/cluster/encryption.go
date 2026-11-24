@@ -723,6 +723,11 @@ func (m *keyManager) takeClusterKey(ctx context.Context, offered *joinKey, reply
 
 		clusterKey = k.Fingerprint()
 		k.Zeroize()
+
+		if !slices.Contains(reply.Keys, clusterKey) {
+			return fmt.Errorf("%w: the received encryption key %s is none of the cluster's keys %v", ErrInvalidJoin,
+				clusterKey, reply.Keys)
+		}
 	}
 
 	switch {

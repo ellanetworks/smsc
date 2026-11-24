@@ -35,6 +35,7 @@ func init() {
 	register(cmdAddRootWrap, handle(applyAddRootWrap))
 	register(cmdReencrypt, handle(applyReencrypt))
 	register(cmdPruneTerms, handle(applyPruneTerms))
+	register(cmdForgetUpgrades, handle(applyForgetUpgrades))
 	register(cmdUpdateOIDC, handle(applyUpdateOIDC))
 	register(cmdLogInWithOIDC, handle(applyLogInWithOIDC))
 	register(cmdUseOIDCState, handle(applyUseOIDCState))

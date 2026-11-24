@@ -557,6 +557,10 @@ func StripSecrets(ctx context.Context, path string) error {
 		}
 	}
 
+	if _, err := tx.ExecContext(ctx, `UPDATE encryption_terms SET upgrade = NULL`); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}

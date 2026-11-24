@@ -29,6 +29,10 @@ func newSecrets(ctx context.Context, d *db.DB, logger *slog.Logger) (*secrets, e
 	switch {
 	case errors.Is(err, encryption.ErrLocked):
 		logger.WarnContext(ctx, "the secrets stay unavailable until this node unlocks its encryption keys")
+	case errors.Is(err, encryption.ErrAuthentication), errors.Is(err, encryption.ErrMalformed),
+		errors.Is(err, encryption.ErrNotEncrypted):
+		logger.ErrorContext(ctx, "a cluster secret cannot be decrypted: logins fail until the encryption keys are "+
+			"rotated, which replaces it", slog.Any("error", err))
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
 		return nil, err

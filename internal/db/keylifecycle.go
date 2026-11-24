@@ -3,11 +3,13 @@ package db
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/ellanetworks/smsc/internal/encryption"
 )
@@ -83,8 +85,13 @@ func applyChangeKeys(a *applyCtx, p KeyChange) (struct{}, error) {
 		return struct{}{}, err
 	}
 
-	if len(p.Keyring) == 0 || len(p.Upgrade) == 0 {
-		return struct{}{}, fmt.Errorf("%w: a key change without a keyring or upgrade", ErrInvalid)
+	switch {
+	case len(p.Keyring) == 0:
+		return struct{}{}, fmt.Errorf("%w: a key change without a keyring", ErrInvalid)
+	case p.Retire && p.Upgrade != nil:
+		return struct{}{}, fmt.Errorf("%w: retiring a cluster key leaves no upgrade entry", ErrInvalid)
+	case !p.Retire && len(p.Upgrade) == 0:
+		return struct{}{}, fmt.Errorf("%w: a rotation without an upgrade entry", ErrInvalid)
 	}
 
 	st, err := readEncryptionKeys(a.ctx, a.tx)
@@ -121,7 +128,10 @@ func applyChangeKeys(a *applyCtx, p KeyChange) (struct{}, error) {
 			[]any{p.Wrap.Fingerprint, p.Wrap.Type, p.Wrap.Mechanism, p.Wrap.Wrapped},
 		},
 		{`UPDATE encryption_keyring SET sealed = ?, active_term = ? WHERE id = 1`, []any{p.Keyring, p.Term}},
-		{`INSERT INTO encryption_terms (term, upgrade) VALUES (?, ?)`, []any{p.Term, p.Upgrade}},
+		{
+			`INSERT INTO encryption_terms (term, upgrade, created_at) VALUES (?, ?, ?)`,
+			[]any{p.Term, p.Upgrade, a.leaderTime},
+		},
 	} {
 		if _, err := a.tx.ExecContext(a.ctx, q.sql, q.args...); err != nil {
 			return struct{}{}, err
@@ -142,7 +152,11 @@ func reseal(a *applyCtx, term uint32, values []ResealedValue) error {
 			return fmt.Errorf("%w: %s.%s is not a secret", ErrInvalid, v.Table, v.Column)
 		}
 
-		if got, err := encryption.Term(v.New); err != nil || got != term {
+		if v.New == nil && resealable[at] != clientSecretAt {
+			return fmt.Errorf("%w: the %s cannot be cleared", ErrInvalid, v.Table)
+		}
+
+		if got, err := encryption.Term(v.New); v.New != nil && (err != nil || got != term) {
 			return fmt.Errorf("%w: the %s is not encrypted under term %d", ErrInvalid, v.Table, term)
 		}
 
@@ -164,6 +178,16 @@ func reseal(a *applyCtx, term uint32, values []ResealedValue) error {
 	return nil
 }
 
+func secretLength(at encryption.Location) int {
+	for _, k := range secretKeys {
+		if k.at == at {
+			return k.length
+		}
+	}
+
+	return jwtSecretLength
+}
+
 func (d *DB) resealSecrets(ctx context.Context, next *encryption.Keyring) ([]ResealedValue, error) {
 	var out []ResealedValue
 
@@ -180,8 +204,16 @@ func (d *DB) resealSecrets(ctx context.Context, next *encryption.Keyring) ([]Res
 		}
 
 		plain, err := d.keys.Decrypt(value, at)
-		if err != nil {
+
+		switch {
+		case err != nil && !d.leaveOut(err):
 			return nil, fmt.Errorf("decrypt the %s: %w", at.Table, err)
+		case err != nil && at == clientSecretAt:
+			out = append(out, ResealedValue{Table: at.Table, Column: at.Column, Old: value})
+			continue
+		case err != nil:
+			plain = make([]byte, secretLength(at))
+			_, _ = rand.Read(plain)
 		}
 
 		sealed, err := next.Encrypt(plain, at)
@@ -211,10 +243,41 @@ func (d *DB) PrepareKeyChange(ctx context.Context, st EncryptionKeys, retire boo
 		return KeyChange{}, err
 	}
 
-	return KeyChange{
+	c := KeyChange{
 		KeyringSum: KeyringSum(st.Keyring), Term: upgrade.Term, Retire: retire, Wrap: sealed.Wrap,
 		Keyring: sealed.Keyring, Upgrade: upgrade.Sealed, Secrets: secrets,
-	}, nil
+	}
+
+	if retire {
+		c.Upgrade = nil
+	}
+
+	return c, nil
+}
+
+type forgetUpgrades struct {
+	Before int64 `json:"before"`
+}
+
+func (d *DB) ForgetUpgrades(ctx context.Context, before time.Time) (err error) {
+	defer d.observe(&err)()
+
+	var pending int
+	if err := d.reader().QueryRowContext(ctx, `SELECT count(*) FROM encryption_terms WHERE upgrade IS NOT NULL
+		AND created_at < ?`, before.UnixNano()).Scan(&pending); err != nil || pending == 0 {
+		return err
+	}
+
+	_, err = submit[struct{}](ctx, d, cmdForgetUpgrades, forgetUpgrades{Before: before.UnixNano()})
+
+	return err
+}
+
+func applyForgetUpgrades(a *applyCtx, p forgetUpgrades) (struct{}, error) {
+	_, err := a.tx.ExecContext(a.ctx, `UPDATE encryption_terms SET upgrade = NULL WHERE upgrade IS NOT NULL
+		AND created_at < ?`, p.Before)
+
+	return struct{}{}, err
 }
 
 type ReencryptedValue struct {
@@ -239,8 +302,12 @@ func applyReencrypt(a *applyCtx, p reencrypt) (int, error) {
 			return 0, fmt.Errorf("%w: %s holds no encrypted content", ErrInvalid, v.Table)
 		}
 
-		if err := requireSealed(a.ctx, a.tx, v.New); err != nil || v.New == nil {
-			return 0, fmt.Errorf("%w: a re-encrypted value is not sealed under a live term: %w", ErrInvalid, err)
+		if v.New == nil {
+			return 0, fmt.Errorf("%w: a re-encrypted value is empty", ErrInvalid)
+		}
+
+		if err := requireSealed(a.ctx, a.tx, v.New); err != nil {
+			return 0, err
 		}
 
 		res, err := a.tx.ExecContext(a.ctx, `UPDATE `+c.table+` SET `+c.column+` = ? WHERE id = ? AND `+c.column+` = ?`,
@@ -265,12 +332,17 @@ type staleRow struct {
 	at    encryption.Location
 }
 
-func (d *DB) staleRows(ctx context.Context, active uint32, limit int) ([]staleRow, error) {
+type ReencryptCursor struct {
+	Message int64
+	Attempt int64
+}
+
+func (d *DB) staleRows(ctx context.Context, active uint32, after ReencryptCursor, limit int) ([]staleRow, error) {
 	var out []staleRow
 
 	rows, err := d.reader().QueryContext(ctx, `SELECT id, tpdu, cipher_id, msisdn, originator_ton, originator_npi,
-		originator FROM messages WHERE cipher_id IS NOT NULL AND substr(tpdu, 3, 4) != ? ORDER BY id LIMIT ?`,
-		termBytes(active), limit)
+		originator FROM messages WHERE cipher_id IS NOT NULL AND substr(tpdu, 3, 4) != ? AND id > ? ORDER BY id
+		LIMIT ?`, termBytes(active), after.Message, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -302,8 +374,8 @@ func (d *DB) staleRows(ctx context.Context, active uint32, limit int) ([]staleRo
 	}
 
 	rows, err = d.reader().QueryContext(ctx, `SELECT id, message_id, deliver_report, cipher_id FROM delivery_attempts
-		WHERE cipher_id IS NOT NULL AND substr(deliver_report, 3, 4) != ? ORDER BY id LIMIT ?`,
-		termBytes(active), limit-len(out))
+		WHERE cipher_id IS NOT NULL AND substr(deliver_report, 3, 4) != ? AND id > ? ORDER BY id LIMIT ?`,
+		termBytes(active), after.Attempt, limit-len(out))
 	if err != nil {
 		return nil, err
 	}
@@ -328,26 +400,36 @@ func (d *DB) staleRows(ctx context.Context, active uint32, limit int) ([]staleRo
 	return out, rows.Err()
 }
 
-func (d *DB) ReencryptStale(ctx context.Context, limit int) (stale, undecryptable int, err error) {
+func (d *DB) ReencryptStale(ctx context.Context, after ReencryptCursor, limit int) (
+	next ReencryptCursor, stale, undecryptable int, err error,
+) {
 	defer d.observe(&err)()
 
 	if !d.unlocked() {
-		return 0, 0, ErrKeysLocked
+		return after, 0, 0, ErrKeysLocked
 	}
 
 	active, err := d.keys.ActiveTerm()
 	if err != nil {
-		return 0, 0, err
+		return after, 0, 0, err
 	}
 
-	rows, err := d.staleRows(ctx, active, limit)
+	rows, err := d.staleRows(ctx, active, after, limit)
 	if err != nil {
-		return 0, 0, err
+		return after, 0, 0, err
 	}
+
+	next = after
 
 	var batch reencrypt
 
 	for _, r := range rows {
+		if r.value.Table == tpduContent.table {
+			next.Message = max(next.Message, r.value.ID)
+		} else {
+			next.Attempt = max(next.Attempt, r.value.ID)
+		}
+
 		plain, err := d.keys.Decrypt(r.value.Old, r.at)
 		if err != nil {
 			undecryptable++
@@ -358,7 +440,7 @@ func (d *DB) ReencryptStale(ctx context.Context, limit int) (stale, undecryptabl
 		clear(plain)
 
 		if err != nil {
-			return 0, 0, err
+			return after, 0, 0, err
 		}
 
 		batch.Values = append(batch.Values, r.value)
@@ -366,11 +448,11 @@ func (d *DB) ReencryptStale(ctx context.Context, limit int) (stale, undecryptabl
 
 	if len(batch.Values) > 0 {
 		if _, err := submit[int](ctx, d, cmdReencrypt, batch); err != nil {
-			return 0, 0, err
+			return after, 0, 0, err
 		}
 	}
 
-	return len(rows), undecryptable, nil
+	return next, len(rows), undecryptable, nil
 }
 
 func termUsage(ctx context.Context, q querier, term uint32) (int, error) {

@@ -49,7 +49,7 @@ The operator and delivery settings are not in this file: they are in the databas
             - `slot` (int): The slot number. Either `token_label` or `slot` must be set.
             - `pin_file` (string): The path to a file holding the user PIN.
             - `key_label` (string): The label of the key.
-            - `mechanism` (string): `aes-gcm`, for an AES-256 key, or `rsa-oaep`, for an RSA key of 3072 bits or more.
+            - `mechanism` (string): `aes-gcm`, for an AES-256 key with a check value, or `rsa-oaep`, for an RSA key of 3072 bits or more.
     - `previous_key` (object, optional): The key being replaced, while [changing the encryption key](../how_to/change_the_encryption_key.md). Same fields as `key`.
 - `telemetry` (object, optional): The [traces](observability.md#traces).
     - `enabled` (boolean, optional): Export traces. Default `false`.

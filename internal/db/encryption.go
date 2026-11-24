@@ -154,8 +154,8 @@ func insertClusterKeys(a *applyCtx, k clusterKeys) error {
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_terms (term, upgrade) VALUES (?, NULL)`,
-		k.ActiveTerm); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_terms (term, upgrade, created_at) VALUES (?, NULL, ?)`,
+		k.ActiveTerm, a.leaderTime); err != nil {
 		return err
 	}
 

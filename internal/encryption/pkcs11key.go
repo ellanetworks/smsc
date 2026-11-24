@@ -232,15 +232,16 @@ func (k *PKCS11Key) findAES(label string) error {
 		return fmt.Errorf("%w: the key %q is AES-%d, want AES-%d", ErrPKCS11, label, 8*n, 8*KeySize)
 	}
 
-	k.key = key
-	k.fingerprint = label
-
 	check, err := k.ctx.GetAttributeValue(k.session, key, []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CHECK_VALUE, nil),
 	})
-	if err == nil && len(check[0].Value) > 0 {
-		k.fingerprint = label + "/" + hex.EncodeToString(check[0].Value)
+	if err != nil || len(check[0].Value) == 0 {
+		return fmt.Errorf("%w: the AES key %q has no check value, so a replaced key cannot be told apart: use an RSA "+
+			"key with rsa-oaep", ErrPKCS11, label)
 	}
+
+	k.key = key
+	k.fingerprint = label + "/" + hex.EncodeToString(check[0].Value)
 
 	return nil
 }

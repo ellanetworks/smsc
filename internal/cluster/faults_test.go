@@ -600,8 +600,6 @@ func newFaultCluster(t *testing.T, opts faultOptions) *faultCluster {
 			t.Fatal(err)
 		}
 
-		d.SetProposer(n)
-
 		n.Lead(func(ctx context.Context, term uint64) {
 			fn.mu.Lock()
 			fn.terms = append(fn.terms, term)

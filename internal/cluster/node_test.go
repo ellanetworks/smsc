@@ -36,8 +36,6 @@ func open(t testing.TB, dir string) *env {
 		t.Fatal(err)
 	}
 
-	d.SetProposer(n)
-
 	return &env{dir: dir, db: d, node: n}
 }
 

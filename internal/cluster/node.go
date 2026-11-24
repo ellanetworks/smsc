@@ -209,6 +209,8 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 		return nil, err
 	}
 
+	d.SetProposer(n)
+
 	go n.watch()
 
 	n.background.Go(n.maintain)

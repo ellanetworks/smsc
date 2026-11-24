@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/ellanetworks/smsc/internal/db"
 )
 
 const (
 	reencryptBatch     = 200
 	reencryptPause     = 50 * time.Millisecond
 	tidyInterval       = 10 * time.Minute
+	upgradeGrace       = 2 * time.Minute
+	forgetInterval     = time.Minute
 	probeInterval      = time.Minute
 	probeRetryInterval = 10 * time.Second
 )
@@ -34,10 +38,16 @@ func (m *keyManager) maintain() {
 	ticker := time.NewTicker(tidyInterval)
 	defer ticker.Stop()
 
+	forget := time.NewTicker(forgetInterval)
+	defer forget.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-forget.C:
+			m.forgetUpgrades(ctx)
+			continue
 		case <-ticker.C:
 		case <-m.tidying:
 		}
@@ -52,9 +62,21 @@ func (m *keyManager) maintain() {
 	}
 }
 
+func (m *keyManager) forgetUpgrades(ctx context.Context) {
+	if leading, _ := m.n.Leader(); !leading {
+		return
+	}
+
+	if err := m.n.db.ForgetUpgrades(ctx, m.n.cfg.Now().Add(-upgradeGrace)); err != nil && ctx.Err() == nil {
+		m.n.cfg.Logger.WarnContext(ctx, "failed to forget the data key upgrade entries", slog.Any("error", err))
+	}
+}
+
 func (m *keyManager) tidyKeys(ctx context.Context) error {
+	var cursor db.ReencryptCursor
+
 	for {
-		n, undecryptable, err := m.n.db.ReencryptStale(ctx, reencryptBatch)
+		next, n, undecryptable, err := m.n.db.ReencryptStale(ctx, cursor, reencryptBatch)
 		if err != nil {
 			return err
 		}
@@ -64,9 +86,11 @@ func (m *keyManager) tidyKeys(ctx context.Context) error {
 				slog.Int("values", undecryptable))
 		}
 
-		if n == 0 || n == undecryptable {
+		if n == 0 {
 			break
 		}
+
+		cursor = next
 
 		select {
 		case <-ctx.Done():
