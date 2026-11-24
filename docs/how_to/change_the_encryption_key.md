@@ -52,7 +52,7 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
 
     On each node, remove the `encryption` block from `smsc.yaml`.
 
-    Keep a copy of `encryption-previous.key` as long as you keep backups taken before the change: restoring them needs it as `previous_key`. Then delete it from the nodes.
+    Keep a copy of `encryption-previous.key` for the backups taken before the change, and delete it from the nodes.
 
 === "Binary, to an HSM"
 
@@ -89,7 +89,7 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
 
     On each node, remove `previous_key` from the configuration file, and delete the previous key file.
 
-    Keep a copy of the previous key as long as you keep backups taken before the change: restoring them needs it as `previous_key`.
+    Keep a copy of the previous key file for the backups taken before the change.
 
 === "Kubernetes"
 
@@ -125,7 +125,7 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
       --set encryption.previousSecretName=
     ```
 
-    Keep `encryption-previous.key` as long as you keep backups taken before the change: restoring them needs it as the previous key. Then delete the Secret:
+    Keep `encryption-previous.key` for the backups taken before the change, and delete the Secret:
 
     ```shell
     kubectl delete secret ella-smsc-encryption-previous -n ella

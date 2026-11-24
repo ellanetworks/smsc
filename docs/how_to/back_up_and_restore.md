@@ -4,7 +4,7 @@ description: Step-by-step instructions to back up and restore Ella SMSC.
 
 # Back Up and Restore
 
-Message content in a backup is encrypted with the encryption key, and the backup does not hold it. Keep a copy of the key, apart from the backups. Phone numbers, users and settings are not encrypted: store and transfer backups encrypted.
+Keep a copy of the encryption key, apart from the backups. Store and transfer backups encrypted.
 
 ## Back up the encryption key
 
@@ -140,17 +140,11 @@ Use this procedure when a cluster lost a majority of its nodes, or a standalone 
         kubectl delete pvc -n ella -l app.kubernetes.io/name=ella-smsc
         ```
 
-    2. If the `ella-smsc-encryption` Secret is gone, create it again from the saved key:
-
-        ```shell
-        kubectl create secret generic ella-smsc-encryption -n ella --from-file=key=encryption.key
-        ```
-
-    3. Deploy it again, with the same values:
+    2. Deploy it again, with the same values:
 
         ```shell
         helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --set replicas=3
         ```
 
-    4. Initialize it with a temporary user, as in [Deploy a High Availability Cluster](deploy_ha_cluster.md), step 2.
-    5. Restore the backup with that user, as in [Restore](#restore).
+    3. Initialize it with a temporary user, as in [Deploy a High Availability Cluster](deploy_ha_cluster.md), step 2.
+    4. Restore the backup with that user, as in [Restore](#restore).
