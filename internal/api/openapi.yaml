@@ -1539,8 +1539,8 @@ paths:
       summary: Rotate the encryption keys
       description: >-
         Generates a new root key and a new data key term in one commit. New values are encrypted under the new
-        term; existing values keep theirs and stay readable. Refused while a cluster key change is in progress. Runs
-        on the leader only. Needs a login, not an API token.
+        term; existing values are re-encrypted under it in the background, then the old data keys are deleted.
+        Refused while a cluster key change is in progress. Runs on the leader only. Needs a login, not an API token.
       responses:
         "200":
           $ref: "#/components/responses/Success"
@@ -1563,10 +1563,9 @@ paths:
       description: >-
         Replaces every message, user and setting with those of an archive from GET /api/v1/backup, after checking
         its checksums and that its schema is not newer than this version's. IDs keep increasing: a message ID
-        already returned is never reused. SMPP sessions are closed. A backup of another cluster is restored only when
-        this node holds the cluster key it was encrypted under, as encryption.key or encryption.previous_key: its
-        encryption keys are adopted and rewrapped under this cluster's key. Runs on the leader only. Needs a login,
-        not an API token.
+        already returned is never reused. SMPP sessions are closed. The backup's encrypted content is re-encrypted
+        under this cluster's keys; this node must hold the cluster key the backup was encrypted under, as
+        encryption.key or encryption.previous_key. Runs on the leader only. Needs a login, not an API token.
       requestBody:
         required: true
         content:
