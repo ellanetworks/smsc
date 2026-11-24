@@ -38,6 +38,19 @@ The operator and delivery settings are not in this file: they are in the databas
     - `join` (list of strings, optional): The `host:port` of the other nodes. Each name resolves to all its addresses.
     - `bootstrap_expect` (int, optional): The number of nodes that form a new cluster together. 2 or more. Requires `join`.
     - `secret_file` (string): The path to the cluster secret: base64 keys of at least 32 bytes, one per line, the first used to sign. Required with `join`.
+- `encryption` (object, optional): [Encryption at rest](../explanation/encryption_at_rest.md).
+    - `key` (object, optional): The encryption key. Default: a key file next to the database.
+        - `type` (string, optional): `file` or `pkcs11`. Default `file`.
+        - `file` (object, optional): With `type: file`.
+            - `path` (string, optional): The path to the key file. Created when absent. Default `encryption.key` in the database's directory.
+        - `pkcs11` (object): With `type: pkcs11`. The key is on an HSM.
+            - `library` (string): The absolute path to the HSM's PKCS#11 library.
+            - `token_label` (string): The label of the token. Either `token_label` or `slot` must be set.
+            - `slot` (int): The slot number. Either `token_label` or `slot` must be set.
+            - `pin_file` (string): The path to a file holding the user PIN.
+            - `key_label` (string): The label of the key.
+            - `mechanism` (string): `aes-gcm`, for an AES-256 key, or `rsa-oaep`, for an RSA key of 3072 bits or more.
+    - `previous_key` (object, optional): The key being replaced, while [changing the encryption key](../how_to/change_the_encryption_key.md). Same fields as `key`.
 - `telemetry` (object, optional): The [traces](observability.md#traces).
     - `enabled` (boolean, optional): Export traces. Default `false`.
     - `otlp_endpoint` (string): The `host:port` of an OTLP/gRPC collector, over plain gRPC. Required when `enabled` is `true`.

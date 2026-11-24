@@ -52,27 +52,29 @@ type Address struct {
 }
 
 type Message struct {
-	ID                 int64
-	Kind               MessageKind
-	ReportFor          int64
-	ReportStatus       uint8
-	Originator         Address
-	Recipient          Address
-	MSISDN             string
-	Origin             MessageOrigin
-	SubmittedBy        int64
-	MessageReference   uint8
-	ProtocolIdentifier uint8
-	TPDU               []byte
-	Status             MessageStatus
-	SingleShot         bool
-	SubmittedAt        time.Time
-	TimeStamp          time.Time
-	ExpiresAt          time.Time
-	NextAttemptAt      time.Time
-	Retries            int
-	UpdatedAt          time.Time
-	TraceParent        string
+	ID                  int64
+	Kind                MessageKind
+	ReportFor           int64
+	ReportStatus        uint8
+	Originator          Address
+	Recipient           Address
+	MSISDN              string
+	Origin              MessageOrigin
+	SubmittedBy         int64
+	MessageReference    uint8
+	ProtocolIdentifier  uint8
+	TPDU                []byte
+	Status              MessageStatus
+	SingleShot          bool
+	SubmittedAt         time.Time
+	TimeStamp           time.Time
+	ExpiresAt           time.Time
+	NextAttemptAt       time.Time
+	Retries             int
+	UpdatedAt           time.Time
+	TraceParent         string
+	StatusReportRequest bool
+	CipherID            []byte
 }
 
 type NewMessage struct {
@@ -129,7 +131,17 @@ func (d *DB) CreateMessage(ctx context.Context, m NewMessage) (int64, error) {
 }
 
 type storeMessages struct {
-	Messages []NewMessage
+	Messages []messageRecord
+}
+
+type messageRecord struct {
+	NewMessage
+	StatusReportRequest bool
+	CipherID            []byte `json:",omitempty"`
+}
+
+func recordOf(m NewMessage) messageRecord {
+	return messageRecord{NewMessage: m, StatusReportRequest: m.Origin == OriginMobile && tpdu.RequestsStatusReport(m.TPDU)}
 }
 
 type storedMessages struct {
@@ -141,14 +153,23 @@ func (d *DB) CreateMessages(ctx context.Context, messages []NewMessage) (_ []int
 	defer d.observe(&err)()
 
 	tp := tracing.TraceParent(ctx)
+	records := make([]messageRecord, len(messages))
 
-	for i := range messages {
-		if messages[i].TraceParent == "" {
-			messages[i].TraceParent = tp
+	for i, m := range messages {
+		if m.TraceParent == "" {
+			m.TraceParent = tp
+		}
+
+		records[i] = recordOf(m)
+	}
+
+	for i := range records {
+		if err := d.sealMessage(&records[i]); err != nil {
+			return nil, err
 		}
 	}
 
-	r, replayed, err := submitReplay[storedMessages](ctx, d, cmdStoreMessages, storeMessages{Messages: messages})
+	r, replayed, err := submitReplay[storedMessages](ctx, d, cmdStoreMessages, storeMessages{Messages: records})
 	if err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			return nil, err
@@ -187,8 +208,8 @@ func applyStoreMessages(a *applyCtx, p storeMessages) (storedMessages, error) {
 	return r, nil
 }
 
-func createMessage(a *applyCtx, m NewMessage) (int64, bool, error) {
-	ctx, tx := a.ctx, a.tx
+func createMessage(a *applyCtx, record messageRecord) (int64, bool, error) {
+	ctx, tx, m := a.ctx, a.tx, record.NewMessage
 
 	route, err := routeOf(a, m)
 	if err != nil {
@@ -219,7 +240,7 @@ func createMessage(a *applyCtx, m NewMessage) (int64, bool, error) {
 		}
 	}
 
-	id, err := insertMessage(ctx, tx, m, route != nil)
+	id, err := insertMessage(a, record, route != nil)
 	if err != nil {
 		return 0, false, err
 	}
@@ -308,7 +329,8 @@ func stamp(ctx context.Context, tx *sql.Tx, msisdn string, at int64) (int64, err
 	return s, nil
 }
 
-func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage, delegated bool) (int64, error) {
+func insertMessage(a *applyCtx, record messageRecord, delegated bool) (int64, error) {
+	ctx, tx, m := a.ctx, a.tx, record.NewMessage
 	at, expiresAt := m.SubmittedAt.UTC().UnixNano(), m.ExpiresAt.UTC().UnixNano()
 
 	status, next := StatusDelegated, expiresAt
@@ -328,15 +350,25 @@ func insertMessage(ctx context.Context, tx *sql.Tx, m NewMessage, delegated bool
 		return 0, err
 	}
 
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO messages (kind, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi,
-		msisdn, origin, submitted_by, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at,
-		time_stamp, expires_at, next_attempt_at, retries, updated_at, traceparent)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+	if err := requireCipherID(record.CipherID, "a message"); err != nil {
+		return 0, err
+	}
+
+	if err := requireSealed(m.TPDU); err != nil || m.TPDU == nil {
+		return 0, fmt.Errorf("%w: a message is not encrypted", ErrInvalid)
+	}
+
+	res, err := tx.ExecContext(ctx, `INSERT INTO messages (kind, originator, originator_ton, originator_npi, recipient,
+		recipient_ton, recipient_npi, msisdn, origin, submitted_by, message_reference, protocol_identifier, tpdu, status,
+		single_shot, submitted_at, time_stamp, expires_at, next_attempt_at, retries, updated_at, traceparent,
+		status_report_request, cipher_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
 		KindMessage, m.Originator.Digits, m.Originator.TypeOfNumber, m.Originator.NumberingPlan,
 		m.Recipient.Digits, m.Recipient.TypeOfNumber, m.Recipient.NumberingPlan, m.MSISDN, m.Origin,
-		sql.Null[int64]{V: m.SubmittedBy, Valid: m.SubmittedBy != 0}, m.MessageReference, m.ProtocolIdentifier, m.TPDU, status, m.SingleShot, at, timeStamp,
-		expiresAt, next, at, nullableString(m.TraceParent))
+		sql.Null[int64]{V: m.SubmittedBy, Valid: m.SubmittedBy != 0},
+		m.MessageReference, m.ProtocolIdentifier, m.TPDU, status,
+		m.SingleShot, at, timeStamp, expiresAt, next, at, nullableString(m.TraceParent), record.StatusReportRequest,
+		record.CipherID)
 	if err != nil {
 		return 0, err
 	}
@@ -387,7 +419,7 @@ func insertStatusReport(ctx context.Context, tx *sql.Tx, messageID int64, r NewS
 func replacePending(a *applyCtx, m NewMessage) (bool, error) {
 	ctx, tx := a.ctx, a.tx
 
-	query := `SELECT ` + messageColumns + ` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
+	query := `SELECT ` + messageColumns("") + ` FROM messages WHERE kind = ? AND originator = ? AND originator_ton = ?
 		AND originator_npi = ? AND protocol_identifier = ? AND status IN (?, ?) AND origin = ?`
 
 	args := []any{
@@ -518,38 +550,71 @@ func isDuplicate(ctx context.Context, tx *sql.Tx, m NewMessage) (bool, error) {
 	return previous == m.MessageReference, nil
 }
 
-const messageColumns = `id, kind, report_for, report_status, originator, originator_ton, originator_npi, recipient, recipient_ton, recipient_npi, msisdn,
-	origin, submitted_by, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at, time_stamp, expires_at,
-	next_attempt_at, retries, updated_at, traceparent`
+var messageFields = []string{
+	"id", "kind", "report_for", "report_status", "originator", "originator_ton", "originator_npi", "recipient",
+	"recipient_ton", "recipient_npi", "msisdn", "origin", "submitted_by", "message_reference", "protocol_identifier",
+	"tpdu", "status", "single_shot", "submitted_at", "time_stamp", "expires_at", "next_attempt_at", "retries",
+	"updated_at", "traceparent", "status_report_request", "cipher_id",
+}
+
+func messageColumns(alias string) string {
+	columns := make([]string, 0, len(messageFields))
+	for _, f := range messageFields {
+		columns = append(columns, alias+f)
+	}
+
+	return strings.Join(columns, ", ")
+}
 
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanMessage(row rowScanner) (Message, error) {
-	var (
-		m                                                           Message
-		reportFor                                                   sql.Null[int64]
-		reportStatus                                                sql.Null[uint8]
-		submittedBy                                                 sql.Null[int64]
-		traceparent                                                 sql.Null[string]
-		submittedAt, timeStamp, expiresAt, nextAttemptAt, updatedAt int64
-	)
+type messageScan struct {
+	m                                                           *Message
+	reportFor                                                   sql.Null[int64]
+	reportStatus                                                sql.Null[uint8]
+	submittedBy                                                 sql.Null[int64]
+	traceparent                                                 sql.Null[string]
+	submittedAt, timeStamp, expiresAt, nextAttemptAt, updatedAt int64
+}
 
-	err := row.Scan(&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber, &m.Originator.NumberingPlan,
-		&m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan, &m.MSISDN, &m.Origin, &submittedBy,
-		&m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status, &m.SingleShot,
-		&submittedAt, &timeStamp, &expiresAt, &nextAttemptAt, &m.Retries, &updatedAt, &traceparent)
-	if err != nil {
+func scanInto(m *Message) *messageScan {
+	return &messageScan{m: m}
+}
+
+func (s *messageScan) targets() []any {
+	m := s.m
+
+	return []any{
+		&m.ID, &m.Kind, &s.reportFor, &s.reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber,
+		&m.Originator.NumberingPlan, &m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan,
+		&m.MSISDN, &m.Origin, &s.submittedBy, &m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status,
+		&m.SingleShot, &s.submittedAt, &s.timeStamp, &s.expiresAt, &s.nextAttemptAt, &m.Retries, &s.updatedAt,
+		&s.traceparent, &m.StatusReportRequest, &m.CipherID,
+	}
+}
+
+func (s *messageScan) finish() {
+	m := s.m
+	m.ReportFor, m.ReportStatus, m.SubmittedBy, m.TraceParent = s.reportFor.V, s.reportStatus.V, s.submittedBy.V,
+		s.traceparent.V
+	m.SubmittedAt = time.Unix(0, s.submittedAt).UTC()
+	m.TimeStamp = time.Unix(0, s.timeStamp).UTC()
+	m.ExpiresAt = time.Unix(0, s.expiresAt).UTC()
+	m.NextAttemptAt = time.Unix(0, s.nextAttemptAt).UTC()
+	m.UpdatedAt = time.Unix(0, s.updatedAt).UTC()
+}
+
+func scanMessage(row rowScanner) (Message, error) {
+	var m Message
+
+	s := scanInto(&m)
+	if err := row.Scan(s.targets()...); err != nil {
 		return Message{}, err
 	}
 
-	m.ReportFor, m.ReportStatus, m.SubmittedBy, m.TraceParent = reportFor.V, reportStatus.V, submittedBy.V, traceparent.V
-	m.SubmittedAt = time.Unix(0, submittedAt).UTC()
-	m.TimeStamp = time.Unix(0, timeStamp).UTC()
-	m.ExpiresAt = time.Unix(0, expiresAt).UTC()
-	m.NextAttemptAt = time.Unix(0, nextAttemptAt).UTC()
-	m.UpdatedAt = time.Unix(0, updatedAt).UTC()
+	s.finish()
 
 	return m, nil
 }
@@ -557,13 +622,17 @@ func scanMessage(row rowScanner) (Message, error) {
 func (d *DB) GetMessage(ctx context.Context, id int64) (_ Message, err error) {
 	defer d.observe(&err)()
 
-	m, err := scanMessage(d.reader().QueryRowContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE id = ?`, id))
+	m, err := scanMessage(d.reader().QueryRowContext(ctx, `SELECT `+messageColumns("")+` FROM messages WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrNotFound
 	}
 
 	if err != nil {
 		return Message{}, fmt.Errorf("get message: %w", err)
+	}
+
+	if err := d.openMessage(&m); err != nil {
+		return Message{}, err
 	}
 
 	return m, nil
@@ -626,7 +695,7 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 		return nil, 0, fmt.Errorf("list messages: %w", err)
 	}
 
-	rows, err := d.reader().QueryContext(ctx, `SELECT `+messageColumns+` FROM messages`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+	rows, err := d.reader().QueryContext(ctx, `SELECT `+messageColumns("")+` FROM messages`+clause+` ORDER BY id DESC LIMIT ? OFFSET ?`,
 		append(args, perPage, (page-1)*perPage)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list messages: %w", err)
@@ -647,6 +716,12 @@ func (d *DB) ListMessages(ctx context.Context, f MessageFilter, page, perPage in
 
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list messages: %w", err)
+	}
+
+	for i := range messages {
+		if err := d.openMessage(&messages[i]); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	return messages, total, nil
@@ -735,7 +810,7 @@ func (d *DB) NextDue(ctx context.Context, msisdn string, now time.Time) (_ Messa
 	defer d.observe(&err)()
 
 	m, err := scanMessage(d.reader().QueryRowContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE msisdn = ? AND status = ? AND next_attempt_at <= ?
+		`SELECT `+messageColumns("")+` FROM messages WHERE msisdn = ? AND status = ? AND next_attempt_at <= ?
 		ORDER BY next_attempt_at, id LIMIT 1`, msisdn, StatusPending, now.UTC().UnixNano()))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, false, nil
@@ -743,6 +818,10 @@ func (d *DB) NextDue(ctx context.Context, msisdn string, now time.Time) (_ Messa
 
 	if err != nil {
 		return Message{}, false, fmt.Errorf("next due message: %w", err)
+	}
+
+	if err := d.openMessage(&m); err != nil {
+		return Message{}, false, err
 	}
 
 	return m, true, nil
@@ -763,8 +842,13 @@ func (d *DB) ScheduleRetry(ctx context.Context, id int64, at, now time.Time, hol
 ) (err error) {
 	defer d.observe(&err)()
 
+	sealed, err := d.sealAttempts(attempts)
+	if err != nil {
+		return err
+	}
+
 	_, err = submit[struct{}](ctx, d, cmdScheduleRetry, scheduleRetry{
-		ID: id, At: at, Now: now, Hold: hold, Since: since, Fence: f, Attempts: attempts,
+		ID: id, At: at, Now: now, Hold: hold, Since: since, Fence: f, Attempts: sealed,
 	})
 	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrStaleTerm) {
 		return fmt.Errorf("schedule retry: %w", err)
@@ -873,7 +957,7 @@ func (d *DB) NextDueFor(ctx context.Context, msisdn string, excludeID int64, now
 	at := now.UTC().UnixNano()
 
 	m, err := scanMessage(d.reader().QueryRowContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE msisdn = ? AND status = ? AND next_attempt_at <= ? AND expires_at > ?
+		`SELECT `+messageColumns("")+` FROM messages WHERE msisdn = ? AND status = ? AND next_attempt_at <= ? AND expires_at > ?
 		AND id != ? ORDER BY next_attempt_at, id LIMIT 1`, msisdn, StatusPending, at, at, excludeID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, false, nil
@@ -881,6 +965,10 @@ func (d *DB) NextDueFor(ctx context.Context, msisdn string, excludeID int64, now
 
 	if err != nil {
 		return Message{}, false, fmt.Errorf("next due message for a recipient: %w", err)
+	}
+
+	if err := d.openMessage(&m); err != nil {
+		return Message{}, false, err
 	}
 
 	return m, true, nil
@@ -1030,9 +1118,14 @@ func (d *DB) CompleteMessage(ctx context.Context, id int64, status MessageStatus
 ) (err error) {
 	defer d.observe(&err)()
 
+	sealed, err := d.sealAttempts(attempts)
+	if err != nil {
+		return err
+	}
+
 	kind, replayed, err := submitReplay[MessageKind](ctx, d, cmdCompleteMessage, completeMessage{
 		ID: id, Status: status, At: at, Report: report, TPStatus: tpStatus, TraceParent: tracing.TraceParent(ctx),
-		Fence: f, Attempts: attempts,
+		Fence: f, Attempts: sealed,
 	})
 	if errors.Is(err, ErrNotPending) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrStaleTerm) {
 		return err
@@ -1168,7 +1261,7 @@ func (d *DB) StatusReportsFor(ctx context.Context, messageIDs []int64) (_ map[in
 	}
 
 	rows, err := d.reader().QueryContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE report_for IN (?`+strings.Repeat(`, ?`, len(messageIDs)-1)+`)
+		`SELECT `+messageColumns("")+` FROM messages WHERE report_for IN (?`+strings.Repeat(`, ?`, len(messageIDs)-1)+`)
 		ORDER BY id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list status reports: %w", err)

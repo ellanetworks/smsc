@@ -40,6 +40,7 @@ type DeliveryAttempt struct {
 	TPFailureCause        string
 	AbsentUserDiagnostics AbsentUserDiagnostics
 	DeliverReport         []byte
+	CipherID              []byte
 }
 
 type AbsentUserDiagnostics struct {
@@ -53,7 +54,7 @@ type AbsentUserDiagnostics struct {
 
 const deliveryAttemptColumns = `id, message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 	failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
-	absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp, deliver_report`
+	absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp, deliver_report, cipher_id`
 
 type recordAttempt struct {
 	Attempt DeliveryAttempt `json:"attempt"`
@@ -69,7 +70,7 @@ type recordedAttempt struct {
 func (d *DB) CreateDeliveryAttempt(ctx context.Context, a DeliveryAttempt) (_ int64, err error) {
 	defer d.observe(&err)()
 
-	r, err := submit[recordedAttempt](ctx, d, cmdRecordAttempt, recordAttempt{Attempt: a})
+	r, err := d.recordAttempt(ctx, recordAttempt{Attempt: a})
 	if err != nil {
 		return 0, fmt.Errorf("create delivery attempt: %w", err)
 	}
@@ -88,12 +89,23 @@ func (d *DB) RecordAttemptAndClaim(ctx context.Context, a DeliveryAttempt, msisd
 		p.Alert = &setAlertMSISDN{MSISDN: msisdn, AlertMSISDN: *alertMSISDN, Now: a.CompletedAt}
 	}
 
-	r, err := submit[recordedAttempt](ctx, d, cmdRecordAttempt, p)
+	r, err := d.recordAttempt(ctx, p)
 	if err != nil {
 		return Claim{}, err
 	}
 
 	return r.Claim, nil
+}
+
+func (d *DB) recordAttempt(ctx context.Context, p recordAttempt) (recordedAttempt, error) {
+	sealed, err := d.sealAttempts([]DeliveryAttempt{p.Attempt})
+	if err != nil {
+		return recordedAttempt{}, err
+	}
+
+	p.Attempt = sealed[0]
+
+	return submit[recordedAttempt](ctx, d, cmdRecordAttempt, p)
 }
 
 func applyRecordAttempt(ax *applyCtx, p recordAttempt) (recordedAttempt, error) {
@@ -130,17 +142,26 @@ func insertAttempts(ax *applyCtx, attempts []DeliveryAttempt) error {
 }
 
 func insertAttempt(ax *applyCtx, a DeliveryAttempt) (int64, error) {
+	if a.DeliverReport == nil {
+		a.CipherID = nil
+	} else if err := requireCipherID(a.CipherID, "a deliver report"); err != nil {
+		return 0, err
+	} else if err := requireSealed(a.DeliverReport); err != nil {
+		return 0, err
+	}
+
 	res, err := ax.tx.ExecContext(ax.ctx,
 		`INSERT INTO delivery_attempts (message_id, started_at, completed_at, step, node, node_type, outcome, result_code, vendor_id,
 			failure_cause, tp_failure_cause, absent_user_diagnostic_mme, absent_user_diagnostic_msc,
-			absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp, deliver_report)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			absent_user_diagnostic_sgsn, absent_user_diagnostic_ip_sm_gw, absent_user_diagnostic_smsf_3gpp, absent_user_diagnostic_smsf_non_3gpp,
+			deliver_report, cipher_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.MessageID, a.StartedAt.UTC().UnixNano(), a.CompletedAt.UTC().UnixNano(), a.Step, a.Node,
 		nullableString(string(a.NodeType)), a.Outcome, nullable(a.ResultCode), nullable(a.VendorID),
 		nullableString(a.FailureCause), nullableString(a.TPFailureCause),
 		nullableString(a.AbsentUserDiagnostics.MME), nullableString(a.AbsentUserDiagnostics.MSC), nullableString(a.AbsentUserDiagnostics.SGSN),
 		nullableString(a.AbsentUserDiagnostics.IPSMGW), nullableString(a.AbsentUserDiagnostics.SMSF3GPP), nullableString(a.AbsentUserDiagnostics.SMSFNon3GPP),
-		a.DeliverReport)
+		a.DeliverReport, a.CipherID)
 	if err != nil {
 		return 0, err
 	}
@@ -194,7 +215,17 @@ func (d *DB) queryDeliveryAttempts(ctx context.Context, where string, args ...an
 		attempts = append(attempts, a)
 	}
 
-	return attempts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range attempts {
+		if err := d.openAttempt(&attempts[i]); err != nil {
+			return nil, err
+		}
+	}
+
+	return attempts, nil
 }
 
 func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {
@@ -212,7 +243,8 @@ func scanDeliveryAttempt(rows *sql.Rows) (DeliveryAttempt, error) {
 
 	if err := rows.Scan(&a.ID, &a.MessageID, &startedAt, &completedAt, &a.Step, &a.Node, &nodeType, &a.Outcome,
 		&resultCode, &vendorID, &failureCause, &tpFailureCause,
-		&absentMME, &absentMSC, &absentSGSN, &absentIPSMGW, &absentSMSF3GPP, &absentSMSFNon3GPP, &deliverReport); err != nil {
+		&absentMME, &absentMSC, &absentSGSN, &absentIPSMGW, &absentSMSF3GPP, &absentSMSFNon3GPP, &deliverReport,
+		&a.CipherID); err != nil {
 		return DeliveryAttempt{}, err
 	}
 

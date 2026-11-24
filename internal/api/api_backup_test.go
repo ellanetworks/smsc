@@ -45,7 +45,14 @@ func backupNode(t *testing.T, store *db.DB) *cluster.Node {
 
 func TestAPITokenBackupHoldsNoSecrets(t *testing.T) {
 	ctx := context.Background()
-	store := openStore(t)
+
+	store, err := db.Open(ctx, filepath.Join(t.TempDir(), "smsc.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = store.Close() })
+
 	node := backupNode(t, store)
 
 	secrets, err := store.Secrets(ctx)

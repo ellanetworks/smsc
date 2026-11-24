@@ -13,12 +13,14 @@ A standalone node, with Diameter on the pod network:
 ```bash
 kubectl create namespace ella
 kubectl label namespace ella pod-security.kubernetes.io/enforce=restricted
+kubectl create secret generic ella-smsc-encryption --namespace ella --from-literal=key="$(openssl rand -base64 32)"
 helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella
 ```
 
 A high-availability cluster:
 
 ```bash
+kubectl create secret generic ella-smsc-encryption --namespace ella --from-literal=key="$(openssl rand -base64 32)"
 kubectl create secret generic ella-smsc-cluster --namespace ella --from-literal=secret="$(openssl rand -base64 32)"
 helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --set replicas=3
 ```
@@ -53,7 +55,9 @@ See [Install](https://docs.ellanetworks.com/smsc/how_to/install/) and [Deploy a 
 |-----|---------|-------------|
 | `replicas` | `1` | Number of pods. `1` deploys a standalone node. `3` or more deploy a high-availability cluster, with one pod per Kubernetes node. |
 | `cluster.secretName` | `<release>-cluster` | Secret that holds the cluster secret in its `secret` key, in high availability. |
-| `config` | logging at `info` | [Configuration file](https://docs.ellanetworks.com/smsc/reference/config_file/) content, merged over the database, API, Diameter, SMPP and cluster settings that the chart sets. |
+| `config` | logging at `info` | [Configuration file](https://docs.ellanetworks.com/smsc/reference/config_file/) content, merged over the database, API, Diameter, SMPP, cluster and encryption settings that the chart sets. |
+| `encryption.secretName` | `<release>-encryption` | Secret that holds the encryption key in its `key` key. Unused when `config.encryption.key` is set. |
+| `encryption.previousSecretName` | | Secret that holds the previous encryption key in its `key` key, while changing the encryption key. |
 | `diameter.service.enabled` | `true` | Create the `<release>-diameter` Service for Diameter on a standalone node on the pod network. |
 | `diameter.service.type` | `ClusterIP` | Type of the Diameter Service. |
 | `diameter.service.annotations` | `{}` | Annotations of the Diameter Service. |
@@ -95,6 +99,9 @@ See [Install](https://docs.ellanetworks.com/smsc/how_to/install/) and [Deploy a 
 | `tolerations` | `[]` | Tolerations. |
 | `affinity` | one pod per Kubernetes node in high availability | Affinity. Replaces the default anti-affinity. |
 | `priorityClassName` | | Priority class. |
+| `extraEnv` | `[]` | Extra environment variables of the Ella SMSC container. |
+| `extraVolumes` | `[]` | Extra pod volumes, such as an HSM PIN Secret. |
+| `extraVolumeMounts` | `[]` | Extra volume mounts of the Ella SMSC container. |
 | `podAnnotations` | `{}` | Extra pod annotations. |
 | `podLabels` | `{}` | Extra pod labels. |
 | `nameOverride` | | Overrides the chart name. |

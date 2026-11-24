@@ -182,7 +182,7 @@ func TestReadinessOfASingleNode(t *testing.T) {
 		names = append(names, c.Name)
 	}
 
-	want := "shutdown,member,initialized,diameter_label,drain,database,leader,cluster"
+	want := "shutdown,member,initialized,diameter_label,drain,database,leader,encryption,cluster"
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("checks = %s, want %s", got, want)
 	}

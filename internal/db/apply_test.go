@@ -56,7 +56,7 @@ func runWorkload(t *testing.T, d *DB) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
-	must(d.Secrets(ctx))
+	newTestCluster(t, d)
 
 	admin := must(d.CreateUser(ctx, NewUser{Email: "admin@example.com", Role: RoleAdmin, PasswordHash: "h"}, 10))
 	ota := must(d.CreateUser(ctx, NewUser{Email: "ota@example.com", Role: RoleSubmitter, PasswordHash: "h"}, 10))
@@ -212,7 +212,6 @@ func TestApplyIsDeterministic(t *testing.T) {
 	leader := openBaselineDB(t)
 	r := &recorder{d: leader}
 	leader.SetProposer(r)
-	migrateAll(t, leader)
 
 	runWorkload(t, leader)
 
@@ -238,7 +237,6 @@ func TestGroupedEntriesMatchSingleEntries(t *testing.T) {
 	leader := openBaselineDB(t)
 	r := &recorder{d: leader}
 	leader.SetProposer(r)
-	migrateAll(t, leader)
 
 	runWorkload(t, leader)
 
@@ -269,7 +267,7 @@ func TestExpiredRequestIDIsAppliedAgainInAnyGrouping(t *testing.T) {
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 	id := RequestID{7}
 
-	cmd := store(t, id, testMessage(1, false, []byte{0}, now))
+	cmd := store(t, testSealer(t), id, testMessage(1, false, []byte{0}, now))
 	cmd.Retryable = true
 
 	var entries [][]byte
@@ -305,10 +303,18 @@ func TestExpiredRequestIDIsAppliedAgainInAnyGrouping(t *testing.T) {
 	}
 }
 
-func store(t *testing.T, id RequestID, messages ...NewMessage) Command {
+func store(t *testing.T, sealer *DB, id RequestID, messages ...NewMessage) Command {
 	t.Helper()
 
-	p, err := json.Marshal(storeMessages{Messages: messages})
+	records := make([]messageRecord, len(messages))
+	for i, m := range messages {
+		records[i] = recordOf(m)
+		if err := sealer.sealMessage(&records[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p, err := json.Marshal(storeMessages{Messages: records})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,9 +347,9 @@ func TestFailedCommandLeavesNoTrace(t *testing.T) {
 	bad.Origin = "nowhere"
 
 	results := applyBatch(t, d,
-		store(t, RequestID{1}, testMessage(1, false, []byte{0x01}, now)),
-		store(t, RequestID{2}, bad),
-		store(t, RequestID{3}, testMessage(3, false, []byte{0x03}, now)),
+		store(t, d, RequestID{1}, testMessage(1, false, []byte{0x01}, now)),
+		store(t, d, RequestID{2}, bad),
+		store(t, d, RequestID{3}, testMessage(3, false, []byte{0x03}, now)),
 	)
 
 	if results[0].Err() != nil || !errors.Is(results[1].Err(), ErrConstraint) || results[2].Err() != nil {
@@ -400,12 +406,11 @@ func TestRequestIDKeepsAnErrorResult(t *testing.T) {
 }
 
 func TestApplySkipsAppliedEntries(t *testing.T) {
-	ctx := context.Background()
 	d := openBaselineDB(t)
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	entry, err := EncodeBatch(Batch{LeaderTime: 1, Commands: []Command{
-		store(t, RequestID{}, testMessage(1, false, []byte{0x01}, now)),
+		store(t, testSealer(t), RequestID{}, testMessage(1, false, []byte{0x01}, now)),
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -417,8 +422,8 @@ func TestApplySkipsAppliedEntries(t *testing.T) {
 		}
 	}
 
-	if _, total, err := d.ListMessages(ctx, MessageFilter{}, 1, 10); err != nil || total != 1 || d.AppliedIndex() != 1 {
-		t.Fatalf("%d messages at index %d, %v; want one at 1", total, d.AppliedIndex(), err)
+	if total := count(t, d, "messages"); total != 1 || d.AppliedIndex() != 1 {
+		t.Fatalf("%d messages at index %d; want one at 1", total, d.AppliedIndex())
 	}
 }
 
@@ -428,7 +433,7 @@ func TestUnknownCommandIsFatal(t *testing.T) {
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 
 	entry, err := EncodeBatch(Batch{LeaderTime: 1, Commands: []Command{
-		store(t, RequestID{}, testMessage(1, false, []byte{0x01}, now)),
+		store(t, testSealer(t), RequestID{}, testMessage(1, false, []byte{0x01}, now)),
 		{Type: 9999, Version: 1, Payload: json.RawMessage(`{}`)},
 	}})
 	if err != nil {
@@ -480,7 +485,7 @@ func TestStateSurvivesReopening(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	must(d.Secrets(ctx))
+	newTestCluster(t, d)
 
 	index := d.AppliedIndex()
 

@@ -381,7 +381,7 @@ func TestReplacedSMPPMessageGetsADeletedReceipt(t *testing.T) {
 				t.Fatalf("receipt = %+v, want TP-Status 2", n)
 			}
 
-			if due, err := dueNotifications(ctx, f.d.reader(), f.esme, replacedAt, 10); err != nil || len(due) != 1 ||
+			if due, err := dueOpened(ctx, f.d, f.esme, replacedAt, 10); err != nil || len(due) != 1 ||
 				due[0].MessageState != 4 {
 				t.Fatalf("DueNotifications = %+v, %v; want DELETED (4)", due, err)
 			}
@@ -438,7 +438,7 @@ func TestDueNotifications(t *testing.T) {
 	ids := func(t *testing.T, esme int64, now time.Time, limit int) []int64 {
 		t.Helper()
 
-		ns, err := dueNotifications(ctx, d.reader(), esme, now, limit)
+		ns, err := dueOpened(ctx, d, esme, now, limit)
 		if err != nil {
 			t.Fatalf("DueNotifications: %v", err)
 		}
@@ -479,7 +479,7 @@ func TestDueNotifications(t *testing.T) {
 	}
 
 	t.Run("contents", func(t *testing.T) {
-		ns, err := dueNotifications(ctx, d.reader(), f.esme, later, 10)
+		ns, err := dueOpened(ctx, d, f.esme, later, 10)
 		if err != nil || len(ns) != 2 {
 			t.Fatalf("DueNotifications = %+v, %v", ns, err)
 		}
@@ -515,7 +515,7 @@ func TestDueNotifications(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ns, err := dueNotifications(ctx, g.d.reader(), g.esme, t0, 10)
+		ns, err := dueOpened(ctx, g.d, g.esme, t0, 10)
 		if err != nil || len(ns) != 1 || ns[0].Ack || !bytes.Equal(ns[0].DeliverReport, report) {
 			t.Fatalf("DueNotifications = %+v, %v; want one SIM answer without Ack", ns, err)
 		}
@@ -534,7 +534,7 @@ func TestDueNotifications(t *testing.T) {
 		t.Fatalf("DueNotifications after a retry = %v, want only the SIM answer", got)
 	}
 
-	if ns, err := dueNotifications(ctx, d.reader(), f.esme, retryAt, 10); err != nil || len(ns) != 2 ||
+	if ns, err := dueOpened(ctx, d, f.esme, retryAt, 10); err != nil || len(ns) != 2 ||
 		ns[1].ID != failedReceipt || ns[1].Attempts != 1 {
 		t.Fatalf("DueNotifications once the retry is due = %+v, %v", ns, err)
 	}
@@ -877,4 +877,19 @@ func TestReplaceIsScopedToTheAccount(t *testing.T) {
 	if s := status(ms); s != StatusReplaced {
 		t.Fatalf("MS message after its MS's replace = %s, want replaced", s)
 	}
+}
+
+func dueOpened(ctx context.Context, d *DB, esmeID int64, now time.Time, limit int) ([]Notification, error) {
+	due, err := dueNotifications(ctx, d.reader(), esmeID, now, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range due {
+		if err := d.openNotification(&due[i]); err != nil {
+			return nil, err
+		}
+	}
+
+	return due, nil
 }

@@ -263,7 +263,9 @@ func TestReadinessOfASingleNode(t *testing.T) {
 		names = append(names, c.Name)
 	}
 
-	want := []string{CheckMember, CheckInitialized, CheckLabel, CheckDrain, CheckDatabase, CheckLeader, CheckCluster}
+	want := []string{
+		CheckMember, CheckInitialized, CheckLabel, CheckDrain, CheckDatabase, CheckLeader, CheckEncryption, CheckCluster,
+	}
 	if !slices.Equal(names, want) {
 		t.Fatalf("checks = %v, want %v", names, want)
 	}

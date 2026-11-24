@@ -14,7 +14,7 @@ import (
 func dueMODeliveries(ctx context.Context, q querier, esmeID int64, now time.Time, limit int) ([]Notification, error) {
 	at := now.UTC().UnixNano()
 
-	rows, err := q.QueryContext(ctx, `SELECT d.id, d.esme_id, d.attempts, `+prefixed("m.", messageColumns)+`
+	rows, err := q.QueryContext(ctx, `SELECT d.id, d.esme_id, d.attempts, `+messageColumns("m.")+`
 		FROM esme_deliveries d
 		JOIN messages m ON m.id = d.message_id
 		WHERE d.esme_id = ? AND d.result IS NULL AND d.next_attempt_at <= ? AND d.expires_at > ?
@@ -44,33 +44,17 @@ func dueMODeliveries(ctx context.Context, q querier, esmeID int64, now time.Time
 }
 
 func scanMODelivery(rows *sql.Rows) (Notification, error) {
-	var (
-		n                        Notification
-		reportFor, submittedBy   sql.Null[int64]
-		reportStatus             sql.Null[uint8]
-		traceparent              sql.Null[string]
-		submitted, ts, exp, next int64
-		updated                  int64
-		m                        = &n.Message
-	)
+	var n Notification
 
-	err := rows.Scan(&n.ID, &n.ESMEID, &n.Attempts,
-		&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber,
-		&m.Originator.NumberingPlan, &m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan,
-		&m.MSISDN, &m.Origin, &submittedBy, &m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status,
-		&m.SingleShot, &submitted, &ts, &exp, &next, &m.Retries, &updated, &traceparent)
-	if err != nil {
+	scan := scanInto(&n.Message)
+
+	if err := rows.Scan(append([]any{&n.ID, &n.ESMEID, &n.Attempts}, scan.targets()...)...); err != nil {
 		return Notification{}, err
 	}
 
-	n.Type = NotificationMO
+	scan.finish()
 
-	m.ReportFor, m.ReportStatus, m.SubmittedBy, m.TraceParent = reportFor.V, reportStatus.V, submittedBy.V, traceparent.V
-	m.SubmittedAt = time.Unix(0, submitted).UTC()
-	m.TimeStamp = time.Unix(0, ts).UTC()
-	m.ExpiresAt = time.Unix(0, exp).UTC()
-	m.NextAttemptAt = time.Unix(0, next).UTC()
-	m.UpdatedAt = time.Unix(0, updated).UTC()
+	n.Type = NotificationMO
 
 	return n, nil
 }
@@ -186,7 +170,7 @@ func completeDelegated(a *applyCtx, messageID, esmeID int64, status MessageStatu
 		return messageClosed{}, err
 	}
 
-	m, err := scanMessage(tx.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE id = ?`, messageID))
+	m, err := scanMessage(tx.QueryRowContext(ctx, `SELECT `+messageColumns("")+` FROM messages WHERE id = ?`, messageID))
 	if err != nil {
 		return messageClosed{}, err
 	}

@@ -30,6 +30,7 @@ import (
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/config"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/db/dbtest"
 	"github.com/ellanetworks/smsc/internal/numbering"
 	"github.com/ellanetworks/smsc/internal/server"
 	"github.com/ellanetworks/smsc/internal/settings"
@@ -484,6 +485,12 @@ func (c *fakeCore) connect(s *smsc) {
 	c.t.Helper()
 
 	addr, ok := s.server.Addr().(*sctp.SCTPAddr)
+	for deadline := time.Now().Add(waitTimeout); !ok && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+
+		addr, ok = s.server.Addr().(*sctp.SCTPAddr)
+	}
+
 	if !ok {
 		c.t.Fatalf("unexpected SMSC address %v", s.server.Addr())
 	}
@@ -711,6 +718,8 @@ func startSMSC(t testing.TB, cfg smscConfig) *smsc {
 
 		t.Fatalf("Start: %v", err)
 	}
+
+	dbtest.Unlock(t, store, filepath.Join(filepath.Dir(cfg.DB.Path), "encryption.key"), waitTimeout)
 
 	s := &smsc{server: srv, store: store, client: http.DefaultClient, url: "http://" + srv.APIAddr().String()}
 

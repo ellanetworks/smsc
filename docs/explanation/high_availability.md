@@ -8,6 +8,8 @@ A high availability (HA) cluster is several Ella SMSC nodes acting as one servic
 
 The cluster uses the [Raft](https://raft.github.io/) consensus algorithm. A message is acknowledged to its sender only once a majority of the nodes have stored it, so an acknowledged message survives the loss of any minority of them.
 
+Every node uses the same [encryption key](encryption_at_rest.md).
+
 ## Failure tolerance
 
 A cluster keeps working as long as a majority of its voting nodes are up.

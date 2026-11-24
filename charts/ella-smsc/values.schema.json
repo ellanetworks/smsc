@@ -78,6 +78,21 @@
         }
       }
     },
+    "encryption": {
+      "type": "object",
+      "description": "Encryption at rest.",
+      "properties": {
+        "secretName": {
+          "type": "string",
+          "description": "Secret that holds the encryption key file in its key key, mounted on every pod. Defaults to <release>-encryption. Unused when config.encryption.key is set."
+        },
+        "previousSecretName": {
+          "type": "string",
+          "description": "Secret that holds the previous encryption key file in its key key, during a change of encryption key."
+        }
+      },
+      "additionalProperties": false
+    },
     "config": {
       "type": "object",
       "description": "Ella SMSC configuration file content, merged over the settings the chart manages."
@@ -305,6 +320,27 @@
           "type": "object",
           "description": "Service account annotations."
         }
+      }
+    },
+    "extraEnv": {
+      "type": "array",
+      "description": "Extra environment variables of the smsc container, e.g. for a PKCS#11 library.",
+      "items": {
+        "type": "object"
+      }
+    },
+    "extraVolumes": {
+      "type": "array",
+      "description": "Extra pod volumes, e.g. the HSM PIN Secret.",
+      "items": {
+        "type": "object"
+      }
+    },
+    "extraVolumeMounts": {
+      "type": "array",
+      "description": "Extra volume mounts of the smsc container.",
+      "items": {
+        "type": "object"
       }
     },
     "podAnnotations": {

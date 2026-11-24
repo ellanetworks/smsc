@@ -87,6 +87,10 @@ func UpdateOIDC(a *auth) http.Handler {
 		}
 
 		current := cfg.OIDC.Get()
+		if current.ClientSecretLocked {
+			writeError(w, r, http.StatusServiceUnavailable, "The encryption keys are locked", nil, cfg.Logger)
+			return
+		}
 
 		o := db.OIDC{
 			Enabled:              params.Enabled,
@@ -160,7 +164,7 @@ func oidcResponse(o db.OIDC) OIDCSettings {
 		ExternalURL:            o.ExternalURL,
 		Issuer:                 o.Issuer,
 		ClientID:               o.ClientID,
-		ClientSecretSet:        o.ClientSecret != "",
+		ClientSecretSet:        o.ClientSecret != "" || o.ClientSecretLocked,
 		DisplayName:            o.DisplayName,
 		Scopes:                 o.Scopes,
 		SessionLifetimeSeconds: int64(o.SessionLifetime / time.Second),

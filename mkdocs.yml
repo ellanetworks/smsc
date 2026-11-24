@@ -75,6 +75,8 @@ nav:
     - Send (U)SIM Data Download Messages over SMPP: how_to/send_sim_data_download_messages_over_smpp.md
     - Route a Short Code to an Application: how_to/route_a_short_code_to_an_application.md
     - Back Up and Restore: how_to/back_up_and_restore.md
+    - Use an HSM: how_to/use_an_hsm.md
+    - Change the Encryption Key: how_to/change_the_encryption_key.md
     - Upgrade: how_to/upgrade.md
     - Scale a High Availability Cluster: how_to/scale_ha_cluster.md
     - Manage Single Sign-On Users: how_to/manage_single_sign_on_users.md
@@ -94,6 +96,7 @@ nav:
       - Retention: reference/api/retention.md
       - Cluster: reference/api/cluster.md
       - Backup: reference/api/backup.md
+      - Encryption: reference/api/encryption.md
       - Status: reference/api/status.md
       - Metrics: reference/api/metrics.md
       - Pprof: reference/api/pprof.md
@@ -111,6 +114,7 @@ nav:
     - Security: explanation/security.md
     - Single Sign-On: explanation/single_sign_on.md
     - High Availability: explanation/high_availability.md
+    - Encryption at Rest: explanation/encryption_at_rest.md
 plugins:
   - search
   - glightbox

@@ -516,6 +516,7 @@ func (n *Node) updateSelf() {
 
 	want := n.certs.member(n.cfg.Advertise, n.cfg.Version, n.label, n.generated)
 	want.APIAddress = n.cfg.APIAddress
+	want.EncryptionKey = n.keyManager.unlockedWith()
 
 	if sameMember(have, want) {
 		return
@@ -616,7 +617,7 @@ func (n *Node) reconcileAddresses() {
 }
 
 func (n *Node) registerSelf(ctx context.Context, via db.Proposer) error {
-	secrets, err := n.db.InitSecrets(ctx, via)
+	clusterID, err := n.db.ClusterID(ctx)
 	if err != nil {
 		return err
 	}
@@ -626,8 +627,8 @@ func (n *Node) registerSelf(ctx context.Context, via db.Proposer) error {
 	if n.cfg.clustered() {
 		address = n.cfg.Advertise
 
-		if n.certs.clusterID() != secrets.ClusterID {
-			cert, err := pki.GenerateCert(secrets.ClusterID, n.id, n.cfg.Now())
+		if n.certs.clusterID() != clusterID {
+			cert, err := pki.GenerateCert(clusterID, n.id, n.cfg.Now())
 			if err != nil {
 				return err
 			}
@@ -644,6 +645,7 @@ func (n *Node) registerSelf(ctx context.Context, via db.Proposer) error {
 
 	want := n.certs.member(address, n.cfg.Version, n.label, n.generated)
 	want.APIAddress = n.cfg.APIAddress
+	want.EncryptionKey = n.keyManager.unlockedWith()
 
 	have, err := n.db.Member(ctx, n.id)
 	if err == nil && sameMember(have, want) {
@@ -660,7 +662,7 @@ func (n *Node) registerSelf(ctx context.Context, via db.Proposer) error {
 func sameMember(a, b db.Member) bool {
 	return a.Address == b.Address && a.Fingerprint == b.Fingerprint && a.SchemaVersion == b.SchemaVersion &&
 		a.Version == b.Version && a.DiameterLabel == b.DiameterLabel && a.LabelGenerated == b.LabelGenerated &&
-		a.APIAddress == b.APIAddress
+		a.APIAddress == b.APIAddress && a.EncryptionKey == b.EncryptionKey
 }
 
 var ErrNotDrained = errors.New("drain the member before removing it, or force the removal")

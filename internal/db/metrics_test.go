@@ -18,8 +18,9 @@ import (
 )
 
 func TestMetricsCountFailuresOnly(t *testing.T) {
-	d := openBaselineDB(t)
+	d := openTestDB(t)
 	ctx := context.Background()
+	before := sampleCount(t, d.metrics.duration)
 	now := time.Now()
 
 	if _, err := d.GetSettings(ctx); err != nil {
@@ -42,7 +43,7 @@ func TestMetricsCountFailuresOnly(t *testing.T) {
 		t.Errorf("errors = %v, want 0", got)
 	}
 
-	if got := sampleCount(t, d.metrics.duration); got != 4 {
+	if got := sampleCount(t, d.metrics.duration) - before; got != 4 {
 		t.Errorf("duration has %d observations, want 4", got)
 	}
 
@@ -103,7 +104,7 @@ func TestEveryCallIsObserved(t *testing.T) {
 	unobserved := map[string]bool{
 		"Close": true, "Collectors": true, "CreateMessage": true, "Ping": true, "Apply": true, "ApplyEntries": true, "AppliedIndex": true, "WaitApplied": true,
 		"OnEvents": true, "SetProposer": true, "RecordConfiguration": true, "MakeDurable": true, "ResetPosition": true, "JWTSecret": true, "OIDCCookieKey": true,
-		"LeaderTime": true, "Schema": true, "RegisterMember": true, "Secrets": true,
+		"LeaderTime": true, "Schema": true, "RegisterMember": true, "Secrets": true, "SetKeys": true, "CreateCluster": true,
 	}
 
 	files, err := filepath.Glob("*.go")

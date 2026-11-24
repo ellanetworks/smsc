@@ -4,7 +4,27 @@ description: Step-by-step instructions to back up and restore Ella SMSC.
 
 # Back Up and Restore
 
-A backup holds message content, user accounts, and the single sign-on client secret. Store and transfer it encrypted.
+A backup is encrypted with the encryption key, and does not hold it. Keep a copy of the key, apart from the backups.
+
+## Back up the encryption key
+
+=== "Snap"
+
+    Copy `/var/snap/ella-smsc/common/encryption.key` from any node:
+
+    ```shell
+    sudo cp /var/snap/ella-smsc/common/encryption.key encryption.key
+    ```
+
+=== "Kubernetes"
+
+    Save the `ella-smsc-encryption` Secret:
+
+    ```shell
+    kubectl get secret ella-smsc-encryption -n ella -o jsonpath='{.data.key}' | base64 -d > encryption.key
+    ```
+
+With an HSM, keep a copy of the key on another HSM.
 
 ## Back up
 
@@ -94,7 +114,12 @@ Use this procedure when a cluster lost a majority of its nodes, or a standalone 
 
 === "Snap"
 
-    1. Install Ella SMSC on a new host, as in [Install](install.md). For a cluster, add a `cluster` block to the configuration file.
+    1. Install Ella SMSC on a new host, as in [Install](install.md). For a cluster, add a `cluster` block to the configuration file. Before starting it, copy the saved encryption key:
+
+        ```shell
+        sudo install -m 0600 encryption.key /var/snap/ella-smsc/common/encryption.key
+        ```
+
     2. Open `http://<host-ip>:5010` in a browser and initialize it with a temporary user.
     3. Restore the backup with that user, as in [Restore](#restore).
     4. For a standalone deployment, stop here.
@@ -102,7 +127,7 @@ Use this procedure when a cluster lost a majority of its nodes, or a standalone 
 
         ```shell
         sudo snap stop ella-smsc.smscd
-        sudo rm -rf /var/snap/ella-smsc/common/smsc.db* /var/snap/ella-smsc/common/raft
+        sudo rm -rf /var/snap/ella-smsc/common/smsc.db* /var/snap/ella-smsc/common/raft /var/snap/ella-smsc/common/encryption.key
         sudo snap start ella-smsc.smscd
         ```
 
@@ -115,11 +140,17 @@ Use this procedure when a cluster lost a majority of its nodes, or a standalone 
         kubectl delete pvc -n ella -l app.kubernetes.io/name=ella-smsc
         ```
 
-    2. Deploy it again, with the same values:
+    2. If the `ella-smsc-encryption` Secret is gone, create it again from the saved key:
+
+        ```shell
+        kubectl create secret generic ella-smsc-encryption -n ella --from-file=key=encryption.key
+        ```
+
+    3. Deploy it again, with the same values:
 
         ```shell
         helm install ella-smsc oci://ghcr.io/ellanetworks/charts/ella-smsc --namespace ella --set replicas=3
         ```
 
-    3. Initialize it with a temporary user, as in [Deploy a High Availability Cluster](deploy_ha_cluster.md), step 2.
-    4. Restore the backup with that user, as in [Restore](#restore).
+    4. Initialize it with a temporary user, as in [Deploy a High Availability Cluster](deploy_ha_cluster.md), step 2.
+    5. Restore the backup with that user, as in [Restore](#restore).

@@ -24,6 +24,8 @@ Initial setup and configuration of Ella SMSC.
 Ongoing management and maintenance of a running Ella SMSC deployment.
 
 - [Back Up and Restore](back_up_and_restore.md)
+- [Use an HSM](use_an_hsm.md)
+- [Change the Encryption Key](change_the_encryption_key.md)
 - [Upgrade](upgrade.md)
 - [Scale a High Availability Cluster](scale_ha_cluster.md)
 - [Manage Single Sign-On Users](manage_single_sign_on_users.md)

@@ -41,6 +41,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s-headless" (include "ella-smsc.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "ella-smsc.encryptionSecret" -}}
+{{- if not ((.Values.config.encryption | default dict).key) }}
+{{- default (printf "%s-encryption" (include "ella-smsc.fullname" .)) .Values.encryption.secretName }}
+{{- end }}
+{{- end }}
+
 {{- define "ella-smsc.clusterSecretName" -}}
 {{- default (printf "%s-cluster" (include "ella-smsc.fullname" .)) .Values.cluster.secretName }}
 {{- end }}
@@ -95,6 +101,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- $join := printf "%s:7000" (include "ella-smsc.headlessServiceName" .) }}
 {{- $_ := set $base "cluster" (dict "address" "0.0.0.0" "port" 7000 "join" (list $join) "bootstrap_expect" 3 "secret_file" "/secrets/cluster/secret") }}
 {{- end }}
+{{- $encryption := dict }}
+{{- if include "ella-smsc.encryptionSecret" . }}
+{{- $_ := set $encryption "key" (dict "type" "file" "file" (dict "path" "/secrets/encryption/key")) }}
+{{- end }}
+{{- if .Values.encryption.previousSecretName }}
+{{- $_ := set $encryption "previous_key" (dict "type" "file" "file" (dict "path" "/secrets/encryption-previous/key")) }}
+{{- end }}
+{{- if $encryption }}
+{{- $_ := set $base "encryption" $encryption }}
+{{- end }}
 {{- if .Values.api.tls.secretName }}
 {{- $_ := set $base.api "tls" (dict "cert" "/tls/api/tls.crt" "key" "/tls/api/tls.key") }}
 {{- end }}
@@ -103,6 +119,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{- define "ella-smsc.validate" -}}
 {{- $nad := .Values.diameter.networkAttachment }}
+{{- $configured := (.Values.config.encryption | default dict) }}
+{{- if and .Values.encryption.secretName $configured.key }}
+{{- fail "encryption.secretName and config.encryption.key both set the encryption key: keep one" }}
+{{- end }}
+{{- if and .Values.encryption.previousSecretName (eq .Values.encryption.previousSecretName (include "ella-smsc.encryptionSecret" .)) }}
+{{- fail "encryption.previousSecretName must name another Secret than the encryption key's" }}
+{{- end }}
+{{- if and .Values.encryption.previousSecretName $configured.previous_key }}
+{{- fail "encryption.previousSecretName and config.encryption.previous_key both set the previous encryption key: keep one" }}
+{{- end }}
+
 {{- if and $nad.enabled $nad.create (empty $nad.ipam) }}
 {{- fail "diameter.networkAttachment.ipam is required when diameter.networkAttachment.create is true" }}
 {{- end }}

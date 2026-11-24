@@ -134,8 +134,9 @@ func TestPurgeMessagesInBatches(t *testing.T) {
 	for i := range 2500 {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO messages (kind, originator, originator_ton, originator_npi, recipient, recipient_ton,
 			recipient_npi, msisdn, origin, message_reference, protocol_identifier, tpdu, status, single_shot, submitted_at,
-			time_stamp, expires_at, next_attempt_at, retries, updated_at)
-			VALUES ('message', '1', 1, 1, '2', 1, 1, '2', 'api', 0, 0, x'00', 'delivered', 0, ?1, ?1, ?1, ?1, 0, ?1)`,
+			time_stamp, expires_at, next_attempt_at, retries, updated_at, cipher_id)
+			VALUES ('message', '1', 1, 1, '2', 1, 1, '2', 'api', 0, 0, x'00', 'delivered', 0, ?1, ?1, ?1, ?1, 0, ?1,
+			randomblob(16))`,
 			at.Add(time.Duration(i)).UnixNano()); err != nil {
 			t.Fatal(err)
 		}

@@ -1,7 +1,6 @@
 package db
 
 import (
-	"bytes"
 	"context"
 	"path/filepath"
 	"reflect"
@@ -53,6 +52,8 @@ func TestUpdateOIDCPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	newTestCluster(t, d)
+
 	want := testOIDC()
 	if err := d.UpdateOIDC(ctx, want); err != nil {
 		t.Fatalf("UpdateOIDC: %v", err)
@@ -67,6 +68,7 @@ func TestUpdateOIDCPersists(t *testing.T) {
 	}
 
 	t.Cleanup(func() { _ = d.Close() })
+	unlockFrom(t, d)
 
 	if got, err := d.GetOIDC(ctx); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("GetOIDC after reopening = %+v, %v, want %+v", got, err, want)
@@ -171,43 +173,5 @@ func TestUpdateOIDCEndsOIDCSessions(t *testing.T) {
 				t.Errorf("link: %v, want kept", err)
 			}
 		})
-	}
-}
-
-func TestOIDCCookieKeySurvivesReopening(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "smsc.db")
-
-	var keys [][]byte
-
-	for range 2 {
-		d, err := Open(ctx, path)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		key, err := d.OIDCCookieKey(ctx)
-		if err != nil {
-			t.Fatalf("OIDCCookieKey: %v", err)
-		}
-
-		secret, err := d.JWTSecret(ctx)
-		if err != nil {
-			t.Fatalf("JWTSecret: %v", err)
-		}
-
-		if bytes.Equal(key, secret) {
-			t.Fatal("the OIDC cookie key is the JWT secret")
-		}
-
-		keys = append(keys, key)
-
-		if err := d.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if len(keys[0]) != oidcCookieKeyLength || !bytes.Equal(keys[0], keys[1]) {
-		t.Fatalf("keys %x and %x, want the same %d bytes", keys[0], keys[1], oidcCookieKeyLength)
 	}
 }

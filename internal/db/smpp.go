@@ -123,16 +123,17 @@ type Notification struct {
 	DataCoding           uint8
 	UserMessageReference *uint16
 	DeliverReport        []byte
+	ReportCipherID       []byte
 	Ack                  bool
 }
 
 const notificationColumns = `n.id, s.esme_id, n.type, n.attempts, n.tp_status, s.source_npi,
-	s.data_coding, s.user_message_reference, a.deliver_report, a.outcome`
+	s.data_coding, s.user_message_reference, a.deliver_report, a.outcome, a.cipher_id`
 
 func dueNotifications(ctx context.Context, q querier, esmeID int64, now time.Time, limit int) ([]Notification, error) {
 	at := now.UTC().UnixNano()
 
-	rows, err := q.QueryContext(ctx, `SELECT `+notificationColumns+`, `+prefixed("m.", messageColumns)+`
+	rows, err := q.QueryContext(ctx, `SELECT `+notificationColumns+`, `+messageColumns("m.")+`
 		FROM smpp_notifications n
 		CROSS JOIN smpp_messages s ON s.message_id = n.message_id
 		JOIN messages m ON m.id = n.message_id
@@ -165,39 +166,25 @@ func dueNotifications(ctx context.Context, q querier, esmeID int64, now time.Tim
 	return out, nil
 }
 
-func prefixed(alias, columns string) string {
-	parts := strings.Split(columns, ",")
-	for i, p := range parts {
-		parts[i] = alias + strings.TrimSpace(p)
-	}
-
-	return strings.Join(parts, ", ")
-}
-
 func scanNotification(rows *sql.Rows) (Notification, error) {
 	var (
-		n                        Notification
-		status                   sql.Null[uint8]
-		reference                sql.Null[uint16]
-		outcome                  sql.Null[string]
-		reportFor                sql.Null[int64]
-		reportStatus             sql.Null[uint8]
-		submittedBy              sql.Null[int64]
-		traceparent              sql.Null[string]
-		submitted, ts, exp, next int64
-		updated                  int64
-		m                        = &n.Message
+		n         Notification
+		status    sql.Null[uint8]
+		reference sql.Null[uint16]
+		outcome   sql.Null[string]
 	)
 
-	err := rows.Scan(&n.ID, &n.ESMEID, &n.Type, &n.Attempts, &status, &n.SourceNPI, &n.DataCoding, &reference,
-		&n.DeliverReport, &outcome,
-		&m.ID, &m.Kind, &reportFor, &reportStatus, &m.Originator.Digits, &m.Originator.TypeOfNumber,
-		&m.Originator.NumberingPlan, &m.Recipient.Digits, &m.Recipient.TypeOfNumber, &m.Recipient.NumberingPlan,
-		&m.MSISDN, &m.Origin, &submittedBy, &m.MessageReference, &m.ProtocolIdentifier, &m.TPDU, &m.Status,
-		&m.SingleShot, &submitted, &ts, &exp, &next, &m.Retries, &updated, &traceparent)
+	scan := scanInto(&n.Message)
+
+	err := rows.Scan(append([]any{
+		&n.ID, &n.ESMEID, &n.Type, &n.Attempts, &status, &n.SourceNPI, &n.DataCoding, &reference, &n.DeliverReport, &outcome,
+		&n.ReportCipherID,
+	}, scan.targets()...)...)
 	if err != nil {
 		return Notification{}, err
 	}
+
+	scan.finish()
 
 	n.TPStatus = status.V
 	n.Ack = outcome.V == "success"
@@ -206,15 +193,8 @@ func scanNotification(rows *sql.Rows) (Notification, error) {
 		n.UserMessageReference = &reference.V
 	}
 
-	m.ReportFor, m.ReportStatus, m.SubmittedBy, m.TraceParent = reportFor.V, reportStatus.V, submittedBy.V, traceparent.V
-	m.SubmittedAt = time.Unix(0, submitted).UTC()
-	m.TimeStamp = time.Unix(0, ts).UTC()
-	m.ExpiresAt = time.Unix(0, exp).UTC()
-	m.NextAttemptAt = time.Unix(0, next).UTC()
-	m.UpdatedAt = time.Unix(0, updated).UTC()
-
 	if n.Type == NotificationReceipt {
-		n.MessageState = messageState(m.Status)
+		n.MessageState = messageState(n.Message.Status)
 	}
 
 	return n, nil

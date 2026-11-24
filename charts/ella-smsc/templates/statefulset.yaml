@@ -89,6 +89,9 @@ spec:
             - name: SMSC_CLUSTER_ADVERTISE
               value: {{ printf "$(POD_NAME).%s.%s.svc.%s:7000" (include "ella-smsc.headlessServiceName" .) .Release.Namespace .Values.clusterDomain }}
             {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -163,6 +166,19 @@ spec:
               mountPath: /tls
               readOnly: true
             {{- end }}
+            {{- if include "ella-smsc.encryptionSecret" . }}
+            - name: encryption-key
+              mountPath: /secrets/encryption
+              readOnly: true
+            {{- end }}
+            {{- if .Values.encryption.previousSecretName }}
+            - name: encryption-previous-key
+              mountPath: /secrets/encryption-previous
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         {{- if .Values.api.tls.secretName }}
         - name: api-tls
@@ -185,6 +201,27 @@ spec:
           secret:
             secretName: {{ .Values.smpp.tls.secretName }}
             defaultMode: 0440
+        {{- end }}
+        {{- if include "ella-smsc.encryptionSecret" . }}
+        - name: encryption-key
+          secret:
+            secretName: {{ include "ella-smsc.encryptionSecret" . }}
+            defaultMode: 0440
+            items:
+              - key: key
+                path: key
+        {{- end }}
+        {{- if .Values.encryption.previousSecretName }}
+        - name: encryption-previous-key
+          secret:
+            secretName: {{ .Values.encryption.previousSecretName }}
+            defaultMode: 0440
+            items:
+              - key: key
+                path: key
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
   volumeClaimTemplates:
     - metadata:

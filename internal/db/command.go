@@ -44,7 +44,7 @@ const (
 	cmdCreateAPIToken
 	cmdDeleteAPIToken
 	cmdTouchAPIToken
-	cmdInitSecrets
+	cmdCreateCluster
 	cmdUpdateOIDC
 	cmdLogInWithOIDC
 	cmdUseOIDCState
@@ -71,6 +71,9 @@ const (
 	cmdReleaseMODelivery
 	cmdExpireMODeliveries
 	cmdLinkOIDCIdentity
+	cmdRotateKeys
+	cmdAddRootWrap
+	cmdRemoveRootWraps
 )
 
 const entryBatch uint16 = 1
@@ -162,6 +165,8 @@ var resultCodes = []struct {
 	{"constraint", ErrConstraint},
 	{"already_applied", ErrAlreadyApplied},
 	{"upgrade_pending", ErrUpgradePending},
+	{"keys_changed", ErrKeysChanged},
+	{"key_change", ErrKeyChange},
 }
 
 var ErrInvalid = errors.New("invalid command")

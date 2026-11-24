@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/encryption"
 )
 
 type Response struct {
@@ -23,6 +24,13 @@ func writeResponse(w http.ResponseWriter, r *http.Request, v any, status int, lo
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, message string, err error, logger *slog.Logger) {
+	if status == http.StatusInternalServerError && errors.Is(err, encryption.ErrLocked) {
+		w.Header().Set("Retry-After", "5")
+		writeJSON(w, r, ErrorResponse{Error: "The encryption keys are locked"}, http.StatusServiceUnavailable, logger)
+
+		return
+	}
+
 	if status == http.StatusInternalServerError && errors.Is(err, db.ErrBusy) {
 		w.Header().Set("Retry-After", "1")
 		writeJSON(w, r, ErrorResponse{Error: "Too busy, retry later"}, http.StatusServiceUnavailable, logger)

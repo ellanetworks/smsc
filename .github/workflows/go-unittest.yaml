@@ -19,7 +19,12 @@ jobs:
       - name: Load SCTP
         run: sudo modprobe sctp
 
+      - name: Install SoftHSM2
+        run: sudo apt-get update && sudo apt-get install -y softhsm2
+
       - name: Unit tests
+        env:
+          SOFTHSM2_LIB: /usr/lib/softhsm/libsofthsm2.so
         run: go test -cover ./...
 
       - name: Sub-module unit tests

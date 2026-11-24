@@ -28,6 +28,12 @@ var (
 
 const maxUserDataOctets = 140
 
+// TS 23.040 clause 9.2.3.1
+// TS 23.040 clause 9.2.3.5
+func RequestsStatusReport(b []byte) bool {
+	return len(b) > 0 && b[0]&0x3 == mtiSubmit && b[0]&0x20 != 0
+}
+
 func MessageType(b []byte) (uint8, bool) {
 	if len(b) == 0 {
 		return 0, false

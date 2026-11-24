@@ -2,9 +2,12 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ellanetworks/smsc/internal/encryption"
 )
 
 type OIDC struct {
@@ -13,6 +16,7 @@ type OIDC struct {
 	Issuer               string
 	ClientID             string
 	ClientSecret         string
+	ClientSecretLocked   bool
 	DisplayName          string
 	Scopes               []string
 	SessionLifetime      time.Duration
@@ -32,15 +36,30 @@ func (d *DB) GetOIDC(ctx context.Context) (_ OIDC, err error) {
 
 	var (
 		o        OIDC
+		secret   []byte
 		scopes   string
 		lifetime int64
 	)
 
 	if err := d.reader().QueryRowContext(ctx, `SELECT enabled, external_url, issuer, client_id, client_secret,
 		display_name, scopes, session_lifetime, trust_unverified_email, ca_certificate, groups_claim
-		FROM oidc WHERE id = 1`).Scan(&o.Enabled, &o.ExternalURL, &o.Issuer, &o.ClientID, &o.ClientSecret,
+		FROM oidc WHERE id = 1`).Scan(&o.Enabled, &o.ExternalURL, &o.Issuer, &o.ClientID, &secret,
 		&o.DisplayName, &scopes, &lifetime, &o.TrustUnverifiedEmail, &o.CACertificate, &o.GroupsClaim); err != nil {
 		return OIDC{}, fmt.Errorf("get OIDC: %w", err)
+	}
+
+	if len(secret) > 0 {
+		plaintext, err := d.openSecret(secret, clientSecretAt)
+
+		switch {
+		case errors.Is(err, encryption.ErrLocked):
+			o.ClientSecretLocked = true
+		case err != nil:
+			return OIDC{}, fmt.Errorf("get OIDC: the client secret: %w", err)
+		default:
+			o.ClientSecret = string(plaintext)
+			clear(plaintext)
+		}
 	}
 
 	o.Scopes = strings.Fields(scopes)
@@ -79,18 +98,40 @@ func groupRoles(ctx context.Context, q querier) ([]GroupRole, error) {
 	return groupRoles, nil
 }
 
+type updateOIDC struct {
+	OIDC
+	SealedClientSecret []byte
+}
+
 func (d *DB) UpdateOIDC(ctx context.Context, o OIDC) (err error) {
 	defer d.observe(&err)()
 
-	if _, err := submit[struct{}](ctx, d, cmdUpdateOIDC, o); err != nil {
+	p := updateOIDC{OIDC: o}
+	p.ClientSecret, p.ClientSecretLocked = "", false
+
+	if o.ClientSecret != "" {
+		if p.SealedClientSecret, err = d.sealSecret([]byte(o.ClientSecret), clientSecretAt); err != nil {
+			return fmt.Errorf("update OIDC: %w", err)
+		}
+	}
+
+	if _, err := submit[struct{}](ctx, d, cmdUpdateOIDC, p); err != nil {
 		return fmt.Errorf("update OIDC: %w", err)
 	}
 
 	return nil
 }
 
-func applyUpdateOIDC(a *applyCtx, o OIDC) (struct{}, error) {
-	ctx, tx := a.ctx, a.tx
+func applyUpdateOIDC(a *applyCtx, p updateOIDC) (struct{}, error) {
+	ctx, tx, o := a.ctx, a.tx, p.OIDC
+
+	if p.ClientSecret != "" {
+		return struct{}{}, fmt.Errorf("%w: a plaintext OIDC client secret", ErrInvalid)
+	}
+
+	if err := requireSealed(p.SealedClientSecret); err != nil {
+		return struct{}{}, err
+	}
 
 	var issuer string
 	if err := tx.QueryRowContext(ctx, `SELECT issuer FROM oidc WHERE id = 1`).Scan(&issuer); err != nil {
@@ -100,7 +141,7 @@ func applyUpdateOIDC(a *applyCtx, o OIDC) (struct{}, error) {
 	if _, err := tx.ExecContext(ctx, `UPDATE oidc SET enabled = ?, external_url = ?, issuer = ?, client_id = ?,
 		client_secret = ?, display_name = ?, scopes = ?, session_lifetime = ?, trust_unverified_email = ?,
 		ca_certificate = ?, groups_claim = ? WHERE id = 1`, o.Enabled, o.ExternalURL, o.Issuer, o.ClientID,
-		o.ClientSecret, o.DisplayName, strings.Join(o.Scopes, " "), int64(o.SessionLifetime),
+		p.SealedClientSecret, o.DisplayName, strings.Join(o.Scopes, " "), int64(o.SessionLifetime),
 		o.TrustUnverifiedEmail, o.CACertificate, o.GroupsClaim); err != nil {
 		return struct{}{}, err
 	}

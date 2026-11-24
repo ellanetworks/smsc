@@ -422,3 +422,36 @@ func TestDeliverFromSubmitAlphanumericOriginator(t *testing.T) {
 		t.Fatalf("Encode = %x, want %x", got, want)
 	}
 }
+
+func TestRequestsStatusReport(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		tpdu []byte
+		want bool
+	}{
+		{"submit with TP-SRR", []byte{0x21, 0x07}, true},
+		{"submit with TP-SRR, TP-UDHI and TP-RP", []byte{0xE1, 0x07}, true},
+		{"submit without TP-SRR", []byte{0x01, 0x07}, false},
+		{"deliver with TP-SRI", []byte{0x20, 0x07}, false},
+		{"command", []byte{0x22, 0x07}, false},
+		{"reserved type", []byte{0x23, 0x07}, false},
+		{"empty", nil, false},
+	} {
+		if got := RequestsStatusReport(c.tpdu); got != c.want {
+			t.Fatalf("%s: %t, want %t", c.name, got, c.want)
+		}
+	}
+
+	for _, srr := range []bool{false, true} {
+		b, err := Submit{StatusReportRequest: srr, MessageReference: 1, Destination: Address{
+			TypeOfNumber: TypeOfNumberInternational, NumberingPlan: NumberingPlanISDN, Digits: "15551230002",
+		}}.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := RequestsStatusReport(b); got != srr {
+			t.Fatalf("an encoded SMS-SUBMIT with TP-SRR %t: %t", srr, got)
+		}
+	}
+}

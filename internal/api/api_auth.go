@@ -130,6 +130,11 @@ func (a *auth) allowAccount(w http.ResponseWriter, r *http.Request, account stri
 }
 
 func (a *auth) logIn(w http.ResponseWriter, r *http.Request, u db.User) (string, bool) {
+	if !a.signing() {
+		writeError(w, r, http.StatusServiceUnavailable, "The encryption keys are locked", errKeysLocked, a.cfg.Logger)
+		return "", false
+	}
+
 	sessionID, err := a.startSession(w, r, u)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "Failed to start a session", err, a.cfg.Logger)
@@ -152,6 +157,11 @@ func Refresh(a *auth) http.Handler {
 		unauthorized := func(message string, err error) {
 			a.clearSessionCookie(w)
 			writeError(w, r, http.StatusUnauthorized, message, err, cfg.Logger)
+		}
+
+		if !a.signing() {
+			writeError(w, r, http.StatusServiceUnavailable, "The encryption keys are locked", errKeysLocked, cfg.Logger)
+			return
 		}
 
 		hash := a.sessionHash(r)

@@ -198,6 +198,7 @@ func TestRoles(t *testing.T) {
 		"DELETE /api/v1/cluster/members/x":                     admin,
 		"POST /api/v1/cluster/members/x/drain":                 admin,
 		"POST /api/v1/cluster/members/x/resume":                admin,
+		"POST /api/v1/encryption/rotate":                       admin,
 		"GET /api/v1/backup":                                   admin,
 		"POST /api/v1/restore":                                 admin,
 		"GET /api/v1/users/me":                                 all,

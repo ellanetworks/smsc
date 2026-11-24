@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ellanetworks/smsc/internal/delivery"
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
 
@@ -80,5 +81,20 @@ func TestPlatformsWaitForTheShutdown(t *testing.T) {
 		if d != want {
 			t.Errorf("%s is %s, want %s", name, d, want)
 		}
+	}
+}
+
+func TestNoCoreDumps(t *testing.T) {
+	if err := noCoreDumps(); err != nil {
+		t.Fatal(err)
+	}
+
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_CORE, &limit); err != nil || limit.Cur != 0 || limit.Max != 0 {
+		t.Fatalf("core limit = %+v, %v", limit, err)
+	}
+
+	if dumpable, err := unix.PrctlRetInt(unix.PR_GET_DUMPABLE, 0, 0, 0, 0); err != nil || dumpable != 0 {
+		t.Fatalf("dumpable = %d, %v", dumpable, err)
 	}
 }

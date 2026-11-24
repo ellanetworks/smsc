@@ -74,6 +74,7 @@ type Server struct {
 	deliverer     *delivery.Deliverer
 	esmes         *esme.Service
 	drain         *drainer
+	labels        chan struct{}
 	stopLeading   context.CancelFunc
 	engines       sync.WaitGroup
 	smppServer    *smpp.Server
@@ -157,7 +158,7 @@ func (s *Server) Start(ctx context.Context) (err error) {
 
 	clusterCfg := cluster.Config{
 		Dir: filepath.Join(filepath.Dir(cfg.DB.Path), "raft"), Version: version.Get().Version, Now: time.Now,
-		Logger: s.Logger, DiameterLabel: cfg.Diameter.HostLabel,
+		Logger: s.Logger, DiameterLabel: cfg.Diameter.HostLabel, Encryption: encryptionConfig(cfg.Encryption),
 	}
 
 	if c := cfg.Cluster; c != nil {
@@ -325,7 +326,7 @@ func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppT
 		return err
 	}
 
-	secrets, err := newSecrets(ctx, database)
+	secrets, err := newSecrets(ctx, database, s.Logger)
 	if err != nil {
 		return err
 	}
@@ -398,10 +399,12 @@ func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppT
 		wake: make(chan struct{}, 1),
 	}
 
+	s.labels = make(chan struct{}, 1)
 	oidcLive := oidc.NewLive(database, oidcSettings)
+	reloads := newReloader(database, secrets, oidcLive, node.KeysChanged(), s.Logger)
 
 	database.OnEvents(func(ev db.Events) {
-		s.applyEvents(context.WithoutCancel(ctx), ev, database, live, oidcLive, deliverer, esmes, secrets)
+		s.applyEvents(context.WithoutCancel(ctx), ev, database, live, deliverer, esmes, reloads)
 	})
 
 	mux.Handle(sgd.ApplicationID, sgd.CommandMOForwardShortMessage, &smscsgd.Handler{
@@ -435,6 +438,7 @@ func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppT
 		OIDC:           oidcLive,
 		Backups:        node,
 		Cluster:        node,
+		Encryption:     node,
 		SMPP:           smppSessions{database},
 		Ready:          s.readiness.checks,
 		Received:       m.received,
@@ -463,6 +467,7 @@ func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppT
 
 	followCtx, stopFollowing := context.WithCancel(base)
 	go nodes.follow(followCtx, live)
+	go reloads.run(followCtx)
 
 	if cfg.SMPP != nil {
 		go esmes.RunSessions(followCtx)
@@ -507,7 +512,7 @@ func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppT
 
 	go s.fenceOnRemoval(base, node, nodes, s.smppServer)
 
-	go s.gateDiameter(followCtx, node, nodes, live)
+	go s.gateDiameter(followCtx, node, nodes, live, s.labels)
 
 	go drain.run(followCtx)
 
@@ -536,33 +541,45 @@ func (s *Server) finish(ctx, base context.Context, addresses []netip.Addr, smppT
 		"diameter", diameterAddr, "api", s.apiListener.Addr().String(), "tls", s.apiTLS != nil, "smpp", smppAddr,
 		"smpp_tls", smppTLS != nil)
 
-	if diameterAddr == "" {
-		s.Logger.WarnContext(ctx, "Diameter stays closed until the cluster records this node's Diameter host label",
-			"label", node.DiameterLabel())
-	}
-
 	return nil
 }
 
-func (s *Server) gateDiameter(ctx context.Context, node *cluster.Node, nodes *nodeManager, live *settings.Live) {
+func (s *Server) gateDiameter(ctx context.Context, node *cluster.Node, nodes *nodeManager, live *settings.Live,
+	labels <-chan struct{},
+) {
 	ticker := time.NewTicker(labelCheckInterval)
 	defer ticker.Stop()
 
+	warned := false
+
 	for {
+		ticked := false
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-node.Removed():
 			return
 		case <-ticker.C:
+			ticked = true
+		case <-labels:
 		}
 
 		label, err := node.CommittedLabel(ctx)
 
 		switch {
 		case err == nil:
+			warned = false
+
 			nodes.setServing(ctx, true, label, live)
 		case ctx.Err() == nil:
+			if ticked && !warned && nodes.Addr() == nil {
+				warned = true
+
+				s.Logger.WarnContext(ctx, "Diameter stays closed until the cluster records this node's Diameter host label",
+					slog.String("label", node.DiameterLabel()), slog.Any("error", err))
+			}
+
 			nodes.setServing(ctx, false, "", live)
 		}
 	}

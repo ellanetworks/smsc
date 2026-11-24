@@ -29,7 +29,10 @@ const (
 	restoreTimeout   = 10 * time.Minute
 )
 
-var ErrInvalidBackup = errors.New("invalid backup")
+var (
+	ErrInvalidBackup      = errors.New("invalid backup")
+	ErrUnrestorableBackup = errors.New("this cluster cannot restore the backup yet")
+)
 
 type Manifest struct {
 	Format       int              `json:"format"`
@@ -163,6 +166,15 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 		return err
 	}
 
+	adopted, err := n.restorable(ctx, path)
+	if err != nil {
+		return err
+	}
+
+	if adopted != nil {
+		defer adopted.keys.Lock()
+	}
+
 	live, err := n.db.Sequences(ctx)
 	if err != nil {
 		return err
@@ -174,6 +186,12 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 
 	if err := n.db.KeepClusterState(ctx, path); err != nil {
 		return fmt.Errorf("keep the cluster members and secrets: %w", err)
+	}
+
+	if adopted != nil {
+		if err := n.db.AdoptKeys(ctx, path, adopted.backup, adopted.wrap, adopted.keys); err != nil {
+			return fmt.Errorf("adopt the backup's encryption keys: %w", err)
+		}
 	}
 
 	f, err := os.Open(path)
@@ -198,6 +216,39 @@ func (n *Node) restoreLocal(ctx context.Context, r io.Reader) error {
 			Size: int64(len(header)) + info.Size(),
 		}, io.MultiReader(bytes.NewReader(header), f), restoreTimeout)
 	})
+}
+
+func (n *Node) restorable(ctx context.Context, path string) (*adoption, error) {
+	live, err := n.db.EncryptionKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	backup, err := db.BackupEncryptionKeys(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read its encryption state: %w", ErrInvalidBackup, err)
+	}
+
+	switch {
+	case !live.Initialized() && !backup.Initialized():
+		return nil, nil
+	case !backup.Initialized():
+		return nil, fmt.Errorf("%w: it was taken before encryption at rest was initialized", ErrUnrestorableBackup)
+	case !live.Initialized():
+		return nil, fmt.Errorf("%w: this cluster's encryption keys are not created yet", ErrUnrestorableBackup)
+	case bytes.Equal(backup.KeyringID, live.KeyringID):
+		return nil, nil
+	}
+
+	a, err := n.keyManager.adopt(live, backup)
+	if err != nil {
+		return nil, err
+	}
+
+	n.keyManager.audit(ctx, "adopt_backup_keys", "Restoring a backup of another cluster: its encryption keys are "+
+		"adopted, rewrapped under "+a.wrap.Fingerprint)
+
+	return a, nil
 }
 
 func mkdirAll(dir string) string {

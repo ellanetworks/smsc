@@ -9,6 +9,7 @@ import (
 type metrics struct {
 	joinRequests *prometheus.CounterVec
 	foreignPeers prometheus.Gauge
+	locked       prometheus.Gauge
 }
 
 func newMetrics() *metrics {
@@ -21,7 +22,20 @@ func newMetrics() *metrics {
 			Name: "ellasmsc_cluster_foreign_peers",
 			Help: "Nodes behind cluster.join that are members of another cluster.",
 		}),
+		locked: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "ellasmsc_encryption_node_locked",
+			Help: "1 when this node cannot unlock the encryption keys.",
+		}),
 	}
+}
+
+func (m *metrics) setEncryption(s EncryptionStatus) {
+	locked := 0.0
+	if s.Locked {
+		locked = 1
+	}
+
+	m.locked.Set(locked)
 }
 
 func RegisterRaftMetrics(reg prometheus.Registerer) error {
@@ -42,7 +56,7 @@ func RegisterRaftMetrics(reg prometheus.Registerer) error {
 
 func (n *Node) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		n.metrics.joinRequests, n.metrics.foreignPeers,
+		n.metrics.joinRequests, n.metrics.foreignPeers, n.metrics.locked,
 		toleranceCollector{n},
 	}
 }

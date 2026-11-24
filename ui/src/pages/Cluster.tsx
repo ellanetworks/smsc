@@ -88,6 +88,16 @@ function SuffrageChip({ suffrage }: { suffrage: ClusterMember["suffrage"] }) {
 }
 
 function HealthChip({ member }: { member: ClusterMember }) {
+  if (member.locked) {
+    return (
+      <Tooltip
+        title="This node cannot unlock its encryption keys: it refuses messages and logins. Its logs give the reason."
+        arrow
+      >
+        <Chip label="Locked" size="small" color="error" />
+      </Tooltip>
+    );
+  }
   if (member.healthy === undefined) {
     return (
       <Tooltip title="The leader has not reported on this node yet." arrow>

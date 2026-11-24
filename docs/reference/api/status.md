@@ -89,6 +89,7 @@ This path returns whether the node is ready to receive traffic.
 | `drain`       | The node is not draining or drained. |
 | `database`    | The database answers. |
 | `leader`      | The node leads, or heard from the leader within 2 s. |
+| `encryption`  | The node unlocked its [encryption keys](../../explanation/encryption_at_rest.md#locked-nodes). |
 | `cluster`     | The node leads, and every voter is healthy. Only with `cluster=true`. |
 
 ### Response Fields

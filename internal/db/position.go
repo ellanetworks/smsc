@@ -301,7 +301,9 @@ func (d *DB) Install(ctx context.Context, src string, at *Position) (err error) 
 		return err
 	}
 
-	d.publish(Events{Replaced: true, Messages: true, Notifications: true, Settings: true, OIDC: true, Members: true})
+	d.publish(Events{
+		Replaced: true, Messages: true, Notifications: true, Settings: true, OIDC: true, Members: true, Encryption: true,
+	})
 
 	return nil
 }
@@ -528,7 +530,9 @@ func (d *DB) Wipe(ctx context.Context, scratch string) (err error) {
 
 var (
 	secretTables  = []string{"jwt_secret", "oidc_cookie_key", "cluster", "cluster_join_tokens"}
-	clusterTables = append([]string{"cluster_members", "cluster_removed_members"}, secretTables...)
+	clusterTables = append([]string{
+		"cluster_members", "cluster_removed_members", "encryption_state", "encryption_root_wraps", "encryption_keyring",
+	}, secretTables...)
 )
 
 func StripSecrets(ctx context.Context, path string) error {
@@ -590,6 +594,16 @@ func (d *DB) KeepClusterState(ctx context.Context, path string) (err error) {
 	defer func() { _ = tx.Rollback() }()
 
 	for _, t := range clusterTables {
+		var present int
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM main.sqlite_schema WHERE type = 'table' AND name = ?)
+			* (SELECT count(*) FROM live.sqlite_schema WHERE type = 'table' AND name = ?)`, t, t).Scan(&present); err != nil {
+			return err
+		}
+
+		if present == 0 {
+			continue
+		}
+
 		if _, err := tx.ExecContext(ctx, `DELETE FROM main.`+t); err != nil {
 			return err
 		}

@@ -58,6 +58,7 @@ type Config struct {
 	BootstrapExpect int
 	SecretFile      string
 	APIAddress      string
+	Encryption      EncryptionConfig
 	Now             func() time.Time
 	Logger          *slog.Logger
 
@@ -84,6 +85,8 @@ type Node struct {
 	rpc     *http.Server
 	peers   *peerClient
 	health  *health
+
+	keyManager *keyManager
 
 	raftMu    sync.RWMutex
 	raft      *raft.Raft
@@ -125,6 +128,14 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 		cfg.Advertise = cfg.Address
 	}
 
+	if cfg.Encryption.Key.Type == "" {
+		cfg.Encryption.Key.Type = KeyTypeFile
+	}
+
+	if cfg.Encryption.Key.Type == KeyTypeFile && cfg.Encryption.Key.Path == "" {
+		cfg.Encryption.Key.Path = filepath.Join(filepath.Dir(cfg.Dir), defaultKeyFile)
+	}
+
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create the raft directory: %w", err)
 	}
@@ -151,6 +162,7 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 
 	n.health = newHealth(n)
 	n.metrics = newMetrics()
+	n.keyManager = newKeyManager(n, cfg.Encryption)
 	n.formation = newFormation(n)
 	n.auth = newJoinAuth(cfg.SecretFile, cfg.Now, cfg.Logger)
 
@@ -171,6 +183,9 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 	}
 
 	d.OnEvents(n.onEvents)
+	d.OnEvents(n.keyManager.onEvents)
+	d.SetKeys(&n.keyManager.keys)
+	_ = n.keyManager.unlock(ctx, false)
 
 	if err := n.certs.refresh(ctx, d); err != nil {
 		return nil, err
@@ -197,6 +212,7 @@ func Open(ctx context.Context, cfg Config, d *db.DB) (*Node, error) {
 	go n.watch()
 
 	n.background.Go(n.maintain)
+	n.background.Go(n.keyManager.run)
 
 	if n.cfg.clustered() {
 		n.background.Go(n.discover)
@@ -574,7 +590,15 @@ func (n *Node) establish(ctx context.Context) (uint64, error) {
 				return 0, err
 			}
 
+			if err := n.keyManager.bootstrap(ctx, batcherProposer{b}); err != nil {
+				return 0, fmt.Errorf("create the cluster: %w", err)
+			}
+
 			if err := n.registerSelf(ctx, batcherProposer{b}); err != nil {
+				return 0, err
+			}
+
+			if err := n.keyManager.leadable(ctx); err != nil {
 				return 0, err
 			}
 

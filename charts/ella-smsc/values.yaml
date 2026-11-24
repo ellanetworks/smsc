@@ -16,6 +16,10 @@ replicas: 1
 cluster:
   secretName: ""
 
+encryption:
+  secretName: ""
+  previousSecretName: ""
+
 config:
   logging:
     level: info
@@ -74,6 +78,10 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
 
 podAnnotations: {}
 podLabels: {}

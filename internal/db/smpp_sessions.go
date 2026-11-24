@@ -222,9 +222,24 @@ func (d *DB) ClaimNotifications(ctx context.Context, nodeID string, esmeID int64
 ) (_ []Notification, err error) {
 	defer d.observe(&err)()
 
-	return submit[[]Notification](ctx, d, cmdClaimNotifications, claimNotifications{
+	if !d.unlocked() {
+		return nil, ErrKeysLocked
+	}
+
+	claimed, err := submit[[]Notification](ctx, d, cmdClaimNotifications, claimNotifications{
 		NodeID: nodeID, ESMEID: esmeID, Now: now, Lease: lease, Limit: limit,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range claimed {
+		if err := d.openNotification(&claimed[i]); err != nil {
+			return nil, err
+		}
+	}
+
+	return claimed, nil
 }
 
 func applyClaimNotifications(a *applyCtx, p claimNotifications) ([]Notification, error) {

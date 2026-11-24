@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/ellanetworks/smsc/internal/cluster/pki"
+	"github.com/ellanetworks/smsc/internal/encryption"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"gopkg.in/yaml.v3"
 )
@@ -20,6 +23,12 @@ const (
 	defaultAPIPort      = 5010
 	defaultSMPPPort     = 2775
 	defaultClusterPort  = 7000
+	defaultKeyFile      = "encryption.key"
+)
+
+const (
+	KeyTypeFile   = "file"
+	KeyTypePKCS11 = "pkcs11"
 )
 
 const (
@@ -30,13 +39,38 @@ const (
 type Config struct {
 	warnings []string
 
-	Logging   Logging   `yaml:"logging"`
-	DB        DB        `yaml:"db"`
-	API       API       `yaml:"api"`
-	Diameter  Diameter  `yaml:"diameter"`
-	SMPP      *SMPP     `yaml:"smpp"`
-	Cluster   *Cluster  `yaml:"cluster"`
-	Telemetry Telemetry `yaml:"telemetry"`
+	Logging    Logging    `yaml:"logging"`
+	DB         DB         `yaml:"db"`
+	API        API        `yaml:"api"`
+	Diameter   Diameter   `yaml:"diameter"`
+	SMPP       *SMPP      `yaml:"smpp"`
+	Cluster    *Cluster   `yaml:"cluster"`
+	Encryption Encryption `yaml:"encryption"`
+	Telemetry  Telemetry  `yaml:"telemetry"`
+}
+
+type Encryption struct {
+	Key         EncryptionKey  `yaml:"key"`
+	PreviousKey *EncryptionKey `yaml:"previous_key"`
+}
+
+type EncryptionKey struct {
+	Type   string     `yaml:"type"`
+	File   FileKey    `yaml:"file"`
+	PKCS11 *PKCS11Key `yaml:"pkcs11"`
+}
+
+type PKCS11Key struct {
+	Library    string `yaml:"library"`
+	TokenLabel string `yaml:"token_label"`
+	Slot       *uint  `yaml:"slot"`
+	PINFile    string `yaml:"pin_file"`
+	KeyLabel   string `yaml:"key_label"`
+	Mechanism  string `yaml:"mechanism"`
+}
+
+type FileKey struct {
+	Path string `yaml:"path"`
 }
 
 type Logging struct {
@@ -140,6 +174,8 @@ func Load(path string) (Config, error) {
 			c.Port = defaultClusterPort
 		}
 	}
+
+	cfg.Encryption.applyDefaults(cfg.DB.Path)
 
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
@@ -248,6 +284,154 @@ func (c Config) validate() error {
 	if c := c.Cluster; c != nil {
 		if err := c.validate(); err != nil {
 			return err
+		}
+	}
+
+	if err := c.Encryption.validate(); err != nil {
+		return err
+	}
+
+	return c.validatePrivateFiles()
+}
+
+func (e *Encryption) applyDefaults(dbPath string) {
+	if e.Key.Type == "" {
+		e.Key.Type = KeyTypeFile
+	}
+
+	if e.Key.Type == KeyTypeFile && e.Key.File.Path == "" {
+		e.Key.File.Path = filepath.Join(filepath.Dir(dbPath), defaultKeyFile)
+	}
+
+	if p := e.PreviousKey; p != nil && p.Type == "" {
+		p.Type = KeyTypeFile
+	}
+}
+
+func (e Encryption) validate() error {
+	if err := e.Key.validate("encryption.key", true); err != nil {
+		return err
+	}
+
+	p := e.PreviousKey
+	if p == nil {
+		return nil
+	}
+
+	if err := p.validate("encryption.previous_key", false); err != nil {
+		return err
+	}
+
+	if p.same(e.Key) {
+		return errors.New("encryption.previous_key must not be encryption.key")
+	}
+
+	return nil
+}
+
+func (k EncryptionKey) same(o EncryptionKey) bool {
+	switch {
+	case k.Type != o.Type:
+		return false
+	case k.Type == KeyTypeFile:
+		return filepath.Clean(k.File.Path) == filepath.Clean(o.File.Path)
+	default:
+		return k.PKCS11.Library == o.PKCS11.Library && k.PKCS11.TokenLabel == o.PKCS11.TokenLabel &&
+			equalSlots(k.PKCS11.Slot, o.PKCS11.Slot) && k.PKCS11.KeyLabel == o.PKCS11.KeyLabel
+	}
+}
+
+func equalSlots(a, b *uint) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func (k EncryptionKey) validate(name string, mayBeMissing bool) error {
+	switch k.Type {
+	case KeyTypeFile:
+		return k.validateFile(name, mayBeMissing)
+	case KeyTypePKCS11:
+		return k.validatePKCS11(name)
+	default:
+		return fmt.Errorf("%s.type %q is not supported: use %q or %q", name, k.Type, KeyTypeFile, KeyTypePKCS11)
+	}
+}
+
+func (k EncryptionKey) validateFile(name string, mayBeMissing bool) error {
+	if k.PKCS11 != nil {
+		return fmt.Errorf("%s.pkcs11 is set but %s.type is %q", name, name, k.Type)
+	}
+
+	if k.File.Path == "" {
+		return fmt.Errorf("%s.file.path is required", name)
+	}
+
+	_, err := encryption.LoadFileKey(k.File.Path)
+
+	switch {
+	case err == nil:
+		return nil
+	case mayBeMissing && errors.Is(err, fs.ErrNotExist):
+		return nil
+	default:
+		return fmt.Errorf("%s.file.path: %w", name, err)
+	}
+}
+
+func (k EncryptionKey) validatePKCS11(name string) error {
+	p := k.PKCS11
+
+	switch {
+	case k.File.Path != "":
+		return fmt.Errorf("%s.file is set but %s.type is %q", name, name, k.Type)
+	case p == nil:
+		return fmt.Errorf("%s.pkcs11 is required", name)
+	case p.Library == "":
+		return fmt.Errorf("%s.pkcs11.library is required", name)
+	case !filepath.IsAbs(p.Library):
+		return fmt.Errorf("%s.pkcs11.library must be an absolute path", name)
+	case (p.TokenLabel == "") == (p.Slot == nil):
+		return fmt.Errorf("%s.pkcs11 needs one of token_label or slot", name)
+	case p.KeyLabel == "":
+		return fmt.Errorf("%s.pkcs11.key_label is required", name)
+	case p.Mechanism != encryption.MechanismAESGCM && p.Mechanism != encryption.MechanismRSAOAEP:
+		return fmt.Errorf("%s.pkcs11.mechanism %q is not supported: use %q or %q", name, p.Mechanism,
+			encryption.MechanismAESGCM, encryption.MechanismRSAOAEP)
+	case p.PINFile == "":
+		return fmt.Errorf("%s.pkcs11.pin_file is required", name)
+	}
+
+	if _, err := os.Stat(p.Library); err != nil {
+		return fmt.Errorf("%s.pkcs11.library: %w", name, err)
+	}
+
+	pin, err := encryption.ReadPIN(p.PINFile)
+	if err != nil {
+		return fmt.Errorf("%s.pkcs11.pin_file: %w", name, err)
+	}
+
+	clear(pin)
+
+	return nil
+}
+
+func (c Config) validatePrivateFiles() error {
+	files := map[string]string{}
+
+	if t := c.API.TLS; t != nil {
+		files["api.tls.key"] = t.Key
+	}
+
+	if s := c.SMPP; s != nil && s.TLS != nil {
+		files["smpp.tls.key"] = s.TLS.Key
+	}
+
+	if cl := c.Cluster; cl != nil && cl.SecretFile != "" {
+		files["cluster.secret_file"] = cl.SecretFile
+	}
+
+	for name, path := range files {
+		if err := encryption.CheckPrivate(path); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
 

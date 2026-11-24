@@ -50,6 +50,7 @@ export const clusterMember = (
   leader: false,
   healthy: true,
   last_contact: "12ms",
+  locked: false,
   ...overrides,
 });
 

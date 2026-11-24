@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -22,6 +21,7 @@ import (
 	"github.com/ellanetworks/core/diameter/tgpp"
 	"github.com/ellanetworks/smsc/internal/api"
 	"github.com/ellanetworks/smsc/internal/db"
+	"github.com/ellanetworks/smsc/internal/db/dbtest"
 	"github.com/ellanetworks/smsc/internal/settings"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -89,20 +89,7 @@ func testConfig(t *testing.T, store *db.DB) api.Config {
 func openStore(t *testing.T) *db.DB {
 	t.Helper()
 
-	store, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "smsc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(func() { _ = store.Close() })
-
-	for v := store.Schema() + 1; v <= db.SchemaVersion(); v++ {
-		if err := store.Migrate(context.Background(), v); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	return store
+	return dbtest.Open(t)
 }
 
 func initialize(t *testing.T, h http.Handler) string {
