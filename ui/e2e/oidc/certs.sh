@@ -4,6 +4,7 @@ set -euo pipefail
 dir="${1:-$(dirname "$0")/../.build/oidc}"
 mkdir -p "$dir"
 cd "$dir"
+rm -f ./*.pem ./*.srl
 
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 \
   -subj "/CN=Ella SMSC E2E CA" -keyout ca-key.pem -out ca.pem 2>/dev/null
@@ -22,3 +23,4 @@ issue keycloak "DNS:keycloak,DNS:localhost"
 issue smsc "DNS:localhost,IP:127.0.0.1"
 
 chmod 0644 ./*.pem
+docker run --rm -v "$PWD:/certs" busybox:1.37.0 sh -c 'chown 0:0 /certs/smsc-key.pem && chmod 0400 /certs/smsc-key.pem'
