@@ -2,8 +2,8 @@ apiVersion: v2
 name: ella-smsc
 description: Ella SMSC, an SMS service center for private 4G and 5G networks.
 type: application
-version: 0.0.1
-appVersion: "v0.0.1"
+version: 0.1.0
+appVersion: "v0.1.0"
 kubeVersion: ">=1.30.0-0"
 home: https://docs.ellanetworks.com/smsc/
 icon: https://raw.githubusercontent.com/ellanetworks/smsc/main/docs/images/logo-mark.svg

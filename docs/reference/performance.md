@@ -62,7 +62,7 @@ In a cluster, CPU and memory are those of the node the ESME is bound to.
 
 | Item | Value |
 | ---- | ----- |
-| Version | Ella SMSC built from source, after v0.0.1, default configuration, with the SMPP listener |
+| Version | Ella SMSC built from source, after v0.1.0, default configuration, with the SMPP listener |
 | Host | 1 host: Intel Core Ultra 7 265K, 20 cores, NVMe SSD with ext4, Ubuntu 26.04, Linux 7.0 |
 | Nodes | Each pinned to its own 4 cores, on its own loopback address. The nodes of a cluster share the SSD. |
 | Load generator | On the same host, pinned to 8 other cores |
