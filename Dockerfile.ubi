@@ -33,6 +33,9 @@ LABEL name="ella-smsc" \
 
 COPY LICENSE /licenses/
 COPY --from=build /out/smsc /usr/bin/smsc
+RUN install -d -o 65532 -g 0 -m 0770 /data
+
+USER 65532
 
 ENTRYPOINT ["/usr/bin/smsc"]
 CMD ["--config", "/smsc.yaml"]

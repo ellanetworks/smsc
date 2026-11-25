@@ -32,7 +32,7 @@ This path returns the version of the SMSC, whether it is initialized, and the id
 ```json
 {
     "result": {
-        "version": "v0.1.0",
+        "version": "v0.1.1",
         "revision": "79194832364de9583e8e659ba700c2fa9ba1e351",
         "initialized": true,
         "clustered": false,
