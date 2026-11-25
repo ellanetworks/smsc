@@ -37,7 +37,9 @@ jobs:
           fi
 
       - name: Lint
-        run: helm lint --strict charts/ella-smsc
+        run: |
+          helm lint --strict charts/ella-smsc
+          helm lint --strict charts/ella-smsc -f charts/ella-smsc/values.openshift.yaml
 
       - name: Render standalone, high availability and Multus
         run: |

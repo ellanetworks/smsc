@@ -39,6 +39,19 @@ jobs:
     uses: ./.github/workflows/image-publish.yaml
     with:
       release: true
+  image-build-ubi:
+    needs: [check-version]
+    uses: ./.github/workflows/image-build-ubi.yaml
+  image-publish-ubi:
+    needs: [image-build-ubi]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-publish.yaml
+    with:
+      release: true
+      artifact: ellasmsc-ubi-image
+      tag-suffix: -ubi
   chart-publish:
     needs: [chart-lint, image-publish]
     permissions:
