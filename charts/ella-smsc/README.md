@@ -88,6 +88,7 @@ See [Install](https://docs.ellanetworks.com/smsc/how_to/install/) and [Deploy a 
 | `resources` | 500m CPU, 256 MiB requested; 4 CPU, 512 MiB limit | Container resources. |
 | `image.repository` | `ghcr.io/ellanetworks/ella-smsc` | Image repository. |
 | `image.tag` | chart `appVersion` | Image tag. |
+| `image.tagSuffix` | | Suffix appended to the image tag. `-ubi` selects the image based on the Red Hat Universal Base Image. |
 | `image.digest` | | Image digest. Takes precedence over `image.tag`. |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy. |
 | `imagePullSecrets` | `[]` | Image pull secrets. |

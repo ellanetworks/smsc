@@ -1,0 +1,47 @@
+name: Image Build (UBI)
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+
+jobs:
+  build-image:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ${{ (matrix.arch == 'arm64' && 'ubuntu-26.04-arm') || 'ubuntu-26.04' }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Build the image
+        env:
+          RELEASE: ${{ github.run_number }}
+        run: |
+          docker build \
+            --file Dockerfile.ubi \
+            --provenance=false \
+            --build-arg VERSION="$(cat version/VERSION)" \
+            --build-arg RELEASE="${RELEASE}" \
+            --build-arg GIT_COMMIT="${GITHUB_SHA}" \
+            --tag ella-smsc:latest \
+            .
+
+      - name: Check that the binary runs on the image
+        run: |
+          docker run --rm ella-smsc:latest -h 2>&1 | tee help.txt
+          grep -q -- '-config' help.txt
+
+      - name: Save container image to file
+        run: docker save -o ellasmsc_latest-${{ matrix.arch }}.tar ella-smsc:latest
+
+      - name: Upload container image to GitHub Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ellasmsc-ubi-image-${{ matrix.arch }}
+          path: ellasmsc_latest-${{ matrix.arch }}.tar

@@ -1,0 +1,38 @@
+FROM node:24-bookworm AS ui
+
+WORKDIR /src/ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+FROM golang:1.27.3-bookworm AS build
+
+ARG GIT_COMMIT
+
+WORKDIR /src
+COPY . .
+COPY --from=ui /src/ui/dist ui/dist
+RUN go build -v -o /out/smsc -ldflags "-s -w -X github.com/ellanetworks/smsc/version.GitCommit=${GIT_COMMIT}" ./cmd/smsc
+
+FROM registry.access.redhat.com/ubi10/ubi-minimal
+
+ARG VERSION
+ARG RELEASE
+
+LABEL name="ella-smsc" \
+      maintainer="Ella Networks Inc." \
+      vendor="Ella Networks Inc." \
+      version="${VERSION}" \
+      release="${RELEASE}" \
+      summary="Ella SMSC, an SMS service center for private 4G and 5G networks." \
+      description="Ella SMSC is a secure, reliable, and easy to operate SMS service center." \
+      io.k8s.display-name="Ella SMSC" \
+      io.k8s.description="Ella SMSC, an SMS service center for private 4G and 5G networks." \
+      url="https://docs.ellanetworks.com/smsc/"
+
+COPY LICENSE /licenses/
+COPY --from=build /out/smsc /usr/bin/smsc
+
+ENTRYPOINT ["/usr/bin/smsc"]
+CMD ["--config", "/smsc.yaml"]
