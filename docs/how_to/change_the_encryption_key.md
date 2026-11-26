@@ -76,7 +76,7 @@ Replace the [encryption key](../explanation/encryption_at_rest.md) with a new ke
           mechanism: rsa-oaep
       previous_key:
         file:
-          path: /var/lib/ella-smsc/encryption.key
+          path: encryption.key
     ```
 
     Restart Ella SMSC.

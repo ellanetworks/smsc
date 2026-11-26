@@ -58,3 +58,15 @@ jobs:
       contents: read
       packages: write
     uses: ./.github/workflows/chart-publish.yaml
+  binary-build:
+    needs: [check-version]
+    uses: ./.github/workflows/binary-build.yaml
+  binary-publish:
+    needs: [binary-build]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/binary-publish.yaml
+    with:
+      tag: ${{ github.ref_name }}
