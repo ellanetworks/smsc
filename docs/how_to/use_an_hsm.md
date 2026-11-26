@@ -16,7 +16,7 @@ Keep the [encryption key](../explanation/encryption_at_rest.md) on a hardware se
 Store the HSM's PIN in a file that Ella SMSC can read:
 
 ```shell
-echo -n '0001password' | sudo install -m 0600 /dev/stdin /etc/ella-smsc/hsm.pin
+echo -n '0001password' | sudo install -D -m 0600 /dev/stdin /etc/ella-smsc/hsm.pin
 ```
 
 Replace `0001password` with your PIN.

@@ -26,6 +26,27 @@ Choose one of the installation methods below.
     sudo snap start --enable ella-smsc.smscd
     ```
 
+=== "Binary"
+
+    Download and extract Ella SMSC (replace `amd64` with `arm64` on arm64 hosts):
+
+    ```shell
+    curl -L https://github.com/ellanetworks/smsc/releases/download/v0.1.2/ella-smsc-v0.1.2-linux-amd64.tar.gz | tar xz
+    cd ella-smsc-v0.1.2-linux-amd64
+    ```
+
+    Configure Ella SMSC:
+
+    ```shell
+    vim smsc.yaml
+    ```
+
+    Start Ella SMSC:
+
+    ```shell
+    sudo ./smsc --config smsc.yaml
+    ```
+
 === "Source"
 
     Install the required dependencies:
